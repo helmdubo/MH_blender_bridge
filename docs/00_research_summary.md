@@ -142,6 +142,25 @@ uasset к UID по имени/пути с подтверждением) — об
 для классов — DisplayName/PreviewBounds/Category/policies). В MVP опционален/пуст,
 нужен для внешних ссылок, forks, BP-дропдауна.
 
+**D18. Флаги диффа `UPDATE_RESOURCE` и `UPDATE_KIND`.** Ретаргет узла на другой
+ресурс (Make Single User) и смена вида узла (mesh → composite_ref) при живом
+node_uid — самостоятельные операции диффа, НЕ REMOVE+CREATE: живой UID = та же
+сущность. Обнаружено при написании expected_diffs этапа A (без этих флагов
+мутация make_single_user невыразима).
+
+**D19. Публичный resource_uid mesh-ресурса = `collection['mh_uid']`.** Единица
+экспорта — GEOMETRY-коллекция (одна коллекция = один FBX = один UStaticMesh);
+именно её UID стоит в манифесте и в `resource_uid` узлов. `mesh['mh_uid']`
+(datablock) и `obj['mh_uid']` — внутренняя identity: порядок сериализации
+multi-object коллекций и арбитраж Make Single User. В манифест v1 не попадают.
+
+**D20. ASCII-идентификаторы, NFC для остальных строк.** Имена ресурсов,
+композитов и bundle — ASCII `[A-Za-z0-9_ -]` (валидация
+`MH_E_NON_ASCII_RESOURCE_NAME`, без транслитерации: имена становятся именами
+UE-пакетов). Все прочие строки (display_name, значения properties) — юникод,
+нормализуемый в NFC на входе канон-формы и при записи файлов: NFD-написание
+из macOS-пайплайна не должно давать фантомный дифф.
+
 ## 4. Известные риски (проверяются первыми)
 
 R1. Axis/handedness (D12) — go/no-go в первую неделю кода.
