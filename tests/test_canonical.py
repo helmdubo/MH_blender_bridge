@@ -11,7 +11,9 @@ import copy
 import json
 import math
 import random
+import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 from gen_canonical_vectors import SAMPLE_COMPOSITE  # noqa: E402
 from mh_canonical import (  # noqa: E402
+    ERROR_CODES,
     P_PROPERTIES,
     P_ROTATION_QUAT,
     P_SCALE,
@@ -32,12 +35,59 @@ from mh_canonical import (  # noqa: E402
     composite_canonical_form,
     composite_content_hash,
     hash_hex,
+    nfc,
     quantize,
     resource_filename,
     sanitize_name,
+    validate_resource_name,
 )
 
 VECTORS_PATH = REPO_ROOT / "golden" / "canonical_vectors.json"
+
+
+# ==========================================================================
+# §6.1 machine error code registry
+# ==========================================================================
+
+
+def test_error_codes_registry_matches_the_spec_table() -> None:
+    assert ERROR_CODES == frozenset(
+        {
+            "MH_E_DUPLICATE_NODE_UID",
+            "MH_E_DUPLICATE_RESOURCE_UID",
+            "MH_E_COMPOSITE_CYCLE",
+            "MH_E_DANGLING_PARENT",
+            "MH_E_PARENT_CYCLE",
+            "MH_E_MISSING_COLLECTION_UID",
+            "MH_E_EMPTY_RESOURCE_COLLECTION",
+            "MH_E_NESTED_COMPOSITE_COLLECTION",
+            "MH_E_NAN_INF_VALUE",
+            "MH_E_INVALID_SCALE",
+            "MH_E_UID8_COLLISION",
+            "MH_E_NON_ASCII_RESOURCE_NAME",
+            "MH_E_UNKNOWN_SCHEMA_VERSION",
+            "MH_E_FOREIGN_UID_OWNER",
+            "MH_E_NAME_MISMATCH",
+            "MH_W_RESOURCE_FAR_FROM_ORIGIN",
+        }
+    )
+    # §6.1 as written: 15 blocking codes and 1 warning
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 15
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 1
+
+
+def test_error_codes_shape() -> None:
+    assert "MH_E_NON_ASCII_RESOURCE_NAME" in ERROR_CODES
+    assert "MH_E_NAN_INF_VALUE" in ERROR_CODES
+    pattern = re.compile(r"^MH_[EW]_[A-Z0-9_]+$")
+    for code in ERROR_CODES:
+        assert pattern.match(code), code
+
+
+def test_quantize_nan_error_carries_its_registry_code() -> None:
+    with pytest.raises(ValueError) as excinfo:
+        quantize(float("nan"), 3)
+    assert str(excinfo.value).startswith("MH_E_NAN_INF_VALUE")
 
 
 # ==========================================================================
@@ -210,6 +260,85 @@ def test_canonical_json_non_ascii_raw_utf8() -> None:
     assert canonical_json_bytes("\U0001f9f1") == '"\U0001f9f1"'.encode("utf-8")
     # 0x7f is not a control char below 0x20 -> emitted raw
     assert canonical_json_bytes("\x7f") == b'"\x7f"'
+
+
+# --- §8.4 Unicode NFC normalization ---------------------------------------
+
+# Spelled with explicit escapes on purpose: the point of these fixtures is the
+# exact code point sequence, which a raw literal could lose to a normalizing
+# editor.
+LATIN_NFD = "cafe\u0301"  # e + combining acute
+LATIN_NFC = "caf\u00e9"  # precomposed é
+CYRILLIC_NFD = "\u0447\u0430\u0438\u0306\u043d\u0438\u043a"  # и + combining breve
+CYRILLIC_NFC = "\u0447\u0430\u0439\u043d\u0438\u043a"  # precomposed й
+# Cyrillic 'о' + combining acute has no precomposed form: NFC leaves it alone.
+NO_PRECOMPOSED = "\u043e\u043a\u043d\u043e\u0301"
+
+
+def test_fixtures_really_are_nfd_and_nfc() -> None:
+    assert LATIN_NFD != LATIN_NFC
+    assert CYRILLIC_NFD != CYRILLIC_NFC
+    assert unicodedata.normalize("NFC", LATIN_NFD) == LATIN_NFC
+    assert unicodedata.normalize("NFC", CYRILLIC_NFD) == CYRILLIC_NFC
+    assert unicodedata.normalize("NFC", NO_PRECOMPOSED) == NO_PRECOMPOSED
+
+
+@pytest.mark.parametrize(
+    "decomposed,composed",
+    [(LATIN_NFD, LATIN_NFC), (CYRILLIC_NFD, CYRILLIC_NFC)],
+)
+def test_canonical_json_normalizes_nfd_strings(decomposed: str, composed: str) -> None:
+    assert canonical_json_bytes(decomposed) == canonical_json_bytes(composed)
+    assert canonical_json_bytes(decomposed) == f'"{composed}"'.encode("utf-8")
+    assert hash_hex(canonical_json_bytes(decomposed)) == hash_hex(canonical_json_bytes(composed))
+
+
+def test_canonical_json_normalizes_object_keys() -> None:
+    assert canonical_json_bytes({LATIN_NFD: 1}) == canonical_json_bytes({LATIN_NFC: 1})
+    # keys nested anywhere, not just at the top level
+    assert canonical_json_bytes({"a": [{CYRILLIC_NFD: 1}]}) == canonical_json_bytes(
+        {"a": [{CYRILLIC_NFC: 1}]}
+    )
+
+
+def test_canonical_json_key_sort_uses_nfc_bytes() -> None:
+    # NFD "é" starts with 'e' (0x65) and would sort between "a" and "z";
+    # its NFC form "é" is 0xc3 0xa9 and must sort after "z".
+    data = canonical_json_bytes({LATIN_NFD[3:]: 1, "z": 2, "a": 3})
+    assert data == b'{"a":3,"z":2,"\xc3\xa9":1}'
+
+
+def test_canonical_json_keeps_marks_without_precomposed_form() -> None:
+    assert canonical_json_bytes(NO_PRECOMPOSED) == f'"{NO_PRECOMPOSED}"'.encode("utf-8")
+
+
+def test_canonical_json_rejects_keys_colliding_under_nfc() -> None:
+    with pytest.raises(ValueError, match="NFC"):
+        canonical_json_bytes({LATIN_NFD: 1, LATIN_NFC: 2})
+
+
+def test_nfc_helper() -> None:
+    assert nfc(LATIN_NFD) == LATIN_NFC
+    assert nfc(nfc(CYRILLIC_NFD)) == CYRILLIC_NFC
+    assert nfc("ascii-1") == "ascii-1"
+    with pytest.raises(TypeError):
+        nfc(1)  # type: ignore[arg-type]
+
+
+def test_composite_hash_is_nfc_spelling_independent() -> None:
+    nfd_doc = copy.deepcopy(SAMPLE_COMPOSITE)
+    nfd_doc["nodes"][0]["display_name"] = CYRILLIC_NFD
+    nfd_doc["nodes"][0]["properties"] = {CYRILLIC_NFD: CYRILLIC_NFD}
+
+    nfc_doc = copy.deepcopy(SAMPLE_COMPOSITE)
+    nfc_doc["nodes"][0]["display_name"] = CYRILLIC_NFC
+    nfc_doc["nodes"][0]["properties"] = {CYRILLIC_NFC: CYRILLIC_NFC}
+
+    assert composite_content_hash(nfd_doc) == composite_content_hash(nfc_doc)
+    # the canonical value tree itself is normalized too, not only its bytes
+    canonical = composite_canonical_form(nfd_doc)
+    node = next(n for n in canonical["nodes"] if n["display_name"] == CYRILLIC_NFC)
+    assert list(node["properties"]) == [CYRILLIC_NFC]
 
 
 def test_canonical_json_scalars() -> None:
@@ -414,17 +543,62 @@ def test_canonical_form_rejects_nan_in_quantized_field() -> None:
 
 
 @pytest.mark.parametrize(
+    "name",
+    [
+        "wall_a",
+        "Wall A",
+        "Window-Set A",
+        "a-b_c 1",
+        "CON",
+        "com1",
+        "x",
+        "0",
+        "  ",  # spaces only: legal input, sanitizes to '_'
+        "-",
+    ],
+)
+def test_validate_resource_name_accepts_ascii_names(name: str) -> None:
+    assert validate_resource_name(name) is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",  # empty is a violation too
+        "окно",
+        "стена A",
+        "wall_á",
+        "café",
+        "wall.001",  # dot is not in [A-Za-z0-9_ -]
+        "wall/a",
+        "wall\ta",
+        "wall\U0001f9f1",
+        LATIN_NFD,
+    ],
+)
+def test_validate_resource_name_rejects_non_ascii_and_empty(name: str) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        validate_resource_name(name)
+    assert str(excinfo.value).startswith("MH_E_NON_ASCII_RESOURCE_NAME")
+
+
+def test_validate_resource_name_rejects_non_strings() -> None:
+    with pytest.raises(TypeError):
+        validate_resource_name(None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
     "raw,expected",
     [
         ("wall_a", "wall_a"),
         ("Wall_A", "wall_a"),
-        ("Window A.001", "window_a_001"),
+        ("Window Set A", "window_set_a"),
+        ("Window-Set A", "window_set_a"),
         ("a---b", "a_b"),
         ("a   b", "a_b"),
-        ("окно", "_"),  # no transliteration: every non-[a-z0-9_] char -> '_'
-        ("стена A", "_a"),
+        ("a - b", "a_b"),
+        ("  ", "_"),
         ("", "unnamed"),
-        ("!!!", "_"),
         ("CON", "_con"),
         ("con", "_con"),
         ("Nul", "_nul"),
@@ -432,15 +606,18 @@ def test_canonical_form_rejects_nan_in_quantized_field() -> None:
         ("lpt9", "_lpt9"),
         ("com0", "com0"),  # not reserved
         ("com10", "com10"),  # not reserved
-        ("con.txt", "con_txt"),  # not a reserved base name after sanitizing
+        ("con 1", "con_1"),  # reserved check runs on the sanitized string
+        ("con-1", "con_1"),
     ],
 )
 def test_sanitize_name(raw: str, expected: str) -> None:
     assert sanitize_name(raw) == expected
 
 
-def test_sanitize_name_output_charset() -> None:
-    for raw in ["Wall A", "окно 42", "a/b\\c:d*e", "\t\n"]:
+def test_sanitize_name_stays_total_for_unvalidated_input() -> None:
+    # `sanitize_name` is not the gate - `validate_resource_name` is - so it must
+    # keep working on arbitrary strings (previews, diagnostics).
+    for raw in ["Wall A", "окно 42", "a/b\\c:d*e", "\t\n", "!!!"]:
         result = sanitize_name(raw)
         assert result
         assert all(c in "abcdefghijklmnopqrstuvwxyz0123456789_" for c in result)
@@ -454,8 +631,16 @@ def test_resource_filename_shape() -> None:
         resource_filename("Window Set A", "f53d93af-94c3-472f-98d0-ff36eb93c417", ".composite")
         == "window_set_a__f53d93af.composite"
     )
-    assert resource_filename("", uid, ".composite") == "unnamed__2db5574c.composite"
     assert resource_filename("CON", uid, ".composite") == "_con__2db5574c.composite"
+    assert resource_filename("con 1", uid, ".composite") == "con_1__2db5574c.composite"
+
+
+def test_resource_filename_validates_the_name_first() -> None:
+    uid = "2db5574c-3aca-43cc-9ab5-8242403e18cd"
+    for bad in ["", "окно", "wall.001"]:
+        with pytest.raises(ValueError) as excinfo:
+            resource_filename(bad, uid, ".composite")
+        assert str(excinfo.value).startswith("MH_E_NON_ASCII_RESOURCE_NAME")
 
 
 def test_resource_filename_validates_uid8() -> None:
@@ -492,6 +677,35 @@ def test_vectors_file_is_well_formed() -> None:
     raw = VECTORS_PATH.read_bytes()
     assert b"\r\n" not in raw
     assert raw.endswith(b"\n")
+    # every non-ASCII character is written as a \uXXXX escape, so the exact code
+    # point sequence of the NFD/NFC vectors survives any editor
+    assert raw.decode("utf-8").isascii()
+
+
+def test_vectors_cover_nfd_normalization() -> None:
+    by_name = {v["name"]: v for v in VECTORS}
+    nfd_vectors = [name for name in by_name if "nfd" in name]
+    assert nfd_vectors, "the vector set must lock the NFC rule of §8.4"
+    for name in nfd_vectors:
+        vector = by_name[name]
+        strings = (
+            [vector["input"]["value"]]
+            if "value" in vector["input"]
+            else [pair[0] for pair in vector["input"]["pairs"]]
+        )
+        # at least one input string must really be decomposed, otherwise the
+        # vector silently stopped testing normalization
+        assert any(s != unicodedata.normalize("NFC", s) for s in strings), name
+
+    # the NFD and NFC spellings of the same word must carry the same expectation
+    assert (
+        by_name["json_nfd_latin_normalized"]["expected"]
+        == by_name["json_nfc_latin_reference"]["expected"]
+    )
+    assert (
+        by_name["json_nfd_cyrillic_normalized"]["expected"]
+        == by_name["json_nfc_cyrillic_reference"]["expected"]
+    )
 
 
 @pytest.mark.parametrize("vector", VECTORS, ids=[v["name"] for v in VECTORS])

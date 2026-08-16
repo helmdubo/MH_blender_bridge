@@ -160,7 +160,10 @@ SAMPLE_COMPOSITE: dict[str, Any] = {
             "node_uid": "b1d2c3e4-5f60-4718-8293-a4b5c6d7e8f9",
             "parent_uid": "6866f569-4d42-472f-a676-a836a3df18ec",
             "kind": "group",
-            "display_name": "окно \"A\"",
+            # deliberately spelled NFD (и + U+0306) - the canonical form must
+            # normalize it to NFC (§8.4); non-ASCII is legal in `display_name`,
+            # only resource/composite/bundle names are ASCII-restricted (§10)
+            "display_name": "\u0447\u0430\u0438\u0306\u043d\u0438\u043a \"A\"",
             "resource_uid": None,
             "local_transform": {
                 "translation_cm": [0.0005, -0.0015, 1.5],
@@ -262,6 +265,26 @@ def build_vectors() -> list[dict[str, Any]]:
         )
     )
     vectors.append(json_vector("json_non_ascii_cyrillic_raw", value="окно_a"))
+    # NFC normalization (§8.4): an NFD-spelled string must produce exactly the
+    # bytes of its NFC spelling. Latin: e + U+0301 -> U+00E9.
+    vectors.append(json_vector("json_nfd_latin_normalized", value="cafe\u0301"))
+    vectors.append(json_vector("json_nfc_latin_reference", value="caf\u00e9"))
+    # Cyrillic: и + U+0306 -> U+0439 (й).
+    vectors.append(
+        json_vector("json_nfd_cyrillic_normalized", value="\u0447\u0430\u0438\u0306\u043d\u0438\u043a")
+    )
+    vectors.append(json_vector("json_nfc_cyrillic_reference", value="\u0447\u0430\u0439\u043d\u0438\u043a"))
+    # A combining mark with no precomposed form (Cyrillic 'о' + U+0301) is left
+    # exactly as it is - NFC is not "compose everything".
+    vectors.append(json_vector("json_nfc_no_precomposed_form", value="\u043e\u043a\u043d\u043e\u0301"))
+    # Object keys are normalized BEFORE sorting: the NFD key `e`+U+0301 becomes
+    # `é` (0xc3 0xa9) and therefore sorts after `z`, not between `a` and `z`.
+    vectors.append(
+        json_vector(
+            "json_nfd_key_sorted_on_nfc_bytes",
+            pairs=[["e\u0301", 1], ["z", 2], ["a", 3]],
+        )
+    )
     vectors.append(json_vector("json_emoji_raw", value="wall \U0001f9f1 a"))
     vectors.append(json_vector("json_del_char_not_escaped", value="ab"))
     vectors.append(json_vector("json_scalars", value=[True, False, None, 0, -5, 1000000]))
@@ -290,7 +313,12 @@ def main() -> int:
     if len(names) != len(set(names)):
         raise SystemExit("duplicate vector names")
 
-    text = json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    # ensure_ascii=True on purpose: several vectors are *about* the exact code
+    # point sequence of a string (NFD vs NFC), and `\uXXXX` escapes state that
+    # sequence unambiguously - a raw-UTF-8 file could be silently re-normalized
+    # by an editor or a platform tool and the vector would quietly stop testing
+    # what it was written for.
+    text = json.dumps(document, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {len(names)} vectors to {OUTPUT_PATH}")
