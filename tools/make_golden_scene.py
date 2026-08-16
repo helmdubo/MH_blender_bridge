@@ -133,8 +133,10 @@ def build():
         scene_geo, "window_a", make_window_mesh("window_a"), "window_a")
     col_decal = add_geometry_resource(
         scene_geo, "decal_leak", make_decal_mesh("decal_leak"), "decal_leak")
-    # TODO(QUESTION-6): interim storage for the node `properties` bag.
-    col_decal["mh_role"] = "decal"
+    # Properties bag storage per QUESTION-6 decision: one custom prop per
+    # schema key, prefixed mh_p_, full key with dots as is (mh_p_role,
+    # mh_p_render.cast_shadow, ...). Everything under mh_p_ exports verbatim.
+    col_decal["mh_p_role"] = "decal"
 
     # --- COMPOSITS: CA_WindowSet -----------------------------------------
     ca_windowset = bpy.data.collections.new("CA_WindowSet")
