@@ -239,6 +239,10 @@ OccurrenceUID = Hash(PlacementUID, NodePathUID)
 RandomValue   = Hash(RngSchemaVersion, PlacementUID, OccurrenceUID, RandomChannelID, UserSeed)
 ```
 - Hash: xxHash64 (или xxh3) по байтовой конкатенации; НЕ HashCombine UE (нестабилен между версиями).
+- Кодирование входов конкатенации (однозначно, как в §9.1): UUID — строка 36 байт
+  ASCII (lowercase, с дефисами); целые (`RngSchemaVersion`, `UserSeed`, `seed_salt`) —
+  uint64 little-endian фиксированной ширины; строки (`RandomChannelID`) —
+  uint32 длина + байты UTF-8.
 - `RandomChannelID` — закрытый реестр: `variant_selection, offset_x, offset_y, offset_z,
   rotation_yaw, rotation_pitch, rotation_roll, scale_uniform, scale_y`. Расширение реестра —
   через schema_version заметку. Свободные строки запрещены.
@@ -287,6 +291,8 @@ schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — пре�
 | `MH_E_NON_ASCII_RESOURCE_NAME` | Blender export | имя ресурса/композита/bundle вне `[A-Za-z0-9_ -]` (§10) |
 | `MH_E_UNKNOWN_SCHEMA_VERSION` | UE import | schema_version не поддержан |
 | `MH_E_FOREIGN_UID_OWNER` | UE import | UID уже принадлежит другому bundle |
+| `MH_E_NAME_MISMATCH` | UE import | `name` ресурса в манифесте ≠ `name` внутри `.composite` (файл правили руками) |
+| `MH_W_RESOURCE_FAR_FROM_ORIGIN` | Blender export (warning) | bbox коллекции-ресурса далеко от origin (§9.3) |
 
 ### 6.2 Машинный формат отчёта валидации
 
@@ -340,7 +346,14 @@ schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — пре�
 | `UPDATE_PROPERTIES` | оба | изменился bag `properties` |
 | `REPARENT` | node | изменился `parent_uid` |
 | `UPDATE_RESOURCE` | node | узел ссылается на другой `resource_uid` (например, Make Single User перевесил placement на новый ресурс) |
+| `UPDATE_KIND` | node | изменился `kind` узла при живом node_uid (замена mesh-placement на composite_ref и т.п.; почти всегда вместе с UPDATE_RESOURCE) |
 | `EXTERNAL_UNRESOLVED` | resource | ссылка на UID вне bundle, не разрешимая на момент импорта |
+
+Смена `kind` — НЕ REMOVE+CREATE: UID жив — сущность та же (принцип №1).
+
+CREATE/REMOVE композита-ресурса **не перечисляет** его узлы в `nodes`: они
+подразумеваются операцией ресурса. Секция `nodes` содержит только изменения
+внутри композитов, существующих в обеих сравниваемых версиях.
 
 ### 7.3 Формат отчёта
 
@@ -481,8 +494,14 @@ NaN/Inf в любом квантуемом поле — ошибка валид�
 
 ### 9.3 Поля per-object (строго в этом порядке)
 
-1. Локальный трансформ объекта относительно коллекции: матрица 4×4 row-major,
-   16 значений q(p=6). Входит в hash, потому что влияет на итоговую геометрию SM.
+1. Трансформ объекта в resource-space: матрица 4×4 row-major, 16 значений q(p=6).
+   У Blender-коллекций нет собственного трансформа, поэтому **resource-space =
+   world-space сцены GEOMETRY** (matrix_world объекта). Авторинг-конвенция,
+   одинаково понимаемая обеими сторонами: ресурс авторится вокруг origin;
+   **pivot будущего UStaticMesh = origin resource-space**. Следствие: сдвиг
+   объектов коллекции целиком меняет и hash, и pivot ассета — осознанно.
+   Валидация экспорта предупреждает (`MH_W_RESOURCE_FAR_FROM_ORIGIN`), если
+   bounding box коллекции далеко от origin — типовая авторская ошибка.
 2. Vertex positions: count, затем per-vertex x, y, z — q(p=4)
    (локальное пространство объекта, метры Blender, после модификаторов).
 3. Polygons: count, затем per-polygon: count вершин + vertex-индексы в порядке обхода
