@@ -1,0 +1,10 @@
+{
+  "schema": "mh.diff_report",
+  "schema_version": 1,
+  "resources": {
+    "3f53abc1-25a3-5da2-b48a-ee4ded2b7867": [
+      "UPDATE_GEOMETRY"
+    ]
+  },
+  "nodes": {}
+}
