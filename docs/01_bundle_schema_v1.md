@@ -92,6 +92,26 @@ Recovery: осиротевшие `*.tmp` зачищаются следующим
 - Hash — это fast-path фильтр «смотреть ли внутрь», а не источник diff-операций:
   операции (§7) всегда вычисляются структурным сравнением распарсенных данных.
 
+Резерв LOD (D13; v1-схема, post-MVP реализация) — optional-поля mesh-ресурса:
+
+```json
+{
+  "uid": "2db5574c-...", "kind": "static_mesh", "name": "wall_a",
+  "source": "meshes/wall_a__2db5574c.mesh.fbx",
+  "content_hash": "xxh3:...",
+  "lod_policy": "generated",
+  "lods": [
+    { "level": 1, "source": "meshes/wall_a__2db5574c.lod1.mesh.fbx", "content_hash": "xxh3:..." }
+  ]
+}
+```
+
+- базовый `source` — всегда LOD0; `lods[]` — только уровни 1+ (отдельные FBX,
+  добавляемые в существующий SM при импорте);
+- `lod_policy: "authored" | "generated" | "nanite"`, default `"generated"`;
+- screen sizes и reduction settings — resolved-свойства UE-стороны, в bundle
+  не входят и не резервируются.
+
 ## 3. Файл `*.composite`
 
 ```json
@@ -246,6 +266,53 @@ parent-цепочки (повторная проверка — файл могл
 UE (Compiler, никогда не крэшит): стек CompositeUID → error-заглушка + Message Log;
 лимит глубины 64; неразрешённый resource_uid → warning-заглушка.
 
+### 6.1 Реестр машинных кодов
+
+Коды стабильны (это API отчётов и тестов); расширение реестра — через
+schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — предупреждение.
+
+| Код | Где проверяется | Условие |
+|---|---|---|
+| `MH_E_DUPLICATE_NODE_UID` | Blender export; UE import | два узла/объекта с одним node_uid |
+| `MH_E_DUPLICATE_RESOURCE_UID` | Blender export; UE import | два datablock'а/коллекции с одним resource_uid (§4.1) |
+| `MH_E_COMPOSITE_CYCLE` | Blender export; UE import; UE compiler | цикл composite-ссылок |
+| `MH_E_DANGLING_PARENT` | Blender export; UE import | `parent_uid` вне node table |
+| `MH_E_PARENT_CYCLE` | Blender export; UE import | цикл parent-цепочки в node table |
+| `MH_E_MISSING_COLLECTION_UID` | Blender export | instance_collection без `mh_uid` |
+| `MH_E_EMPTY_RESOURCE_COLLECTION` | Blender export | пустая коллекция-ресурс |
+| `MH_E_NESTED_COMPOSITE_COLLECTION` | Blender export | под-коллекции в composite-коллекции |
+| `MH_E_NAN_INF_VALUE` | Blender export | NaN/Inf в квантуемом поле (§8.2) |
+| `MH_E_INVALID_SCALE` | Blender export | scale ≤ 0 по любой оси (§11) |
+| `MH_E_UID8_COLLISION` | Blender export | коллизия uid8 в именах файлов (§10) |
+| `MH_E_NON_ASCII_RESOURCE_NAME` | Blender export | имя ресурса/композита/bundle вне `[A-Za-z0-9_ -]` (§10) |
+| `MH_E_UNKNOWN_SCHEMA_VERSION` | UE import | schema_version не поддержан |
+| `MH_E_FOREIGN_UID_OWNER` | UE import | UID уже принадлежит другому bundle |
+
+### 6.2 Машинный формат отчёта валидации
+
+Как и у диффов (§7.3), машинный формат первичен; текст в логе генерируется из него.
+В этом же формате записаны `golden/expected_errors/*.json` — спецификация
+негативных тестов этапа B.
+
+```json
+{
+  "schema": "mh.validation_report",
+  "schema_version": 1,
+  "errors": [
+    {
+      "code": "MH_E_DUPLICATE_NODE_UID",
+      "subjects": ["6866f569-4d42-472f-a676-a836a3df18ec"],
+      "message": "два объекта с одним mh_uid: 'window_1', 'window_1.001'"
+    }
+  ]
+}
+```
+
+- `subjects` — UID'ы затронутых сущностей, отсортированы побайтово; если UID
+  неприменим — стабильный идентификатор контекста (путь файла).
+- `message` — человекочитаемый, в тестовое сравнение НЕ входит: expected_errors
+  сравниваются по множеству пар (code, subjects).
+
 ## 7. Диффы (контракт reimport)
 
 ### 7.1 Ключевание
@@ -365,6 +432,10 @@ NaN/Inf в любом квантуемом поле — ошибка валид�
   в узле: `node_uid, parent_uid, kind, display_name, resource_uid, local_transform,
   properties`, прочие known-поля — за ними, unknown — по алфавиту в конце.)
 - Без whitespace: `{"a":1,"b":[2,3]}`.
+- Все строки нормализуются в **Unicode NFC** до сериализации — и на входе канон-формы,
+  и при записи on-disk файлов. Иначе NFD-написание из macOS-пайплайна даёт другой hash
+  при неотличимом на глаз имени — фантомный дифф ровно того класса, против которого
+  строилась канонизация.
 - Строки — UTF-8; экранируются только обязательные символы: `"` как `\"`, `\` как `\\`,
   управляющие < 0x20 как `\u00xx` (hex lowercase). Не-ASCII символы НЕ экранируются.
 - Целые — десятичные, без `+`, без ведущих нулей; `-0` нормализуется в `0`.
@@ -446,18 +517,23 @@ NaN/Inf в любом квантуемом поле — ошибка валид�
 display-имён не влияли на файловую систему).
 
 - `uid8` — первые 8 hex-символов UID (первый блок UUID до дефиса), lowercase.
-- Санитизация display-имени:
+- **ASCII-валидация имён (до санитизации).** Имена ресурсов, композитов и bundle
+  обязаны состоять из `[A-Za-z0-9_ -]`; иначе экспорт падает с
+  `MH_E_NON_ASCII_RESOURCE_NAME` («переименуйте ресурс»). Без транслитерации:
+  транслит-таблица — ещё один вечный контракт в двух реализациях, а имена ресурсов
+  становятся именами UE-пакетов, где не-ASCII — источник проблем в движке и VCS.
+  Не-ASCII (в т.ч. кириллица) остаётся легальной в `display_name` узлов и значениях
+  `properties` — они в файлы и пакеты не попадают.
+- Санитизация валидированного имени:
   1. lowercase;
-  2. каждый символ вне `[a-z0-9_]` → `_` (без транслитерации);
+  2. каждый символ вне `[a-z0-9_]` (т.е. пробел и дефис) → `_`;
   3. последовательности `_` схлопываются в один;
   4. пустой результат → `unnamed`;
   5. зарезервированные имена Windows (`con`, `prn`, `aux`, `nul`,
-     `com1`–`com9`, `lpt1`–`lpt9`; проверка — по уже санитизированной строке,
-     т.е. `con.txt` → `con_txt` не зарезервировано) → префикс `_`.
-
-  Правила применяются строго по порядку: имя целиком из недопустимых символов
-  (например, кириллица) схлопывается в `_`, а не в `unnamed` — уникальность всё
-  равно даёт uid8. Читаемость таких имён — QUESTION-8.
+     `com1`–`com9`, `lpt1`–`lpt9`; проверка — по уже санитизированной строке:
+     `con` → `_con`, но `con 1` → `con_1` не зарезервировано) → префикс `_`.
+- Имя bundle-каталога (`<name>.bundle`) подчинено тем же правилам: ASCII-валидация
+  + санитизация `<name>`.
 - Уникальность имени файла гарантирует `uid8`, а не display-имя.
 - Коллизия `uid8` двух разных UID внутри одного bundle (вероятность ~10⁻⁹ на пару):
   экспорт падает с требованием перегенерировать UID одного из ресурсов.
