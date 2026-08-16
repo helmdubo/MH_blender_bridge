@@ -235,10 +235,60 @@ UE (Compiler, никогда не крэшит): стек CompositeUID → error
 
 ## 7. Диффы (контракт reimport)
 
-Операции, которые UE-Analyzer обязан различать и печатать в отчёте:
-`CREATE / UPDATE_GEOMETRY / UPDATE_TRANSFORM / UPDATE_PROPERTIES / RENAME / REPARENT /
-REMOVE / UNCHANGED / EXTERNAL_UNRESOLVED`.
-Повторный импорт неизменённого bundle → 100% UNCHANGED, ноль пересозданных ассетов —
+### 7.1 Ключевание
+
+Дифф живёт в двух пространствах, оба ключуются UID'ами:
+
+- **resource-операции** — по `resource_uid` (меши, композиты как ресурсы bundle);
+- **node-операции** — по `node_uid` в контексте композита-владельца
+  (один node_uid уникален внутри composite, не глобально).
+
+### 7.2 Операции — множество ортогональных флагов
+
+Операции на сущности — не взаимоисключающий enum, а **множество флагов**:
+`wall_a: {RENAME, UPDATE_GEOMETRY}`, `node 6866…: {REPARENT, UPDATE_TRANSFORM}`.
+Исключительны только `CREATE` и `REMOVE` — каждый несовместим с любым другим флагом.
+`UNCHANGED` = пустое множество (в отчёте такая сущность не перечисляется).
+
+| Флаг | Пространство | Смысл |
+|---|---|---|
+| `CREATE` | оба | UID появился |
+| `REMOVE` | оба | UID исчез |
+| `RENAME` | оба | изменилось display-имя (`name` / `display_name`) |
+| `UPDATE_GEOMETRY` | resource (mesh) | изменился mesh content_hash (§9) |
+| `UPDATE_TRANSFORM` | node | изменился `local_transform` (сравнение квантованных целых) |
+| `UPDATE_PROPERTIES` | оба | изменился bag `properties` |
+| `REPARENT` | node | изменился `parent_uid` |
+| `UPDATE_RESOURCE` | node | узел ссылается на другой `resource_uid` (например, Make Single User перевесил placement на новый ресурс) |
+| `EXTERNAL_UNRESOLVED` | resource | ссылка на UID вне bundle, не разрешимая на момент импорта |
+
+### 7.3 Формат отчёта
+
+Машинный формат первичен — **JSON**; человекочитаемое представление генерируется из него.
+Тот же формат обязан печатать UE-Analyzer, и в нём же записаны
+`golden/expected_diffs/*.json` — тест этапа C буквально сравнивает два JSON.
+
+```json
+{
+  "schema": "mh.diff_report",
+  "schema_version": 1,
+  "resources": {
+    "2db5574c-3aca-43cc-9ab5-8242403e18cd": ["RENAME", "UPDATE_GEOMETRY"]
+  },
+  "nodes": {
+    "f53d93af-94c3-472f-98d0-ff36eb93c417": {
+      "6866f569-4d42-472f-a676-a836a3df18ec": ["UPDATE_TRANSFORM"]
+    }
+  }
+}
+```
+
+- `nodes` ключуется `composite_uid` → `node_uid` → флаги.
+- Флаги внутри массива — в фиксированном порядке таблицы 7.2 (для стабильного сравнения).
+- Сущности с пустым множеством флагов не включаются: пустой дифф =
+  `{"resources": {}, "nodes": {}}`.
+
+Повторный импорт неизменённого bundle → пустой дифф, ноль пересозданных ассетов —
 это приёмочный тест всего пайплайна.
 
 ## 8. Канонизация и content_hash
