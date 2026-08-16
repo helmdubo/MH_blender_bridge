@@ -1,0 +1,12 @@
+{
+  "schema": "mh.validation_report",
+  "schema_version": 1,
+  "errors": [
+    {
+      "code": "MH_E_DUPLICATE_NODE_UID",
+      "subjects": [
+        "cee71350-e209-5356-80f6-17dd59797e33"
+      ]
+    }
+  ]
+}

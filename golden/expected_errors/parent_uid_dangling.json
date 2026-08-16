@@ -1,0 +1,12 @@
+{
+  "schema": "mh.validation_report",
+  "schema_version": 1,
+  "errors": [
+    {
+      "code": "MH_E_DANGLING_PARENT",
+      "subjects": [
+        "2616561d-e91a-5555-931f-6b7640427241"
+      ]
+    }
+  ]
+}

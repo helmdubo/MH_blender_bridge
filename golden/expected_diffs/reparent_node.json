@@ -1,0 +1,13 @@
+{
+  "schema": "mh.diff_report",
+  "schema_version": 1,
+  "resources": {},
+  "nodes": {
+    "51a4b89a-4b2a-5069-87df-6763e9c014e7": {
+      "2616561d-e91a-5555-931f-6b7640427241": [
+        "UPDATE_TRANSFORM",
+        "REPARENT"
+      ]
+    }
+  }
+}

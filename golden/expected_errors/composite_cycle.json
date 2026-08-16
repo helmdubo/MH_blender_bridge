@@ -1,0 +1,13 @@
+{
+  "schema": "mh.validation_report",
+  "schema_version": 1,
+  "errors": [
+    {
+      "code": "MH_E_COMPOSITE_CYCLE",
+      "subjects": [
+        "77829da7-624e-5c91-a132-82178e866a80",
+        "b0ca6032-8884-534d-8ceb-20f4a4edb766"
+      ]
+    }
+  ]
+}

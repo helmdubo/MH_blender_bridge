@@ -1,0 +1,11 @@
+# Generated Blender scenes: the scripts in tools/ are the source of truth
+golden/*.blend
+golden/*.blend1
+golden/mutations/*.blend
+golden/mutations/*.blend1
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
