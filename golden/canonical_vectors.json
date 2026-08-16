@@ -1,0 +1,785 @@
+{
+  "schema": "mh.canonical_vectors",
+  "schema_version": 1,
+  "vectors": [
+    {
+      "expected": {
+        "q": 0
+      },
+      "input": {
+        "p": 3,
+        "value": 0.0005
+      },
+      "kind": "quantize",
+      "name": "quantize_half_even_down"
+    },
+    {
+      "expected": {
+        "q": 2
+      },
+      "input": {
+        "p": 3,
+        "value": 0.0015
+      },
+      "kind": "quantize",
+      "name": "quantize_half_even_up"
+    },
+    {
+      "expected": {
+        "q": 2
+      },
+      "input": {
+        "p": 3,
+        "value": 0.0025
+      },
+      "kind": "quantize",
+      "name": "quantize_half_even_2_5"
+    },
+    {
+      "expected": {
+        "q": 0
+      },
+      "input": {
+        "p": 3,
+        "value": -0.0005
+      },
+      "kind": "quantize",
+      "name": "quantize_negative_half_even_down"
+    },
+    {
+      "expected": {
+        "q": -2
+      },
+      "input": {
+        "p": 3,
+        "value": -0.0015
+      },
+      "kind": "quantize",
+      "name": "quantize_negative_half_even_up"
+    },
+    {
+      "expected": {
+        "q": -12346
+      },
+      "input": {
+        "p": 3,
+        "value": -12.3456
+      },
+      "kind": "quantize",
+      "name": "quantize_negative_value"
+    },
+    {
+      "expected": {
+        "q": 45000
+      },
+      "input": {
+        "p": 3,
+        "value": 45.0
+      },
+      "kind": "quantize",
+      "name": "quantize_already_integral"
+    },
+    {
+      "expected": {
+        "q": 0
+      },
+      "input": {
+        "p": 6,
+        "value": -0.0
+      },
+      "kind": "quantize",
+      "name": "quantize_negative_zero"
+    },
+    {
+      "expected": {
+        "q": 2000000
+      },
+      "input": {
+        "p": 6,
+        "value": 2
+      },
+      "kind": "quantize",
+      "name": "quantize_int_input"
+    },
+    {
+      "expected": {
+        "q": 210125
+      },
+      "input": {
+        "p": 3,
+        "value": 210.125
+      },
+      "kind": "quantize",
+      "name": "quantize_translation_typical"
+    },
+    {
+      "expected": {
+        "q": 123456
+      },
+      "input": {
+        "p": 6,
+        "value": 0.1234565
+      },
+      "kind": "quantize",
+      "name": "quantize_p6_tie"
+    },
+    {
+      "expected": {
+        "q": 3334
+      },
+      "input": {
+        "p": 4,
+        "value": 0.33335
+      },
+      "kind": "quantize",
+      "name": "quantize_weight_p4"
+    },
+    {
+      "expected": {
+        "quat": [
+          0,
+          0,
+          0,
+          1000000
+        ]
+      },
+      "input": {
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_identity"
+    },
+    {
+      "expected": {
+        "quat": [
+          0,
+          0,
+          382683,
+          923880
+        ]
+      },
+      "input": {
+        "q": [
+          0.0,
+          0.0,
+          0.3826834323650898,
+          0.9238795325112867
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_yaw45"
+    },
+    {
+      "expected": {
+        "quat": [
+          0,
+          0,
+          382683,
+          923880
+        ]
+      },
+      "input": {
+        "q": [
+          -0.0,
+          -0.0,
+          -0.3826834323650898,
+          -0.9238795325112867
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_yaw45_negated"
+    },
+    {
+      "expected": {
+        "quat": [
+          -500000,
+          500000,
+          -500000,
+          500000
+        ]
+      },
+      "input": {
+        "q": [
+          0.5,
+          -0.5,
+          0.5,
+          -0.5
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_w_negative"
+    },
+    {
+      "expected": {
+        "quat": [
+          1000000,
+          0,
+          0,
+          0
+        ]
+      },
+      "input": {
+        "q": [
+          -1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_w_zero_x_negative"
+    },
+    {
+      "expected": {
+        "quat": [
+          0,
+          0,
+          1000000,
+          0
+        ]
+      },
+      "input": {
+        "q": [
+          0.0,
+          0.0,
+          -1.0,
+          0.0
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_w_zero_z_negative"
+    },
+    {
+      "expected": {
+        "quat": [
+          0,
+          1000000,
+          0,
+          0
+        ]
+      },
+      "input": {
+        "q": [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_w_zero_positive"
+    },
+    {
+      "expected": {
+        "quat": [
+          0,
+          0,
+          0,
+          1000000
+        ]
+      },
+      "input": {
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          2.0
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_not_normalized"
+    },
+    {
+      "expected": {
+        "quat": [
+          500000,
+          500000,
+          500000,
+          500000
+        ]
+      },
+      "input": {
+        "q": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "kind": "quat",
+      "name": "quat_not_normalized_general"
+    },
+    {
+      "expected": {
+        "bytes_hex": "7b22223a382c223130223a362c2232223a372c2241223a332c2261223a322c227a223a312c22c3a9223a342c22d18f223a357d",
+        "hash": "xxh3:3db1e112da863cfa"
+      },
+      "input": {
+        "pairs": [
+          [
+            "z",
+            1
+          ],
+          [
+            "a",
+            2
+          ],
+          [
+            "A",
+            3
+          ],
+          [
+            "é",
+            4
+          ],
+          [
+            "я",
+            5
+          ],
+          [
+            "10",
+            6
+          ],
+          [
+            "2",
+            7
+          ],
+          [
+            "",
+            8
+          ]
+        ]
+      },
+      "kind": "json",
+      "name": "json_key_order_utf8"
+    },
+    {
+      "expected": {
+        "bytes_hex": "2268652073616964205c2268695c22205c5c206f6b22",
+        "hash": "xxh3:117fb2eac3b2f30a"
+      },
+      "input": {
+        "value": "he said \"hi\" \\ ok"
+      },
+      "kind": "json",
+      "name": "json_escape_quote_backslash"
+    },
+    {
+      "expected": {
+        "bytes_hex": "22615c7530303030625c7530303038635c7530303039645c7530303061655c7530303062665c7530303063675c7530303064685c75303031666922",
+        "hash": "xxh3:1653e7ca5e1ac563"
+      },
+      "input": {
+        "value": "a\u0000b\bc\td\ne\u000bf\fg\rh\u001fi"
+      },
+      "kind": "json",
+      "name": "json_escape_control_chars"
+    },
+    {
+      "expected": {
+        "bytes_hex": "22d0bed0bad0bdd0be5f6122",
+        "hash": "xxh3:53a9e0fca9b0775d"
+      },
+      "input": {
+        "value": "окно_a"
+      },
+      "kind": "json",
+      "name": "json_non_ascii_cyrillic_raw"
+    },
+    {
+      "expected": {
+        "bytes_hex": "2277616c6c20f09fa7b1206122",
+        "hash": "xxh3:cfc33443921c9e2b"
+      },
+      "input": {
+        "value": "wall 🧱 a"
+      },
+      "kind": "json",
+      "name": "json_emoji_raw"
+    },
+    {
+      "expected": {
+        "bytes_hex": "22617f6222",
+        "hash": "xxh3:77a8c62610b2032d"
+      },
+      "input": {
+        "value": "ab"
+      },
+      "kind": "json",
+      "name": "json_del_char_not_escaped"
+    },
+    {
+      "expected": {
+        "bytes_hex": "5b747275652c66616c73652c6e756c6c2c302c2d352c313030303030305d",
+        "hash": "xxh3:d258c81daea13300"
+      },
+      "input": {
+        "value": [
+          true,
+          false,
+          null,
+          0,
+          -5,
+          1000000
+        ]
+      },
+      "kind": "json",
+      "name": "json_scalars"
+    },
+    {
+      "expected": {
+        "bytes_hex": "7b2261223a7b7d2c2262223a5b5d2c2263223a22227d",
+        "hash": "xxh3:b49b8e6c11c1a9e9"
+      },
+      "input": {
+        "value": {
+          "a": {},
+          "b": [],
+          "c": ""
+        }
+      },
+      "kind": "json",
+      "name": "json_empty_containers"
+    },
+    {
+      "expected": {
+        "bytes_hex": "7b226e6f646573223a5b7b2261223a312c2262223a327d2c7b2261223a5b312c5b322c7b227a223a6e756c6c7d5d5d7d5d7d",
+        "hash": "xxh3:57fd660963539f37"
+      },
+      "input": {
+        "value": {
+          "nodes": [
+            {
+              "a": 1,
+              "b": 2
+            },
+            {
+              "a": [
+                1,
+                [
+                  2,
+                  {
+                    "z": null
+                  }
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "kind": "json",
+      "name": "json_nested_structure"
+    },
+    {
+      "expected": {
+        "bytes_hex": "7b226e616d65223a2277696e646f775f7365745f61222c226e6f646573223a5b7b22646973706c61795f6e616d65223a2277696e646f775f612e303031222c226b696e64223a226d657368222c226c6f63616c5f7472616e73666f726d223a7b22726f746174696f6e5f71756174223a5b302c302c302c313030303030305d2c227363616c65223a5b313030303030302c313030303030302c313030303030305d2c227472616e736c6174696f6e5f636d223a5b302c34353030302c3231303030305d7d2c226e6f64655f756964223a2236383636663536392d346434322d343732662d613637362d613833366133646631386563222c22706172656e745f756964223a6e756c6c2c2270726f70657274696573223a7b2272656e6465722e6f6666736574223a3530303030302c22726f6c65223a22646563616c222c2276656e646f722e756e6b6e6f776e5f666c6167223a747275652c2276656e646f722e756e6b6e6f776e5f6e756c6c223a6e756c6c2c2276656e646f722e756e6b6e6f776e5f6e756d626572223a323030303030307d2c227265736f757263655f756964223a2235383339613265312d396230612d346138332d396639612d316532643363346235613630227d2c7b22646973706c61795f6e616d65223a226c616d70222c226b696e64223a22636f6d706f736974655f726566222c226c6f63616c5f7472616e73666f726d223a7b22726f746174696f6e5f71756174223a5b302c302c3338323638332c3932333838305d2c227363616c65223a5b313030303030302c313030303030302c313030303030305d2c227472616e736c6174696f6e5f636d223a5b2d31323334352c302c3231303132355d7d2c226e6f64655f756964223a2261306363663138632d326131652d346330632d396132662d396430643331613534653130222c22706172656e745f756964223a6e756c6c2c2270726f70657274696573223a7b7d2c227265736f757263655f756964223a2265336261363738332d316636622d346636652d396134652d306632663761326639623331227d2c7b22646973706c61795f6e616d65223a22d0bed0bad0bdd0be205c22415c22222c226b696e64223a2267726f7570222c226c6f63616c5f7472616e73666f726d223a7b22726f746174696f6e5f71756174223a5b302c302c313030303030302c305d2c227363616c65223a5b3530303030302c323030303030302c313030303030315d2c227472616e736c6174696f6e5f636d223a5b302c2d322c313530305d7d2c226e6f64655f756964223a2262316432633365342d356636302d343731382d383239332d613462356336643765386639222c22706172656e745f756964223a2236383636663536392d346434322d343732662d613637362d613833366133646631386563222c2270726f70657274696573223a7b22726f6c65223a2267726f7570227d2c227265736f757263655f756964223a6e756c6c7d5d2c22736368656d61223a226d682e636f6d706f73697465222c22736368656d615f76657273696f6e223a312c22756964223a2266353364393361662d393463332d343732662d393864302d666633366562393363343137227d",
+        "canonical": {
+          "name": "window_set_a",
+          "nodes": [
+            {
+              "display_name": "window_a.001",
+              "kind": "mesh",
+              "local_transform": {
+                "rotation_quat": [
+                  0,
+                  0,
+                  0,
+                  1000000
+                ],
+                "scale": [
+                  1000000,
+                  1000000,
+                  1000000
+                ],
+                "translation_cm": [
+                  0,
+                  45000,
+                  210000
+                ]
+              },
+              "node_uid": "6866f569-4d42-472f-a676-a836a3df18ec",
+              "parent_uid": null,
+              "properties": {
+                "render.offset": 500000,
+                "role": "decal",
+                "vendor.unknown_flag": true,
+                "vendor.unknown_null": null,
+                "vendor.unknown_number": 2000000
+              },
+              "resource_uid": "5839a2e1-9b0a-4a83-9f9a-1e2d3c4b5a60"
+            },
+            {
+              "display_name": "lamp",
+              "kind": "composite_ref",
+              "local_transform": {
+                "rotation_quat": [
+                  0,
+                  0,
+                  382683,
+                  923880
+                ],
+                "scale": [
+                  1000000,
+                  1000000,
+                  1000000
+                ],
+                "translation_cm": [
+                  -12345,
+                  0,
+                  210125
+                ]
+              },
+              "node_uid": "a0ccf18c-2a1e-4c0c-9a2f-9d0d31a54e10",
+              "parent_uid": null,
+              "properties": {},
+              "resource_uid": "e3ba6783-1f6b-4f6e-9a4e-0f2f7a2f9b31"
+            },
+            {
+              "display_name": "окно \"A\"",
+              "kind": "group",
+              "local_transform": {
+                "rotation_quat": [
+                  0,
+                  0,
+                  1000000,
+                  0
+                ],
+                "scale": [
+                  500000,
+                  2000000,
+                  1000001
+                ],
+                "translation_cm": [
+                  0,
+                  -2,
+                  1500
+                ]
+              },
+              "node_uid": "b1d2c3e4-5f60-4718-8293-a4b5c6d7e8f9",
+              "parent_uid": "6866f569-4d42-472f-a676-a836a3df18ec",
+              "properties": {
+                "role": "group"
+              },
+              "resource_uid": null
+            }
+          ],
+          "schema": "mh.composite",
+          "schema_version": 1,
+          "uid": "f53d93af-94c3-472f-98d0-ff36eb93c417"
+        },
+        "hash": "xxh3:563b3e860363277e"
+      },
+      "input": {
+        "doc": {
+          "name": "window_set_a",
+          "nodes": [
+            {
+              "display_name": "lamp",
+              "kind": "composite_ref",
+              "local_transform": {
+                "rotation_quat": [
+                  0.0,
+                  0.0,
+                  0.382683,
+                  0.92388
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ],
+                "translation_cm": [
+                  -12.345,
+                  0.0,
+                  210.125
+                ]
+              },
+              "node_uid": "a0ccf18c-2a1e-4c0c-9a2f-9d0d31a54e10",
+              "parent_uid": null,
+              "properties": {},
+              "resource_uid": "e3ba6783-1f6b-4f6e-9a4e-0f2f7a2f9b31"
+            },
+            {
+              "display_name": "window_a.001",
+              "kind": "mesh",
+              "local_transform": {
+                "rotation_quat": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ],
+                "translation_cm": [
+                  0.0,
+                  45.0,
+                  210.0
+                ]
+              },
+              "node_uid": "6866f569-4d42-472f-a676-a836a3df18ec",
+              "parent_uid": null,
+              "properties": {
+                "render.offset": 0.5,
+                "role": "decal",
+                "vendor.unknown_flag": true,
+                "vendor.unknown_null": null,
+                "vendor.unknown_number": 2
+              },
+              "resource_uid": "5839a2e1-9b0a-4a83-9f9a-1e2d3c4b5a60"
+            },
+            {
+              "display_name": "окно \"A\"",
+              "kind": "group",
+              "local_transform": {
+                "rotation_quat": [
+                  0.0,
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                "scale": [
+                  0.5,
+                  2.0,
+                  1.000001
+                ],
+                "translation_cm": [
+                  0.0005,
+                  -0.0015,
+                  1.5
+                ]
+              },
+              "node_uid": "b1d2c3e4-5f60-4718-8293-a4b5c6d7e8f9",
+              "parent_uid": "6866f569-4d42-472f-a676-a836a3df18ec",
+              "properties": {
+                "role": "group"
+              },
+              "resource_uid": null
+            }
+          ],
+          "schema": "mh.composite",
+          "schema_version": 1,
+          "uid": "f53d93af-94c3-472f-98d0-ff36eb93c417"
+        }
+      },
+      "kind": "composite",
+      "name": "composite_small_bundle"
+    },
+    {
+      "expected": {
+        "bytes_hex": "7b226e616d65223a2276617269616e745f7365745f61222c226e6f646573223a5b7b22646973706c61795f6e616d65223a22627573685f76617269616e7473222c226b696e64223a2276617269616e745f736574222c226c6f63616c5f7472616e73666f726d223a7b22726f746174696f6e5f71756174223a5b302c302c302c313030303030305d2c227363616c65223a5b313030303030302c313030303030302c313030303030305d2c227472616e736c6174696f6e5f636d223a5b313030302c323030322c2d333530305d7d2c226e6f64655f756964223a2263306666656530302d313131312d343232322d383333332d343434343535353536363636222c22706172656e745f756964223a6e756c6c2c2270726f70657274696573223a7b7d2c22736565645f706f6c696379223a22696e6865726974222c22736565645f73616c74223a372c2276617269616e7473223a5b7b227265736f757263655f756964223a2231313131313131312d313131312d343131312d383131312d313131313131313131313131222c22776569676874223a31303030307d2c7b227265736f757263655f756964223a2232323232323232322d323232322d343232322d383232322d323232323232323232323232222c22776569676874223a333333347d5d7d5d2c22736368656d61223a226d682e636f6d706f73697465222c22736368656d615f76657273696f6e223a312c22756964223a2230613162326333642d346535662d346136622d386339642d306531663261336234633564222c2276656e646f722e756e6b6e6f776e5f746f705f6c6576656c223a7b22636f756e74223a333030303030302c227363616c655f68696e74223a313530303030307d7d",
+        "canonical": {
+          "name": "variant_set_a",
+          "nodes": [
+            {
+              "display_name": "bush_variants",
+              "kind": "variant_set",
+              "local_transform": {
+                "rotation_quat": [
+                  0,
+                  0,
+                  0,
+                  1000000
+                ],
+                "scale": [
+                  1000000,
+                  1000000,
+                  1000000
+                ],
+                "translation_cm": [
+                  1000,
+                  2002,
+                  -3500
+                ]
+              },
+              "node_uid": "c0ffee00-1111-4222-8333-444455556666",
+              "parent_uid": null,
+              "properties": {},
+              "seed_policy": "inherit",
+              "seed_salt": 7,
+              "variants": [
+                {
+                  "resource_uid": "11111111-1111-4111-8111-111111111111",
+                  "weight": 10000
+                },
+                {
+                  "resource_uid": "22222222-2222-4222-8222-222222222222",
+                  "weight": 3334
+                }
+              ]
+            }
+          ],
+          "schema": "mh.composite",
+          "schema_version": 1,
+          "uid": "0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+          "vendor.unknown_top_level": {
+            "count": 3000000,
+            "scale_hint": 1500000
+          }
+        },
+        "hash": "xxh3:685fb6be55316a4b"
+      },
+      "input": {
+        "doc": {
+          "name": "variant_set_a",
+          "nodes": [
+            {
+              "display_name": "bush_variants",
+              "kind": "variant_set",
+              "local_transform": {
+                "rotation_quat": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ],
+                "translation_cm": [
+                  1.0005,
+                  2.0015,
+                  -3.5
+                ]
+              },
+              "node_uid": "c0ffee00-1111-4222-8333-444455556666",
+              "parent_uid": null,
+              "properties": {},
+              "seed_policy": "inherit",
+              "seed_salt": 7,
+              "variants": [
+                {
+                  "resource_uid": "11111111-1111-4111-8111-111111111111",
+                  "weight": 1.0
+                },
+                {
+                  "resource_uid": "22222222-2222-4222-8222-222222222222",
+                  "weight": 0.33335
+                }
+              ]
+            }
+          ],
+          "schema": "mh.composite",
+          "schema_version": 1,
+          "uid": "0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+          "vendor.unknown_top_level": {
+            "count": 3,
+            "scale_hint": 1.5
+          }
+        }
+      },
+      "kind": "composite",
+      "name": "composite_reserved_fields"
+    }
+  ]
+}
