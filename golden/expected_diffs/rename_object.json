@@ -1,0 +1,12 @@
+{
+  "schema": "mh.diff_report",
+  "schema_version": 1,
+  "resources": {},
+  "nodes": {
+    "e2938c77-57a0-53bc-9e6e-e54d619856d3": {
+      "feea2668-7bb0-5a88-8f87-0355185de523": [
+        "RENAME"
+      ]
+    }
+  }
+}
