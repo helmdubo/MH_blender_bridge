@@ -169,6 +169,15 @@ Recovery: осиротевшие `*.tmp` зачищаются следующим
 Хранение: `obj['mh_uid']` (node), `mesh['mh_uid']` (resource), `collection['mh_uid']`
 (resource/composite). Назначение — lazy при Validate/Export. UUID4, lowercase, дефисы.
 
+Разъяснение ролей двух «resource»-UID у mesh-ресурса:
+
+- **`collection['mh_uid']`** — публичный `resource_uid`: единица экспорта
+  (одна GEOMETRY-коллекция = один FBX = один UStaticMesh). Именно он стоит в
+  манифесте (`resources[].uid`) и в `resource_uid` узлов-placement'ов.
+- **`mesh['mh_uid']`** (datablock) и `obj['mh_uid']` объектов внутри коллекции —
+  внутренняя identity: порядок сериализации multi-object коллекций (§9.2) и
+  арбитраж Make Single User (§4.1). В манифест v1 не попадают.
+
 ### 4.1 Дубликаты UID: детект и арбитраж
 
 Blender копирует custom props при любом дублировании, поэтому дубликаты UID — штатная
