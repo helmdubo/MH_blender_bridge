@@ -1,0 +1,16 @@
+{
+  "schema": "mh.diff_report",
+  "schema_version": 1,
+  "resources": {
+    "46a37584-ef7e-569a-ab26-0ade2ef8b35c": [
+      "CREATE"
+    ]
+  },
+  "nodes": {
+    "e2938c77-57a0-53bc-9e6e-e54d619856d3": {
+      "fecbf563-9382-5562-8542-c8deb5ec4b61": [
+        "UPDATE_RESOURCE"
+      ]
+    }
+  }
+}
