@@ -11,13 +11,16 @@
 
 ```
 Building_A.bundle/
-├─ export_manifest.json          # СЛУЖЕБНЫЙ, скрытый от пользователя, пишется ПОСЛЕДНИМ
-├─ building_a.composite          # 1 файл = 1 composite definition (JSON внутри)
-├─ window_set_a.composite
+├─ export_manifest.json                    # СЛУЖЕБНЫЙ, скрытый от пользователя, пишется ПОСЛЕДНИМ
+├─ building_a__3c1a9b2e.composite          # 1 файл = 1 composite definition (JSON внутри)
+├─ window_set_a__f53d93af.composite
 └─ meshes/
-   ├─ wall_a__2db5574c.mesh.fbx  # 1 файл = 1 mesh resource; суффикс = первые 8 hex UID
+   ├─ wall_a__2db5574c.mesh.fbx            # 1 файл = 1 mesh resource
    └─ window_a__5839a2e1.mesh.fbx
 ```
+
+Имя файла ресурса: `<sanitized_name>__<uid8>` + расширение (`.composite` / `.mesh.fbx`),
+единообразно для мешей и композитов — правила §10.
 
 Атомарность экспорта: экспорт во временный каталог → хеши → манифест последним →
 атомарная замена published-каталога. Отсутствие валидного манифеста = UE не импортирует.
@@ -45,7 +48,7 @@ Building_A.bundle/
       "uid": "f53d93af-94c3-472f-98d0-ff36eb93c417",
       "kind": "composite",
       "name": "window_set_a",
-      "source": "window_set_a.composite",
+      "source": "window_set_a__f53d93af.composite",
       "content_hash": "xxh3:aa01..."
     }
   ],
@@ -307,3 +310,24 @@ NaN/Inf в любом квантуемом поле — ошибка валид�
 - Прочие generic-атрибуты, vertex groups, shape keys в v1 НЕ хешируются: их изменение
   не детектится как UPDATE_GEOMETRY (расширение перечня = bump тега `mh.meshser`,
   см. QUESTIONS).
+
+## 10. Имена файлов внутри bundle
+
+Схема имени файла ресурса: `<sanitized_name>__<uid8>` + расширение
+(`.mesh.fbx` для мешей, `.composite` для композитов — симметрично, чтобы коллизии
+display-имён не влияли на файловую систему).
+
+- `uid8` — первые 8 hex-символов UID (первый блок UUID до дефиса), lowercase.
+- Санитизация display-имени:
+  1. lowercase;
+  2. каждый символ вне `[a-z0-9_]` → `_` (без транслитерации);
+  3. последовательности `_` схлопываются в один;
+  4. пустой результат → `unnamed`;
+  5. зарезервированные имена Windows (`con`, `prn`, `aux`, `nul`,
+     `com1`–`com9`, `lpt1`–`lpt9`) → префикс `_`.
+- Уникальность имени файла гарантирует `uid8`, а не display-имя.
+- Коллизия `uid8` двух разных UID внутри одного bundle (вероятность ~10⁻⁹ на пару):
+  экспорт падает с требованием перегенерировать UID одного из ресурсов.
+  Схему имени НЕ расширяем: детерминированность имени файла ценнее.
+- Rename ресурса меняет имя файла (`source` в манифесте), но не UID: для UE это
+  RENAME, не REMOVE+CREATE. Старый файл удаляется по протоколу §1 (после манифеста).
