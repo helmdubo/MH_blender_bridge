@@ -35,3 +35,8 @@ python3 -m pytest tests -q
 `golden/expected_diffs/*.json` — первичная спецификация диффов (формат
 `mh.diff_report`, docs/01 §7.3); `.md` рядом — сгенерированное представление
 (`tools/render_expected_diffs.py`), руками не редактировать.
+
+`golden/expected_errors/*.json` — спецификация негативных тестов (формат
+`mh.validation_report`, docs/01 §6.2) для сцен-«вредителей» (`duplicate_uid`,
+`parent_uid_dangling`) и bundle-фикстуры цикла
+(`golden/fixtures/composite_cycle/`, генерируется `tools/make_cycle_fixture.py`).

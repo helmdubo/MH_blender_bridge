@@ -51,6 +51,12 @@ _PATHS = (
     "node/ca_windowset/window_4",
     #   make_single_user: unique copy of the window_a resource
     "col/window_a_unique", "obj/window_a_unique", "mesh/window_a_unique",
+    #   composite_cycle (negative): a bundle-level fixture of two .composite
+    #   files referencing each other. A true instance_collection cycle cannot
+    #   be persisted inside one .blend — Blender's depsgraph crashes on it —
+    #   so the cycle arrives the way it does in reality: via file-level refs.
+    "col/cycle_a", "node/cycle_a/ref_b",
+    "col/cycle_b", "node/cycle_b/ref_a",
 )
 
 UIDS = {path: golden_uid(path) for path in _PATHS}

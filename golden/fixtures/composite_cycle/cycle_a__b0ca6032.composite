@@ -1,0 +1,34 @@
+{
+  "schema": "mh.composite",
+  "schema_version": 1,
+  "uid": "b0ca6032-8884-534d-8ceb-20f4a4edb766",
+  "name": "cycle_a",
+  "nodes": [
+    {
+      "node_uid": "f6d91b61-1922-5e94-aed2-42198862ee65",
+      "parent_uid": null,
+      "kind": "composite_ref",
+      "display_name": "ref_b",
+      "resource_uid": "77829da7-624e-5c91-a132-82178e866a80",
+      "local_transform": {
+        "translation_cm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_quat": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "properties": {}
+    }
+  ]
+}

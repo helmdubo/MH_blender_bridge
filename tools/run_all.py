@@ -17,6 +17,9 @@ REPO_ROOT = os.path.dirname(TOOLS_DIR)
 MUTATIONS = (
     "rename_object", "rename_collection", "linked_duplicate",
     "make_single_user", "delete_node", "edit_geometry", "reparent_node",
+    # Negative scenarios (QUESTION-7): scenes that must FAIL stage-B export
+    # validation; their spec lives in golden/expected_errors/.
+    "duplicate_uid", "parent_uid_dangling",
 )
 
 
@@ -36,6 +39,11 @@ def main():
     run_blender_script(os.path.join(TOOLS_DIR, "make_golden_scene.py"))
     for name in MUTATIONS:
         run_blender_script(os.path.join(TOOLS_DIR, "mutations", f"{name}.py"))
+    # The composite-cycle negative fixture is bundle-level JSON, not a .blend:
+    # Blender cannot persist an instance_collection cycle (see the script).
+    subprocess.run(
+        [sys.executable, os.path.join(TOOLS_DIR, "make_cycle_fixture.py")],
+        check=True, cwd=REPO_ROOT)
     subprocess.run(
         [sys.executable, os.path.join(TOOLS_DIR, "render_expected_diffs.py")],
         check=True, cwd=REPO_ROOT)
