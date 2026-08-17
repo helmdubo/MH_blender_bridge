@@ -22,13 +22,13 @@ Blender и UE обязаны сойтись с точностью 0.1 см.
 
 ПРОЦЕДУРА ДЛЯ ВЛАДЕЛЬЦА
 -----------------------
-1. Получить FBX: на машине с Blender выполнить
+1. Получить FBX: он уже лежит в репозитории —
 
-       python3 tools/make_axis_bundle.py        (или: blender -b -P tools/make_axis_bundle.py)
+       golden/fixtures/axis/axis_probe.fbx
 
-   Скрипт печатает полный путь к `axis_probe.fbx` (по умолчанию — во временный
-   scratchpad-каталог, вне репозитория) и все ожидаемые числа. Скопировать этот
-   `.fbx` на машину с UE, например в `D:/mimir/axis_probe.fbx`.
+   Blender для проверки НЕ нужен. (Перегенерация при желании:
+   `blender -b -P tools/make_axis_bundle.py` или `python3 tools/make_axis_bundle.py`
+   с pip-модулем bpy — файл детерминирован, числа совпадут бит-в-бит.)
 
 2. В проекте UE 5.7 включить плагины (Edit → Plugins, после включения —
    перезапуск редактора):
@@ -73,7 +73,8 @@ import unreal
 # ---------------------------------------------------------------------------
 
 # Путь к axis_probe.fbx, который напечатал tools/make_axis_bundle.py.
-FBX_PATH = r"D:/mimir/axis_probe.fbx"
+# Путь к копии репозитория на вашей машине + golden/fixtures/axis/axis_probe.fbx
+FBX_PATH = r"D:/mimir/MH_blender_bridge/golden/fixtures/axis/axis_probe.fbx"
 DEST_PACKAGE_PATH = "/Game/MimirAxisProbe"
 
 # --- Числа ниже посчитаны tools/make_axis_bundle.py (Blender 4.5, headless) ---

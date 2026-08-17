@@ -55,10 +55,8 @@ from make_golden_scene import CONTROL_VERTEX, make_window_mesh  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RISK_DOC = os.path.join(REPO_ROOT, "docs", "RISK_RESULTS.md")
-DEFAULT_OUTDIR = (
-    "/tmp/claude-0/-home-user-MH-blender-bridge/"
-    "068a4cb7-444e-5774-b480-0850f20e3282/scratchpad/axis"
-)
+# The FBX is a committed fixture: the owner runs the UE half without Blender.
+DEFAULT_OUTDIR = os.path.join(REPO_ROOT, "golden", "fixtures", "axis")
 FBX_NAME = "axis_probe.fbx"
 
 BLENDER_METERS_TO_UE_CENTIMETERS = 100.0
