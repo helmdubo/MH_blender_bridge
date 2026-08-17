@@ -1,0 +1,229 @@
+"""Semantic model of a bundle and its on-disk writers (schema §1-§3, §8.1).
+
+bpy-free by design: the Blender extraction layer (B8) produces these
+dataclasses, the exporter (B10) feeds them to the writers. Transforms are
+stored as quantized integers (§8.2) — the writers render decimals q / 10^p;
+hashes are computed via the canonical library from the exact structures
+written to disk, so file, canon form and hash cannot diverge.
+"""
+
+from dataclasses import dataclass, field
+
+from .canonical import (
+    P_ROTATION_QUAT,
+    P_SCALE,
+    P_TRANSLATION_CM,
+    composite_content_hash,
+    nfc,
+    resource_filename,
+)
+
+__all__ = [
+    "QuantizedTransform",
+    "Node",
+    "Composite",
+    "MaterialSlot",
+    "MeshResource",
+    "MaterialResource",
+    "Manifest",
+    "composite_disk_dict",
+    "manifest_disk_dict",
+    "composite_hash",
+    "IDENTITY_TRANSFORM",
+    "NODE_KINDS",
+    "RESERVED_NODE_KINDS",
+]
+
+NODE_KINDS = ("group", "mesh", "composite_ref")
+RESERVED_NODE_KINDS = ("variant_set", "variant", "actor")
+
+
+def _dec(q: int, p: int) -> float:
+    """Quantized integer -> on-disk decimal (q / 10^p)."""
+    return q / 10 ** p
+
+
+@dataclass(frozen=True)
+class QuantizedTransform:
+    """local_transform in canonical integers (§8.2)."""
+    translation: tuple  # 3 x int, p=3 (cm)
+    rotation: tuple     # 4 x int, p=6, sign-canonicalized (x, y, z, w)
+    scale: tuple        # 3 x int, p=6
+
+    def disk_dict(self) -> dict:
+        return {
+            "translation_cm": [_dec(q, P_TRANSLATION_CM) for q in self.translation],
+            "rotation_quat": [_dec(q, P_ROTATION_QUAT) for q in self.rotation],
+            "scale": [_dec(q, P_SCALE) for q in self.scale],
+        }
+
+
+IDENTITY_TRANSFORM = QuantizedTransform(
+    translation=(0, 0, 0),
+    rotation=(0, 0, 0, 10 ** P_ROTATION_QUAT),
+    scale=(10 ** P_SCALE,) * 3,
+)
+
+
+@dataclass
+class Node:
+    node_uid: str
+    parent_uid: str | None
+    kind: str
+    display_name: str
+    resource_uid: str | None
+    local_transform: QuantizedTransform
+    properties: dict = field(default_factory=dict)
+
+    def disk_dict(self) -> dict:
+        # Fixed on-disk key order (§8.4); group nodes carry no resource_uid.
+        out = {
+            "node_uid": self.node_uid,
+            "parent_uid": self.parent_uid,
+            "kind": self.kind,
+        }
+        out["display_name"] = nfc(self.display_name)
+        if self.resource_uid is not None:
+            out["resource_uid"] = self.resource_uid
+        out["local_transform"] = self.local_transform.disk_dict()
+        out["properties"] = _nfc_tree(self.properties)
+        return out
+
+
+@dataclass
+class Composite:
+    uid: str
+    name: str
+    nodes: list  # list[Node]
+
+    def filename(self) -> str:
+        return resource_filename(self.name, self.uid, ".composite")
+
+
+@dataclass(frozen=True)
+class MaterialSlot:
+    slot_name: str
+    material_uid: str
+
+
+@dataclass
+class MeshResource:
+    uid: str
+    name: str
+    content_hash: str  # xxh3:... over the §9 stream
+    material_slots: list = field(default_factory=list)  # list[MaterialSlot]
+
+    def filename(self) -> str:
+        return resource_filename(self.name, self.uid, ".mesh.fbx")
+
+    def source(self) -> str:
+        return f"meshes/{self.filename()}"
+
+
+@dataclass
+class MaterialResource:
+    uid: str
+    name: str
+    shader_class: str
+    params: dict = field(default_factory=dict)
+    textures: dict = field(default_factory=dict)  # slot -> texture_root-relative path
+
+
+@dataclass
+class Manifest:
+    bundle_uid: str
+    bundle_name: str
+    blend_file: str
+    exporter_version: str
+    meshes: list = field(default_factory=list)       # list[MeshResource]
+    composites: list = field(default_factory=list)   # list[Composite]
+    materials: list = field(default_factory=list)    # list[MaterialResource]
+    external_dependencies: list = field(default_factory=list)  # list[dict]
+
+
+def _nfc_tree(value):
+    """NFC-normalize every string in a JSON-ish tree (§8.4, writer side)."""
+    if isinstance(value, str):
+        return nfc(value)
+    if isinstance(value, dict):
+        return {nfc(k): _nfc_tree(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_nfc_tree(v) for v in value]
+    return value
+
+
+def composite_disk_dict(composite: Composite) -> dict:
+    """On-disk `*.composite` document (§3, §8.1): fixed key order, nodes
+    sorted by node_uid, quantized decimals."""
+    nodes = sorted(composite.nodes, key=lambda n: n.node_uid.encode("utf-8"))
+    return {
+        "schema": "mh.composite",
+        "schema_version": 1,
+        "uid": composite.uid,
+        "name": nfc(composite.name),
+        "nodes": [node.disk_dict() for node in nodes],
+    }
+
+
+def manifest_disk_dict(manifest: Manifest, composite_hashes: dict) -> dict:
+    """On-disk export_manifest.json (§2). `composite_hashes` maps
+    composite uid -> content_hash (computed by the exporter from the exact
+    disk dicts it wrote); mesh hashes live on the MeshResource entries."""
+    resources = []
+    for mesh in manifest.meshes:
+        entry = {
+            "uid": mesh.uid,
+            "kind": "static_mesh",
+            "name": nfc(mesh.name),
+            "source": mesh.source(),
+            "content_hash": mesh.content_hash,
+        }
+        if mesh.material_slots:
+            entry["material_slots"] = [
+                {"slot_name": nfc(s.slot_name), "material_uid": s.material_uid}
+                for s in mesh.material_slots
+            ]
+        resources.append(entry)
+    for composite in manifest.composites:
+        resources.append({
+            "uid": composite.uid,
+            "kind": "composite",
+            "name": nfc(composite.name),
+            "source": composite.filename(),
+            "content_hash": composite_hashes[composite.uid],
+        })
+    resources.sort(key=lambda r: r["uid"].encode("utf-8"))
+
+    materials = [
+        {
+            "uid": m.uid,
+            "kind": "material",
+            "name": nfc(m.name),
+            "shader_class": nfc(m.shader_class),
+            "params": _nfc_tree(m.params),
+            "textures": _nfc_tree(m.textures),
+        }
+        for m in manifest.materials
+    ]
+    materials.sort(key=lambda m: m["uid"].encode("utf-8"))
+
+    external = sorted(
+        (dict(e) for e in manifest.external_dependencies),
+        key=lambda e: e["uid"].encode("utf-8"))
+
+    return {
+        "schema": "mh.bundle_manifest",
+        "schema_version": 1,
+        "exporter_version": manifest.exporter_version,
+        "bundle_uid": manifest.bundle_uid,
+        "bundle_name": nfc(manifest.bundle_name),
+        "source": {"blend_file": nfc(manifest.blend_file)},
+        "resources": resources,
+        "materials": materials,
+        "external_dependencies": external,
+    }
+
+
+def composite_hash(composite: Composite) -> str:
+    """content_hash of a composite — over the exact disk dict (§8)."""
+    return composite_content_hash(composite_disk_dict(composite))
