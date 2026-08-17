@@ -21,6 +21,12 @@ class MH_PT_main(bpy.types.Panel):
         box.prop(prefs, "source_root", text="Source")
         box.prop(context.scene, "mh_bundle_subdir")
 
+        texture_box = layout.box()
+        texture_box.label(text="Materials", icon="MATERIAL")
+        texture_box.prop(prefs, "texture_root", text="Textures")
+        texture_box.prop(prefs, "legacy_texture_root", text="Old Root")
+        texture_box.operator("mh.remap_texture_root", icon="FILE_REFRESH")
+
         col = layout.column(align=True)
         col.operator("mh.export_bundle", icon="EXPORT")
         col.operator("mh.validate", icon="CHECKMARK")

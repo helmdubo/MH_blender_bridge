@@ -859,6 +859,74 @@
       },
       "kind": "composite",
       "name": "composite_reserved_fields"
+    },
+    {
+      "expected": {
+        "bytes_hex": "7b22706172616d73223a7b2268616c665f6576656e223a3132333435362c226c6162656c223a22636166c3a9222c226d6963726f5f64657461696c5f6c61796572223a363030303030302c226d6963726f5f64657461696c5f6c617965725f75765f7363616c65223a31363337313030302c227369646573223a302c2274696e74223a5b3130303030302c313030303030302c313030303030302c313030303030305d7d2c227368616465725f636c617373223a2272656e64696e73745f73696d706c65222c227465787475726573223a7b2274657830223a22636f6d6d6f6e2f6d6574616c5f642e746966222c2274657832223a22636f6d6d6f6e2f6d6574616c5f6e2e746966227d7d",
+        "canonical": {
+          "params": {
+            "half_even": 123456,
+            "label": "caf\u00e9",
+            "micro_detail_layer": 6000000,
+            "micro_detail_layer_uv_scale": 16371000,
+            "sides": 0,
+            "tint": [
+              100000,
+              1000000,
+              1000000,
+              1000000
+            ]
+          },
+          "shader_class": "rendinst_simple",
+          "textures": {
+            "tex0": "common/metal_d.tif",
+            "tex2": "common/metal_n.tif"
+          }
+        },
+        "disk": {
+          "params": {
+            "half_even": 0.123456,
+            "label": "caf\u00e9",
+            "micro_detail_layer": 6,
+            "micro_detail_layer_uv_scale": 16.371,
+            "sides": 0,
+            "tint": [
+              0.1,
+              1,
+              1,
+              1
+            ]
+          },
+          "shader_class": "rendinst_simple",
+          "textures": {
+            "tex0": "common/metal_d.tif",
+            "tex2": "common/metal_n.tif"
+          }
+        },
+        "hash": "xxh3:8fa1b87b2ad82923"
+      },
+      "input": {
+        "params": {
+          "half_even": 0.1234565,
+          "label": "cafe\u0301",
+          "micro_detail_layer": 6,
+          "micro_detail_layer_uv_scale": 16.3710003,
+          "sides": 0,
+          "tint": [
+            0.1,
+            1.0,
+            1,
+            1.0
+          ]
+        },
+        "shader_class": "rendinst_simple",
+        "textures": {
+          "tex0": "common/metal_d.tif",
+          "tex2": "common/metal_n.tif"
+        }
+      },
+      "kind": "material",
+      "name": "material_manifest_v2_payload"
     }
   ]
 }

@@ -21,17 +21,33 @@ from mh4blend.core.diff import diff_bundles  # noqa: E402
 
 
 def load_bundle(bundle_dir):
+    pending_path = os.path.join(bundle_dir, "export_manifest.json.tmp")
+    if os.path.exists(pending_path):
+        raise SystemExit(
+            f"export in progress or recovery required in {bundle_dir}: "
+            "export_manifest.json.tmp exists")
     manifest_path = os.path.join(bundle_dir, "export_manifest.json")
     if not os.path.exists(manifest_path):
         raise SystemExit(f"no export_manifest.json in {bundle_dir} — not a bundle")
-    with open(manifest_path, encoding="utf-8") as f:
-        manifest = json.load(f)
+    with open(manifest_path, "rb") as f:
+        manifest_bytes = f.read()
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
     composites = {}
     for entry in manifest.get("resources", []):
         if entry.get("kind") == "composite":
             with open(os.path.join(bundle_dir, entry["source"]),
                       encoding="utf-8") as f:
                 composites[entry["uid"]] = json.load(f)
+    # Close the race with a concurrent exporter: either its marker is still
+    # present, or the stable manifest bytes changed when it committed.
+    if os.path.exists(pending_path):
+        raise SystemExit(
+            f"export started while reading {bundle_dir}: "
+            "export_manifest.json.tmp exists")
+    with open(manifest_path, "rb") as f:
+        if f.read() != manifest_bytes:
+            raise SystemExit(
+                f"export_manifest.json changed while reading {bundle_dir}")
     return manifest, composites
 
 

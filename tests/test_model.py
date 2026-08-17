@@ -94,7 +94,7 @@ def test_manifest_layout_and_ordering():
         params={"gamma": 1.0}, textures={"tex0": "common/stone_tex_d.tif"})
     manifest = Manifest(
         bundle_uid=UIDS["col/ca_building"], bundle_name="Golden",
-        blend_file="golden.blend", exporter_version="0.1.0",
+        blend_file="golden.blend", exporter_version="0.2.0",
         meshes=[mesh], composites=[composite], materials=[material],
         external_dependencies=[
             {"uid": UIDS["col/cycle_b"], "kind": "composite", "name": "cycle_b"}])
@@ -102,6 +102,8 @@ def test_manifest_layout_and_ordering():
     doc = manifest_disk_dict(manifest, {composite.uid: composite_hash(composite)})
 
     assert doc["schema"] == "mh.bundle_manifest"
+    assert doc["schema_version"] == 2
+    assert composite_disk_dict(composite)["schema_version"] == 1
     assert list(doc) == ["schema", "schema_version", "exporter_version",
                          "bundle_uid", "bundle_name", "source", "resources",
                          "materials", "external_dependencies"]
@@ -114,6 +116,34 @@ def test_manifest_layout_and_ordering():
     mat_entry = doc["materials"][0]
     assert mat_entry["kind"] == "material"
     assert mat_entry["textures"]["tex0"] == "common/stone_tex_d.tif"
+    assert mat_entry["content_hash"] == material.content_hash
+
+
+def test_material_fingerprint_excludes_identity_and_name():
+    payload = dict(
+        shader_class="rendinst_simple",
+        params={"roughness": 0.25},
+        textures={"tex0": "common/stone_tex_d.tif"},
+    )
+    a = MaterialResource(UIDS["mesh/wall_a"], "m_stone", **payload)
+    b = MaterialResource(UIDS["mesh/wall_b"], "renamed_material", **payload)
+    assert a.content_hash == b.content_hash
+
+
+def test_manifest_material_payload_is_normalized_before_write():
+    def render(value):
+        material = MaterialResource(
+            UIDS["mesh/wall_b"], "m_stone", "rendinst_simple",
+            params={"roughness": value}, textures={})
+        manifest = Manifest(
+            UIDS["col/ca_building"], "Golden", "golden.blend", "0.2.0",
+            materials=[material])
+        return manifest_disk_dict(manifest, {})
+
+    exact = render(0.25)
+    sub_step = render(0.2500004)
+    assert exact["materials"] == sub_step["materials"]
+    assert exact["materials"][0]["params"] == {"roughness": 0.25}
 
 
 def test_writer_normalizes_display_names_to_nfc():

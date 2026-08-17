@@ -1,6 +1,6 @@
 # MH_blender_bridge
 
-DCC-driven composite asset pipeline: Blender → versioned Source Bundle → UE5.
+DCC-driven composite asset pipeline: Blender → versioned source files → UE5.
 Философия — DagorEngine composites; спеки и Decision Log — в `docs/` (читать в
 порядке 00 → 01 → 02 → 03).
 
@@ -40,3 +40,33 @@ python3 -m pytest tests -q
 `mh.validation_report`, docs/01 §6.2) для сцен-«вредителей» (`duplicate_uid`,
 `parent_uid_dangling`) и bundle-фикстуры цикла
 (`golden/fixtures/composite_cycle/`, генерируется `tools/make_cycle_fixture.py`).
+
+## Blender-аддон
+
+```bash
+python tools/build_addon_zip.py
+```
+
+Установите `dist/mh4blend-<version>.zip` через Blender **Install from Disk**.
+Для XXH3-хешей пакет `xxhash` должен быть установлен в Python этой
+версии Blender. В preferences `mh4blend` задаются `Source Root`,
+`Texture Root` и опциональный `registry.json`; в N-панели **MH** доступны
+**Export Sources** и **Validate**.
+
+Материальные metadata читаются из `Material.dagormat`, поэтому для
+полного экспорта включите dag4blend. Обычный Blender-материал без
+dagormat остаётся валидным: он экспортируется как пустая заглушка
+`rendinst_simple`. На диске пишутся только `*.composite`, `meshes/*.mesh.fbx`
+и служебный `export_manifest.json`; отдельного `materials.json` нет.
+
+Для однократного переноса legacy-путей задайте **Old Texture Root (Remap)**
+и новый **Texture Root**, затем нажмите **Remap Old Texture Root**. Оператор
+с подтверждением меняет только абсолютные пути внутри старого корня; операция
+поддерживает Undo и пишет счётчики в `mh_export_log`.
+
+Совместимость с реальным RNA из vendored dag4blend проверяется отдельно:
+
+```bash
+blender -b --factory-startup --python-exit-code 1 \
+  -P tools/check_dag4blend_compat.py
+```

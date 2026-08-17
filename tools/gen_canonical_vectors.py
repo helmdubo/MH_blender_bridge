@@ -16,7 +16,7 @@ formatting is only for humans.
 
 Vector shape:
 
-    {"name": str, "kind": "quantize"|"quat"|"json"|"composite",
+    {"name": str, "kind": "quantize"|"quat"|"json"|"composite"|"material",
      "input": <kind-specific>, "expected": <kind-specific>}
 
   kind "quantize"  input {"value": <number>, "p": <int>}
@@ -32,6 +32,10 @@ Vector shape:
   kind "composite" input {"doc": <parsed *.composite document>}
                    expected {"canonical": <canonical value tree>,
                              "bytes_hex": <hex>, "hash": "xxh3:..."}
+  kind "material"  input {"shader_class": str, "params": {}, "textures": {}}
+                   expected {"disk": <normalized manifest payload>,
+                             "canonical": <canonical value tree>,
+                             "bytes_hex": <hex>, "hash": "xxh3:..."}
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "tools"))
+sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh_canonical import (  # noqa: E402
     canonical_json_bytes,
@@ -51,6 +56,10 @@ from mh_canonical import (  # noqa: E402
     composite_canonical_form,
     hash_hex,
     quantize,
+)
+from mh4blend.core.materials import (  # noqa: E402
+    material_canonical_form,
+    material_disk_payload,
 )
 
 OUTPUT_PATH = REPO_ROOT / "golden" / "canonical_vectors.json"
@@ -103,6 +112,29 @@ def composite_vector(name: str, doc: dict) -> dict[str, Any]:
         "kind": "composite",
         "input": {"doc": doc},
         "expected": {
+            "canonical": canonical,
+            "bytes_hex": data.hex(),
+            "hash": hash_hex(data),
+        },
+    }
+
+
+def material_vector(
+    name: str, shader_class: str, params: dict, textures: dict,
+) -> dict[str, Any]:
+    disk = material_disk_payload(shader_class, params, textures)
+    canonical = material_canonical_form(shader_class, params, textures)
+    data = canonical_json_bytes(canonical)
+    return {
+        "name": name,
+        "kind": "material",
+        "input": {
+            "shader_class": shader_class,
+            "params": params,
+            "textures": textures,
+        },
+        "expected": {
+            "disk": disk,
             "canonical": canonical,
             "bytes_hex": data.hex(),
             "hash": hash_hex(data),
@@ -299,6 +331,26 @@ def build_vectors() -> list[dict[str, Any]]:
     # --- §8 composite ------------------------------------------------------
     vectors.append(composite_vector("composite_small_bundle", SAMPLE_COMPOSITE))
     vectors.append(composite_vector("composite_reserved_fields", SAMPLE_RESERVED))
+
+    # --- manifest v2 material payload -------------------------------------
+    # Locks raw->disk p=6 normalization, canonical integer scaling, NFC,
+    # sequence order, key sorting in bytes, and the final XXH3 value.
+    vectors.append(material_vector(
+        "material_manifest_v2_payload",
+        "rendinst_simple",
+        {
+            "micro_detail_layer": 6,
+            "micro_detail_layer_uv_scale": 16.3710003,
+            "half_even": 0.1234565,
+            "tint": [0.1, 1.0, 1, 1.0],
+            "label": "cafe\u0301",
+            "sides": 0,
+        },
+        {
+            "tex2": "common/metal_n.tif",
+            "tex0": "common/metal_d.tif",
+        },
+    ))
 
     return vectors
 

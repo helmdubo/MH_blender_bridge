@@ -1,18 +1,21 @@
-# 01 — Bundle Schema v1 (SPEC)
+# 01 — Source Files Schema: Composite v1 + Manifest v2 (SPEC)
 
-Статус: **ЗАФИКСИРОВАНА ФИНАЛЬНО — schema_version = 1**. Состав v1: этап A + пакет
-D21–D29 (materials/текстуры/зеркалирование путей) + последняя pre-freeze поправка —
-ресурсные `properties` (QUESTION-9, ADDENDUM-2). Любое изменение дальше — только
-через повышение `schema_version` и migration-заметку.
+Статус: формат `*.composite` **зафиксирован как schema_version = 1**.
+`export_manifest.json` повышен до **schema_version = 2** по D31: материальные
+записи получили `content_hash`, необходимый для D25. Это единственная
+миграция v1→v2; после неё любое on-disk изменение снова требует
+повышения версии и migration-заметки.
+`mh.validation_report` также v2: в нём появился отдельный неблокирующий
+массив `warnings`. Формат `mh.diff_report` остаётся v1.
 
 Принцип №1 (проверяется каждым решением): **Identity = адрес, а не имя и не порядок.**
 Ни rename, ни перестановка узлов в файле, ни добавление параметра, ни апгрейд движка
 не меняют ничего, кроме того, что изменил человек.
 
-## 1. Структура bundle-каталога
+## 1. Структура каталога исходников
 
 ```
-Building_A.bundle/
+Building_A/
 ├─ export_manifest.json                    # СЛУЖЕБНЫЙ, скрытый от пользователя, пишется ПОСЛЕДНИМ
 ├─ building_a__3c1a9b2e.composite          # 1 файл = 1 composite definition (JSON внутри)
 ├─ window_set_a__f53d93af.composite
@@ -26,39 +29,49 @@ Building_A.bundle/
 
 ### 1.1 Протокол атомарности экспорта
 
-Модель: **per-file атомарность + манифест как единственная точка коммита**.
+Модель: **per-file атомарность + pending manifest как fail-closed marker**.
 («Замена каталога целиком» отвергнута: на Windows она конфликтует с открытыми
 watcher'ом файлами и противоречит правилу «неизменённое не перезаписывается».)
 
 Порядок экспорта:
 
-1. Изменённые и новые файлы пишутся рядом с целевым путём как `<имя>.tmp`,
+1. Вся семантическая модель, все composite documents, их hash и новый manifest
+   вычисляются и валидируются **до первой записи** в каталог назначения.
+2. Подготовленный manifest атомарно записывается как
+   `export_manifest.json.tmp`. Пока этот marker существует, UE не читает даже
+   старый стабильный manifest в этом каталоге.
+3. Изменённые и новые файлы пишутся рядом с целевым путём как `<имя>.tmp`,
    затем per-file rename поверх целевого имени (атомарный на одном томе).
-2. Неизменённые файлы (по content_hash) не переэкспортируются и **не трогаются вовсе**.
-3. `export_manifest.json` пишется **последним**, тем же способом (tmp → rename).
-   Это точка коммита: до неё UE видит старый консистентный bundle.
-4. Удаление — строго по разности манифестов: удаляется множество путей
+4. Неизменённые файлы (по content_hash) не переэкспортируются и **не трогаются вовсе**.
+5. После успешной записи всех payload prepared marker атомарно переименовывается
+   в `export_manifest.json`. Исчезновение marker + rename manifest — commit event
+   для UE watcher. Если semantic manifest совпал, payload не ремонтировался и
+   marker от прошлого crash отсутствует, manifest также не трогается. Report
+   различает `manifest_changed` и физический `manifest_written`.
+6. Удаление — строго по разности манифестов: удаляется множество путей
    `sources(предыдущий манифест) − sources(новый манифест)`, вычисленное из двух
    манифестов, **никогда не обход каталога**. Экспортер не имеет права трогать
    файлы, которых сам не записывал (заметки пользователя, `.bak` и прочее в
    bundle-каталоге неприкосновенны). Нет предыдущего манифеста — ничего не
    удаляем. Удаление выполняется **после** успешной записи нового манифеста.
 
-Контракт UE-стороны: доверять только манифесту, игнорировать любые файлы, не
-перечисленные в нём, — поэтому промежуточные состояния каталога безвредны by design.
-Отсутствие валидного манифеста = UE не импортирует каталог.
+Контракт UE-стороны: при наличии `export_manifest.json.tmp` каталог считается
+`export in progress` и не импортируется; в отсутствие marker доверять только
+стабильному manifest и игнорировать не перечисленные в нём файлы. Отсутствие
+валидного manifest = UE не импортирует каталог.
 
-Recovery: осиротевшие `*.tmp` зачищаются следующим экспортом; `export_manifest.json.tmp`
-никогда не интерпретируется как манифест. Watcher UE подписан только на манифест-файл,
-с debounce.
+Recovery: payload `*.tmp` зачищаются следующим экспортом, но pending manifest
+намеренно сохраняется как fail-closed marker и заменяется только следующим
+успешным экспортом. Watcher UE подписан на stable manifest rename с debounce;
+startup scan обязан сначала проверить отсутствие pending marker.
 
 ## 2. export_manifest.json
 
 ```json
 {
   "schema": "mh.bundle_manifest",
-  "schema_version": 1,
-  "exporter_version": "0.1.0",
+  "schema_version": 2,
+  "exporter_version": "0.2.0",
   "bundle_uid": "11db2600-1a7d-4808-bfa7-0d7b5c71a78c",
   "bundle_name": "Building_A",
   "source": { "blend_file": "Building_A.blend" },
@@ -80,7 +93,8 @@ Recovery: осиротевшие `*.tmp` зачищаются следующим
   ],
   "external_dependencies": [
     { "uid": "e3ba6783-...", "kind": "composite", "name": "lamp_a" }
-  ]
+  ],
+  "materials": []
 }
 ```
 
@@ -130,17 +144,33 @@ Recovery: осиротевшие `*.tmp` зачищаются следующим
 ### 2.1 Секция `materials` (D22)
 
 Материал — ресурс с UID; записи сортируются по uid; отдельного materials.json нет.
+Манифест — единственная точка коммита всей транзакции экспорта.
 
 ```json
 {
   "uid": "<uuid>", "kind": "material", "name": "m_stucco_concrete",
   "shader_class": "rendinst_perlin_layered",
   "params": { "mask_gamma": [0.1, 1.0, 1.0, 1.0], "micro_detail_layer": 0 },
-  "textures": { "tex0": "manmade_common/textures/whitewash_plain_a_tex_d.tif" }
+  "textures": { "tex0": "manmade_common/textures/whitewash_plain_a_tex_d.tif" },
+  "content_hash": "xxh3:0123456789abcdef"
 }
 ```
 
 Правила:
+- Blender-источник — `Material.dagormat`: `shader_class`, `optional`, `sides`,
+  `textures`. `sides` сериализуется в `params`; пустые texture slots
+  опускаются. Node tree не используется как metadata-источник.
+- Если dagormat отсутствует или `shader_class` пуст, пишется
+  `rendinst_simple` с пустыми `params` и `textures`.
+- `content_hash` = XXH3-64 от канон-формы
+  `{shader_class, params, textures}`. UID/name/kind исключены: rename
+  материала не считается изменением его properties.
+- Канон material payload использует тот же compact JSON/сортировку
+  UTF-8 ключей/NFC, что §8. Все числа внутри `params` и `textures`
+  рекурсивно квантуются с p=6; bool/null не квантуются, порядок
+  массивов сохраняется. В manifest записывается то же нормализованное
+  представление `q / 10^6`, которое хешируется: например, `16.3710003`
+  записывается как `16.371`, поэтому disk/hash/diff не расходятся.
 - `shader_class` → Master-материал по пути `<master_root>/<shader_class>`
   (настройка проекта UE; alias-словарь, default пустой). Реестр — D28:
   генерируется UE-плагином из папки master_root; неизвестный shader_class
@@ -154,7 +184,28 @@ Recovery: осиротевшие `*.tmp` зачищаются следующим
   root — ошибка `MH_E_TEXTURE_OUTSIDE_ROOT`.
 - У mesh-ресурса появляется таблица связи (НЕ парсинг имён из FBX):
   `material_slots: [{ "slot_name": "...", "material_uid": "<uuid>" }]` —
-  порядок = порядок слотов.
+  порядок первого вхождения: ObjectUID, затем slot index;
+  повторный MaterialUID не дублируется. В UE связь ключуется
+  `slot_name`, а не ordinal-позицией в этом сводном массиве.
+- Пустой material slot → `MH_E_EMPTY_MATERIAL_SLOT`; одинаковый
+  `slot_name` для разных MaterialUID → `MH_E_MATERIAL_SLOT_CONFLICT`.
+- Rename материала даёт material `RENAME`; для каждого mesh, где
+  изменился FBX slot name, дополнительно ожидаются `UPDATE_GEOMETRY`
+  и `UPDATE_PROPERTIES` с переэкспортом FBX.
+
+Минимальный читаемый Blender-аддоном registry:
+
+```json
+{
+  "schema": "mh.registry",
+  "schema_version": 1,
+  "shader_classes": ["rendinst_simple", "rendinst_perlin_layered"]
+}
+```
+
+Дополнительные top-level секции допускаются. Незаданный registry отключает
+проверку без warning; заданный, но нечитаемый/невалидный даёт
+`MH_W_REGISTRY_INVALID` и не блокирует экспорт.
 
 ### 2.2 Зеркалирование путей (D27)
 
@@ -356,8 +407,13 @@ schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — пре�
 | `MH_E_FOREIGN_UID_OWNER` | UE import | UID уже принадлежит другому bundle |
 | `MH_E_NAME_MISMATCH` | UE import | `name` ресурса в манифесте ≠ `name` внутри `.composite` (файл правили руками) |
 | `MH_E_TEXTURE_OUTSIDE_ROOT` | Blender export | путь текстуры вне `texture_root` (§2.1, D23/D27) |
+| `MH_E_EMPTY_MATERIAL_SLOT` | Blender export | в mesh-ресурсе есть material slot без Material |
+| `MH_E_MATERIAL_SLOT_CONFLICT` | Blender export | один `slot_name` в mesh-ресурсе ссылается на разные MaterialUID |
+| `MH_E_INVALID_MATERIAL_VALUE` | Blender export | material payload не JSON-совместим или ключи конфликтуют после NFC |
 | `MH_E_TARGET_NAME_COLLISION` | UE import | два ресурса дают одно имя ассета в одном целевом каталоге (§2.2, D27) |
 | `MH_W_RESOURCE_FAR_FROM_ORIGIN` | Blender export (warning) | bbox коллекции-ресурса далеко от origin (§9.3) |
+| `MH_W_UNKNOWN_SHADER_CLASS` | Blender export (warning) | `shader_class` нет в прочитанном registry |
+| `MH_W_REGISTRY_INVALID` | Blender export (warning) | registry не читается или не соответствует схеме |
 
 ### 6.2 Машинный формат отчёта валидации
 
@@ -368,14 +424,15 @@ schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — пре�
 ```json
 {
   "schema": "mh.validation_report",
-  "schema_version": 1,
+  "schema_version": 2,
   "errors": [
     {
       "code": "MH_E_DUPLICATE_NODE_UID",
       "subjects": ["6866f569-4d42-472f-a676-a836a3df18ec"],
       "message": "два объекта с одним mh_uid: 'window_1', 'window_1.001'"
     }
-  ]
+  ],
+  "warnings": []
 }
 ```
 
@@ -383,6 +440,8 @@ schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — пре�
   неприменим — стабильный идентификатор контекста (путь файла).
 - `message` — человекочитаемый, в тестовое сравнение НЕ входит: expected_errors
   сравниваются по множеству пар (code, subjects).
+- `warnings` имеет тот же формат строк, но `MH_W_*` не меняет
+  `ok` и не блокирует запись файлов.
 
 ## 7. Диффы (контракт reimport)
 
@@ -631,8 +690,8 @@ display-имён не влияли на файловую систему).
   5. зарезервированные имена Windows (`con`, `prn`, `aux`, `nul`,
      `com1`–`com9`, `lpt1`–`lpt9`; проверка — по уже санитизированной строке:
      `con` → `_con`, но `con 1` → `con_1` не зарезервировано) → префикс `_`.
-- Имя bundle-каталога (`<name>.bundle`) подчинено тем же правилам: ASCII-валидация
-  + санитизация `<name>`.
+- Имя каталога экспорта (`<name>`, без обязательного суффикса)
+  подчинено тем же правилам: ASCII-валидация + санитизация `<name>`.
 - Уникальность имени файла гарантирует `uid8`, а не display-имя.
 - Коллизия `uid8` двух разных UID внутри одного bundle (вероятность ~10⁻⁹ на пару):
   экспорт падает с требованием перегенерировать UID одного из ресурсов.
@@ -696,5 +755,12 @@ scale_UE = ( sx,  sy,  sz )
 | `_tex_m` \| `_m` | true | TC_DEFAULT |
 
 Абсолютные пути в legacy-метаданных нормализуются аддоном под `texture_root`
-на экспорте; путь вне root — `MH_E_TEXTURE_OUTSIDE_ROOT`. Утилита однократного
-remap старого корня на новый — в аддоне (D27).
+на экспорте; путь вне root — `MH_E_TEXTURE_OUTSIDE_ROOT`. Для однократной
+миграции пользователь задаёт `Old Texture Root (Remap)` и новый `Texture Root`,
+затем явно запускает `Remap Old Texture Root`: оператор с подтверждением и Undo
+переписывает только абсолютные `Material.dagormat.textures.*` внутри старого
+корня. Операция двухфазная: сначала preflight всех путей, затем применение с
+rollback при ошибке. Относительные/`//`, пути другого platform-style, вне корня
+и на чужом drive не меняются; linked/read-only материалы пропускаются и входят
+в отдельный счётчик. Повторный запуск идемпотентен, итог пишется в
+`mh_export_log` (D27).

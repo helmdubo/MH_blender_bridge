@@ -40,9 +40,10 @@ def test_all_scenarios_covered():
 def test_report_schema():
     for name, doc in load_all().items():
         assert doc["schema"] == "mh.validation_report", name
-        assert doc["schema_version"] == 1, name
-        assert set(doc) == {"schema", "schema_version", "errors"}, name
+        assert doc["schema_version"] == 2, name
+        assert set(doc) == {"schema", "schema_version", "errors", "warnings"}, name
         assert doc["errors"], f"{name}: an expected-error file must expect errors"
+        assert doc["warnings"] == [], name
 
 
 def test_codes_in_registry():

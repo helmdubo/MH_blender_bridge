@@ -1,11 +1,12 @@
 """Bundle exporter (B10): gathers the semantic model from the GEOMETRY and
 COMPOSITS scenes and writes the bundle per the §1.1 atomicity protocol.
 
-Write order: changed files via <name>.tmp + rename; unchanged files (by
-content_hash against the previous manifest) are never touched;
-export_manifest.json goes last (the commit point); deletions are computed
-as sources(previous manifest) - sources(new manifest), never a directory
-sweep. Validation errors abort before any file is written.
+Write order: a prepared export_manifest.json.tmp is the fail-closed marker;
+changed files use <name>.tmp + rename; unchanged files (by content_hash
+against the previous manifest) are never touched; the prepared manifest is
+promoted last; deletions are computed as sources(previous manifest) -
+sources(new manifest), never a directory sweep. Validation errors abort
+before any file is written.
 
 FBX geometry goes out with the studio-canonical settings and the
 meters->centimeters temporary state (ported from
@@ -32,16 +33,19 @@ from ..core.uid import PROP_UID, ensure_uid, find_duplicate_uids
 from ..core.validate import (
     MHValidationError,
     ValidationError,
+    ValidationWarning,
     build_report,
     validate_manifest,
 )
 from .composite_extract import _bag, extract_composites
+from .material_extract import extract_collection_materials
 from .mesh_extract import extract_mesh_records
 from ..core.meshser import mesh_content_hash
 
 __all__ = ["export_bundle", "FBX_EXPORT_KWARGS"]
 
-EXPORTER_VERSION = "0.1.0"
+EXPORTER_VERSION = "0.2.0"
+PENDING_MANIFEST_NAME = "export_manifest.json.tmp"
 
 # Canonical FBX settings — the owner's working script, verbatim.
 FBX_EXPORT_KWARGS = dict(
@@ -141,6 +145,25 @@ def _temporary_ue_centimeter_export_state(objects):
 # ---------------------------------------------------------------------------
 
 
+def _used_meshes(geo_scene):
+    """Distinct mesh datablocks used by GEOMETRY objects.
+
+    Multiple objects may intentionally share one mesh datablock.  Duplicate
+    UID arbitration applies to distinct datablocks, not to each object use.
+    """
+    meshes = []
+    seen = set()
+    for obj in geo_scene.objects:
+        if obj.type != "MESH" or obj.data is None:
+            continue
+        identity = obj.data.as_pointer()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        meshes.append(obj.data)
+    return meshes
+
+
 def _collect_duplicate_errors(geo_scene, cmp_scene):
     errors = []
     objects = list(geo_scene.objects) + list(cmp_scene.objects)
@@ -148,8 +171,7 @@ def _collect_duplicate_errors(geo_scene, cmp_scene):
         errors.append(ValidationError(
             "MH_E_DUPLICATE_NODE_UID", [uid],
             "objects share one mh_uid (Ctrl+D?)"))
-    meshes = [obj.data for obj in geo_scene.objects
-              if obj.type == "MESH" and obj.data is not None]
+    meshes = _used_meshes(geo_scene)
     collections = (list(geo_scene.collection.children)
                    + list(cmp_scene.collection.children))
     for uid, _owners in find_duplicate_uids(meshes + collections).items():
@@ -157,7 +179,30 @@ def _collect_duplicate_errors(geo_scene, cmp_scene):
             "MH_E_DUPLICATE_RESOURCE_UID", [uid],
             "datablocks/collections share one mh_uid (§4.1 arbitration "
             "needed)"))
+    for uid, _owners in find_duplicate_uids(_used_materials(geo_scene)).items():
+        errors.append(ValidationError(
+            "MH_E_DUPLICATE_RESOURCE_UID", [uid],
+            "materials share one mh_uid (§4.1 arbitration needed)"))
     return errors
+
+
+def _used_materials(geo_scene):
+    """Distinct material datablocks used by GEOMETRY mesh objects."""
+    materials = []
+    seen = set()
+    for obj in geo_scene.objects:
+        if obj.type != "MESH":
+            continue
+        for slot in obj.material_slots:
+            material = slot.material
+            if material is None:
+                continue
+            identity = material.as_pointer()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            materials.append(material)
+    return materials
 
 
 def _assign_uids(geo_scene, cmp_scene):
@@ -167,13 +212,15 @@ def _assign_uids(geo_scene, cmp_scene):
             ensure_uid(obj)
             if obj.type == "MESH" and obj.data is not None:
                 ensure_uid(obj.data)
+    for material in _used_materials(geo_scene):
+        ensure_uid(material)
     for collection in cmp_scene.collection.children:
         ensure_uid(collection)
         for obj in collection.objects:
             ensure_uid(obj)
 
 
-def _gather(geo_scene, cmp_scene, bundle_name):
+def _gather(geo_scene, cmp_scene, bundle_name, texture_root=""):
     """-> (Manifest, list[Composite], {col_uid: [objects]}, scene_errors)"""
     errors = _collect_duplicate_errors(geo_scene, cmp_scene)
     if errors:
@@ -183,6 +230,7 @@ def _gather(geo_scene, cmp_scene, bundle_name):
 
     depsgraph = bpy.context.evaluated_depsgraph_get()
     meshes = []
+    materials_by_uid = {}
     export_objects = {}
     for collection in geo_scene.collection.children:
         records = extract_mesh_records(collection, depsgraph)
@@ -191,11 +239,19 @@ def _gather(geo_scene, cmp_scene, bundle_name):
                 "MH_E_EMPTY_RESOURCE_COLLECTION", [collection[PROP_UID]],
                 f"'{collection.name}' has no mesh objects"))
             continue
+        try:
+            collection_materials, material_slots = \
+                extract_collection_materials(collection, texture_root)
+        except MHValidationError as exc:
+            errors.append(exc.as_row())
+            continue
+        for material in collection_materials:
+            materials_by_uid.setdefault(material.uid, material)
         meshes.append(MeshResource(
             uid=collection[PROP_UID],
             name=collection.name,
             content_hash=mesh_content_hash(records),
-            material_slots=[],  # populated by B4-mat (materials extraction)
+            material_slots=material_slots,
             properties=_bag(collection),
         ))
         export_objects[collection[PROP_UID]] = [
@@ -227,6 +283,7 @@ def _gather(geo_scene, cmp_scene, bundle_name):
         exporter_version=EXPORTER_VERSION,
         meshes=meshes,
         composites=composites,
+        materials=list(materials_by_uid.values()),
         external_dependencies=sorted(external.values(), key=lambda e: e["uid"]),
     )
     return manifest, composites, export_objects, errors
@@ -243,6 +300,11 @@ def _write_json_atomic(path, doc):
         json.dump(doc, f, indent=2, ensure_ascii=False)
         f.write("\n")
     os.replace(tmp, path)
+
+
+def _promote_pending_manifest(pending_path, manifest_path):
+    """Commit seam kept separate so crash recovery is testable."""
+    os.replace(pending_path, manifest_path)
 
 
 def _export_collection_fbx(geo_scene, objects, filepath):
@@ -272,18 +334,45 @@ def _read_previous_manifest(bundle_dir):
 
 
 def _cleanup_orphan_tmp(bundle_dir):
+    pending_manifest = os.path.normcase(os.path.realpath(
+        os.path.join(bundle_dir, PENDING_MANIFEST_NAME)))
     for root, _dirs, files in os.walk(bundle_dir):
         for name in files:
             if name.endswith(".tmp"):
+                path = os.path.join(root, name)
+                # A pending manifest is the fail-closed transaction marker.
+                # Preserve it across a crashed run until a later successful
+                # export atomically promotes it to the stable manifest.
+                if os.path.normcase(os.path.realpath(path)) == pending_manifest:
+                    continue
                 with contextlib.suppress(OSError):
-                    os.remove(os.path.join(root, name))
+                    os.remove(path)
+
+
+def _safe_bundle_target(bundle_dir, source):
+    """Resolve an untrusted previous-manifest source below ``bundle_dir``."""
+    if not isinstance(source, str) or not source or os.path.isabs(source):
+        return None
+    root = os.path.realpath(os.path.abspath(bundle_dir))
+    target = os.path.realpath(os.path.abspath(os.path.join(root, source)))
+    try:
+        inside = os.path.commonpath(
+            [os.path.normcase(root), os.path.normcase(target)]) \
+            == os.path.normcase(root)
+    except ValueError:
+        inside = False
+    if not inside or target == root:
+        return None
+    return target
 
 
 def export_bundle(bundle_dir, geo_scene=None, cmp_scene=None,
-                  bundle_name=None, dry_run=False):
+                  bundle_name=None, dry_run=False, texture_root="",
+                  registry_path=""):
     """Run the full export into `bundle_dir`. Returns a report dict:
     {"validation": mh.validation_report, "written": [...], "skipped": [...],
-     "deleted": [...], "ok": bool}. On validation errors nothing is written.
+     "deleted": [...], "manifest_changed": bool, "manifest_written": bool,
+     "ok": bool}. On validation errors nothing is written.
     dry_run=True stops after validation (the Validate button).
     """
     geo_scene = geo_scene or bpy.data.scenes["GEOMETRY"]
@@ -293,67 +382,133 @@ def export_bundle(bundle_dir, geo_scene=None, cmp_scene=None,
         bundle_name = stem or "untitled"
 
     manifest, composites, export_objects, scene_errors = _gather(
-        geo_scene, cmp_scene, bundle_name)
+        geo_scene, cmp_scene, bundle_name, texture_root=texture_root)
 
     if manifest is not None:
-        report = validate_manifest(manifest)
+        registry = None
+        registry_warnings = []
+        if registry_path:
+            try:
+                with open(bpy.path.abspath(registry_path), encoding="utf-8") as f:
+                    registry = f.read()
+            except (OSError, UnicodeError) as exc:
+                registry_warnings.append(ValidationWarning(
+                    "MH_W_REGISTRY_INVALID", [manifest.bundle_uid], str(exc)))
+        report = validate_manifest(manifest, registry=registry)
         rows = scene_errors + [
             ValidationError(e["code"], e["subjects"], e.get("message", ""))
             for e in report["errors"]]
+        warning_rows = registry_warnings + [
+            ValidationWarning(
+                warning["code"], warning["subjects"],
+                warning.get("message", ""))
+            for warning in report.get("warnings", [])]
     else:
         rows = scene_errors
-    validation = build_report(rows)
+        warning_rows = []
+    validation = build_report(rows, warning_rows)
     if validation["errors"] or dry_run:
         return {"ok": not validation["errors"], "validation": validation,
-                "written": [], "skipped": [], "deleted": []}
+                "written": [], "skipped": [], "deleted": [],
+                "manifest_changed": False, "manifest_written": False}
+
+    # Prepare every semantic JSON document before touching the destination.
+    # Material normalization/hashing and composite canonicalization can reject
+    # invalid values; doing that work here preserves the no-partial-write
+    # validation contract even if a future adapter misses a model-level check.
+    composite_docs = {}
+    composite_hashes = {}
+    for composite in composites:
+        composite_docs[composite.uid] = composite_disk_dict(composite)
+        composite_hashes[composite.uid] = composite_hash(composite)
+    manifest_doc = manifest_disk_dict(manifest, composite_hashes)
 
     os.makedirs(os.path.join(bundle_dir, "meshes"), exist_ok=True)
     _cleanup_orphan_tmp(bundle_dir)
+    pending_manifest_path = os.path.join(bundle_dir, PENDING_MANIFEST_NAME)
+    recovery_in_progress = os.path.exists(pending_manifest_path)
     previous = _read_previous_manifest(bundle_dir)
     prev_hashes = {}
     prev_sources = set()
     if previous:
         for entry in previous.get("resources", []):
-            prev_hashes[entry["uid"]] = entry.get("content_hash")
-            prev_sources.add(entry["source"])
+            if not isinstance(entry, dict):
+                continue
+            uid = entry.get("uid")
+            source = entry.get("source")
+            if isinstance(uid, str):
+                prev_hashes[uid] = entry.get("content_hash")
+            if isinstance(source, str):
+                prev_sources.add(source)
             for lod in entry.get("lods", ()):
-                prev_sources.add(lod["source"])
+                if isinstance(lod, dict) and isinstance(lod.get("source"), str):
+                    prev_sources.add(lod["source"])
 
     written, skipped = [], []
 
+    mesh_needs_write = {
+        mesh.uid: recovery_in_progress or not (
+            prev_hashes.get(mesh.uid) == mesh.content_hash
+            and os.path.exists(os.path.join(bundle_dir, mesh.source())))
+        for mesh in manifest.meshes
+    }
+    composite_needs_write = {
+        composite.uid: recovery_in_progress or not (
+            prev_hashes.get(composite.uid) == composite_hashes[composite.uid]
+            and os.path.exists(os.path.join(bundle_dir, composite.filename())))
+        for composite in composites
+    }
+    manifest_path = os.path.join(bundle_dir, "export_manifest.json")
+    manifest_changed = previous != manifest_doc
+    new_sources = {r["source"] for r in manifest_doc["resources"]}
+    stale_targets = [
+        (source, _safe_bundle_target(bundle_dir, source))
+        for source in sorted(prev_sources - new_sources)
+    ]
+    stale_targets = [
+        (source, target) for source, target in stale_targets
+        if target is not None and os.path.exists(target)
+    ]
+    manifest_written = (
+        manifest_changed
+        or any(mesh_needs_write.values())
+        or any(composite_needs_write.values())
+        or bool(stale_targets)
+        or recovery_in_progress
+    )
+
+    # The pending manifest is both the prepared commit record and a fail-closed
+    # in-progress marker for UE. It is created before the first payload replace
+    # and promoted atomically only after every payload write succeeds.
+    if manifest_written:
+        _write_json_atomic(pending_manifest_path, manifest_doc)
+
     for mesh in manifest.meshes:
         target = os.path.join(bundle_dir, mesh.source())
-        if (prev_hashes.get(mesh.uid) == mesh.content_hash
-                and os.path.exists(target)):
+        if not mesh_needs_write[mesh.uid]:
             skipped.append(mesh.source())
             continue
         _export_collection_fbx(geo_scene, export_objects[mesh.uid], target)
         written.append(mesh.source())
 
-    composite_hashes = {}
     for composite in composites:
-        doc = composite_disk_dict(composite)
-        content_hash = composite_hash(composite)
-        composite_hashes[composite.uid] = content_hash
+        doc = composite_docs[composite.uid]
         target = os.path.join(bundle_dir, composite.filename())
-        if (prev_hashes.get(composite.uid) == content_hash
-                and os.path.exists(target)):
+        if not composite_needs_write[composite.uid]:
             skipped.append(composite.filename())
             continue
         _write_json_atomic(target, doc)
         written.append(composite.filename())
 
-    manifest_doc = manifest_disk_dict(manifest, composite_hashes)
-    _write_json_atomic(
-        os.path.join(bundle_dir, "export_manifest.json"), manifest_doc)
+    if manifest_written:
+        _promote_pending_manifest(pending_manifest_path, manifest_path)
 
-    new_sources = {r["source"] for r in manifest_doc["resources"]}
     deleted = []
-    for source in sorted(prev_sources - new_sources):
-        path = os.path.join(bundle_dir, source)
-        if os.path.exists(path):
-            os.remove(path)
-            deleted.append(source)
+    for source, target in stale_targets:
+        os.remove(target)
+        deleted.append(source)
 
     return {"ok": True, "validation": validation, "written": written,
-            "skipped": skipped, "deleted": deleted}
+            "skipped": skipped, "deleted": deleted,
+            "manifest_changed": manifest_changed,
+            "manifest_written": manifest_written}

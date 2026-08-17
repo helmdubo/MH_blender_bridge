@@ -6,7 +6,7 @@
 
 ## 1. Что мы строим
 
-DCC-driven composite asset pipeline: Blender → versioned Source Bundle → UE5.
+DCC-driven composite asset pipeline: Blender → versioned source files → UE5.
 Философия взята из DagorEngine (`.composit.blk` + `.dag` + daEditor composite entities),
 слабые места Dagor (name-based identity, filesystem resolver, отсутствие diff) — исправлены.
 
@@ -131,8 +131,8 @@ per-level с добавлением в существующий SM, либо Nan
 круг Blender↔UE замыкаем.
 
 **D15. Материалы в MVP:** существующая metadata-схема студии + порт текущих post-import
-скриптов как шаг Finalize. Отдельный materials.json — решение отложено. Материал — ресурс
-с UID в dependency graph (обязательно к моменту incremental reimport материалов).
+скриптов как шаг Finalize. Материал — ресурс с UID в dependency graph; записи хранятся
+в `export_manifest.json`, отдельного `materials.json` нет (окончательно уточнено D22/D30).
 
 **D16. Миграция существующего контента:** операция Adopt Existing (привязка существующего
 uasset к UID по имени/пути с подтверждением) — обязательна до раскатки на реальный проект,
@@ -224,6 +224,32 @@ Master или исправьте shader_class»), импорт остальны�
 cm-контекст-менеджер из reference-скрипта умеет skeletal-режим (`only_deform`) —
 при портировании ветка сохраняется за флагом. Блокирующих расширение решений
 в v1 нет.
+
+**D30. Blender-источник материалов MVP — `Material.dagormat`.** Аддон dag4blend
+должен быть включён при авторинге dagormat-материалов. `shader_class`, `optional`,
+`sides` и `textures` читаются из dagormat; `sides` попадает в `params`, пустые
+текстурные слоты не сериализуются. Если dagormat отсутствует или shader пуст,
+экспортируется валидная заглушка `rendinst_simple` с пустыми params/textures.
+UID хранится в `Material['mh_uid']`. Node-based Blender material не является
+альтернативным источником метаданных в MVP.
+Пустой Blender material slot блокирует экспорт: у него нет MaterialUID,
+поэтому section нельзя однозначно восстановить в UE. Один `slot_name`
+не может ссылаться на разные MaterialUID. В multi-object ресурсе
+порядок таблицы детерминирован ObjectUID, затем slot index; повторный
+MaterialUID не дублируется. UE связывает слоты по `slot_name`, а не
+по позиции в сводном массиве.
+
+**D31. Material fingerprint и версия манифеста.** Для D25 материал получает
+`content_hash` по канон-форме только семантического payload
+`{shader_class, params, textures}`. `uid`, `name` и `kind` в fingerprint не входят:
+rename остаётся `RENAME`. Это единственное изменение on-disk контракта после freeze,
+поэтому `export_manifest.json` повышен до `schema_version: 2`; формат `.composite`
+остаётся v1. JSON-ключи `bundle_uid`/`bundle_name` сохраняются ради совместимости,
+но в UI и пользовательской документации используется «Export Sources».
+Исключение имени означает, что сам material-ресурс при rename даёт
+`RENAME`, но mesh-ресурсы, где изменился FBX slot name, также получают
+`UPDATE_GEOMETRY` + `UPDATE_PROPERTIES` и переэкспортируются. Это нужно,
+чтобы имя слота в FBX и `material_slots` оставались согласованы.
 
 ## 4. Известные риски (проверяются первыми)
 

@@ -85,6 +85,9 @@ ERROR_CODES = frozenset(
         "MH_E_UID8_COLLISION",
         "MH_E_NON_ASCII_RESOURCE_NAME",
         # Blender export (materials/textures, D23/D27)
+        "MH_E_EMPTY_MATERIAL_SLOT",
+        "MH_E_INVALID_MATERIAL_VALUE",
+        "MH_E_MATERIAL_SLOT_CONFLICT",
         "MH_E_TEXTURE_OUTSIDE_ROOT",
         # UE import
         "MH_E_UNKNOWN_SCHEMA_VERSION",
@@ -92,7 +95,9 @@ ERROR_CODES = frozenset(
         "MH_E_NAME_MISMATCH",
         "MH_E_TARGET_NAME_COLLISION",
         # warnings
+        "MH_W_REGISTRY_INVALID",
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
+        "MH_W_UNKNOWN_SHADER_CLASS",
     }
 )
 

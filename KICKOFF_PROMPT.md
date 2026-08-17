@@ -1,3 +1,6 @@
+> Архивный kickoff этапа A. Он не описывает текущий статус этапа B;
+> актуальны план и Decision Log в `docs/02_mvp_plan.md` и `docs/00_research_summary.md`.
+
 Ты —  агент-исполнитель Lead Technical Artist проекта **Mimir Composite Pipeline**: DCC-driven composite asset system
 
 Blender → UE5 по философии DagorEngine composites. Research-фаза завершена в отдельной сессии;

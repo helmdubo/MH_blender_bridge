@@ -41,6 +41,11 @@ from mh_canonical import (  # noqa: E402
     sanitize_name,
     validate_resource_name,
 )
+from mh4blend.core.materials import (  # noqa: E402
+    material_canonical_form,
+    material_content_hash,
+    material_disk_payload,
+)
 
 VECTORS_PATH = REPO_ROOT / "golden" / "canonical_vectors.json"
 
@@ -65,17 +70,21 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_INVALID_SCALE",
             "MH_E_UID8_COLLISION",
             "MH_E_NON_ASCII_RESOURCE_NAME",
+            "MH_E_EMPTY_MATERIAL_SLOT",
+            "MH_E_INVALID_MATERIAL_VALUE",
+            "MH_E_MATERIAL_SLOT_CONFLICT",
             "MH_E_TEXTURE_OUTSIDE_ROOT",
             "MH_E_UNKNOWN_SCHEMA_VERSION",
             "MH_E_FOREIGN_UID_OWNER",
             "MH_E_NAME_MISMATCH",
             "MH_E_TARGET_NAME_COLLISION",
+            "MH_W_REGISTRY_INVALID",
             "MH_W_RESOURCE_FAR_FROM_ORIGIN",
+            "MH_W_UNKNOWN_SHADER_CLASS",
         }
     )
-    # §6.1 as written: 17 blocking codes and 1 warning (D23/D27 added two)
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 17
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 1
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 20
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 3
 
 
 def test_error_codes_shape() -> None:
@@ -675,7 +684,7 @@ def test_vectors_file_is_well_formed() -> None:
     names = [v["name"] for v in VECTORS]
     assert len(names) == len(set(names))
     kinds = {v["kind"] for v in VECTORS}
-    assert kinds == {"quantize", "quat", "json", "composite"}
+    assert kinds == {"quantize", "quat", "json", "composite", "material"}
     raw = VECTORS_PATH.read_bytes()
     assert b"\r\n" not in raw
     assert raw.endswith(b"\n")
@@ -741,6 +750,18 @@ def test_vector(vector: dict[str, Any]) -> None:
         assert data.hex() == expected["bytes_hex"]
         assert hash_hex(data) == expected["hash"]
         assert composite_content_hash(given["doc"]) == expected["hash"]
+        return
+
+    if kind == "material":
+        args = (given["shader_class"], given["params"], given["textures"])
+        disk = material_disk_payload(*args)
+        canonical = material_canonical_form(*args)
+        assert disk == expected["disk"]
+        assert canonical == expected["canonical"]
+        data = canonical_json_bytes(canonical)
+        assert data.hex() == expected["bytes_hex"]
+        assert hash_hex(data) == expected["hash"]
+        assert material_content_hash(*args) == expected["hash"]
         return
 
     raise AssertionError(f"unknown vector kind: {kind}")

@@ -1,5 +1,8 @@
 # dag4blend 2.12.0 → модель для Blender→UE5 composite pipeline
 
+> Исторический research-документ. При расхождении приоритет у Decision Log
+> в `00_research_summary.md` и текущей спеки `01_bundle_schema_v1.md`.
+
 Разбор по реальному коду плагина (`cmp/cmp_import.py`, `cmp/cmp_export.py`, `cmp/composite_functions.py`, `cmp/cache_rw.py`, `cmp/node_properties.py`, `cmp/cmp_panels.py`, `colprops/colprops.py`, `object_properties/`, `dagormat/`, `exporter/exporter.py`).
 
 ---

@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "addon"))
 sys.path.insert(0, str(REPO_ROOT / "tools"))
@@ -19,13 +21,18 @@ from mh4blend.core.model import (  # noqa: E402
     Node,
     QuantizedTransform,
 )
-from mh4blend.core.validate import validate_manifest  # noqa: E402
+from mh4blend.core.validate import (  # noqa: E402
+    ValidationError,
+    ValidationWarning,
+    build_report,
+    validate_manifest,
+)
 
 
 def make_manifest(**overrides):
     base = dict(
         bundle_uid=UIDS["col/ca_building"], bundle_name="Golden",
-        blend_file="golden.blend", exporter_version="0.1.0")
+        blend_file="golden.blend", exporter_version="0.2.0")
     base.update(overrides)
     return Manifest(**base)
 
@@ -46,8 +53,8 @@ def test_clean_manifest_is_empty_report():
         composites=[Composite(UIDS["col/ca_windowset"], "ca_windowset",
                               [node("node/ca_windowset/window_1")])])
     report = validate_manifest(manifest)
-    assert report == {"schema": "mh.validation_report", "schema_version": 1,
-                      "errors": []}
+    assert report == {"schema": "mh.validation_report", "schema_version": 2,
+                      "errors": [], "warnings": []}
 
 
 def test_cycle_fixture_verdict_matches_expected_errors_spec():
@@ -132,3 +139,68 @@ def test_zero_scale_ascii_name_uid8_and_texture_checks():
         MaterialResource(UIDS["mesh/wall_b"], "m_x", "shader",
                          textures={"tex0": "C:/abs/path_tex_d.tif"})]))
     assert ("MH_E_TEXTURE_OUTSIDE_ROOT", (UIDS["mesh/wall_b"],)) in codes(report)
+
+
+def test_registry_warnings_are_non_blocking_and_missing_registry_is_silent():
+    material = MaterialResource(
+        UIDS["mesh/wall_b"], "m_x", "unknown_shader")
+    manifest = make_manifest(materials=[material])
+
+    absent = validate_manifest(manifest, registry=None)
+    assert absent["errors"] == []
+    assert absent["warnings"] == []
+
+    registry = {
+        "schema": "mh.registry",
+        "schema_version": 1,
+        "shader_classes": ["rendinst_simple"],
+    }
+    report = validate_manifest(manifest, registry=registry)
+    assert report["errors"] == []
+    assert [(w["code"], w["subjects"]) for w in report["warnings"]] == [
+        ("MH_W_UNKNOWN_SHADER_CLASS", [UIDS["mesh/wall_b"]])]
+
+
+def test_invalid_registry_is_warning_not_error():
+    report = validate_manifest(
+        make_manifest(), registry={"schema": "mh.registry", "schema_version": 99})
+    assert report["errors"] == []
+    assert report["warnings"][0]["code"] == "MH_W_REGISTRY_INVALID"
+    assert report["warnings"][0]["subjects"] == [UIDS["col/ca_building"]]
+
+
+def test_report_builder_keeps_error_and_warning_channels_separate_and_sorted():
+    errors = [ValidationError(
+        "MH_E_EMPTY_MATERIAL_SLOT", [UIDS["col/wall_a"]], "empty slot")]
+    warnings = [
+        ValidationWarning(
+            "MH_W_UNKNOWN_SHADER_CLASS", [UIDS["mesh/wall_b"]], "unknown"),
+        ValidationWarning(
+            "MH_W_REGISTRY_INVALID", [UIDS["col/ca_building"]], "invalid"),
+    ]
+    report = build_report(errors, warnings)
+    assert [row["code"] for row in report["errors"]] == [
+        "MH_E_EMPTY_MATERIAL_SLOT"]
+    assert [row["code"] for row in report["warnings"]] == [
+        "MH_W_REGISTRY_INVALID", "MH_W_UNKNOWN_SHADER_CLASS"]
+    with pytest.raises(AssertionError, match="non-blocking code"):
+        ValidationError("MH_W_UNKNOWN_SHADER_CLASS", [], "wrong channel")
+    with pytest.raises(AssertionError, match="blocking code"):
+        ValidationWarning("MH_E_EMPTY_MATERIAL_SLOT", [], "wrong channel")
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_code"),
+    [
+        ({"bad": float("nan")}, "MH_E_NAN_INF_VALUE"),
+        ({"bad": float("inf")}, "MH_E_NAN_INF_VALUE"),
+        ({"bad": object()}, "MH_E_INVALID_MATERIAL_VALUE"),
+    ],
+)
+def test_invalid_material_payload_is_reported_before_manifest_write(
+        params, expected_code):
+    material = MaterialResource(
+        UIDS["mesh/wall_b"], "m_x", "rendinst_simple", params=params)
+    report = validate_manifest(make_manifest(materials=[material]))
+    assert [(row["code"], row["subjects"]) for row in report["errors"]] == [
+        (expected_code, [UIDS["mesh/wall_b"]])]
