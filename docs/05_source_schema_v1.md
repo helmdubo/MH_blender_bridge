@@ -1,18 +1,22 @@
-# 05 — Source Schema v1 (NORMATIVE FREEZE CANDIDATE)
+# 05 — Source Schema v1 (NORMATIVE FINAL v1)
 
-Статус: **единственный нормативный кандидат на on-disk контракт Source Schema
+Статус: **единственный нормативный замороженный on-disk контракт Source Schema
 v1**. Документ учитывает решения `[composite-graph-source]`,
 `[texture-path-canonicalization]`, `[uid-source-resolution]` и
 `[material-source-files]`. Противоречащие ему pre-freeze описания bundle,
 inline `materials[]`, `external_dependencies[]` и directory-local-only resolve
 являются историческими.
 
-После приёмки точного SHA этого schema-doc commit внешним ревьювером v1
-заморожена окончательно. Любое изменение
-формы JSON, required/optional-полей, канонизации, path semantics, hash input или
+Source Schema v1 заморожена. Любое изменение формы JSON,
+required/optional-полей, канонизации, path semantics, hash input или
 машинного кода, меняющее совместимость, требует `schema_version: 2` и явной
 migration note. Директивы аудитора ссылаются на решения по slug; числовые D-ID
 назначает репозиторий.
+
+Post-freeze D38 `[fbx-export-materials-toggle]` — совместимое operational/UX
+amendment: одна вкладка `MH` и Boolean `Export Materials` лишь оркестрируют уже
+описанные standalone writers. Ни одна JSON-форма, canonical byte, hash input или
+диагностическая семантика этого документа не изменена.
 
 ## 1. Инварианты
 
@@ -171,11 +175,14 @@ Manifest row и payload согласованы: UID/name внутри `.composit
 Node/placement properties живут только в `.composite`; они не наследуются из
 resource bag и не дублируют его.
 
-`material` не имеет kind-specific полей в manifest. `shader_class`, `params` и
-`textures` принадлежат только `.material` payload.
+`material` не имеет kind-specific полей в manifest; в частности, manifest-row
+kind `material` **не допускает `properties`**. Asset-level semantic properties
+материала живут в `.material.params`; `shader_class`, `params` и `textures`
+принадлежат только `.material` payload. Это уточнение не добавляет поле в v1.
 
-`properties` — единственная открытая resource extension bag. Прочие неизвестные
-поля row не являются v1 extension mechanism.
+Для допускающих её rows (`static_mesh`, `composite`) `properties` — единственная
+открытая resource extension bag. Прочие неизвестные поля row не являются v1
+extension mechanism.
 
 ### 3.4 Hash inputs
 
@@ -492,9 +499,11 @@ export и UE import блокируют соответствующую опера
 `MH_E_PARENT_CYCLE`.
 
 Missing material при Blender import даёт `MH_W_MATERIAL_NOT_FOUND`, mesh
-geometry продолжает импортироваться. Missing material при FBX/composite export
-даёт warning со списком UID и быстрым действием `Export materials…`, но не
-авторазмещает материал и не блокирует geometry payload. Missing
+geometry продолжает импортироваться. Missing material при FBX Export с
+`Export Materials=OFF` либо после неуспешной material-операции даёт warning со
+списком UID и быстрым действием `Export materials…`, но не блокирует geometry
+payload. При ON новая material resource создаётся по D38; существующая
+обновляется in place. Composite Export material payload не размещает. Missing
 static-mesh/composite dependency при export — `MH_E_UNRESOLVED_EXTERNAL`.
 При UE import unresolved material блокирует применение только затронутого
 material resource с `MH_E_UNRESOLVED_EXTERNAL`; остальные независимые resource
@@ -607,10 +616,23 @@ marker. До записи он обязан:
 `MH_E_INVALID_EXPORT_MANIFEST`; автоматического выбора или удаления нет.
 Повторный crash оставляет тот же fail-closed recovery protocol.
 
-Первый Material Export принимает Material + Directory. Если UID уже имеет
-единственного owner, выбранный каталог не перемещает его: update идёт in place.
-Экспорт mesh/composite с невыгруженными materials не создаёт `.material`
-автоматически.
+UI FBX Export с `Export Materials=ON` собирает уникальные MaterialUID выбранной
+Collection hierarchy и запускает для каждого тот же standalone material writer:
+unique owner обновляется in place, UID без owner использует каталог выбранного
+FBX output. В обычной операции FBX/mesh-row commit'ится первым, после чего идут
+material upserts: material failure становится warning и не откатывает geometry.
+Если до запуска уже существует доказанный pending material marker выбранной
+Collection, сначала выполняется обязательный recovery этого MaterialUID, потому
+что §9.1 запрещает любой другой write под root до снятия marker.
+Это последовательность независимых resource-транзакций, а не новый bundle или
+cross-manifest atomic commit; успешно завершённые upserts не откатываются из-за
+последующего независимого upsert.
+
+При `Export Materials=OFF` FBX writer не вызывает material writer и не меняет
+material payload/rows. Отдельный Material Export принимает Material + Directory;
+если UID уже имеет единственного owner, выбранный каталог не перемещает его:
+update идёт in place. Composite Export не создаёт `.material`. Во всех режимах
+texture files не входят в export-транзакции и не копируются.
 
 ### 9.2 Resolver/import snapshot
 
@@ -647,6 +669,8 @@ API: внешних consumers до freeze не было. Golden artifacts рег
   `.material`; два static meshes из разных manifests ссылаются на его UID.
   Resolve/import материализует материал один раз. Изменение только `.material`
   даёт `UPDATE_PROPERTIES` одного material resource и ноль mesh operations.
+  FBX Export/ON обновляет unique owner in place, новый material создаёт рядом с
+  FBX, а OFF оставляет все material bytes/rows неизменными.
 
 В этом schema-doc commit фиксируются формы и ожидаемые исходы M8/M9. Golden
 файлы, canonical bytes и expected hashes регенерируются в G1/G4 и должны быть

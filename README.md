@@ -2,12 +2,13 @@
 
 DCC-driven composite asset pipeline: Blender → versioned source files → UE5.
 Философия — DagorEngine composites; спеки и Decision Log — в `docs/`.
-Кандидат на финальную standalone source schema v1:
+Финальная standalone Source Schema v1:
 `docs/05_source_schema_v1.md`,
-авторские workflows: `docs/04_source_workflows.md`, план реализации после
-freeze: `docs/06_final_v1_plan.md`. Тот же commit становится окончательно
-замороженным после приёмки внешним ревьювером. Старые bundle-разделы документов
-01–02 сохранены только как история и помечены superseded.
+авторские workflows: `docs/04_source_workflows.md`, план реализации:
+`docs/06_final_v1_plan.md`. Post-freeze `Export Materials`/single-tab amendment
+меняет только UX и orchestration standalone writers; JSON schema и canonical
+bytes v1 не изменены. Старые bundle-разделы документов 01–02 сохранены только
+как история и помечены superseded.
 
 ## Структура
 
@@ -53,16 +54,23 @@ python3 -m pytest tests -q
 python tools/build_addon_zip.py
 ```
 
-Установите `dist/mh4blend-<version>.zip` через Blender **Install from Disk**.
-Для XXH3-хешей пакет `xxhash` должен быть установлен в Python этой версии
-Blender. Целевой UX v1 состоит из трёх отдельных вкладок N-панели; общей
-кнопки Bundle/Export Sources нет:
+Установите `dist/mh4blend-<version>-windows-x64.zip` через Blender
+**Get Extensions → Install from Disk**. Это self-contained Extension: закреплённый
+wheel `xxhash` уже входит в ZIP, вручную запускать `pip install` не нужно.
+Перед переходом с прежнего script-addon отключите и удалите его в Preferences,
+перезапустите Blender и только затем установите Extension ZIP: одновременно
+включённые legacy-addon и Extension регистрируют одинаковые `mh.*` операторы.
+Целевой UX v1 — одна N-panel вкладка **MH** без общей кнопки Bundle/Export
+Sources:
 
-- **FBX Export**: Collection + Directory + Export;
+- **FBX Export**: Collection + Directory + `Export Materials` (default ON) +
+  Export. ON обновляет каждый уникальный используемый материал: существующий
+  UID — in place у найденного owner, новый UID — рядом с выбранным FBX;
+  OFF не трогает material payload/rows;
 - **Composites / Import**: `.composite` File Path + Import;
-- **Composites / Export**: Collection + Directory + Export.
-- **MH Material**: Material + Folder + Export; при повторном экспорте
-  существующие payload и owning manifest по UID обновляются in place.
+- **Composites / Export**: Collection + Directory + Export;
+- **Materials**: Material + Folder + Export; существующие payload и owning
+  manifest по UID всегда обновляются in place.
 
 Материальные metadata читаются из `Material.dagormat`, поэтому для полного
 экспорта включите dag4blend. Обычный Blender-материал без dagormat остаётся
@@ -73,15 +81,17 @@ Blender. Целевой UX v1 состоит из трёх отдельных в
 путём и диагностикой согласно `texture_policy`. Отдельного Texture Root нет;
 текстуры не копируются и не изменяются.
 
-Каждая операция обновляет только выбранный ресурс и его owning
-`export_manifest.json`. Манифест — квитанция собственных ресурсов, а не bundle,
-не граф зависимостей и не список владения каталогом; несвязанные записи и файлы
-сохраняются. Resolver ищет payload по UID во всём `source_root` и всегда
-подтверждает единственного владельца-манифест. Полный контракт и обратный
-импорт: `docs/04_source_workflows.md`.
+Каждый standalone writer обновляет только свой ресурс и owning
+`export_manifest.json`. FBX с `Export Materials=ON` оркестрирует несколько таких
+material upserts вместе с mesh upsert, но не создаёт bundle-транзакцию и не
+экспортирует иной dependency closure. Манифест — квитанция собственных ресурсов,
+а не bundle, не граф зависимостей и не список владения каталогом; несвязанные
+записи и файлы сохраняются. Resolver ищет payload по UID во всём `source_root` и
+всегда подтверждает единственного владельца-манифест. Текстуры не копируются.
+Полный контракт и обратный импорт: `docs/04_source_workflows.md`.
 
-Текущая реализация в рабочей ветке предшествует финальному schema freeze и
-должна быть приведена к документам 04–06 отдельным кодовым срезом.
+Текущая реализация в рабочей ветке приводится к замороженным документам 04–06;
+полевой приёмкой считается только ZIP после прохождения соответствующих gates.
 
 Совместимость с реальным RNA из vendored dag4blend проверяется отдельно:
 

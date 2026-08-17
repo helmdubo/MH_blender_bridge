@@ -58,11 +58,17 @@ def test_export_in_any_order_then_dependency_import_and_roundtrip(tmp_path):
     child_node["mh_p_role"] = "window"
     _instance_node(parent, "ChildPlacement", child, (-4, 0.5, 2))
 
-    output = tmp_path / "sources"
-    # Deliberately export the parent before either dependency.
-    parent_report = export_composite_collection(parent, str(output))
-    mesh_report = export_fbx_collection(mesh, str(output))
-    child_report = export_composite_collection(child, str(output))
+    source_root = tmp_path / "sources"
+    composite_output = source_root / "composites"
+    mesh_output = source_root / "meshes"
+    composite_output.mkdir(parents=True)
+    mesh_output.mkdir()
+    mesh_report = export_fbx_collection(
+        mesh, str(mesh_output), source_root=str(source_root))
+    child_report = export_composite_collection(
+        child, str(composite_output), source_root=str(source_root))
+    parent_report = export_composite_collection(
+        parent, str(composite_output), source_root=str(source_root))
     assert parent_report["ok"] and mesh_report["ok"] and child_report["ok"]
     parent_source = parent_report["path"]
     parent_uid = parent_report["uid"]
@@ -71,7 +77,8 @@ def test_export_in_any_order_then_dependency_import_and_roundtrip(tmp_path):
     original_parent = json.loads(Path(parent_source).read_text(encoding="utf-8"))
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    imported = import_composite_file(parent_source)
+    imported = import_composite_file(
+        parent_source, source_root=str(source_root))
 
     assert imported["ok"]
     assert set(imported["imported_composites"]) == {parent_uid, child_uid}
@@ -87,9 +94,20 @@ def test_export_in_any_order_then_dependency_import_and_roundtrip(tmp_path):
     assert child_instance["mh_p_role"] == "window"
     assert any(obj.type == "MESH" for obj in imported_mesh.objects)
 
-    roundtrip_dir = tmp_path / "roundtrip"
+    roundtrip_root = tmp_path / "roundtrip"
+    roundtrip_meshes = roundtrip_root / "meshes"
+    roundtrip_composites = roundtrip_root / "composites"
+    roundtrip_meshes.mkdir(parents=True)
+    roundtrip_composites.mkdir()
+    export_fbx_collection(
+        imported_mesh, str(roundtrip_meshes),
+        source_root=str(roundtrip_root))
+    export_composite_collection(
+        imported_child, str(roundtrip_composites),
+        source_root=str(roundtrip_root))
     roundtrip = export_composite_collection(
-        imported_parent, str(roundtrip_dir))
+        imported_parent, str(roundtrip_composites),
+        source_root=str(roundtrip_root))
     roundtrip_doc = json.loads(
         Path(roundtrip["path"]).read_text(encoding="utf-8"))
     assert roundtrip_doc == original_parent

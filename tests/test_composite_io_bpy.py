@@ -15,6 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh4blend.core.model import composite_disk_dict  # noqa: E402
+from mh4blend.core.materials import material_content_hash  # noqa: E402
+from mh4blend.core.material_source import build_material_document  # noqa: E402
 from mh4blend.core.uid import PROP_UID  # noqa: E402
 from mh4blend.core.validate import MHValidationError  # noqa: E402
 from mh4blend.scene.composite_extract import (  # noqa: E402
@@ -29,6 +31,12 @@ from mh4blend.scene.import_composite import (  # noqa: E402
     CompositeImportError,
     import_composite_file,
 )
+from mh4blend.scene.source_manifest import (  # noqa: E402
+    abandon_staged_manifest,
+    ManifestError,
+    prepare_manifest_update,
+    stage_manifest,
+)
 
 ROOT_UID = "10000000-0000-0000-0000-000000000001"
 CHILD_UID = "20000000-0000-0000-0000-000000000002"
@@ -38,7 +46,9 @@ CHILD_NODE_UID = "50000000-0000-0000-0000-000000000005"
 MESH_NODE_UID = "60000000-0000-0000-0000-000000000006"
 MATERIAL_UID = "a0000000-0000-0000-0000-00000000000a"
 MISSING_MATERIAL_UID = "b0000000-0000-0000-0000-00000000000b"
-SECOND_MESH_UID = "30000000-0000-0000-0000-000000000004"
+SECOND_MESH_UID = "31000000-0000-0000-0000-000000000004"
+MISSING_COMPOSITE_UID = "21000000-0000-0000-0000-000000000012"
+MISSING_COMPOSITE_NODE_UID = "51000000-0000-0000-0000-000000000015"
 
 
 class _CompositeIOTestTextures(bpy.types.PropertyGroup):
@@ -124,17 +134,42 @@ def _manifest(resources):
         "schema": "mh.export_manifest",
         "schema_version": 1,
         "exporter_version": "test",
-        "source": {"blend_file": "test.blend"},
-        "resources": resources,
-        "materials": [],
+        "resources": sorted(resources, key=lambda row: row["uid"].encode()),
     }
 
 
 def _resource(uid, kind, name, source):
     return {
         "uid": uid, "kind": kind, "name": name, "source": source,
-        "content_hash": "xxh3:test",
+        "content_hash": "xxh3:0000000000000000",
     }
+
+
+def _source_name(uid, kind, name):
+    suffix = {
+        "static_mesh": ".mesh.fbx",
+        "composite": ".composite",
+        "material": ".material",
+    }[kind]
+    return f"{name}__{uid[:8]}{suffix}"
+
+
+def _write_material_fixture(directory, material):
+    document, _diagnostics = build_material_document(
+        uid=material["uid"],
+        name=material["name"],
+        shader_class=material["shader_class"],
+        params=material.get("params", {}),
+        textures=material.get("textures", {}),
+        source_root=str(directory),
+    )
+    source = _source_name(material["uid"], "material", material["name"])
+    _write_json(directory / source, document)
+    row = _resource(
+        material["uid"], "material", material["name"], source)
+    row["content_hash"] = material_content_hash(
+        document["shader_class"], document["params"], document["textures"])
+    return row, document
 
 
 def _collection_by_uid(uid):
@@ -170,13 +205,18 @@ def _write_mesh_import_fixture(tmp_path, mesh_rows, materials=()):
             "mesh", row["name"], row["uid"])
         for index, row in enumerate(mesh_rows, 1)
     ]
-    root_path = tmp_path / "root.composite"
+    root_source = _source_name(ROOT_UID, "composite", "root_cmp")
+    root_path = tmp_path / root_source
     _write_json(root_path, _document(ROOT_UID, "root_cmp", nodes))
+    material_rows = [
+        _write_material_fixture(tmp_path, material)[0]
+        for material in materials
+    ]
     manifest = _manifest([
-        _resource(ROOT_UID, "composite", "root_cmp", "root.composite"),
+        _resource(ROOT_UID, "composite", "root_cmp", root_source),
         *mesh_rows,
+        *material_rows,
     ])
-    manifest["materials"] = list(materials)
     _write_json(tmp_path / "export_manifest.json", manifest)
     return root_path
 
@@ -217,7 +257,19 @@ def test_export_selected_collection_only_and_updates_manifest(tmp_path):
     ignored_mesh = bpy.data.objects.new("authoring_helper", bpy.data.meshes.new("m"))
     definition.objects.link(ignored_mesh)
 
-    report = export_composite_collection(definition, str(tmp_path))
+    mesh_source = _source_name(MESH_UID, "static_mesh", "mesh_a")
+    child_source = _source_name(CHILD_UID, "composite", "child_cmp")
+    (tmp_path / mesh_source).write_bytes(b"test-fbx-payload")
+    _write_json(
+        tmp_path / child_source,
+        _document(CHILD_UID, "child_cmp", []))
+    _write_json(tmp_path / "export_manifest.json", _manifest([
+        _resource(MESH_UID, "static_mesh", "mesh_a", mesh_source),
+        _resource(CHILD_UID, "composite", "child_cmp", child_source),
+    ]))
+
+    report = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
     assert report["ok"]
     assert report["resource_entry"]["content_hash"].startswith("xxh3:")
     document = json.loads(Path(report["path"]).read_text(encoding="utf-8"))
@@ -229,7 +281,9 @@ def test_export_selected_collection_only_and_updates_manifest(tmp_path):
     assert by_uid[MESH_NODE_UID]["parent_uid"] == GROUP_UID
     manifest = json.loads((tmp_path / "export_manifest.json").read_text())
     assert manifest["schema"] == "mh.export_manifest"
-    assert manifest["resources"] == [report["resource_entry"]]
+    rows = {row["uid"]: row for row in manifest["resources"]}
+    assert rows[ROOT_UID] == report["resource_entry"]
+    assert set(rows) == {ROOT_UID, CHILD_UID, MESH_UID}
     assert not (tmp_path / "export_manifest.json.tmp").exists()
 
 
@@ -246,8 +300,56 @@ def test_nonzero_instance_offset_blocks_before_destination_write(tmp_path):
     definition.objects.link(node)
     with pytest.raises(MHValidationError,
                        match="MH_E_INVALID_COLLECTION_OFFSET"):
-        export_composite_collection(definition, str(tmp_path))
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
     assert list(tmp_path.iterdir()) == []
+
+
+def test_composite_export_blocks_unresolved_mesh_dependency(tmp_path):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    target = bpy.data.collections.new("mesh_a")
+    target[PROP_UID] = MESH_UID
+    target.objects.link(bpy.data.objects.new(
+        "mesh_content", bpy.data.meshes.new("mesh_content_data")))
+    node = bpy.data.objects.new("mesh_node", None)
+    node[PROP_UID] = MESH_NODE_UID
+    node.instance_type = "COLLECTION"
+    node.instance_collection = target
+    definition.objects.link(node)
+
+    with pytest.raises(MHValidationError,
+                       match="MH_E_UNRESOLVED_EXTERNAL"):
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_composite_export_blocks_external_dependency_cycle(tmp_path):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    child = bpy.data.collections.new("child_cmp")
+    child[PROP_UID] = CHILD_UID
+    node = bpy.data.objects.new("child_node", None)
+    node[PROP_UID] = CHILD_NODE_UID
+    node.instance_type = "COLLECTION"
+    node.instance_collection = child
+    definition.objects.link(node)
+
+    child_source = _source_name(CHILD_UID, "composite", "child_cmp")
+    _write_json(tmp_path / child_source, _document(CHILD_UID, "child_cmp", [
+        _node(
+            "80000000-0000-0000-0000-000000000008",
+            "composite_ref", "back_to_root", ROOT_UID),
+    ]))
+    _write_json(tmp_path / "export_manifest.json", _manifest([
+        _resource(CHILD_UID, "composite", "child_cmp", child_source),
+    ]))
+
+    with pytest.raises(MHValidationError, match="MH_E_COMPOSITE_CYCLE"):
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
+    assert not list(tmp_path.glob(f"*__{ROOT_UID[:8]}.composite"))
 
 
 def test_stale_collection_pointer_with_instance_type_none_blocks_export(
@@ -264,7 +366,8 @@ def test_stale_collection_pointer_with_instance_type_none_blocks_export(
     definition.objects.link(node)
 
     with pytest.raises(MHValidationError, match="MH_E_INVALID_COMPOSITE"):
-        export_composite_collection(definition, str(tmp_path))
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
     assert list(tmp_path.iterdir()) == []
 
 
@@ -278,10 +381,244 @@ def test_export_stages_manifest_before_payload_replace(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "_write_json_atomic", fail_payload)
     with pytest.raises(RuntimeError, match="simulated payload failure"):
-        export_composite_collection(definition, str(tmp_path))
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
     assert (tmp_path / "export_manifest.json.tmp").exists()
     assert not (tmp_path / "export_manifest.json").exists()
     assert not list(tmp_path.glob("*.composite"))
+
+
+def test_unchanged_composite_hash_skips_payload_rewrite(
+        tmp_path, monkeypatch):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    initial = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+    payload_path = Path(initial["path"])
+    original_payload = payload_path.read_bytes()
+    module = importlib.import_module("mh4blend.scene.export_composite")
+    writes = []
+    monkeypatch.setattr(
+        module, "_write_json_atomic",
+        lambda path, document: writes.append((path, document)))
+
+    repeated = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+
+    assert repeated["ok"]
+    assert repeated["written"] is False
+    assert repeated["manifest_written"] is True
+    assert writes == []
+    assert payload_path.read_bytes() == original_payload
+
+
+def test_manifest_only_composite_change_skips_payload_rewrite(
+        tmp_path, monkeypatch):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    initial = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+    payload_path = Path(initial["path"])
+    original_payload = payload_path.read_bytes()
+    definition["mh_p_category"] = "building"
+    module = importlib.import_module("mh4blend.scene.export_composite")
+    writes = []
+    monkeypatch.setattr(
+        module, "_write_json_atomic",
+        lambda path, document: writes.append((path, document)))
+
+    updated = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+
+    assert updated["written"] is False
+    assert updated["manifest_written"] is True
+    assert writes == []
+    assert payload_path.read_bytes() == original_payload
+    manifest = json.loads(
+        (tmp_path / "export_manifest.json").read_text(encoding="utf-8"))
+    row = next(item for item in manifest["resources"]
+               if item["uid"] == ROOT_UID)
+    assert row["properties"] == {"category": "building"}
+
+
+def test_missing_owned_composite_payload_is_rebuilt(tmp_path):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    initial = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+    payload_path = Path(initial["path"])
+    payload_path.unlink()
+
+    rebuilt = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+
+    assert rebuilt["ok"]
+    assert rebuilt["written"] is True
+    assert rebuilt["manifest_written"] is True
+    assert payload_path.is_file()
+    assert json.loads(payload_path.read_text(encoding="utf-8"))["uid"] == \
+        ROOT_UID
+
+
+def test_corrupt_owned_composite_payload_is_rebuilt(tmp_path):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    initial = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+    payload_path = Path(initial["path"])
+    payload_path.write_bytes(b"not-json")
+
+    rebuilt = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+
+    assert rebuilt["ok"]
+    assert rebuilt["written"] is True
+    assert rebuilt["manifest_written"] is True
+    assert json.loads(payload_path.read_text(encoding="utf-8"))["uid"] == \
+        ROOT_UID
+
+
+def test_dependency_snapshot_is_reproved_under_stage_root_lock(
+        tmp_path, monkeypatch):
+    root = bpy.data.collections.new("root_cmp")
+    root[PROP_UID] = ROOT_UID
+    child = bpy.data.collections.new("child_cmp")
+    child[PROP_UID] = CHILD_UID
+    initial_root = export_composite_collection(
+        root, str(tmp_path), source_root=str(tmp_path))
+    export_composite_collection(
+        child, str(tmp_path), source_root=str(tmp_path))
+    root_payload = Path(initial_root["path"])
+    original_root_payload = root_payload.read_bytes()
+
+    root_to_child = bpy.data.objects.new("root_to_child", None)
+    root_to_child[PROP_UID] = CHILD_NODE_UID
+    root_to_child.instance_type = "COLLECTION"
+    root_to_child.instance_collection = child
+    root.objects.link(root_to_child)
+
+    module = importlib.import_module("mh4blend.scene.export_composite")
+    real_stage = module.stage_manifest
+    interleaved = False
+
+    def stage_after_child_commit(directory, document, **kwargs):
+        nonlocal interleaved
+        if not interleaved:
+            interleaved = True
+            child_to_root = bpy.data.objects.new("child_to_root", None)
+            child_to_root[PROP_UID] = \
+                "80000000-0000-0000-0000-000000000008"
+            child_to_root.instance_type = "COLLECTION"
+            child_to_root.instance_collection = root
+            child.objects.link(child_to_root)
+            export_composite_collection(
+                child, str(tmp_path), source_root=str(tmp_path))
+        return real_stage(directory, document, **kwargs)
+
+    monkeypatch.setattr(module, "stage_manifest", stage_after_child_commit)
+    with pytest.raises(ManifestError, match="changed after snapshot"):
+        export_composite_collection(
+            root, str(tmp_path), source_root=str(tmp_path))
+
+    assert interleaved
+    assert not (tmp_path / "export_manifest.json.tmp").exists()
+    assert root_payload.read_bytes() == original_root_payload
+    child_payload = json.loads(next(
+        tmp_path.glob(f"*__{CHILD_UID[:8]}.composite")
+    ).read_text(encoding="utf-8"))
+    assert child_payload["nodes"][0]["resource_uid"] == ROOT_UID
+
+
+def test_composite_retry_recovers_marker_and_forces_payload_rewrite(
+        tmp_path, monkeypatch):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    initial = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+    payload_path = Path(initial["path"])
+    original_payload = payload_path.read_bytes()
+
+    group = bpy.data.objects.new("new_group", None)
+    group[PROP_UID] = GROUP_UID
+    definition.objects.link(group)
+    module = importlib.import_module("mh4blend.scene.export_composite")
+    real_write = module._write_json_atomic
+
+    def fail_payload(_path, _document):
+        raise RuntimeError("injected composite payload failure")
+
+    monkeypatch.setattr(module, "_write_json_atomic", fail_payload)
+    with pytest.raises(RuntimeError,
+                       match="injected composite payload failure"):
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
+    marker = tmp_path / "export_manifest.json.tmp"
+    assert marker.is_file()
+    assert payload_path.read_bytes() == original_payload
+
+    writes = []
+
+    def record_recovery_write(path, document):
+        writes.append((path, document["uid"]))
+        return real_write(path, document)
+
+    monkeypatch.setattr(module, "_write_json_atomic", record_recovery_write)
+    recovered = export_composite_collection(
+        definition, str(tmp_path), source_root=str(tmp_path))
+
+    assert recovered["ok"]
+    assert writes == [(str(payload_path), ROOT_UID)]
+    assert not marker.exists()
+    assert payload_path.read_bytes() != original_payload
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    assert [row["node_uid"] for row in payload["nodes"]] == [GROUP_UID]
+    manifest = json.loads(
+        (tmp_path / "export_manifest.json").read_text(encoding="utf-8"))
+    manifest_row = next(
+        row for row in manifest["resources"] if row["uid"] == ROOT_UID)
+    assert manifest_row == recovered["resource_entry"]
+
+
+def test_composite_retry_rejects_different_selected_uid(tmp_path, monkeypatch):
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    module = importlib.import_module("mh4blend.scene.export_composite")
+
+    def fail_payload(_path, _document):
+        raise RuntimeError("leave root marker")
+
+    monkeypatch.setattr(module, "_write_json_atomic", fail_payload)
+    with pytest.raises(RuntimeError, match="leave root marker"):
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
+
+    other = bpy.data.collections.new("other_cmp")
+    other[PROP_UID] = CHILD_UID
+    with pytest.raises(MHValidationError,
+                       match="MH_E_INVALID_EXPORT_MANIFEST"):
+        export_composite_collection(
+            other, str(tmp_path), source_root=str(tmp_path))
+    assert (tmp_path / "export_manifest.json.tmp").is_file()
+
+
+def test_composite_export_rejects_pending_non_composite_kind(tmp_path):
+    mesh_source = _source_name(MESH_UID, "static_mesh", "mesh_a")
+    pending = prepare_manifest_update(
+        str(tmp_path),
+        resources=[_resource(
+            MESH_UID, "static_mesh", "mesh_a", mesh_source)],
+        exporter_version="test",
+        source_root=str(tmp_path),
+    )
+    stage_manifest(str(tmp_path), pending)
+    abandon_staged_manifest(str(tmp_path))
+
+    definition = bpy.data.collections.new("root_cmp")
+    definition[PROP_UID] = ROOT_UID
+    with pytest.raises(ValueError, match="MH_E_INVALID_EXPORT_MANIFEST"):
+        export_composite_collection(
+            definition, str(tmp_path), source_root=str(tmp_path))
+    assert (tmp_path / "export_manifest.json.tmp").is_file()
 
 
 def _write_dependency_fixture(tmp_path, *, cycle=False):
@@ -290,8 +627,7 @@ def _write_dependency_fixture(tmp_path, *, cycle=False):
         _node(CHILD_NODE_UID, "composite_ref", "child_instance",
               CHILD_UID, GROUP_UID, (100.0, -200.0, 300.0),
               (0.0, 0.0, -0.707107, 0.707107), (2.0, 1.0, 0.5),
-              properties={"offset": 0.5, "nullable": None},
-              future_tag={"kept": True}),
+              properties={"offset": 0.5, "nullable": None}),
         _node(MESH_NODE_UID, "mesh", "mesh_instance", MESH_UID),
     ]
     child_nodes = []
@@ -299,14 +635,17 @@ def _write_dependency_fixture(tmp_path, *, cycle=False):
         child_nodes.append(_node(
             "80000000-0000-0000-0000-000000000008",
             "composite_ref", "back_to_root", ROOT_UID))
-    root_path = tmp_path / "root.composite"
-    child_path = tmp_path / "child.composite"
+    root_source = _source_name(ROOT_UID, "composite", "root_cmp")
+    child_source = _source_name(CHILD_UID, "composite", "child_cmp")
+    mesh_source = _source_name(MESH_UID, "static_mesh", "missing")
+    root_path = tmp_path / root_source
+    child_path = tmp_path / child_source
     _write_json(root_path, _document(ROOT_UID, "root_cmp", root_nodes))
     _write_json(child_path, _document(CHILD_UID, "child_cmp", child_nodes))
     resources = [
-        _resource(ROOT_UID, "composite", "root_cmp", "root.composite"),
-        _resource(CHILD_UID, "composite", "child_cmp", "child.composite"),
-        _resource(MESH_UID, "static_mesh", "mesh_a", "missing.mesh.fbx"),
+        _resource(ROOT_UID, "composite", "root_cmp", root_source),
+        _resource(CHILD_UID, "composite", "child_cmp", child_source),
+        _resource(MESH_UID, "static_mesh", "mesh_a", mesh_source),
     ]
     resources[0]["properties"] = {"category": "building"}
     resources[2]["material_slots"] = [
@@ -350,15 +689,11 @@ def test_dependency_import_builds_collections_instances_and_custom_props(tmp_pat
     assert instance["mh_p_offset"] == 0.5
     assert json.loads(instance["mh_properties_fallback_json"]) == \
         {"nullable": None}
-    assert json.loads(instance["mh_custom_metadata_json"])["future_tag"] \
-        == {"kept": True}
     # UE (100,-200,300) cm -> Blender (1,2,3) m. Actual matrix is authority.
     assert tuple(round(value, 6) for value in instance.matrix_local.translation) \
         == (1.0, 2.0, 3.0)
 
     source = json.loads(root_path.read_text(encoding="utf-8"))
-    for row in source["nodes"]:
-        row.pop("future_tag", None)
     round_trip = composite_disk_dict(extract_composite(root))
     assert round_trip == source
 
@@ -397,14 +732,94 @@ def test_reimport_updates_same_collection_and_node_in_place(tmp_path):
     assert stale_name not in bpy.data.objects
 
 
-def test_cycle_is_rejected_before_geometry_scene_creation(tmp_path):
+def test_cycle_back_edge_becomes_warning_placeholder(tmp_path):
     root_path = _write_dependency_fixture(tmp_path, cycle=True)
-    before_collections = len(bpy.data.collections)
+    report = import_composite_file(str(root_path), import_fbx=False)
+    cycle_warning = [warning for warning in report["warnings"]
+                     if warning["code"] == "MH_W_COMPOSITE_CYCLE"]
+    assert len(cycle_warning) == 1
+    child = _collection_by_uid(CHILD_UID)
+    back_edge = next(obj for obj in child.objects
+                     if obj.get(PROP_UID)
+                     == "80000000-0000-0000-0000-000000000008")
+    assert back_edge["mh_resource_uid"] == ROOT_UID
+    assert back_edge["mh_unresolved"] is True
+    assert back_edge.instance_type == "NONE"
+    assert back_edge.instance_collection is None
+    assert back_edge.empty_display_type == "CUBE"
+
+
+def _write_missing_payload_owner_fixture(tmp_path):
+    root_source = _source_name(ROOT_UID, "composite", "root_cmp")
+    missing_mesh_source = _source_name(
+        MESH_UID, "static_mesh", "missing_mesh")
+    missing_composite_source = _source_name(
+        MISSING_COMPOSITE_UID, "composite", "missing_composite")
+    root_path = tmp_path / root_source
+    _write_json(root_path, _document(ROOT_UID, "root_cmp", [
+        _node(MESH_NODE_UID, "mesh", "mesh_placeholder", MESH_UID),
+        _node(
+            MISSING_COMPOSITE_NODE_UID, "composite_ref",
+            "composite_placeholder", MISSING_COMPOSITE_UID),
+    ]))
+    _write_json(tmp_path / "export_manifest.json", _manifest([
+        _resource(ROOT_UID, "composite", "root_cmp", root_source),
+        _resource(
+            MISSING_COMPOSITE_UID, "composite", "missing_composite",
+            missing_composite_source),
+        _resource(
+            MESH_UID, "static_mesh", "missing_mesh", missing_mesh_source),
+    ]))
+    return root_path, tmp_path / missing_mesh_source
+
+
+def test_global_import_preserves_owned_missing_payload_placeholders(tmp_path):
+    root_path, _missing_mesh_path = _write_missing_payload_owner_fixture(
+        tmp_path)
+    report = import_composite_file(
+        str(root_path), source_root=str(tmp_path), import_fbx=False)
+    assert set(report["placeholders"]) == {
+        MESH_UID, MISSING_COMPOSITE_UID}
+
+    root = _collection_by_uid(ROOT_UID)
+    nodes = {obj.get(PROP_UID): obj for obj in root.objects}
+    expected = {
+        MESH_NODE_UID: MESH_UID,
+        MISSING_COMPOSITE_NODE_UID: MISSING_COMPOSITE_UID,
+    }
+    for node_uid, resource_uid in expected.items():
+        node = nodes[node_uid]
+        target = _collection_by_uid(resource_uid)
+        assert node[PROP_UID] == node_uid
+        assert node["mh_resource_uid"] == resource_uid
+        assert node["mh_unresolved"] is True
+        assert node.instance_type == "COLLECTION"
+        assert node.instance_collection == target
+        assert target["mh_unresolved"] is True
+
+
+def test_missing_payload_appearance_during_apply_rolls_back(tmp_path,
+                                                            monkeypatch):
+    root_path, missing_mesh_path = _write_missing_payload_owner_fixture(
+        tmp_path)
+    baseline = _blend_id_state()
+    module = importlib.import_module("mh4blend.scene.import_composite")
+    real_apply = module._apply_document
+
+    def create_payload_after_apply(collection, document, collections,
+                                   transaction):
+        result = real_apply(collection, document, collections, transaction)
+        if document["uid"] == ROOT_UID:
+            missing_mesh_path.write_bytes(b"appeared during Blender apply")
+        return result
+
+    monkeypatch.setattr(module, "_apply_document", create_payload_after_apply)
+    with pytest.raises(CompositeImportError,
+                       match="MH_E_INVALID_EXPORT_MANIFEST"):
+        import_composite_file(
+            str(root_path), source_root=str(tmp_path), import_fbx=False)
+    assert _blend_id_state() == baseline
     assert bpy.data.scenes.get("GEOMETRY") is None
-    with pytest.raises(CompositeImportError, match="MH_E_COMPOSITE_CYCLE"):
-        import_composite_file(str(root_path), import_fbx=False)
-    assert bpy.data.scenes.get("GEOMETRY") is None
-    assert len(bpy.data.collections) == before_collections
 
 
 def test_manifest_staged_after_payload_reads_blocks_before_mutation(
@@ -430,9 +845,33 @@ def test_manifest_staged_after_payload_reads_blocks_before_mutation(
     assert bpy.data.scenes.get("GEOMETRY") is None
 
 
+def test_sibling_composite_changed_after_plan_blocks_before_mutation(
+        tmp_path, monkeypatch):
+    root_path = _write_dependency_fixture(tmp_path)
+    child_path = tmp_path / _source_name(
+        CHILD_UID, "composite", "child_cmp")
+    baseline = _blend_id_state()
+    module = importlib.import_module("mh4blend.scene.import_composite")
+    real_preflight = module._preflight_destination
+
+    def mutate_child_after_plan(plan):
+        result = real_preflight(plan)
+        child_path.write_bytes(child_path.read_bytes() + b" ")
+        return result
+
+    monkeypatch.setattr(
+        module, "_preflight_destination", mutate_child_after_plan)
+    with pytest.raises(CompositeImportError,
+                       match="MH_E_INVALID_EXPORT_MANIFEST"):
+        import_composite_file(str(root_path), import_fbx=False)
+    assert _blend_id_state() == baseline
+    assert bpy.data.scenes.get("GEOMETRY") is None
+
+
 def test_manifest_staged_during_fbx_import_rolls_back_all_blender_data(
         tmp_path, monkeypatch):
-    fbx_path = tmp_path / "raced.mesh.fbx"
+    fbx_path = tmp_path / _source_name(
+        MESH_UID, "static_mesh", "raced")
     _export_test_fbx(fbx_path)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     mesh_row = _resource(
@@ -458,13 +897,100 @@ def test_manifest_staged_during_fbx_import_rolls_back_all_blender_data(
     assert bpy.data.scenes.get("GEOMETRY") is None
 
 
+def test_fbx_changed_during_import_rolls_back_all_blender_data(
+        tmp_path, monkeypatch):
+    fbx_path = tmp_path / _source_name(
+        MESH_UID, "static_mesh", "raced")
+    _export_test_fbx(fbx_path)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mesh_row = _resource(
+        MESH_UID, "static_mesh", "mesh_a", fbx_path.name)
+    root_path = _write_mesh_import_fixture(tmp_path, [mesh_row])
+    baseline = _blend_id_state()
+    module = importlib.import_module("mh4blend.scene.import_composite")
+    real_import = module._import_fbx_into_collection
+
+    def mutate_fbx_after_read(scene, collection, source, resource_uid):
+        result = real_import(scene, collection, source, resource_uid)
+        with open(source, "ab") as stream:
+            stream.write(b"changed")
+        return result
+
+    monkeypatch.setattr(
+        module, "_import_fbx_into_collection", mutate_fbx_after_read)
+    with pytest.raises(CompositeImportError,
+                       match="MH_E_INVALID_EXPORT_MANIFEST"):
+        import_composite_file(str(root_path))
+    assert _blend_id_state() == baseline
+    assert bpy.data.scenes.get("GEOMETRY") is None
+
+
 def test_reserved_random_kind_is_diagnosed_without_scene_mutation(tmp_path):
-    path = tmp_path / "random.composite"
+    path = tmp_path / _source_name(ROOT_UID, "composite", "random")
     _write_json(path, _document(ROOT_UID, "root_cmp", [
         _node(GROUP_UID, "variant_set", "random_variants")]))
     with pytest.raises(CompositeImportError,
                        match="MH_E_UNSUPPORTED_NODE_KIND"):
         import_composite_file(str(path), import_fbx=False)
+    assert bpy.data.scenes.get("GEOMETRY") is None
+
+
+def test_unknown_composite_node_field_is_rejected_before_mutation(tmp_path):
+    path = tmp_path / _source_name(ROOT_UID, "composite", "unknown")
+    node = _node(GROUP_UID, "group", "group")
+    node["future_tag"] = {"not": "a v1 extension bag"}
+    _write_json(path, _document(ROOT_UID, "root_cmp", [node]))
+    with pytest.raises(CompositeImportError, match="MH_E_INVALID_COMPOSITE"):
+        import_composite_file(str(path), import_fbx=False)
+    assert bpy.data.scenes.get("GEOMETRY") is None
+
+
+def _write_material_integrity_fixture(tmp_path):
+    mesh_row = _resource(
+        MESH_UID, "static_mesh", "mesh_a",
+        _source_name(MESH_UID, "static_mesh", "missing"))
+    mesh_row["material_slots"] = [
+        {"slot_name": "slot_mat", "material_uid": MATERIAL_UID}]
+    material = {
+        "uid": MATERIAL_UID,
+        "name": "slot_mat",
+        "shader_class": "rendinst_simple",
+        "params": {"sides": 0},
+        "textures": {},
+    }
+    root_path = _write_mesh_import_fixture(tmp_path, [mesh_row], [material])
+    material_path = tmp_path / _source_name(
+        MATERIAL_UID, "material", "slot_mat")
+    return root_path, material_path
+
+
+@pytest.mark.parametrize(("field", "value", "code"), [
+    ("uid", MISSING_MATERIAL_UID, "MH_E_RESOURCE_UID_MISMATCH"),
+    ("name", "renamed_elsewhere", "MH_E_NAME_MISMATCH"),
+])
+def test_material_payload_identity_must_match_manifest_before_mutation(
+        tmp_path, field, value, code):
+    root_path, material_path = _write_material_integrity_fixture(tmp_path)
+    document = json.loads(material_path.read_text(encoding="utf-8"))
+    document[field] = value
+    _write_json(material_path, document)
+    baseline = _blend_id_state()
+    with pytest.raises(CompositeImportError, match=code):
+        import_composite_file(str(root_path), import_fbx=False)
+    assert _blend_id_state() == baseline
+    assert bpy.data.scenes.get("GEOMETRY") is None
+
+
+def test_material_payload_hash_must_match_manifest_before_mutation(tmp_path):
+    root_path, material_path = _write_material_integrity_fixture(tmp_path)
+    document = json.loads(material_path.read_text(encoding="utf-8"))
+    document["params"]["sides"] = 2
+    _write_json(material_path, document)
+    baseline = _blend_id_state()
+    with pytest.raises(CompositeImportError,
+                       match="MH_E_INVALID_EXPORT_MANIFEST"):
+        import_composite_file(str(root_path), import_fbx=False)
+    assert _blend_id_state() == baseline
     assert bpy.data.scenes.get("GEOMETRY") is None
 
 
@@ -479,13 +1005,14 @@ def test_available_fbx_is_imported_into_mesh_collection(tmp_path):
         if index % 2 == 0:
             polygon.material_index = 1
     cube.select_set(True)
-    fbx_path = tmp_path / "mesh.mesh.fbx"
+    fbx_path = tmp_path / _source_name(MESH_UID, "static_mesh", "mesh")
     bpy.ops.export_scene.fbx(filepath=str(fbx_path), use_selection=True)
     bpy.data.objects.remove(cube, do_unlink=True)
     bpy.data.materials.remove(source_material)
     bpy.data.materials.remove(unmapped_material)
 
-    root_path = tmp_path / "root.composite"
+    root_source = _source_name(ROOT_UID, "composite", "root_cmp")
+    root_path = tmp_path / root_source
     _write_json(root_path, _document(ROOT_UID, "root_cmp", [
         _node(MESH_NODE_UID, "mesh", "mesh_instance", MESH_UID)]))
     mesh_resource = _resource(
@@ -504,11 +1031,13 @@ def test_available_fbx_is_imported_into_mesh_collection(tmp_path):
         "textures": {"tex0": "A:\\textures\\metal_d.tif"},
         "content_hash": "xxh3:material-test",
     }
+    material_resource, material_document = _write_material_fixture(
+        tmp_path, material_row)
     manifest = _manifest([
-        _resource(ROOT_UID, "composite", "root_cmp", "root.composite"),
+        _resource(ROOT_UID, "composite", "root_cmp", root_source),
         mesh_resource,
+        material_resource,
     ])
-    manifest["materials"] = [material_row]
     _write_json(tmp_path / "export_manifest.json", manifest)
 
     report = import_composite_file(str(root_path))
@@ -522,7 +1051,7 @@ def test_available_fbx_is_imported_into_mesh_collection(tmp_path):
         for slot in obj.material_slots if slot.name == "slot_mat")
     assert imported_material[PROP_UID] == MATERIAL_UID
     assert json.loads(imported_material["mh_material_payload_json"]) == \
-        material_row
+        material_document
     assert not hasattr(imported_material, "dagormat")
     assert report["rehydrated_materials"] == [MATERIAL_UID]
     warning_codes = {warning["code"] for warning in report["warnings"]}
@@ -531,12 +1060,14 @@ def test_available_fbx_is_imported_into_mesh_collection(tmp_path):
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
         "MH_W_MATERIAL_SLOT_UNMAPPED",
+        "MH_W_TEXTURE_OUTSIDE_ROOT",
     }
 
 
 def test_unrepresentable_dagormat_payload_roundtrips_via_json_fallback(
         tmp_path, dagormat_rna):
-    fbx_path = tmp_path / "material.mesh.fbx"
+    fbx_path = tmp_path / _source_name(
+        MESH_UID, "static_mesh", "material")
     _export_test_fbx(fbx_path, "slot_mat")
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -580,18 +1111,20 @@ def test_unrepresentable_dagormat_payload_roundtrips_via_json_fallback(
     reexport = export_fbx_collection(
         mesh_collection, tmp_path / "reexport", dry_run=True)
     assert reexport["ok"] is True
-    assert len(reexport["material_entries"]) == 1
-    entry = reexport["material_entries"][0]
-    assert entry["uid"] == MATERIAL_UID
-    assert entry["shader_class"] == material_row["shader_class"]
-    assert entry["params"] == params
-    assert entry["textures"] == material_row["textures"]
+    assert len(reexport["materials"]) == 1
+    resource = reexport["materials"][0]
+    assert resource.uid == MATERIAL_UID
+    assert resource.shader_class == material_row["shader_class"]
+    assert resource.params == params
+    assert resource.textures == {"tex0": "A:/textures/metal_d.tif"}
 
 
 def test_second_fbx_failure_rolls_back_every_created_blender_id(
         tmp_path, monkeypatch):
-    first_fbx = tmp_path / "first.mesh.fbx"
-    second_fbx = tmp_path / "second.mesh.fbx"
+    first_fbx = tmp_path / _source_name(
+        MESH_UID, "static_mesh", "first")
+    second_fbx = tmp_path / _source_name(
+        SECOND_MESH_UID, "static_mesh", "second")
     _export_test_fbx(first_fbx)
     _export_test_fbx(second_fbx)
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -623,7 +1156,8 @@ def test_second_fbx_failure_rolls_back_every_created_blender_id(
 
 def test_material_apply_failure_restores_old_payload_and_mesh(
         tmp_path, monkeypatch):
-    fbx_path = tmp_path / "material.mesh.fbx"
+    fbx_path = tmp_path / _source_name(
+        MESH_UID, "static_mesh", "material")
     _export_test_fbx(fbx_path, "slot_mat")
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -719,7 +1253,8 @@ def test_node_apply_failure_restores_existing_hierarchy_and_stale_nodes(
 
 
 def test_same_uid_collection_and_material_rename_in_place(tmp_path):
-    fbx_path = tmp_path / "renamed.mesh.fbx"
+    fbx_path = tmp_path / _source_name(
+        MESH_UID, "static_mesh", "renamed")
     _export_test_fbx(fbx_path, "slot_mat")
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -769,7 +1304,8 @@ def test_same_uid_collection_and_material_rename_in_place(tmp_path):
 
 def _write_material_ownership_fixture(tmp_path):
     mesh_row = _resource(
-        MESH_UID, "static_mesh", "mesh_a", "missing.mesh.fbx")
+        MESH_UID, "static_mesh", "mesh_a",
+        _source_name(MESH_UID, "static_mesh", "missing"))
     mesh_row["material_slots"] = [
         {"slot_name": "slot_mat", "material_uid": MATERIAL_UID}]
     material_row = {

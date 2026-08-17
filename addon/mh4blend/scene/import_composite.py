@@ -20,7 +20,16 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from ..core.canonical import ERROR_CODES, validate_resource_name
-from ..core.materials import material_disk_payload
+from ..core.materials import material_content_hash, material_disk_payload
+from ..core.material_source import (
+    MaterialSourceError,
+    validate_material_document,
+)
+from ..core.source_resolver import (
+    assert_source_snapshot_stable,
+    resolve_resource_for_import,
+    scan_source_root,
+)
 from ..core.uid import PROP_UID
 from ..core.validate import MHValidationError
 from .composite_extract import (
@@ -126,6 +135,7 @@ class _BlenderImportTransaction:
                 "instance_type": obj.instance_type,
                 "empty_display_type": getattr(
                     obj, "empty_display_type", "PLAIN_AXES"),
+                "color": tuple(obj.color),
                 "collections": list(obj.users_collection),
             }
 
@@ -185,6 +195,7 @@ class _BlenderImportTransaction:
             obj.instance_type = state["instance_type"]
             if obj.type == "EMPTY":
                 obj.empty_display_type = state["empty_display_type"]
+            obj.color = state["color"]
             obj.name = state["name"]
             _restore_id_properties(obj, state["properties"])
 
@@ -290,12 +301,17 @@ class _BlenderImportTransaction:
                 break
 
 
-def _read_json(path):
+def _read_json_bytes(path):
     try:
-        with open(path, encoding="utf-8") as stream:
-            return json.load(stream)
+        with open(path, "rb") as stream:
+            payload = stream.read()
+        return json.loads(payload.decode("utf-8")), payload
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         _fail("MH_E_INVALID_COMPOSITE", f"cannot read '{path}': {exc}")
+
+
+def _read_json(path):
+    return _read_json_bytes(path)[0]
 
 
 def _number(value, subject):
@@ -344,6 +360,13 @@ def _validate_document(document, path):
             or document.get("schema_version") != 1:
         _fail("MH_E_UNKNOWN_SCHEMA_VERSION",
               f"unsupported composite schema in '{path}'")
+    expected_fields = {"schema", "schema_version", "uid", "name", "nodes"}
+    if set(document) != expected_fields:
+        _fail(
+            "MH_E_INVALID_COMPOSITE",
+            f"'{path}' has invalid fields; "
+            f"missing={sorted(expected_fields - set(document))}, "
+            f"unknown={sorted(set(document) - expected_fields)}")
     uid = document.get("uid")
     name = document.get("name")
     if not isinstance(uid, str) or not uid:
@@ -376,6 +399,14 @@ def _validate_document(document, path):
         if kind not in SUPPORTED_NODE_KINDS:
             _fail("MH_E_UNSUPPORTED_NODE_KIND",
                   f"unknown node kind '{kind}' on {node_uid}")
+        expected_fields = _NODE_FIELDS if kind != "group" \
+            else _NODE_FIELDS - {"resource_uid"}
+        if set(raw) != expected_fields:
+            _fail(
+                "MH_E_INVALID_COMPOSITE",
+                f"'{path}' node has invalid fields; "
+                f"missing={sorted(expected_fields - set(raw))}, "
+                f"unknown={sorted(set(raw) - expected_fields)}")
         display_name = raw.get("display_name")
         if not isinstance(display_name, str) or not display_name:
             _fail("MH_E_INVALID_COMPOSITE",
@@ -406,12 +437,7 @@ def _validate_document(document, path):
             "local_transform": _validate_transform(
                 raw.get("local_transform"), node_uid),
             "properties": deepcopy(properties),
-            # Preserve forward-compatible, non-semantic source metadata for
-            # inspection. It is not interpreted as random/variant behavior.
-            "custom_metadata": {
-                key: deepcopy(value) for key, value in raw.items()
-                if key not in _NODE_FIELDS
-            },
+            "custom_metadata": {},
         }
         nodes.append(normalized)
         by_uid[node_uid] = normalized
@@ -478,7 +504,9 @@ def _load_manifest(root_directory, manifest):
         _fail("MH_E_INVALID_EXPORT_MANIFEST", str(exc))
 
 
-def load_composite_plan(filepath, manifest=None, resource_resolver=None):
+def load_composite_plan(
+        filepath, manifest=None, resource_resolver=None, *, source_root=None,
+        texture_policy="transitional"):
     """Read and preflight a root composite plus every reachable local doc.
 
     A resolver may return a manifest-style row for a UID not present in the
@@ -491,35 +519,29 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
      check_manifest_stability) = _load_manifest(root_directory, manifest)
     index = manifest_resource_index(manifest_doc) if manifest_doc else {}
     materials = {}
-    for row in (manifest_doc or {}).get("materials", []):
-        uid = row["uid"]  # source_manifest already validates identity/duplicates
-        if row.get("kind") != "material":
-            _fail("MH_E_RESOURCE_KIND_MISMATCH",
-                  f"manifest material {uid} has kind {row.get('kind')!r}")
-        if not isinstance(row.get("name"), str) or not row["name"]:
-            _fail("MH_E_INVALID_EXPORT_MANIFEST",
-                  f"manifest material {uid} has no name")
-        if not isinstance(row.get("shader_class"), str):
-            _fail("MH_E_INVALID_EXPORT_MANIFEST",
-                  f"manifest material {uid} has invalid shader_class")
-        if not isinstance(row.get("textures", {}), dict):
-            _fail("MH_E_INVALID_EXPORT_MANIFEST",
-                  f"manifest material {uid} textures must be an object")
-        params = row.get("params", row.get("optional", {}))
-        if not isinstance(params, dict):
-            _fail("MH_E_INVALID_EXPORT_MANIFEST",
-                  f"manifest material {uid} params must be an object")
-        if "optional" in row and not isinstance(row["optional"], dict):
-            _fail("MH_E_INVALID_EXPORT_MANIFEST",
-                  f"manifest material {uid} optional must be an object")
-        materials[uid] = deepcopy(row)
+    material_warnings = []
+    payload_tokens = {}
+    material_root = os.path.abspath(source_root or manifest_directory)
 
     def resolve(uid, expected_kind):
-        row = index.get(uid)
-        if row is None and resource_resolver is not None:
-            row = resource_resolver(uid, expected_kind)
+        local_row = index.get(uid)
+        row = local_row
+        payload_path = None
+        if resource_resolver is not None:
+            resolved = resource_resolver(uid, expected_kind)
+            if resolved is not None and hasattr(resolved, "manifest_row"):
+                resolved_row = resolved.manifest_row
+                if local_row is not None and resolved_row != local_row:
+                    _fail(
+                        "MH_E_INVALID_EXPORT_MANIFEST",
+                        f"global owner row for {uid} differs from the "
+                        "selected manifest row")
+                row = resolved_row
+                payload_path = resolved.payload_path
+            elif resolved is not None:
+                row = resolved
         if row is None:
-            return None
+            return None, None
         if not isinstance(row, dict):
             _fail("MH_E_INVALID_EXPORT_MANIFEST",
                   f"resolver row for {uid} is not an object")
@@ -528,9 +550,14 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
             _fail("MH_E_RESOURCE_KIND_MISMATCH",
                   f"resource {uid} is {actual_kind!r}, expected "
                   f"{expected_kind!r}")
-        return deepcopy(row)
+        if payload_path is None:
+            payload_path = _safe_source(
+                manifest_directory, row.get("source"), uid)
+        return deepcopy(row), payload_path
 
-    root = _validate_document(_read_json(root_path), root_path)
+    root_payload, root_bytes = _read_json_bytes(root_path)
+    root = _validate_document(root_payload, root_path)
+    payload_tokens[root_path] = root_bytes
     documents = {root["uid"]: root}
     document_paths = {root["uid"]: root_path}
     resources = {}
@@ -548,11 +575,8 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
             if prior is not None and prior["kind"] != expected:
                 _fail("MH_E_RESOURCE_KIND_MISMATCH",
                       f"resource {uid} is referenced as both kinds")
-            row = resolve(uid, expected)
-            source = None
+            row, source = resolve(uid, expected)
             if row is not None:
-                source = _safe_source(
-                    manifest_directory, row.get("source"), uid)
                 properties = row.get("properties", {})
                 if not isinstance(properties, dict):
                     _fail("MH_E_INVALID_EXPORT_MANIFEST",
@@ -604,7 +628,9 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
                 if source is None or not os.path.isfile(source):
                     unresolved.add(uid)
                     continue
-                loaded = _validate_document(_read_json(source), source)
+                loaded_payload, loaded_bytes = _read_json_bytes(source)
+                payload_tokens[source] = loaded_bytes
+                loaded = _validate_document(loaded_payload, source)
                 if loaded["uid"] != uid:
                     _fail("MH_E_RESOURCE_UID_MISMATCH",
                           f"'{source}' uid {loaded['uid']} != manifest uid {uid}")
@@ -623,6 +649,14 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
                     queue.append(loaded)
             elif source is None or not os.path.isfile(source):
                 unresolved.add(uid)
+            else:
+                try:
+                    with open(source, "rb") as stream:
+                        payload_tokens[source] = stream.read()
+                except OSError as exc:
+                    _fail(
+                        "MH_E_INVALID_RESOURCE_SOURCE",
+                        f"cannot read static mesh {uid} at '{source}': {exc}")
 
     # The selected root path is authoritative, while its optional manifest row
     # still contributes resource-level properties shown on the collection.
@@ -630,7 +664,7 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
             and resources[root["uid"]]["kind"] != "composite":
         _fail("MH_E_RESOURCE_KIND_MISMATCH",
               f"root composite {root['uid']} is also referenced as a mesh")
-    root_row = resolve(root["uid"], "composite")
+    root_row, root_row_source = resolve(root["uid"], "composite")
     root_properties = {}
     if root_row is not None:
         root_properties = root_row.get("properties", {})
@@ -651,28 +685,88 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
                   f"selected composite name {root['name']!r} != manifest "
                   f"name {root_name!r}")
         # Validate containment even though the explicitly selected file wins.
-        _safe_source(manifest_directory, root_row.get("source"), root["uid"])
+        if root_row_source is None:
+            _fail("MH_E_INVALID_RESOURCE_SOURCE",
+                  f"root composite {root['uid']} has no source")
     resources[root["uid"]] = {
         "uid": root["uid"], "kind": "composite", "name": root["name"],
         "source": root_path, "properties": deepcopy(root_properties),
     }
 
+    # Resolve referenced material payloads independently from the mesh FBX.
+    # Missing material rows/payloads remain warnings; malformed payloads and
+    # receipt mismatches fail before Blender data is touched.
+    referenced_material_uids = sorted({
+        slot["material_uid"]
+        for resource in resources.values()
+        if resource["kind"] == "static_mesh"
+        for slot in resource.get("material_slots", [])
+    })
+    for material_uid in referenced_material_uids:
+        row, material_path = resolve(material_uid, "material")
+        if row is None or material_path is None or not os.path.isfile(material_path):
+            continue
+        try:
+            with open(material_path, "rb") as stream:
+                payload = stream.read()
+            document = json.loads(payload.decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            _fail("MH_E_INVALID_MATERIAL_VALUE",
+                  f"cannot read material {material_uid} at "
+                  f"'{material_path}': {exc}")
+        try:
+            normalized, diagnostics = validate_material_document(
+                document, source_root=material_root,
+                texture_policy=texture_policy)
+        except MaterialSourceError as exc:
+            _fail(exc.code, f"invalid material {material_uid}: {exc}")
+        if normalized["uid"] != material_uid:
+            _fail(
+                "MH_E_RESOURCE_UID_MISMATCH",
+                f"material payload '{material_path}' uid "
+                f"{normalized['uid']} does not match manifest row "
+                f"{material_uid}")
+        if normalized["name"] != row["name"]:
+            _fail(
+                "MH_E_NAME_MISMATCH",
+                f"material payload '{material_path}' name "
+                f"{normalized['name']!r} does not match manifest row "
+                f"{row['name']!r}")
+        actual_hash = material_content_hash(
+            normalized["shader_class"], normalized["params"],
+            normalized["textures"])
+        if actual_hash != row["content_hash"]:
+            _fail(
+                "MH_E_INVALID_EXPORT_MANIFEST",
+                f"material {material_uid} content_hash {row['content_hash']} "
+                f"does not match payload {actual_hash}")
+        materials[material_uid] = normalized
+        payload_tokens[material_path] = payload
+        material_warnings.extend(diagnostic.disk_dict()
+                                 for diagnostic in diagnostics)
+
     graph = {uid: [] for uid in documents}
     for uid, document in documents.items():
         graph[uid] = [
-            node["resource_uid"] for node in document["nodes"]
+            (node["resource_uid"], node) for node in document["nodes"]
             if node["kind"] == "composite_ref"
             and node["resource_uid"] in documents
         ]
     colors = {uid: 0 for uid in graph}
+    cycle_warnings = []
 
     def visit(uid, stack):
         colors[uid] = 1
         stack.append(uid)
-        for target_uid in graph[uid]:
+        for target_uid, node in graph[uid]:
             if colors[target_uid] == 1:
                 cycle = stack[stack.index(target_uid):] + [target_uid]
-                _fail("MH_E_COMPOSITE_CYCLE", " -> ".join(cycle))
+                node["cycle_placeholder"] = True
+                cycle_warnings.append(_warning(
+                    "MH_W_COMPOSITE_CYCLE", cycle,
+                    "composite back-edge imported as an unresolved "
+                    f"placeholder: {' -> '.join(cycle)}"))
+                continue
             if colors[target_uid] == 0:
                 visit(target_uid, stack)
         stack.pop()
@@ -682,6 +776,12 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
         if colors[uid] == 0:
             visit(uid, [])
 
+    for document in documents.values():
+        for node in document["nodes"]:
+            node["unresolved_placeholder"] = (
+                node["resource_uid"] is not None
+                and node["resource_uid"] in unresolved)
+
     return {
         "root_uid": root["uid"],
         "documents": documents,
@@ -689,10 +789,25 @@ def load_composite_plan(filepath, manifest=None, resource_resolver=None):
         "unresolved": sorted(unresolved),
         "manifest": manifest_doc,
         "materials": materials,
+        "warnings": material_warnings + cycle_warnings,
+        "payload_tokens": payload_tokens,
         "manifest_directory": manifest_directory,
         "manifest_token": manifest_token,
         "check_manifest_stability": check_manifest_stability,
     }
+
+
+def _assert_payloads_stable(payload_tokens):
+    for path, expected in payload_tokens.items():
+        try:
+            with open(path, "rb") as stream:
+                actual = stream.read()
+        except OSError as exc:
+            _fail("MH_E_INVALID_EXPORT_MANIFEST",
+                  f"payload disappeared during import: {path}: {exc}")
+        if actual != expected:
+            _fail("MH_E_INVALID_EXPORT_MANIFEST",
+                  f"payload changed during import: {path}")
 
 
 def _find_collection_by_uid(uid):
@@ -1065,7 +1180,12 @@ def _apply_document(collection, document, collections, transaction):
         else:
             transaction.snapshot_object(obj)
         obj.name = node["display_name"]
-        obj.empty_display_type = "PLAIN_AXES"
+        is_placeholder = bool(
+            node.get("cycle_placeholder")
+            or node.get("unresolved_placeholder"))
+        obj.empty_display_type = "CUBE" if is_placeholder else "PLAIN_AXES"
+        obj.color = (1.0, 0.0, 0.0, 1.0) if is_placeholder \
+            else (1.0, 1.0, 1.0, 1.0)
         obj[PROP_UID] = node_uid
         obj[PROP_KIND] = node["kind"]
         obj[PROP_DISPLAY_NAME] = node["display_name"]
@@ -1086,8 +1206,13 @@ def _apply_document(collection, document, collections, transaction):
             obj.instance_type = "NONE"
         else:
             obj[PROP_RESOURCE_UID] = node["resource_uid"]
-            obj.instance_type = "COLLECTION"
-            obj.instance_collection = collections[node["resource_uid"]]
+            if node.get("cycle_placeholder"):
+                obj.instance_collection = None
+                obj.instance_type = "NONE"
+            else:
+                obj.instance_type = "COLLECTION"
+                obj.instance_collection = collections[node["resource_uid"]]
+        obj["mh_unresolved"] = is_placeholder
         obj["mh_imported_composite_node"] = True
         _set_properties(obj, node["properties"])
         metadata = node["custom_metadata"]
@@ -1112,22 +1237,34 @@ def _apply_document(collection, document, collections, transaction):
 
 
 def import_composite(filepath, manifest=None, geometry_scene=None,
-                     resource_resolver=None, import_fbx=True):
+                     resource_resolver=None, import_fbx=True,
+                     source_root=None, texture_policy="transitional",
+                     snapshot_guard=None):
     """Import a dependency graph into collection definitions in GEOMETRY.
 
     Existing collections with the same composite UID are updated in place.
-    Invalid documents, dependency cycles, and destination UID conflicts are
-    rejected during preflight, before any scene/datablock mutation.
+    Invalid documents and destination UID conflicts are rejected during
+    preflight, before any scene/datablock mutation. Composite back-edges are
+    represented by unresolved warning placeholders so the remaining graph can
+    still be edited in Blender.
     """
-    plan = load_composite_plan(filepath, manifest, resource_resolver)
+    plan = load_composite_plan(
+        filepath, manifest, resource_resolver, source_root=source_root,
+        texture_policy=texture_policy)
     kinds, names, existing, existing_materials = _preflight_destination(plan)
     transaction = _BlenderImportTransaction()
+    if snapshot_guard is not None:
+        try:
+            snapshot_guard()
+        except ManifestError as exc:
+            _fail("MH_E_INVALID_EXPORT_MANIFEST", str(exc))
     if plan["check_manifest_stability"]:
         try:
             assert_manifest_stable(
                 plan["manifest_directory"], plan["manifest_token"])
         except ManifestError as exc:
             _fail("MH_E_INVALID_EXPORT_MANIFEST", str(exc))
+    _assert_payloads_stable(plan["payload_tokens"])
     retired = []
     try:
         scene = geometry_scene or bpy.data.scenes.get("GEOMETRY")
@@ -1156,7 +1293,7 @@ def import_composite(filepath, manifest=None, geometry_scene=None,
             collections[uid] = collection
 
         imported_fbx = []
-        warnings = []
+        warnings = list(plan["warnings"])
         for uid, resource in sorted(plan["resources"].items()):
             if resource["kind"] != "static_mesh":
                 continue
@@ -1229,6 +1366,12 @@ def import_composite(filepath, manifest=None, geometry_scene=None,
                     plan["manifest_directory"], plan["manifest_token"])
             except ManifestError as exc:
                 _fail("MH_E_INVALID_EXPORT_MANIFEST", str(exc))
+        if snapshot_guard is not None:
+            try:
+                snapshot_guard()
+            except ManifestError as exc:
+                _fail("MH_E_INVALID_EXPORT_MANIFEST", str(exc))
+        _assert_payloads_stable(plan["payload_tokens"])
         for collection, obj in retired:
             transaction.retire(collection, obj)
     except Exception:
@@ -1240,8 +1383,22 @@ def import_composite(filepath, manifest=None, geometry_scene=None,
     return report
 
 
-def import_composite_file(filepath, manifest_path=None, **kwargs):
-    """UI-facing alias using a path to an optional export manifest."""
+def import_composite_file(filepath, manifest_path=None, *, registry_path=None,
+                          **kwargs):
+    """Import with automatic global UID resolution when Source Root is set."""
+    source_root = kwargs.get("source_root")
+    if source_root and kwargs.get("resource_resolver") is None:
+        texture_policy = kwargs.get("texture_policy", "transitional")
+        snapshot = scan_source_root(
+            os.path.abspath(bpy.path.abspath(os.fspath(source_root))),
+            registry_path=registry_path,
+            texture_policy=texture_policy,
+        )
+        kwargs["resource_resolver"] = lambda uid, expected_kind: (
+            resolve_resource_for_import(
+                snapshot, uid, expected_kind=expected_kind))
+        kwargs["snapshot_guard"] = lambda: assert_source_snapshot_stable(
+            snapshot)
     report = import_composite(filepath, manifest=manifest_path, **kwargs)
     report["imported_meshes"] = report["mesh_uids"]
     report["imported_composites"] = report["composite_uids"]

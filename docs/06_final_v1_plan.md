@@ -1,7 +1,9 @@
 # 06 — Final Source Schema v1: execution plan
 
-Статус: актуальный план после pre-freeze amendments. Он заменяет Blender-
-последовательность из `02_mvp_plan.md`. Нельзя начинать следующий gate до
+Статус: актуальный план для замороженной Source Schema v1 с совместимым
+post-freeze operational/UX amendment D38 `[fbx-export-materials-toggle]`.
+Amendment не меняет JSON/canonical bytes и не переоткрывает G0. План заменяет
+Blender-последовательность из `02_mvp_plan.md`. Нельзя начинать следующий gate до
 приёмки предыдущего. Крупные срезы проверяет внешний аудитор; field acceptance
 в Blender выполняет owner.
 
@@ -9,9 +11,9 @@
 
 Scope: только contracts/docs, без Blender implementation.
 
-Статус до внешней приёмки: **FREEZE CANDIDATE**. Статус FINAL относится к тому
-же exact commit SHA после положительного review; новый «исправляющий» commit уже
-считается новым кандидатом.
+Статус: **FINAL v1 FROZEN**. После freeze разрешены wording и operational/UX
+уточнения без изменения on-disk bytes; любое byte-significant изменение создаёт
+новую schema version.
 
 Deliverables:
 
@@ -82,7 +84,8 @@ Tests/gate:
 ### G2.1 Material writer
 
 - отдельный `.material` payload и material resource-row;
-- первый export использует выбранный Folder;
+- первый export использует Folder явного Material Export либо каталог FBX при
+  включённом `Export Materials`;
 - повторный export находит unique owner и обновляет существующий source in
   place, независимо от текущего display-name/Folder;
 - rename payload не переименовывает файл;
@@ -92,9 +95,15 @@ Tests/gate:
 
 - один Collection → один FBX;
 - mesh row содержит slot-name → MaterialUID;
-- missing material не блокирует geometry export: structured warning + список
-  для **Export materials…**;
-- material payload не экспортируется автоматически.
+- Boolean `Export Materials`, default ON;
+- ON дедуплицирует материалы выбранной Collection hierarchy: unique owner
+  обновляется in place, UID без owner создаётся рядом с выбранным FBX output;
+- OFF записывает только FBX/mesh-row и не меняет material payload/rows;
+- missing material в OFF/failed-material ветке не блокирует geometry export:
+  structured warning + список для **Export materials…**;
+- runtime order: geometry commit → material upserts; доказанный pending
+  MaterialUID является исключением и recovery'ится первым по fail-closed §9.1;
+- texture files не копируются ни в одной ветке.
 
 ### G2.3 Composite writer
 
@@ -111,7 +120,9 @@ Tests/gate:
 - staged failure оставляет fail-closed marker и восстанавливается только
   разрешённым writer;
 - material rename остаётся update одного существующего файла;
-- отсутствующий shared material даёт warning, не случайное auto-ownership;
+- ON обновляет shared material у существующего owner, а новый material впервые
+  размещает рядом с FBX; OFF даёт warning без material writes;
+- повторяющиеся MaterialUID экспортируются один раз;
 - Blender integration suite green, затем внешний audit receipt.
 
 ## G3 — Recursive importer и UI
@@ -131,11 +142,13 @@ Tests/gate:
 
 ### G3.2 UI
 
-- `MH FBX`: Collection, Folder, Export FBX;
-- `MH Composite`: Import path / Export Collection+Folder, Import/Export;
-- `MH Material`: Material, first-export Folder, Export Material;
+- одна N-panel вкладка `MH`;
+- секция `FBX Export`: Collection, Folder, `Export Materials` default ON,
+  Export FBX;
+- секция `Composites`: Import path / Export Collection+Folder, Import/Export;
+- секция `Materials`: Material, first-export Folder, Export Material;
 - `source_root`, optional registry path и `texture_policy` в project settings;
-- быстрый переход **Export materials…** из FBX warning report;
+- быстрый переход **Export materials…** из FBX OFF/failed warning report;
 - нет Bundle Export, Texture Root, `Recursive` или `With dags/FBX` toggles;
 - structured log отображает UID, owning manifest и resolver reason.
 
@@ -164,6 +177,9 @@ Tests/gate:
 - два mesh resources из разных owning manifests ссылаются на один MaterialUID;
 - материал импортируется один раз;
 - его UPDATE_PROPERTIES не обновляет FBX resources.
+- FBX/ON обновляет существующий owner in place и не создаёт копию;
+- новый UID при ON создаётся рядом с FBX, OFF оставляет material bytes/rows
+  неизменными; texture files не копируются.
 
 Final receipts:
 
@@ -172,7 +188,7 @@ Final receipts:
 3. Внешний audit полного среза.
 4. Owner field acceptance: реальный проектный `source_root`, dag4blend/dagormat,
    cross-directory recursion, missing→resolve, shared material и transitional
-   external texture.
+   external texture, обе ветки `Export Materials`.
 
 Только после owner acceptance Blender v1 slice считается завершённым. UE watcher,
 asset import и placement compilation продолжаются по актуальным post-Blender
@@ -180,7 +196,8 @@ asset import и placement compilation продолжаются по актуал
 
 ## Не входит в этот execution slice
 
-- автоматический dependency-closure export;
+- автоматический dependency-closure export за пределами явно ограниченного
+  material-set выбранной FBX Collection hierarchy;
 - `Structure only` import;
 - ручной `Rename file to match`;
 - disk cache manifest index;

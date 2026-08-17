@@ -50,7 +50,7 @@ props), обход Empty-графа из `cmp_export::write_node`, принци�
 > номер в этом журнале. При переносе директивы в Decision Log репозиторий назначает
 > следующий свободный номер, не меняя slug и смысл решения.
 
-> **Актуализация UX/источников:** D32–D37 ниже заменяют D2, D15, D17,
+> **Актуализация UX/источников:** D32–D38 ниже заменяют D2, D15, D17,
 > D21–D23, D27 и bundle-части D31 там, где они противоречат отдельным
 > FBX/Composite операциям.
 > Исторический текст оставлен для аудита решений, но не является заданием на
@@ -287,10 +287,9 @@ v2, bundle-поля и inline material payload полностью superseded D33
 legacy-форматом production-кодека.
 
 **D32. [separate-source-operations] В пользовательском UX нет Bundle Export.**
-Источник экспортируется независимыми операциями: `MH FBX` принимает Collection +
-Directory; `MH Composite / Export` — Collection + Directory; `MH Composite /
-Import` — один `.composite` File Path; `MH Material` — Material + Directory для
-первого экспорта. Общего запуска «экспортировать всё» нет. `source_root` при этом
+Все инструменты собраны в одной N-panel вкладке `MH`, но остаются независимыми
+секциями/операциями: `FBX Export`, `Composites` с подрежимами Import/Export и
+`Materials`. Общего запуска «экспортировать всё» нет. `source_root` при этом
 существует как единая проектная граница resolver'а, нормализации путей и
 зеркалирования в Content Browser; это не bundle, не Texture Root и не выбранная
 за пользователя папка экспорта. Composite Import v1 всегда выполняет recursive
@@ -370,8 +369,9 @@ Empty/Collection с сохранёнными NodeUID/ResourceUID и
 повторяет каскад и наполняет те же сущности. Export вычисляет зависимости из
 `.composite` и `material_slots`, ничего не записывая в `external_dependencies`:
 unresolved mesh/composite блокирует операцию `MH_E_UNRESOLVED_EXTERNAL`, а
-unresolved material даёт warning со списком и быстрым действием `Export
-materials…`. Рекурсивный обход дедуплицирует ресурс по UID; cycle-policy — D10.
+unresolved material, который текущая операция не должна экспортировать, даёт
+warning со списком и быстрым действием `Export materials…`; FBX-specific policy
+определена D38. Рекурсивный обход дедуплицирует ресурс по UID; cycle-policy — D10.
 
 **D37. [material-source-files] Материал — самостоятельный source-файл и обычный
 ресурс manifest.** Один `<sanitized_name>__<uid8>.material` со схемой
@@ -382,18 +382,36 @@ materials…`. Рекурсивный обход дедуплицирует ре
 inline `materials[]` запрещён. Хеш считается по семантической
 канон-форме `{shader_class, params, textures}`, не по `uid`/`name`/kind.
 
-Первое размещение файла явно выбирает художник во вкладке `MH Material` (Material +
-Directory). При следующих экспортах D36 находит существующую пару
+Первое размещение файла выбирается либо явно в секции `Materials` (Material +
+Directory), либо принятой owner-политикой FBX Export из D38. При следующих
+экспортах D36 находит существующую пару
 (payload, owning manifest), и это расположение всегда выигрывает: обновление идёт
 in place, повторный выбор папки не требуется. Rename меняет `name` внутри payload
 и manifest, но **не переименовывает файл автоматически**: соответствие
 `sanitized_name` текущему `name` не требуется и не проверяется, уникальность
 обеспечивает `uid8`. Ручной транзакционный `Rename file to match` относится к
-ROADMAP. FBX/Composite Export никогда не размещает missing material автоматически:
-он завершается с warning, списком невыгруженных материалов и действием `Export
-materials…`. Shared material из общей папки резолвится один раз по UID независимо
-от числа mesh-потребителей и их каталогов. Решение supersedes inline-хранение D15,
-D22 и pre-freeze manifest-часть D31.
+ROADMAP. Composite Export не размещает material payload; FBX Export следует D38.
+Shared material из общей папки резолвится один раз по UID независимо от числа
+mesh-потребителей и их каталогов. Решение supersedes inline-хранение D15, D22 и
+pre-freeze manifest-часть D31.
+
+**D38. [fbx-export-materials-toggle] FBX Export имеет явный Boolean `Export
+Materials`, default ON.** Это принятое владельцем post-freeze operational/UX
+amendment, совместимое с Source Schema v1: ни один JSON field, canonical byte или
+hash rule не меняется. При ON операция собирает каждый уникальный MaterialUID,
+использованный объектами выбранной Collection hierarchy. Уже существующий
+material payload резолвится по D36 и обновляется in place вместе со своим owning
+manifest; UID без владельца впервые создаётся рядом с выбранным FBX output и
+добавляется в тот же directory-local manifest. При OFF записываются только FBX и
+mesh resource-row; material payload/rows не создаются и не обновляются, а missing
+UID остаются в structured warning с действием `Export materials…`. Это не общий
+dependency-closure export и не возвращение Bundle Export: действие ограничено
+явным Boolean и material slots выбранной FBX Collection hierarchy. Текстуры в
+обоих режимах только ссылаются по D34 и никогда не копируются.
+Ошибки material extraction/preparation/write превращаются в
+`MH_W_MATERIAL_NOT_FOUND` и не откатывают уже committed FBX; crash после
+material marker остаётся глобально fail-closed по D36 и требует recovery этого
+MaterialUID до следующего resource-write.
 
 ## 4. Известные риски (проверяются первыми)
 

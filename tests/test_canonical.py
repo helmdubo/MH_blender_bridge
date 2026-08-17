@@ -61,6 +61,8 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_DUPLICATE_NODE_UID",
             "MH_E_DUPLICATE_RESOURCE_UID",
             "MH_E_COMPOSITE_CYCLE",
+            "MH_E_AMBIGUOUS_RESOURCE_OWNER",
+            "MH_E_UNRESOLVED_EXTERNAL",
             "MH_E_DANGLING_PARENT",
             "MH_E_PARENT_CYCLE",
             "MH_E_MISSING_COLLECTION_UID",
@@ -86,6 +88,10 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_NAME_MISMATCH",
             "MH_E_TARGET_NAME_COLLISION",
             "MH_W_REGISTRY_INVALID",
+            "MH_W_REGISTRY_STALE",
+            "MH_W_COMPOSITE_CYCLE",
+            "MH_W_UNRESOLVED_RESOURCE",
+            "MH_W_TEXTURE_OUTSIDE_ROOT",
             "MH_W_MATERIAL_NOT_FOUND",
             "MH_W_MATERIAL_PAYLOAD_FALLBACK",
             "MH_W_MATERIAL_SLOT_NOT_FOUND",
@@ -94,8 +100,8 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_W_UNKNOWN_SHADER_CLASS",
         }
     )
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 27
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 7
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 29
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 11
 
 
 def test_error_codes_shape() -> None:

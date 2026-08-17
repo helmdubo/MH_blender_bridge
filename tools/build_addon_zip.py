@@ -1,58 +1,101 @@
-"""Build the installable addon zip: dist/mh4blend-<version>.zip.
+"""Build and validate the self-contained Blender Extension package.
 
-Blender's 'Install from Disk' expects a zip whose ROOT contains the addon
-package directory (mh4blend/__init__.py at 'mh4blend/__init__.py' inside
-the archive) — pointing it at a repo folder or zipping a parent directory
-produces "No module named 'mh4blend'".
+The extension bundles the pinned native ``xxhash`` wheel declared by
+``blender_manifest.toml``. Blender's extension installer extracts the matching
+wheel into extension-local site-packages, so artists never run pip manually.
 
-    python3 tools/build_addon_zip.py
+Usage::
 
-Pure stdlib, no bpy.
+    python tools/build_addon_zip.py
+
+Set ``MH_BLENDER`` when Blender is not on PATH or installed in the default
+Windows 4.5 location.
 """
 
-import ast
+from __future__ import annotations
+
+import hashlib
 import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tomllib
 import zipfile
 
-TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(TOOLS_DIR)
-ADDON_DIR = os.path.join(REPO_ROOT, "addon", "mh4blend")
-DIST_DIR = os.path.join(REPO_ROOT, "dist")
 
-EXCLUDE_DIRS = {"__pycache__"}
-EXCLUDE_SUFFIXES = (".pyc",)
-
-
-def addon_version():
-    with open(os.path.join(ADDON_DIR, "__init__.py"), encoding="utf-8") as f:
-        tree = ast.parse(f.read())
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and node.targets[0].id == "bl_info":
-            version = ast.literal_eval(node.value)["version"]
-            return ".".join(str(part) for part in version)
-    raise SystemExit("bl_info not found in addon/mh4blend/__init__.py")
+TOOLS_DIR = Path(__file__).resolve().parent
+REPO_ROOT = TOOLS_DIR.parent
+ADDON_DIR = REPO_ROOT / "addon" / "mh4blend"
+DIST_DIR = REPO_ROOT / "dist"
+MANIFEST_PATH = ADDON_DIR / "blender_manifest.toml"
+DEFAULT_WINDOWS_BLENDER = Path(
+    r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe")
 
 
-def main():
-    os.makedirs(DIST_DIR, exist_ok=True)
-    zip_path = os.path.join(DIST_DIR, f"mh4blend-{addon_version()}.zip")
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for root, dirs, files in os.walk(ADDON_DIR):
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-            for name in sorted(files):
-                if name.endswith(EXCLUDE_SUFFIXES):
-                    continue
-                full = os.path.join(root, name)
-                # zip root = mh4blend/... — exactly what Blender expects
-                arcname = os.path.relpath(full, os.path.dirname(ADDON_DIR))
-                archive.write(full, arcname)
-    names = zipfile.ZipFile(zip_path).namelist()
-    assert "mh4blend/__init__.py" in names, "zip layout broken"
-    assert "mh4blend/scene/export_bundle.py" not in names, \
-        "retired Bundle Export API must not ship"
-    print(f"built: {zip_path}  ({len(names)} files)")
-    print("install: Blender > Edit > Preferences > Add-ons > "
-          "(v) Install from Disk... > select this zip")
+def _blender_executable() -> str:
+    configured = os.environ.get("MH_BLENDER", "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.is_file():
+            return str(candidate)
+        raise SystemExit(f"MH_BLENDER does not exist: {candidate}")
+    discovered = shutil.which("blender")
+    if discovered:
+        return discovered
+    if DEFAULT_WINDOWS_BLENDER.is_file():
+        return str(DEFAULT_WINDOWS_BLENDER)
+    raise SystemExit(
+        "Blender not found. Set MH_BLENDER to the Blender executable.")
+
+
+def _run(command: list[str]) -> None:
+    completed = subprocess.run(command, check=False)
+    if completed.returncode:
+        raise SystemExit(completed.returncode)
+
+
+def main() -> None:
+    manifest = tomllib.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    version = manifest["version"]
+    platforms = manifest.get("platforms", [])
+    platform_suffix = platforms[0] if len(platforms) == 1 else "multi-platform"
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    zip_path = DIST_DIR / f"mh4blend-{version}-{platform_suffix}.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+
+    blender = _blender_executable()
+    _run([
+        blender,
+        "--command", "extension", "build",
+        "--source-dir", str(ADDON_DIR),
+        "--output-filepath", str(zip_path),
+    ])
+    _run([
+        blender,
+        "--command", "extension", "validate", str(zip_path),
+    ])
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+    required = {
+        "__init__.py",
+        "blender_manifest.toml",
+        "wheels/xxhash-4.0.1-cp311-cp311-win_amd64.whl",
+    }
+    missing = required - names
+    if missing:
+        raise SystemExit(
+            "extension package is missing: " + ", ".join(sorted(missing)))
+    if "scene/export_bundle.py" in names:
+        raise SystemExit("retired Bundle Export API must not ship")
+
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    print(f"built: {zip_path}")
+    print(f"sha256: {digest}")
+    print("install: Blender > Edit > Preferences > Get Extensions > "
+          "Install from Disk")
 
 
 if __name__ == "__main__":

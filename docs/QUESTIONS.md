@@ -182,10 +182,15 @@ mesh-ресурса в манифесте properties-поля нет. Роль �
 станет много — правильнее поле в манифесте через schema_version=2.
 
 **Статус.** РЕШЕНО (ADDENDUM-2, подтверждено freeze candidate standalone-схемы v1):
-ресурсные properties — optional bag `properties` в resource-row owning
-`mh.export_manifest` v1. Ресурсные = asset-level (применяются при импорте
-геометрии независимо от placements), узловые = placement-level; при компиляции
-они дополняют ресурсные. Наследование resource properties в узлы запрещено.
+для `static_mesh`/`composite` ресурсные properties — optional bag `properties`
+в resource-row owning `mh.export_manifest` v1. Ресурсные = asset-level
+(применяются при импорте независимо от placements), узловые = placement-level;
+при компиляции они дополняют ресурсные. Наследование resource properties в узлы
+запрещено.
 Упоминания старого manifest v2 и inline `materials[]` считать историческими:
 материал теперь отдельный ресурс `.material`, а актуальная форма manifest-row
 зафиксирована в `05_source_schema_v1.md`.
+
+**Next-cycle clarification (reviewer):** material manifest-row намеренно не
+имеет bag `properties`; asset-level semantic material properties живут в
+`.material.params`. Это уточнение wording, а не новое поле frozen v1.

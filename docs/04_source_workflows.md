@@ -1,9 +1,9 @@
-# 04 — Source Workflows v1 (NORMATIVE FREEZE CANDIDATE)
+# 04 — Source Workflows v1 (NORMATIVE FINAL v1)
 
-Статус: нормативный workflow кандидата на финальную on-disk схему v1. Документ
-заменяет bundle-oriented UX и соответствующие части документов 00–02. Точный
-schema-doc commit становится FINAL v1 FREEZE после приёмки внешним ревьювером;
-после этого байтово-значимые изменения требуют `schema_version = 2`.
+Статус: нормативный workflow замороженной on-disk схемы v1. Post-freeze
+operational amendment D38 `[fbx-export-materials-toggle]` добавляет Boolean и
+объединяет UI в одну вкладку, не меняя ни одного JSON field, canonical byte или
+hash rule. Любое будущее байтово-значимое изменение требует `schema_version = 2`.
 
 ## 1. Инвариант источников
 
@@ -13,8 +13,9 @@ Collection и **никогда** не является источником comp
 одиночного FBX не может достоверно восстановить composite hierarchy.
 
 Материал — самостоятельный ресурс: один `mh.material` v1 ↔ один Blender
-Material ↔ один будущий UE Material Instance. Он не принадлежит мешу и не
-размещается автоматически рядом с первым потребителем.
+Material ↔ один будущий UE Material Instance. Он не принадлежит мешу; место
+первого экспорта выбирается явным Material Export либо политикой Boolean
+`Export Materials` у конкретного FBX Export, а не неявным первым потребителем.
 
 ## 2. Настройки проекта
 
@@ -41,24 +42,43 @@ Bundle Root и не Texture Root. Все межкаталожные ссылки
 Отдельного Texture Root и remap-настройки нет. Текстуры не копируются и не
 перемещаются.
 
-## 3. UX: три независимых workflow
+## 3. UX: одна вкладка `MH`, независимые секции
 
-В аддоне нет Bundle Export, Export Sources и неявного экспорта dependency
-closure.
+В аддоне одна N-panel вкладка **MH** с секциями **FBX Export**,
+**Composites** (Import/Export) и **Materials**. Общей операции Bundle Export,
+Export Sources и неявного экспорта произвольного dependency closure нет.
 
-### MH FBX
+### FBX Export
 
 - **Collection** — одна geometry definition;
 - **Folder** — каталог первого экспорта;
+- **Export Materials** — Boolean, default **ON**;
 - **Export FBX** — атомарно записывает один FBX и upsert'ит его строку в
   `export_manifest.json` этого каталога.
 
-Слоты записывают только `material_uid`. Если соответствующий `.material` ещё
-не найден, FBX всё равно экспортируется, лог получает warning со списком, а
-быстрое действие **Export materials…** переводит к явному material workflow.
-Материалы рядом с FBX автоматически не создаются.
+Mesh-row в обоих режимах записывает те же `material_slots` с `material_uid`.
+При **ON** exporter дедуплицирует все материалы, используемые объектами
+выбранной Collection hierarchy. Для каждого MaterialUID сначала применяется
+resolver: существующие payload и owning manifest обновляются **in place**, даже
+если находятся в другой папке; UID без владельца впервые создаётся рядом с
+выбранным FBX output и получает material-row в его manifest. При **OFF** exporter
+пишет только FBX/mesh-row и не создаёт и не обновляет ни один material payload
+или row. Неразрешённые material UID в этом режиме остаются warning со списком и
+действием **Export materials…**.
 
-### MH Composite
+Это orchestration нескольких standalone resource writers, не bundle и не одна
+cross-manifest транзакция: каждый material/mesh upsert использует собственный
+fail-closed atomic protocol. Текстуры в обоих режимах остаются ссылками и
+никогда не копируются.
+
+Обычная FBX-операция сначала commit'ит geometry/mesh-row, затем выполняет
+подготовленные material upserts. Поэтому ошибка конкретного материала даёт
+`MH_W_MATERIAL_NOT_FOUND`, но не отменяет FBX. Если material writer уже создал
+pending marker и упал, marker намеренно остаётся fail-closed; следующий запуск
+сначала выполняет explicit recovery именно этого MaterialUID, после чего может
+продолжить остальные resource-writes.
+
+### Composites
 
 **Import:** `*.composite` path + **Import Composite**. Рекурсивное разрешение
 дочерних composites и импорт найденных FBX всегда включены. Галок `Recursive`
@@ -73,14 +93,16 @@ closure.
 найденные child-composite definitions. Существующие узлы не пересоздаются,
 NodeUID/ResourceUID не меняются.
 
-### MH Material
+### Materials
 
 - **Material** — один Blender Material;
-- **Folder** — выбирается только для первого экспорта UID;
+- **Folder** — используется для первого экспорта UID, если его ещё не создал
+  FBX Export с `Export Materials=ON`;
 - **Export Material** — пишет один `.material` и upsert'ит resource-row owning
   manifest.
 
-После первого экспорта resolver находит единственного владельца UID, и
+После первого экспорта любым из двух явных workflows resolver находит
+единственного владельца UID, и
 последующие экспорты обновляют существующий файл **in place**. Новое значение
 Folder не переносит ресурс и не создаёт второго владельца.
 
@@ -220,8 +242,9 @@ set блокирует apply, не смешивая ревизии.
 
 - unresolved mesh/composite reference блокирует экспорт с
   `MH_E_UNRESOLVED_EXTERNAL`;
-- unresolved material UID даёт warning со списком и **Export materials…**, но
-  не блокирует экспорт геометрии;
+- unresolved material UID при `Export Materials=OFF` либо после неуспешной
+  material-операции даёт warning со списком и **Export materials…**, но не
+  блокирует уже разрешённый geometry payload;
 - никаких dependency rows в manifest после проверки не записывается.
 
 Production-reader принимает только финальную v1 форму. Pre-freeze
@@ -295,6 +318,10 @@ Blender-export и UE-import блокируются на том же факте �
 3. Импорт создаёт/резолвит один Blender Material.
 4. Изменение `.material` даёт UPDATE_PROPERTIES материала и ноль mesh updates.
 5. Rename материала обновляет содержимое существующего файла без rename пути.
+6. FBX Export с `Export Materials=ON` обновляет этот material in place в
+   `common/materials/`, не создавая копию рядом с mesh.
+7. Новый MaterialUID при ON впервые создаётся рядом с выбранным FBX; тот же
+   export при OFF не меняет ни одного material payload/row и выдаёт warning.
 
 ### Owner field slice
 
@@ -302,4 +329,6 @@ Blender-export и UE-import блокируются на том же факте �
 подтягиваются все найденные nested composites, FBX и materials; отсутствующие
 ссылки видимы и восстанавливаются через **Resolve Missing**. Повторный export
 даёт те же UID и semantic graph. Texture-policy проверяется одним internal и
-одним external authored path без копирования файлов.
+одним external authored path без копирования файлов. Отдельно проверяются
+default ON и OFF ветки `Export Materials`, включая отсутствие material writes
+при OFF и отсутствие texture copies при ON.

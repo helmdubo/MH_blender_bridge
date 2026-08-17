@@ -13,6 +13,7 @@ from mh4blend.scene.source_manifest import (  # noqa: E402
     MANIFEST_NAME,
     PENDING_MANIFEST_NAME,
     ManifestError,
+    abandon_staged_manifest,
     assert_manifest_stable,
     commit_staged_manifest,
     load_export_manifest,
@@ -24,65 +25,528 @@ from mh4blend.scene.source_manifest import (  # noqa: E402
 )
 
 
-MESH_A = {
-    "uid": "10000000-0000-0000-0000-000000000001",
+MESH_UID = "10000000-0000-0000-0000-000000000001"
+COMPOSITE_UID = "20000000-0000-0000-0000-000000000002"
+MATERIAL_UID = "30000000-0000-0000-0000-000000000003"
+
+MESH = {
+    "uid": MESH_UID,
     "kind": "static_mesh",
     "name": "mesh_a",
-    "source": "mesh_a.fbx",
+    "source": "meshes/mesh_a__10000000.mesh.fbx",
     "content_hash": "xxh3:0000000000000001",
 }
-COMPOSITE_B = {
-    "uid": "20000000-0000-0000-0000-000000000002",
+COMPOSITE = {
+    "uid": COMPOSITE_UID,
     "kind": "composite",
     "name": "composite_b",
-    "source": "composite_b.composite",
+    "source": "composites/composite_b__20000000.composite",
     "content_hash": "xxh3:0000000000000002",
 }
-MATERIAL_C = {
-    "uid": "30000000-0000-0000-0000-000000000003",
+MATERIAL = {
+    "uid": MATERIAL_UID,
     "kind": "material",
     "name": "material_c",
-    "shader_class": "rendinst_simple",
-    "params": {},
-    "textures": {},
+    "source": "materials/material_c__30000000.material",
     "content_hash": "xxh3:0000000000000003",
 }
 
 
-def prepare(directory, **kwargs):
+def manifest(rows=(), exporter_version="0.4.0"):
+    return {
+        "schema": "mh.export_manifest",
+        "schema_version": 1,
+        "exporter_version": exporter_version,
+        "resources": sorted((dict(row) for row in rows), key=lambda row: row["uid"]),
+    }
+
+
+def prepare(directory, row, exporter_version="0.4.0"):
     return prepare_manifest_update(
-        str(directory), exporter_version="0.3.0", blend_file="scene.blend",
-        **kwargs)
+        str(directory), resources=[row], exporter_version=exporter_version,
+        blend_file="ignored.blend", source_root=str(directory))
 
 
-def test_incremental_updates_preserve_unrelated_resources(tmp_path):
-    first = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), first)
-    commit_staged_manifest(str(tmp_path))
+def commit(directory, document):
+    stage_manifest(str(directory), document)
+    commit_staged_manifest(str(directory))
 
-    second = prepare(tmp_path, resources=[COMPOSITE_B])
-    assert [row["uid"] for row in second["resources"]] == [
-        MESH_A["uid"], COMPOSITE_B["uid"]]
-    assert manifest_resource_index(second)[MESH_A["uid"]] == MESH_A
+
+def test_frozen_v1_manifest_has_resources_only_and_material_is_ordinary_row():
+    document = validate_export_manifest(manifest([MESH, COMPOSITE, MATERIAL]))
+    assert list(document) == [
+        "schema", "schema_version", "exporter_version", "resources"]
+    assert {row["kind"] for row in document["resources"]} == {
+        "static_mesh", "composite", "material"}
+    assert manifest_resource_index(document)[MATERIAL_UID] == MATERIAL
+
+
+@pytest.mark.parametrize("legacy", [
+    {"source": {"blend_file": "old.blend"}},
+    {"materials": []},
+    {"external_dependencies": []},
+    {"bundle_uid": "old"},
+])
+def test_pre_freeze_top_level_fields_are_rejected(legacy):
+    document = manifest([MESH])
+    document.update(legacy)
+    with pytest.raises(ManifestError, match="invalid fields"):
+        validate_export_manifest(document)
+
+
+def test_pre_freeze_bundle_schema_has_no_production_reader():
+    document = manifest([MESH])
+    document["schema"] = "mh.bundle_manifest"
+    document["schema_version"] = 2
+    with pytest.raises(ManifestError, match="unsupported export manifest schema"):
+        validate_export_manifest(document)
+
+
+@pytest.mark.parametrize("row", [
+    dict(MATERIAL, shader_class="rendinst_simple"),
+    dict(COMPOSITE, material_slots=[]),
+    dict(MESH, future_field=True),
+])
+def test_unknown_or_wrong_kind_fields_are_rejected(row):
+    with pytest.raises(ManifestError, match="invalid fields"):
+        validate_export_manifest(manifest([row]))
+
+
+@pytest.mark.parametrize("source", [
+    "meshes\\mesh_a__10000000.mesh.fbx",
+    "./meshes/mesh_a__10000000.mesh.fbx",
+    "meshes/temp/../mesh_a__10000000.mesh.fbx",
+    "../mesh_a__10000000.mesh.fbx",
+    "C:/mesh_a__10000000.mesh.fbx",
+    "/mesh_a__10000000.mesh.fbx",
+    "meshes/mesh_a__10000000.fbx",
+    "meshes/mesh_a__deadbeef.mesh.fbx",
+    "meshes/mesh_a__10000000.MESH.FBX",
+])
+def test_source_must_be_canonical_and_match_kind_uid8_suffix(source):
+    with pytest.raises(ManifestError) as caught:
+        validate_export_manifest(manifest([dict(MESH, source=source)]))
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+
+
+def test_source_path_nfd_is_rejected_instead_of_silently_repaired():
+    source = "materials/me\u0301__30000000.material"
+    with pytest.raises(ManifestError) as caught:
+        validate_export_manifest(manifest([dict(MATERIAL, source=source)]))
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("uid", "10000000-0000-0000-0000-00000000000A"),
+    ("uid", "not-a-uuid"),
+    ("content_hash", "xxh3:ABCDEF0000000001"),
+    ("content_hash", "xxh3:1234"),
+    ("name", "mesh/invalid"),
+])
+def test_common_row_identity_fields_are_strict(field, value):
+    with pytest.raises(ManifestError):
+        validate_export_manifest(manifest([dict(MESH, **{field: value})]))
+
+
+def test_material_slots_may_reference_external_owner_and_are_not_local_closure():
+    mesh = dict(MESH, material_slots=[{
+        "slot_name": "m_primary", "material_uid": MATERIAL_UID}])
+    document = validate_export_manifest(manifest([mesh]))
+    assert document["resources"][0]["material_slots"] == mesh["material_slots"]
+
+
+@pytest.mark.parametrize("slots", [
+    {},
+    [{"slot_name": "m", "material_uid": MATERIAL_UID, "extra": 1}],
+    [
+        {"slot_name": "a", "material_uid": MATERIAL_UID},
+        {"slot_name": "b", "material_uid": MATERIAL_UID},
+    ],
+    [
+        {"slot_name": "me\u0301tal", "material_uid": MATERIAL_UID},
+        {"slot_name": "m\u00e9tal", "material_uid": COMPOSITE_UID},
+    ],
+])
+def test_material_slot_shape_and_deduplication_are_strict(slots):
+    with pytest.raises(ManifestError, match="material"):
+        validate_export_manifest(manifest([dict(MESH, material_slots=slots)]))
+
+
+def test_static_mesh_lods_are_validated_with_exact_uid8_suffix():
+    row = dict(MESH, lod_policy="authored", lods=[{
+        "level": 1,
+        "source": "meshes/mesh_a__10000000.lod1.mesh.fbx",
+        "content_hash": "xxh3:0000000000000009",
+    }])
+    assert validate_export_manifest(manifest([row]))["resources"][0] == row
+    row["lods"][0]["source"] = "meshes/mesh_a__10000000.lod2.mesh.fbx"
+    with pytest.raises(ManifestError) as caught:
+        validate_export_manifest(manifest([row]))
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+
+
+def test_resources_are_required_to_be_uid_sorted_and_unique():
+    with pytest.raises(ManifestError, match="sorted"):
+        validate_export_manifest({
+            **manifest(), "resources": [COMPOSITE, MESH]})
+    with pytest.raises(ManifestError, match="duplicate uid"):
+        validate_export_manifest({
+            **manifest(), "resources": [MESH, dict(MESH)]})
+
+
+def test_manifest_rejects_two_full_uids_with_same_uid8():
+    collision_uid = "10000000-1111-1111-1111-111111111111"
+    collision = dict(
+        MESH,
+        uid=collision_uid,
+        name="mesh_b",
+        source="meshes/mesh_b__10000000.mesh.fbx",
+    )
+    with pytest.raises(ManifestError) as caught:
+        validate_export_manifest(manifest([MESH, collision]))
+    assert caught.value.code == "MH_E_UID8_COLLISION"
+
+
+def test_incremental_upsert_preserves_unrelated_resources(tmp_path):
+    commit(tmp_path, prepare(tmp_path, MESH))
+    updated = prepare(tmp_path, COMPOSITE)
+    assert [row["uid"] for row in updated["resources"]] == [
+        MESH_UID, COMPOSITE_UID]
+    assert set(updated) == {
+        "schema", "schema_version", "exporter_version", "resources"}
+
+
+def test_existing_uid_keeps_kind_and_source_location(tmp_path):
+    commit(tmp_path, prepare(tmp_path, MATERIAL))
+    with pytest.raises(ManifestError, match="cannot change kind"):
+        prepare(tmp_path, dict(MESH, uid=MATERIAL_UID,
+                               source="mesh__30000000.mesh.fbx"))
+    moved = dict(MATERIAL, source="other/material_c__30000000.material")
+    with pytest.raises(ManifestError, match="existing source"):
+        prepare(tmp_path, moved)
+
+
+def test_global_owner_scan_prevents_creating_same_uid_in_second_manifest(tmp_path):
+    owner = tmp_path / "library_a"
+    candidate = tmp_path / "library_b"
+    owner.mkdir()
+    candidate.mkdir()
+    first = prepare_manifest_update(
+        str(owner), resources=[MATERIAL], exporter_version="0.4.0",
+        source_root=str(tmp_path))
+    commit(owner, first)
+    with pytest.raises(ManifestError) as caught:
+        prepare_manifest_update(
+            str(candidate), resources=[MATERIAL], exporter_version="0.4.0",
+            source_root=str(tmp_path))
+    assert caught.value.code == "MH_E_AMBIGUOUS_RESOURCE_OWNER"
+
+
+def test_writer_admission_rejects_uid8_collision_in_another_manifest(tmp_path):
+    owner = tmp_path / "library_a"
+    candidate = tmp_path / "library_b"
+    owner.mkdir()
+    candidate.mkdir()
+    first = prepare_manifest_update(
+        str(owner), resources=[MESH], exporter_version="0.4.0",
+        source_root=str(tmp_path))
+    commit(owner, first)
+    collision_uid = "10000000-1111-1111-1111-111111111111"
+    collision = dict(
+        MESH, uid=collision_uid, name="mesh_b",
+        source="mesh_b__10000000.mesh.fbx")
+    with pytest.raises(ManifestError) as caught:
+        prepare_manifest_update(
+            str(candidate), resources=[collision], exporter_version="0.4.0",
+            source_root=str(tmp_path))
+    assert caught.value.code == "MH_E_UID8_COLLISION"
+
+
+def test_owner_directory_must_be_inside_configured_source_root(tmp_path):
+    source_root = tmp_path / "root"
+    output = tmp_path / "outside"
+    source_root.mkdir()
+    output.mkdir()
+    with pytest.raises(ManifestError) as caught:
+        prepare_manifest_update(
+            str(output), resources=[MESH], exporter_version="0.4.0",
+            source_root=str(source_root))
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+
+
+def test_owner_directory_real_target_cannot_escape_source_root(
+        tmp_path, monkeypatch):
+    source_root = tmp_path / "root"
+    external = tmp_path / "external"
+    source_root.mkdir()
+    external.mkdir()
+    linked_output = source_root / "linked"
+    linked_output.mkdir()
+    original_realpath = source_manifest_mod.os.path.realpath
+
+    def junction_realpath(path):
+        if os.path.normpath(os.path.abspath(path)) == os.path.normpath(
+                str(linked_output)):
+            return str(external)
+        return original_realpath(path)
+
+    monkeypatch.setattr(
+        source_manifest_mod.os.path, "realpath", junction_realpath)
+    with pytest.raises(ManifestError) as caught:
+        prepare_manifest_update(
+            str(linked_output), resources=[MESH], exporter_version="0.4.0",
+            source_root=str(source_root))
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+
+
+def test_positive_prepare_requires_source_root(tmp_path):
+    with pytest.raises(ManifestError, match="source_root is required"):
+        prepare_manifest_update(
+            str(tmp_path), resources=[MESH], exporter_version="0.4.0")
+
+
+def test_one_writer_transaction_upserts_exactly_one_resource(tmp_path):
+    with pytest.raises(ManifestError, match="exactly one"):
+        prepare_manifest_update(
+            str(tmp_path), resources=[MESH, COMPOSITE],
+            exporter_version="0.4.0")
+    with pytest.raises(ManifestError, match="exactly one"):
+        prepare_manifest_update(
+            str(tmp_path), resources=[], exporter_version="0.4.0")
 
 
 def test_pending_marker_blocks_read_until_promoted(tmp_path):
-    document = prepare(tmp_path, resources=[MESH_A])
+    document = prepare(tmp_path, MESH)
     stage_manifest(str(tmp_path), document)
-    assert (tmp_path / PENDING_MANIFEST_NAME).exists()
     with pytest.raises(ManifestError, match="export in progress"):
         load_export_manifest(str(tmp_path))
     commit_staged_manifest(str(tmp_path))
-    assert not (tmp_path / PENDING_MANIFEST_NAME).exists()
-    assert load_export_manifest(str(tmp_path))["resources"] == [MESH_A]
+    assert load_export_manifest(str(tmp_path)) == document
 
 
-def test_reader_rejects_marker_created_during_manifest_read(
+def test_two_prepared_writers_cannot_overwrite_first_marker(tmp_path):
+    first = prepare(tmp_path, MESH)
+    second = prepare(tmp_path, COMPOSITE)
+    stage_manifest(str(tmp_path), first)
+    with pytest.raises(ManifestError, match="another writer"):
+        stage_manifest(str(tmp_path), second)
+    commit_staged_manifest(str(tmp_path))
+    assert load_export_manifest(str(tmp_path)) == first
+
+
+def test_cross_directory_stage_rechecks_global_owner_under_root_lock(tmp_path):
+    owner_a = tmp_path / "a"
+    owner_b = tmp_path / "b"
+    owner_a.mkdir()
+    owner_b.mkdir()
+    row_b = dict(MESH, source="mesh_b__10000000.mesh.fbx")
+    prepared_a = prepare_manifest_update(
+        str(owner_a), resources=[MESH], exporter_version="0.4.0",
+        source_root=str(tmp_path))
+    prepared_b = prepare_manifest_update(
+        str(owner_b), resources=[row_b], exporter_version="0.4.0",
+        source_root=str(tmp_path))
+    stage_manifest(str(owner_a), prepared_a)
+    with pytest.raises(ManifestError, match="pending marker"):
+        stage_manifest(str(owner_b), prepared_b)
+    commit_staged_manifest(str(owner_a))
+
+
+def test_stage_snapshot_guard_fails_under_locks_without_marker_and_releases(
         tmp_path, monkeypatch):
-    document = prepare(tmp_path, resources=[MESH_A])
+    document = prepare(tmp_path, MESH)
+    acquired = []
+    original_acquire = source_manifest_mod._acquire_file_lock
+
+    def tracked_acquire(path, owner):
+        stream = original_acquire(path, owner)
+        acquired.append(stream)
+        return stream
+
+    monkeypatch.setattr(
+        source_manifest_mod, "_acquire_file_lock", tracked_acquire)
+
+    def stale_guard():
+        assert len(acquired) == 2
+        assert all(not stream.closed for stream in acquired)
+        raise ManifestError("dependency snapshot changed")
+
+    with pytest.raises(ManifestError, match="dependency snapshot changed"):
+        stage_manifest(
+            str(tmp_path), document, snapshot_guard=stale_guard)
+    assert not (tmp_path / PENDING_MANIFEST_NAME).exists()
+    assert all(stream.closed for stream in acquired)
+    directory_key = source_manifest_mod._directory_key(str(tmp_path))
+    assert directory_key not in source_manifest_mod._STAGED_TOKENS
+    assert directory_key not in source_manifest_mod._STAGED_LOCKS
+
+    acquired.clear()
     stage_manifest(str(tmp_path), document)
     commit_staged_manifest(str(tmp_path))
 
+
+def test_recovery_stage_guard_failure_preserves_marker_and_releases_locks(
+        tmp_path, monkeypatch):
+    interrupted = prepare(tmp_path, MESH)
+    marker = stage_manifest(str(tmp_path), interrupted)
+    abandon_staged_manifest(str(tmp_path))
+    marker_before = (tmp_path / PENDING_MANIFEST_NAME).read_bytes()
+    recovery = prepare(
+        tmp_path, dict(MESH, content_hash="xxh3:0000000000000099"))
+    acquired = []
+    original_acquire = source_manifest_mod._acquire_file_lock
+
+    def tracked_acquire(path, owner):
+        stream = original_acquire(path, owner)
+        acquired.append(stream)
+        return stream
+
+    monkeypatch.setattr(
+        source_manifest_mod, "_acquire_file_lock", tracked_acquire)
+
+    def stale_guard():
+        assert len(acquired) == 2
+        assert all(not stream.closed for stream in acquired)
+        raise ManifestError("recovery dependency snapshot changed")
+
+    with pytest.raises(
+            ManifestError, match="recovery dependency snapshot changed"):
+        stage_manifest(
+            str(tmp_path), recovery, snapshot_guard=stale_guard)
+    assert (tmp_path / PENDING_MANIFEST_NAME).read_bytes() == marker_before
+    assert all(stream.closed for stream in acquired)
+    directory_key = source_manifest_mod._directory_key(str(tmp_path))
+    assert directory_key not in source_manifest_mod._STAGED_TOKENS
+    assert directory_key not in source_manifest_mod._STAGED_LOCKS
+
+
+def test_two_recovery_writers_cannot_replace_same_marker(tmp_path):
+    initial = prepare(tmp_path, MESH)
+    stage_manifest(str(tmp_path), initial)
+    abandon_staged_manifest(str(tmp_path))
+    changed_a = dict(MESH, content_hash="xxh3:0000000000000099")
+    changed_b = dict(MESH, content_hash="xxh3:0000000000000088")
+    recovery_a = prepare(tmp_path, changed_a)
+    recovery_b = prepare(tmp_path, changed_b)
+    stage_manifest(str(tmp_path), recovery_a)
+    with pytest.raises(ManifestError, match="another writer"):
+        stage_manifest(str(tmp_path), recovery_b)
+    commit_staged_manifest(str(tmp_path))
+    assert manifest_resource_index(load_export_manifest(str(tmp_path)))[
+        MESH_UID]["content_hash"] == "xxh3:0000000000000099"
+
+
+def test_stage_rejects_document_that_bypassed_owner_preparation(tmp_path):
+    with pytest.raises(ManifestError, match="prepare_manifest_update"):
+        stage_manifest(str(tmp_path), manifest([MESH]))
+    assert not (tmp_path / PENDING_MANIFEST_NAME).exists()
+
+
+def test_commit_is_bound_to_exact_bytes_staged_by_writer(tmp_path):
+    document = prepare(tmp_path, MESH)
+    stage_manifest(str(tmp_path), document)
+    replacement = manifest([COMPOSITE])
+    (tmp_path / PENDING_MANIFEST_NAME).write_text(
+        json.dumps(replacement, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="changed before commit"):
+        commit_staged_manifest(str(tmp_path))
+
+
+def _windows_os_error(winerror):
+    error = OSError(f"injected WinError {winerror}")
+    error.winerror = winerror
+    return error
+
+
+def test_commit_retries_transient_windows_replace_with_lock_held(
+        tmp_path, monkeypatch):
+    document = prepare(tmp_path, MESH)
+    marker = stage_manifest(str(tmp_path), document)
+    directory_key = source_manifest_mod._directory_key(str(tmp_path))
+    lock_stream = source_manifest_mod._STAGED_LOCKS[directory_key]
+    original_replace = source_manifest_mod.os.replace
+    calls = []
+    sleeps = []
+
+    def transient_then_success(source, destination):
+        calls.append((source, destination))
+        assert directory_key in source_manifest_mod._STAGED_TOKENS
+        assert source_manifest_mod._STAGED_LOCKS[directory_key] is lock_stream
+        assert not lock_stream.closed
+        if len(calls) <= 2:
+            raise _windows_os_error(5 if len(calls) == 1 else 32)
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(source_manifest_mod.os, "replace", transient_then_success)
+    monkeypatch.setattr(source_manifest_mod.time, "sleep", sleeps.append)
+    final = commit_staged_manifest(str(tmp_path))
+    assert final == os.path.join(str(tmp_path), MANIFEST_NAME)
+    assert len(calls) == 3
+    assert sleeps == [0.01, 0.02]
+    assert not os.path.exists(marker)
+    assert os.path.exists(final)
+    assert lock_stream.closed
+    assert directory_key not in source_manifest_mod._STAGED_TOKENS
+    assert directory_key not in source_manifest_mod._STAGED_LOCKS
+
+
+def test_commit_exhausted_windows_replace_retry_is_fail_closed(
+        tmp_path, monkeypatch):
+    document = prepare(tmp_path, MESH)
+    marker = stage_manifest(str(tmp_path), document)
+    marker_bytes = (tmp_path / PENDING_MANIFEST_NAME).read_bytes()
+    directory_key = source_manifest_mod._directory_key(str(tmp_path))
+    lock_stream = source_manifest_mod._STAGED_LOCKS[directory_key]
+    calls = []
+    sleeps = []
+
+    def always_transient(source, destination):
+        calls.append((source, destination))
+        assert not lock_stream.closed
+        raise _windows_os_error(32)
+
+    monkeypatch.setattr(source_manifest_mod.os, "replace", always_transient)
+    monkeypatch.setattr(source_manifest_mod.time, "sleep", sleeps.append)
+    with pytest.raises(OSError, match="WinError 32"):
+        commit_staged_manifest(str(tmp_path))
+    assert len(calls) == 7
+    assert sum(sleeps) == pytest.approx(0.51)
+    assert os.path.exists(marker)
+    assert (tmp_path / PENDING_MANIFEST_NAME).read_bytes() == marker_bytes
+    assert not (tmp_path / MANIFEST_NAME).exists()
+    assert lock_stream.closed
+    assert directory_key not in source_manifest_mod._STAGED_TOKENS
+    assert directory_key not in source_manifest_mod._STAGED_LOCKS
+
+
+def test_commit_nontransient_replace_error_is_not_retried(
+        tmp_path, monkeypatch):
+    document = prepare(tmp_path, MESH)
+    marker = stage_manifest(str(tmp_path), document)
+    directory_key = source_manifest_mod._directory_key(str(tmp_path))
+    lock_stream = source_manifest_mod._STAGED_LOCKS[directory_key]
+    calls = []
+    sleeps = []
+    nontransient = _windows_os_error(87)
+
+    def fail_once(source, destination):
+        calls.append((source, destination))
+        raise nontransient
+
+    monkeypatch.setattr(source_manifest_mod.os, "replace", fail_once)
+    monkeypatch.setattr(source_manifest_mod.time, "sleep", sleeps.append)
+    with pytest.raises(OSError, match="WinError 87"):
+        commit_staged_manifest(str(tmp_path))
+    assert len(calls) == 1
+    assert sleeps == []
+    assert os.path.exists(marker)
+    assert lock_stream.closed
+    assert directory_key not in source_manifest_mod._STAGED_TOKENS
+    assert directory_key not in source_manifest_mod._STAGED_LOCKS
+
+
+def test_reader_rejects_marker_created_during_manifest_read(tmp_path, monkeypatch):
+    commit(tmp_path, prepare(tmp_path, MESH))
     original_read = source_manifest_mod._read_file_bytes
     calls = 0
 
@@ -100,437 +564,93 @@ def test_reader_rejects_marker_created_during_manifest_read(
     assert calls == 1
 
 
-def test_reader_rejects_manifest_bytes_replaced_without_visible_marker(
-        tmp_path, monkeypatch):
-    document = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), document)
-    commit_staged_manifest(str(tmp_path))
-    replacement = prepare(tmp_path, resources=[COMPOSITE_B])
-    replacement_bytes = (
-        json.dumps(replacement, indent=2, ensure_ascii=False) + "\n"
-    ).encode("utf-8")
-
-    original_read = source_manifest_mod._read_file_bytes
-    calls = 0
-
-    def raced_read(path):
-        nonlocal calls
-        payload = original_read(path)
-        calls += 1
-        if calls == 1:
-            (tmp_path / MANIFEST_NAME).write_bytes(replacement_bytes)
-        return payload
-
-    monkeypatch.setattr(source_manifest_mod, "_read_file_bytes", raced_read)
-    with pytest.raises(ManifestError, match="changed while reading"):
-        load_export_manifest(str(tmp_path))
-    assert calls == 2
-
-
-def test_snapshot_token_rejects_export_started_during_payload_reads(tmp_path):
-    document = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), document)
-    commit_staged_manifest(str(tmp_path))
-    loaded, token = load_export_manifest_snapshot(str(tmp_path))
-    assert loaded["resources"] == [MESH_A]
-
-    # Models the consumer having read one or more composite/FBX payloads,
-    # followed by a writer beginning another transaction before Blender apply.
-    changed = prepare(
-        tmp_path,
-        resources=[dict(MESH_A, content_hash="xxh3:0000000000000099")])
-    stage_manifest(str(tmp_path), changed)
-    with pytest.raises(ManifestError, match="export in progress"):
-        assert_manifest_stable(str(tmp_path), token)
-
-
-def test_snapshot_token_rejects_commit_completed_during_payload_reads(tmp_path):
-    document = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), document)
-    commit_staged_manifest(str(tmp_path))
+def test_snapshot_token_rejects_later_commit(tmp_path):
+    commit(tmp_path, prepare(tmp_path, MESH))
     _loaded, token = load_export_manifest_snapshot(str(tmp_path))
-
-    changed = prepare(
-        tmp_path,
-        resources=[dict(MESH_A, content_hash="xxh3:0000000000000099")])
-    stage_manifest(str(tmp_path), changed)
-    commit_staged_manifest(str(tmp_path))
+    changed = dict(MESH, content_hash="xxh3:0000000000000099")
+    commit(tmp_path, prepare(tmp_path, changed))
     with pytest.raises(ManifestError, match="changed after it was read"):
         assert_manifest_stable(str(tmp_path), token)
 
 
-def test_missing_snapshot_token_rejects_manifest_appearing_later(tmp_path):
+def test_missing_snapshot_token_rejects_manifest_appearing(tmp_path):
     document, token = load_export_manifest_snapshot(
         str(tmp_path), allow_missing=True)
     assert document is None and token is None
-
-    created = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), created)
-    commit_staged_manifest(str(tmp_path))
+    commit(tmp_path, prepare(tmp_path, MESH))
     with pytest.raises(ManifestError, match="changed after it was read"):
         assert_manifest_stable(str(tmp_path), token)
 
 
+def test_recovery_requires_marker_to_change_exactly_incoming_uid(tmp_path):
+    commit(tmp_path, prepare(tmp_path, MESH))
+    interrupted = prepare(tmp_path, dict(
+        MESH, content_hash="xxh3:0000000000000099"))
+    stage_manifest(str(tmp_path), interrupted)
+    with pytest.raises(ManifestError, match=MESH_UID):
+        prepare(tmp_path, COMPOSITE)
+    recovered = prepare(tmp_path, dict(
+        MESH, content_hash="xxh3:0000000000000099"))
+    assert manifest_resource_index(recovered)[MESH_UID]["content_hash"] \
+        == "xxh3:0000000000000099"
+
+
+def test_first_export_recovery_keeps_marker_source(tmp_path):
+    pending = prepare(tmp_path, MATERIAL)
+    stage_manifest(str(tmp_path), pending)
+    moved = dict(MATERIAL, source="other/material_c__30000000.material")
+    with pytest.raises(ManifestError, match="recovery source"):
+        prepare(tmp_path, moved)
+
+
+def test_recovery_rejects_marker_that_also_changed_unrelated_row(tmp_path):
+    commit(tmp_path, prepare(tmp_path, MESH))
+    commit(tmp_path, prepare(tmp_path, COMPOSITE))
+    tampered = manifest([
+        dict(MESH, content_hash="xxh3:0000000000000099"),
+        dict(COMPOSITE, content_hash="xxh3:0000000000000088"),
+    ])
+    (tmp_path / PENDING_MANIFEST_NAME).write_text(
+        json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="exactly incoming UID"):
+        prepare(tmp_path, dict(MESH, content_hash="xxh3:0000000000000099"))
+
+
+def test_recovery_owner_scan_ignores_only_own_marker(tmp_path):
+    owner = tmp_path / "owner"
+    other = tmp_path / "other"
+    owner.mkdir()
+    other.mkdir()
+    first = prepare_manifest_update(
+        str(owner), resources=[MESH], exporter_version="0.4.0",
+        source_root=str(tmp_path))
+    commit(owner, first)
+    changed = dict(MESH, content_hash="xxh3:0000000000000099")
+    pending = prepare_manifest_update(
+        str(owner), resources=[changed], exporter_version="0.4.0",
+        source_root=str(tmp_path))
+    stage_manifest(str(owner), pending)
+    (other / PENDING_MANIFEST_NAME).write_text("pending", encoding="utf-8")
+    with pytest.raises(ManifestError, match="pending marker"):
+        prepare_manifest_update(
+            str(owner), resources=[changed], exporter_version="0.4.0",
+            source_root=str(tmp_path))
+
+
 def test_staging_uses_lf_and_terminal_newline(tmp_path):
-    document = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), document)
+    stage_manifest(str(tmp_path), prepare(tmp_path, MATERIAL))
     payload = (tmp_path / PENDING_MANIFEST_NAME).read_bytes()
     assert payload.endswith(b"\n")
     assert b"\r\n" not in payload
 
 
-def test_legacy_bundle_manifest_is_migrated_on_next_update(tmp_path):
-    legacy = {
-        "schema": "mh.bundle_manifest",
-        "schema_version": 2,
-        "exporter_version": "0.2.0",
-        "bundle_uid": "ignored",
-        "bundle_name": "ignored",
-        "source": {"blend_file": "old.blend"},
-        "resources": [MESH_A],
-        "materials": [],
-        "external_dependencies": [],
-    }
-    (tmp_path / MANIFEST_NAME).write_text(json.dumps(legacy), encoding="utf-8")
-    updated = prepare(tmp_path, resources=[COMPOSITE_B])
-    assert updated["schema"] == "mh.export_manifest"
-    assert "bundle_uid" not in updated
-    assert {r["uid"] for r in updated["resources"]} == {
-        MESH_A["uid"], COMPOSITE_B["uid"]}
-
-
-def test_duplicate_rows_in_one_update_are_rejected(tmp_path):
-    with pytest.raises(ManifestError, match="duplicate uid"):
-        prepare(tmp_path, resources=[MESH_A, dict(MESH_A)])
-
-
-@pytest.mark.parametrize(("field", "value"), [
-    ("uid", 7),
-    ("kind", 7),
-    ("name", None),
-    ("source", 7),
-    ("content_hash", False),
-])
-def test_incoming_resource_requires_strict_writer_fields(
-        tmp_path, field, value):
-    malformed = dict(MESH_A, **{field: value})
-    with pytest.raises(ManifestError):
-        prepare(tmp_path, resources=[malformed])
-
-
-def test_malformed_stable_resource_fails_before_incoming_merge(tmp_path):
-    malformed = {
-        "schema": "mh.export_manifest",
-        "schema_version": 1,
-        "exporter_version": "0.3.0",
-        "source": {"blend_file": "old.blend"},
-        "resources": [{
-            key: value for key, value in MESH_A.items()
-            if key != "content_hash"
-        }],
-        "materials": [],
-    }
-    (tmp_path / MANIFEST_NAME).write_text(
-        json.dumps(malformed), encoding="utf-8")
-    with pytest.raises(ManifestError, match="content_hash"):
-        prepare(tmp_path, resources=[COMPOSITE_B])
-    assert not (tmp_path / PENDING_MANIFEST_NAME).exists()
-
-
-def test_schema_version_bool_is_not_integer_v1(tmp_path):
-    malformed = prepare(tmp_path, resources=[MESH_A])
-    malformed["schema_version"] = True
-    with pytest.raises(ManifestError, match="schema_version"):
-        stage_manifest(str(tmp_path), malformed)
-
-
-def test_static_mesh_material_slots_are_strict_and_cross_referenced(tmp_path):
-    mesh = dict(MESH_A, material_slots=[{
-        "slot_name": "slot_a", "material_uid": MATERIAL_C["uid"]}])
-    document = prepare(
-        tmp_path, resources=[mesh], materials=[MATERIAL_C])
-    assert document["resources"][0]["material_slots"] == [{
-        "slot_name": "slot_a", "material_uid": MATERIAL_C["uid"]}]
-
-
-@pytest.mark.parametrize("slots", [
-    {},
-    ["not-an-object"],
-    [{"slot_name": "slot_a"}],
-    [{"slot_name": 1, "material_uid": MATERIAL_C["uid"]}],
-    [{"slot_name": "slot_a", "material_uid": 1}],
-])
-def test_static_mesh_rejects_malformed_material_slots(tmp_path, slots):
-    mesh = dict(MESH_A, material_slots=slots)
-    with pytest.raises(ManifestError, match="material_slot|material slot"):
-        prepare(tmp_path, resources=[mesh], materials=[MATERIAL_C])
-
-
-def test_static_mesh_rejects_duplicate_normalized_slot_names(tmp_path):
-    mesh = dict(MESH_A, material_slots=[
-        {"slot_name": "m\u00e9tal", "material_uid": MATERIAL_C["uid"]},
-        {"slot_name": "me\u0301tal", "material_uid": MATERIAL_C["uid"]},
-    ])
-    with pytest.raises(ManifestError, match="duplicate material slot_name"):
-        prepare(tmp_path, resources=[mesh], materials=[MATERIAL_C])
-
-
-def test_static_mesh_rejects_missing_material_reference(tmp_path):
-    mesh = dict(MESH_A, material_slots=[{
-        "slot_name": "slot_a", "material_uid": MATERIAL_C["uid"]}])
-    with pytest.raises(ManifestError, match="references missing material"):
-        prepare(tmp_path, resources=[mesh])
-
-
-def test_reader_tolerates_dangling_material_for_importer_warning(tmp_path):
-    mesh = dict(MESH_A, material_slots=[{
-        "slot_name": "missing_slot", "material_uid": MATERIAL_C["uid"]}])
-    document = {
-        "schema": "mh.export_manifest",
-        "schema_version": 1,
-        "exporter_version": "0.3.0",
-        "source": {"blend_file": "legacy.blend"},
-        "resources": [mesh],
-        "materials": [],
-    }
-    # A reader accepts structurally valid legacy/external incompleteness so
-    # the importer can surface MH_W_MATERIAL_NOT_FOUND and keep the mesh.
-    (tmp_path / MANIFEST_NAME).write_text(
-        json.dumps(document), encoding="utf-8")
-    loaded = load_export_manifest(str(tmp_path))
-    assert loaded["resources"][0]["material_slots"] == mesh["material_slots"]
-    snap, token = load_export_manifest_snapshot(str(tmp_path))
-    assert snap == loaded and isinstance(token, bytes)
-    assert manifest_resource_index(loaded)[MESH_A["uid"]]["kind"] \
-        == "static_mesh"
-
-
-def test_explicit_strict_reference_validation_rejects_dangling_material():
-    mesh = dict(MESH_A, material_slots=[{
-        "slot_name": "missing_slot", "material_uid": MATERIAL_C["uid"]}])
-    document = {
-        "schema": "mh.export_manifest",
-        "schema_version": 1,
-        "exporter_version": "0.3.0",
-        "source": {},
-        "resources": [mesh],
-        "materials": [],
-    }
-    assert validate_export_manifest(document)["resources"] == [mesh]
-    with pytest.raises(ManifestError, match="references missing material"):
-        validate_export_manifest(document, strict_references=True)
-
-
-def test_stage_and_update_keep_writer_references_strict(tmp_path):
-    mesh = dict(MESH_A, material_slots=[{
-        "slot_name": "missing_slot", "material_uid": MATERIAL_C["uid"]}])
-    document = {
-        "schema": "mh.export_manifest",
-        "schema_version": 1,
-        "exporter_version": "0.3.0",
-        "source": {},
-        "resources": [mesh],
-        "materials": [],
-    }
-    with pytest.raises(ManifestError, match="references missing material"):
-        stage_manifest(str(tmp_path), document)
-    assert not (tmp_path / PENDING_MANIFEST_NAME).exists()
-
-    # Even if an incomplete manifest came from an older/external writer, the
-    # next local writer refuses to preserve it into a new staged transaction.
-    (tmp_path / MANIFEST_NAME).write_text(
-        json.dumps(document), encoding="utf-8")
-    with pytest.raises(ManifestError, match="references missing material"):
-        prepare(tmp_path, resources=[COMPOSITE_B])
-
-
-def test_reader_still_rejects_malformed_slot_shape(tmp_path):
-    malformed = dict(MESH_A, material_slots={})
-    document = {
-        "schema": "mh.export_manifest",
-        "schema_version": 1,
-        "exporter_version": "0.3.0",
-        "source": {},
-        "resources": [malformed],
-        "materials": [],
-    }
-    (tmp_path / MANIFEST_NAME).write_text(
-        json.dumps(document), encoding="utf-8")
-    with pytest.raises(ManifestError, match="material_slots must be an array"):
-        load_export_manifest(str(tmp_path))
-
-
-def test_composite_rejects_mesh_only_material_slots(tmp_path):
-    malformed = dict(COMPOSITE_B, material_slots=[])
-    with pytest.raises(ManifestError, match="cannot contain material_slots"):
-        prepare(tmp_path, resources=[malformed])
-
-
-@pytest.mark.parametrize(("field", "value"), [
-    ("uid", 7),
-    ("kind", "static_mesh"),
-    ("name", None),
-    ("content_hash", 7),
-    ("shader_class", ""),
-    ("params", []),
-    ("textures", []),
-])
-def test_incoming_material_requires_strict_writer_fields(
-        tmp_path, field, value):
-    malformed = dict(MATERIAL_C, **{field: value})
-    with pytest.raises(ManifestError):
-        prepare(tmp_path, materials=[malformed])
-
-
-def test_material_payload_is_normalized_before_return_and_stage(tmp_path):
-    material = dict(
-        MATERIAL_C,
-        shader_class="re\u0301ndinst_simple",
-        params={"roughness": 0.2500004},
-        textures={"te\u0301x0": "A:\\textures\\metal_d.tif"},
-    )
-    document = prepare(tmp_path, materials=[material])
-    row = document["materials"][0]
-    assert row["shader_class"] == "r\u00e9ndinst_simple"
-    assert row["params"] == {"roughness": 0.25}
-    assert row["textures"] == {"t\u00e9x0": "A:\\textures\\metal_d.tif"}
-
-
-def test_material_rejects_non_string_texture_path(tmp_path):
-    malformed = dict(MATERIAL_C, textures={"tex0": 123})
-    with pytest.raises(ManifestError, match="texture slots and paths"):
-        prepare(tmp_path, materials=[malformed])
-
-
-def test_material_rejects_non_finite_nested_param(tmp_path):
-    malformed = dict(MATERIAL_C, params={"nested": [float("nan")]})
-    with pytest.raises(ManifestError, match="invalid payload"):
-        prepare(tmp_path, materials=[malformed])
-
-
-def test_two_resource_uids_cannot_own_one_source_path(tmp_path):
-    collision = dict(COMPOSITE_B, source=MESH_A["source"])
-    with pytest.raises(ManifestError, match="source .* is shared"):
-        prepare(tmp_path, resources=[MESH_A, collision])
-
-
-@pytest.mark.parametrize("first, alias", [
-    ("payload/mesh_a.fbx", "./payload/mesh_a.fbx"),
-    ("payload/mesh_a.fbx", "payload\\mesh_a.fbx"),
-    ("payload/mesh_a.fbx", "PAYLOAD/MESH_A.FBX"),
-])
-def test_source_ownership_rejects_relative_and_windows_aliases(
-        tmp_path, first, alias):
-    mesh = dict(MESH_A, source=first)
-    collision = dict(COMPOSITE_B, source=alias)
-    with pytest.raises(ManifestError, match="source .* is shared"):
-        prepare(tmp_path, resources=[mesh, collision])
-
-
-def test_relative_source_is_stored_in_canonical_slash_form(tmp_path):
-    aliased = dict(MESH_A, source="./payload\\temp/../mesh_a.fbx")
-    document = prepare(tmp_path, resources=[aliased])
-    assert document["resources"][0]["source"] == "payload/mesh_a.fbx"
-    stage_manifest(str(tmp_path), document)
-    commit_staged_manifest(str(tmp_path))
-    assert load_export_manifest(str(tmp_path))["resources"][0]["source"] \
-        == "payload/mesh_a.fbx"
-
-
-def test_existing_resource_uid_cannot_change_kind(tmp_path):
-    stable = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), stable)
-    commit_staged_manifest(str(tmp_path))
-    changed_kind = dict(COMPOSITE_B, uid=MESH_A["uid"])
-    with pytest.raises(ManifestError, match="cannot change kind"):
-        prepare(tmp_path, resources=[changed_kind])
-
-
-def test_resource_and_material_uid_spaces_cannot_overlap(tmp_path):
-    material = {
-        "uid": MESH_A["uid"],
-        "kind": "material",
-        "name": "m",
-        "shader_class": "rendinst_simple",
-        "params": {},
-        "textures": {},
-        "content_hash": "xxh3:0000000000000003",
-    }
-    with pytest.raises(ManifestError, match="resource and material"):
-        prepare(tmp_path, resources=[MESH_A], materials=[material])
+def test_schema_version_bool_is_not_integer_v1():
+    document = manifest([MESH])
+    document["schema_version"] = True
+    with pytest.raises(ManifestError) as caught:
+        validate_export_manifest(document)
+    assert caught.value.code == "MH_E_UNKNOWN_SCHEMA_VERSION"
 
 
 def test_missing_manifest_can_be_optional(tmp_path):
     assert load_export_manifest(str(tmp_path), allow_missing=True) is None
-
-
-def test_interrupted_resource_must_be_reexported_before_unrelated_uid(tmp_path):
-    stable = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), stable)
-    commit_staged_manifest(str(tmp_path))
-
-    changed_a = dict(MESH_A, content_hash="xxh3:0000000000000099")
-    pending = prepare(tmp_path, resources=[changed_a])
-    stage_manifest(str(tmp_path), pending)
-
-    with pytest.raises(ManifestError, match=MESH_A["uid"]):
-        prepare(tmp_path, resources=[COMPOSITE_B])
-
-    recovered = prepare(tmp_path, resources=[changed_a])
-    assert manifest_resource_index(recovered)[MESH_A["uid"]] == changed_a
-
-
-def test_first_interrupted_resource_cannot_recover_as_another_kind(tmp_path):
-    pending = prepare(tmp_path, resources=[COMPOSITE_B])
-    stage_manifest(str(tmp_path), pending)
-    changed_kind = dict(
-        MESH_A, uid=COMPOSITE_B["uid"], source="composite_b.mesh.fbx")
-    with pytest.raises(ManifestError, match="cannot change kind from interrupted"):
-        prepare(tmp_path, resources=[changed_kind])
-
-
-def test_inline_material_only_pending_state_does_not_block_other_export(tmp_path):
-    stable = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), stable)
-    commit_staged_manifest(str(tmp_path))
-    material = {
-        "uid": "30000000-0000-0000-0000-000000000003",
-        "kind": "material",
-        "name": "m",
-        "shader_class": "rendinst_simple",
-        "params": {"roughness": 0.5},
-        "textures": {},
-        "content_hash": "xxh3:0000000000000003",
-    }
-    pending = prepare(tmp_path, materials=[material])
-    stage_manifest(str(tmp_path), pending)
-
-    unrelated = prepare(tmp_path, resources=[COMPOSITE_B])
-    assert unrelated["materials"] == []
-
-
-def test_top_level_blend_file_is_kept_for_one_source_file(tmp_path):
-    stable = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), stable)
-    commit_staged_manifest(str(tmp_path))
-
-    updated = prepare(tmp_path, resources=[COMPOSITE_B])
-    assert updated["source"] == {"blend_file": "scene.blend"}
-
-
-def test_top_level_blend_file_is_removed_for_mixed_directory_index(tmp_path):
-    stable = prepare(tmp_path, resources=[MESH_A])
-    stage_manifest(str(tmp_path), stable)
-    commit_staged_manifest(str(tmp_path))
-
-    mixed = prepare_manifest_update(
-        str(tmp_path), resources=[COMPOSITE_B], exporter_version="0.3.0",
-        blend_file="other_scene.blend")
-    assert mixed["source"] == {}
-    stage_manifest(str(tmp_path), mixed)
-    commit_staged_manifest(str(tmp_path))
-
-    # Unknown/mixed provenance is sticky; a later single-resource update must
-    # not claim the whole directory for its own authoring file again.
-    later = prepare(tmp_path, resources=[MESH_A])
-    assert later["source"] == {}

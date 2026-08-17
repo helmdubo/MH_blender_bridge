@@ -74,6 +74,8 @@ ERROR_CODES = frozenset(
         "MH_E_DUPLICATE_NODE_UID",
         "MH_E_DUPLICATE_RESOURCE_UID",
         "MH_E_COMPOSITE_CYCLE",
+        "MH_E_AMBIGUOUS_RESOURCE_OWNER",
+        "MH_E_UNRESOLVED_EXTERNAL",
         "MH_E_DANGLING_PARENT",
         "MH_E_PARENT_CYCLE",
         # Blender export
@@ -104,6 +106,10 @@ ERROR_CODES = frozenset(
         "MH_E_TARGET_NAME_COLLISION",
         # warnings
         "MH_W_REGISTRY_INVALID",
+        "MH_W_REGISTRY_STALE",
+        "MH_W_COMPOSITE_CYCLE",
+        "MH_W_UNRESOLVED_RESOURCE",
+        "MH_W_TEXTURE_OUTSIDE_ROOT",
         "MH_W_MATERIAL_NOT_FOUND",
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
@@ -546,8 +552,9 @@ def hash_hex(data: bytes) -> str:
     """Return ``"xxh3:" + 16 lowercase hex chars`` of XXH3-64 over `data` (§8.3)."""
     if xxhash is None:
         raise RuntimeError(
-            "MH: the 'xxhash' python package is not installed in this Blender. "
-            "Run:  <blender>/<version>/python/bin/python -m pip install xxhash")
+            "MH: the bundled 'xxhash' runtime is unavailable. Reinstall the "
+            "MH Blender Bridge Extension ZIP with Get Extensions > Install "
+            "from Disk")
     return "xxh3:" + xxhash.xxh3_64(data).hexdigest()
 
 

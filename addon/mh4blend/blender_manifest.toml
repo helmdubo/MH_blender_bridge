@@ -1,0 +1,27 @@
+schema_version = "1.0.0"
+
+id = "mh4blend"
+version = "0.4.0"
+name = "MH Blender Bridge"
+tagline = "Export FBX, materials, and composite sources for UE5"
+maintainer = "MH Studio"
+type = "add-on"
+
+blender_version_min = "4.5.0"
+blender_version_max = "5.0.0"
+platforms = ["windows-x64"]
+license = ["SPDX:LicenseRef-Proprietary"]
+
+wheels = [
+  "./wheels/xxhash-4.0.1-cp311-cp311-win_amd64.whl",
+]
+
+[permissions]
+files = "Import and export project source files"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "*.pyc",
+  ".*",
+]

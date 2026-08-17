@@ -15,13 +15,26 @@ from mathutils import Matrix
 from ..core.canonical import nfc, resource_filename
 from ..core.meshser import mesh_content_hash
 from ..core.model import Manifest, MeshResource
+from ..core.source_resolver import (
+    assert_source_snapshot_stable,
+    pending_writer_uid,
+    resolve_resource,
+    resolve_resource_for_import,
+    resolve_resource_for_writer,
+    scan_source_root,
+)
 from ..core.uid import PROP_UID, ensure_uid, find_duplicate_uids
 from ..core.validate import MHValidationError, ValidationWarning, validate_manifest
 from .composite_extract import _bag
+from .export_material import (
+    prepare_material_resource_export,
+    write_prepared_material,
+)
 from .material_extract import extract_materials_from_objects
 from .mesh_extract import _record_for_object
 from .source_manifest import (
     MANIFEST_NAME,
+    abandon_staged_manifest,
     commit_staged_manifest,
     prepare_manifest_update,
     stage_manifest,
@@ -51,7 +64,7 @@ FBX_EXPORT_KWARGS = dict(
 )
 
 BLENDER_METERS_TO_UE_CENTIMETERS = 100.0
-EXPORTER_VERSION = "0.3.0"
+EXPORTER_VERSION = "0.4.0"
 
 
 def collect_collection_mesh_objects(collection):
@@ -232,17 +245,126 @@ def _temporary_selection_context(scene, objects):
                 bpy.ops.object.mode_set(mode=original_mode)
 
 
-def _material_entry(material):
-    payload = material.disk_payload()
-    return {
-        "uid": material.uid,
-        "kind": "material",
-        "name": nfc(material.name),
-        "shader_class": payload["shader_class"],
-        "params": payload["params"],
-        "textures": payload["textures"],
-        "content_hash": material.content_hash,
-    }
+def _resolved_source_root(value):
+    if not isinstance(value, (str, os.PathLike)) or not str(value).strip():
+        raise ValueError(
+            "Configure Project Source Root in the MH addon preferences")
+    root = os.path.abspath(bpy.path.abspath(os.fspath(value)))
+    if not os.path.isdir(root):
+        raise ValueError(f"Project Source Root does not exist: {root}")
+    return root
+
+
+def _assert_output_under_root(output_dir, source_root):
+    try:
+        inside = os.path.commonpath([
+            os.path.normcase(os.path.abspath(output_dir)),
+            os.path.normcase(os.path.abspath(source_root)),
+        ]) == os.path.normcase(os.path.abspath(source_root))
+    except ValueError:
+        inside = False
+    if not inside:
+        raise ValueError(
+            "FBX output folder must be inside Project Source Root")
+
+
+def _material_owners(snapshot, materials):
+    owners = {}
+    for material in materials:
+        resolved = resolve_resource(
+            snapshot, material.uid, expected_kind="material")
+        if resolved is None:
+            continue
+        owners[material.uid] = {
+            "payload_path": resolved.payload_path,
+            "owning_manifest_path": resolved.owning_manifest_path,
+            "manifest_row": resolved.manifest_row,
+        }
+    return owners
+
+
+def _prepare_materials_tolerant(
+        materials, output_dir, *, source_root, texture_policy, owners):
+    prepared = []
+    warnings = []
+    for material in materials:
+        owner = owners.get(material.uid)
+        try:
+            prepared.append(prepare_material_resource_export(
+                material,
+                output_dir,
+                source_root=source_root,
+                texture_policy=texture_policy,
+                target_payload_path=(
+                    owner["payload_path"] if owner else None),
+                owning_manifest_path=(
+                    owner["owning_manifest_path"] if owner else None),
+                existing_source=(
+                    owner["manifest_row"]["source"] if owner else None),
+            ))
+        except (OSError, RuntimeError, ValueError) as exc:
+            warnings.append(ValidationWarning(
+                "MH_W_MATERIAL_NOT_FOUND", [material.uid],
+                f"material export preparation failed; geometry will still "
+                f"export: {exc}",
+            ).disk_dict())
+    return prepared, warnings
+
+
+def _write_material_resources(
+        prepared_materials, *, source_root, texture_policy, dry_run):
+    updates = []
+    warnings = []
+    for prepared in prepared_materials:
+        owner_dir = os.path.dirname(prepared.owning_manifest_path)
+        written = False
+        manifest_written = False
+        try:
+            if not dry_run:
+                manifest = prepare_manifest_update(
+                    owner_dir,
+                    resources=[prepared.resource_row],
+                    exporter_version=EXPORTER_VERSION,
+                    blend_file=os.path.basename(bpy.data.filepath) or None,
+                    source_root=source_root,
+                )
+                stage_manifest(owner_dir, manifest)
+                try:
+                    written = write_prepared_material(
+                        prepared,
+                        source_root=source_root,
+                        texture_policy=texture_policy,
+                        force=manifest.is_recovery,
+                    )
+                    commit_staged_manifest(owner_dir)
+                    manifest_written = True
+                except BaseException:
+                    abandon_staged_manifest(owner_dir)
+                    raise
+            updates.append({
+                "ok": True,
+                "uid": prepared.document["uid"],
+                "path": prepared.payload_path,
+                "written": written,
+                "manifest_path": prepared.owning_manifest_path,
+                "manifest_written": manifest_written,
+            })
+        except (OSError, RuntimeError, ValueError) as exc:
+            uid = prepared.document["uid"]
+            warnings.append(ValidationWarning(
+                "MH_W_MATERIAL_NOT_FOUND", [uid],
+                f"material export failed; geometry remains exported: {exc}",
+            ).disk_dict())
+            updates.append({
+                "ok": False,
+                "uid": uid,
+                "path": prepared.payload_path,
+                "written": False,
+                "manifest_path": prepared.owning_manifest_path,
+                "manifest_written": False,
+                "error": str(exc),
+            })
+    return updates, warnings
 
 
 def _export_selected_fbx(filepath):
@@ -251,7 +373,9 @@ def _export_selected_fbx(filepath):
 
 
 def export_fbx_collection(
-        collection, output_dir, *, dry_run=False, registry_path=""):
+        collection, output_dir, *, dry_run=False, registry_path="",
+        export_materials=False, source_root="",
+        texture_policy="transitional"):
     """Export one selected collection as one FBX static-mesh resource.
 
     Returns a structured report containing the domain objects and their
@@ -327,6 +451,132 @@ def export_fbx_collection(
         bpy.path.abspath(os.fspath(output_dir)))
     filepath = os.path.join(resolved_output_dir, filename)
 
+    prepared_materials = []
+    material_updates = []
+    source_snapshot = None
+    material_owners = {}
+    missing_material_uids = []
+    material_prepare_warnings = []
+    recovery_material_updates = []
+    recovery_material_entries = []
+    deferred_materials = []
+    normalized_policy = str(texture_policy).lower()
+    resolved_source_root = None
+    if isinstance(source_root, (str, os.PathLike)) and str(source_root).strip():
+        resolved_source_root = _resolved_source_root(source_root)
+        _assert_output_under_root(resolved_output_dir, resolved_source_root)
+    if export_materials:
+        if resolved_source_root is None:
+            resolved_source_root = _resolved_source_root(source_root)
+    materials_to_prepare = list(materials)
+    pending = pending_writer_uid(resolved_source_root) \
+        if resolved_source_root is not None else None
+    if pending is not None:
+        if pending.kind == "material":
+            if not export_materials:
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: pending material "
+                    f"{pending.uid} blocks geometry-only FBX export")
+            if dry_run:
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: dry-run cannot recover a "
+                    "pending material transaction")
+            material_by_uid = {material.uid: material for material in materials}
+            recovery_material = material_by_uid.get(pending.uid)
+            if recovery_material is None:
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: pending material recovery "
+                    f"{pending.uid} is not used by the selected FBX")
+            resolution = resolve_resource_for_writer(
+                resolved_source_root,
+                pending.uid,
+                expected_kind="material",
+                registry_path=(
+                    os.path.abspath(bpy.path.abspath(registry_path))
+                    if registry_path else None),
+                texture_policy=normalized_policy,
+            )
+            source_snapshot = resolution.snapshot
+            recovery_owners = {
+                pending.uid: {
+                    "payload_path": resolution.owner.payload_path,
+                    "owning_manifest_path": (
+                        resolution.owner.owning_manifest_path),
+                    "manifest_row": resolution.owner.manifest_row,
+                },
+            }
+            recovery_prepared, recovery_prepare_warnings = \
+                _prepare_materials_tolerant(
+                    [recovery_material],
+                    resolved_output_dir,
+                    source_root=resolved_source_root,
+                    texture_policy=normalized_policy,
+                    owners=recovery_owners,
+                )
+            if recovery_prepare_warnings or not recovery_prepared:
+                detail = recovery_prepare_warnings[0]["message"] \
+                    if recovery_prepare_warnings else "recovery preparation failed"
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: pending material "
+                    f"{pending.uid} cannot recover: {detail}")
+            recovery_material_entries = [
+                recovery_prepared[0].resource_row]
+            recovery_material_updates, recovery_write_warnings = \
+                _write_material_resources(
+                    recovery_prepared,
+                    source_root=resolved_source_root,
+                    texture_policy=normalized_policy,
+                    dry_run=False,
+                )
+            if recovery_write_warnings or not recovery_material_updates[0]["ok"]:
+                detail = recovery_material_updates[0].get(
+                    "error", "recovery write failed")
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: pending material "
+                    f"{pending.uid} recovery failed: {detail}")
+            materials_to_prepare = [
+                material for material in materials
+                if material.uid != pending.uid]
+        elif pending.kind == "static_mesh":
+            if pending.uid != resource_uid:
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: pending static mesh "
+                    f"{pending.uid} is not the selected FBX {resource_uid}")
+            if dry_run:
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: dry-run cannot recover a "
+                    "pending static mesh transaction")
+            if export_materials:
+                deferred_materials = materials_to_prepare
+            materials_to_prepare = []
+        else:
+            raise ValueError(
+                "MH_E_INVALID_EXPORT_MANIFEST: pending "
+                f"{pending.kind} {pending.uid} blocks FBX export")
+    if materials_to_prepare and resolved_source_root is not None:
+        resolved_registry_path = (
+            os.path.abspath(bpy.path.abspath(registry_path))
+            if registry_path else None)
+        source_snapshot = scan_source_root(
+            resolved_source_root,
+            registry_path=resolved_registry_path,
+            texture_policy=normalized_policy)
+        material_owners = _material_owners(
+            source_snapshot, materials_to_prepare)
+    if export_materials:
+        prepared_materials, material_prepare_warnings = \
+            _prepare_materials_tolerant(
+                materials_to_prepare,
+                resolved_output_dir,
+                source_root=resolved_source_root,
+                texture_policy=normalized_policy,
+                owners=material_owners,
+            )
+    else:
+        missing_material_uids = sorted(
+            material.uid for material in materials
+            if material.uid not in material_owners)
+
     resource_entry = {
         "uid": resource.uid,
         "kind": "static_mesh",
@@ -342,8 +592,8 @@ def export_fbx_collection(
         ]
     if resource.properties:
         resource_entry["properties"] = resource.properties
-    material_entries = [
-        _material_entry(material) for material in materials]
+    material_entries = recovery_material_entries + [
+        prepared.resource_row for prepared in prepared_materials]
 
     registry = None
     adapter_warnings = []
@@ -364,6 +614,23 @@ def export_fbx_collection(
         materials=materials,
     ), registry=registry)
     validation["warnings"] = adapter_warnings + validation.get("warnings", [])
+    validation["warnings"].extend(material_prepare_warnings)
+    if source_snapshot is not None:
+        validation["warnings"].extend({
+            "code": diagnostic.code,
+            "subjects": ([diagnostic.uid] if diagnostic.uid else []),
+            "message": diagnostic.message,
+        } for diagnostic in source_snapshot.diagnostics)
+    if missing_material_uids:
+        validation["warnings"].append(ValidationWarning(
+            "MH_W_MATERIAL_NOT_FOUND",
+            missing_material_uids,
+            "FBX references materials that are not exported under Project "
+            "Source Root; enable Export Materials or use Export materials",
+        ).disk_dict())
+    for prepared in prepared_materials:
+        validation["warnings"].extend(
+            diagnostic.disk_dict() for diagnostic in prepared.diagnostics)
     if validation["errors"]:
         return {
             "ok": False,
@@ -376,34 +643,137 @@ def export_fbx_collection(
             "resource_entry": resource_entry,
             "materials": materials,
             "material_entries": material_entries,
+            "material_updates": material_updates,
         }
 
     written = False
     manifest_written = False
     manifest_path = os.path.join(resolved_output_dir, MANIFEST_NAME)
     if not dry_run:
+        resolved_registry_path = (
+            os.path.abspath(bpy.path.abspath(registry_path))
+            if registry_path else None)
+        mesh_recovery = pending is not None \
+            and pending.kind == "static_mesh"
+        if mesh_recovery:
+            mesh_resolution = resolve_resource_for_writer(
+                resolved_source_root,
+                resource_uid,
+                expected_kind="static_mesh",
+                expected_source=filename,
+                registry_path=resolved_registry_path,
+                texture_policy=normalized_policy,
+            )
+            mesh_owner = mesh_resolution.owner
+            mesh_snapshot = mesh_resolution.snapshot
+        else:
+            mesh_snapshot = scan_source_root(
+                resolved_source_root,
+                registry_path=resolved_registry_path,
+                texture_policy=normalized_policy,
+            )
+            mesh_owner = resolve_resource_for_import(
+                mesh_snapshot, resource_uid, expected_kind="static_mesh")
+
+        if mesh_owner is not None:
+            expected_manifest = os.path.normcase(os.path.normpath(
+                manifest_path))
+            actual_manifest = os.path.normcase(os.path.normpath(
+                mesh_owner.owning_manifest_path))
+            expected_payload = os.path.normcase(os.path.normpath(filepath))
+            actual_payload = os.path.normcase(os.path.normpath(
+                mesh_owner.payload_path))
+            if (actual_manifest != expected_manifest
+                    or actual_payload != expected_payload
+                    or mesh_owner.manifest_row["source"] != filename):
+                raise ValueError(
+                    "MH_E_INVALID_EXPORT_MANIFEST: existing static mesh "
+                    f"{resource_uid} must be updated at its exact owning "
+                    "manifest and payload path")
+
+        payload_hash_matches = (
+            mesh_owner is not None
+            and mesh_owner.manifest_row["content_hash"]
+            == resource_entry["content_hash"]
+            and os.path.isfile(mesh_owner.payload_path)
+        )
+        write_mesh_payload = mesh_recovery or not payload_hash_matches
+        assert_source_snapshot_stable(mesh_snapshot)
         manifest = prepare_manifest_update(
             resolved_output_dir,
             resources=[resource_entry],
-            materials=material_entries,
             exporter_version=EXPORTER_VERSION,
-            blend_file=os.path.basename(bpy.data.filepath) or "untitled.blend",
+            blend_file=os.path.basename(bpy.data.filepath) or None,
+            source_root=resolved_source_root,
         )
-        stage_manifest(resolved_output_dir, manifest)
+        stage_manifest(
+            resolved_output_dir,
+            manifest,
+            snapshot_guard=lambda: assert_source_snapshot_stable(
+                mesh_snapshot),
+        )
         tmp = filepath + ".tmp"
         with contextlib.suppress(OSError):
             os.remove(tmp)
         try:
-            with _temporary_selection_context(scene, objects):
-                with _temporary_ue_centimeter_export_state(objects):
-                    _export_selected_fbx(tmp)
-            os.replace(tmp, filepath)
-            written = True
+            if write_mesh_payload:
+                with _temporary_selection_context(scene, objects):
+                    with _temporary_ue_centimeter_export_state(objects):
+                        _export_selected_fbx(tmp)
+                os.replace(tmp, filepath)
+                written = True
             manifest_path = commit_staged_manifest(resolved_output_dir)
             manifest_written = True
+        except BaseException:
+            abandon_staged_manifest(resolved_output_dir)
+            raise
         finally:
             with contextlib.suppress(OSError):
                 os.remove(tmp)
+        if deferred_materials:
+            resolved_registry_path = (
+                os.path.abspath(bpy.path.abspath(registry_path))
+                if registry_path else None)
+            source_snapshot = scan_source_root(
+                resolved_source_root,
+                registry_path=resolved_registry_path,
+                texture_policy=normalized_policy)
+            deferred_owners = _material_owners(
+                source_snapshot, deferred_materials)
+            deferred_prepared, deferred_warnings = \
+                _prepare_materials_tolerant(
+                    deferred_materials,
+                    resolved_output_dir,
+                    source_root=resolved_source_root,
+                    texture_policy=normalized_policy,
+                    owners=deferred_owners,
+                )
+            prepared_materials.extend(deferred_prepared)
+            material_entries.extend(
+                prepared.resource_row for prepared in deferred_prepared)
+            validation["warnings"].extend(deferred_warnings)
+            validation["warnings"].extend({
+                "code": diagnostic.code,
+                "subjects": ([diagnostic.uid] if diagnostic.uid else []),
+                "message": diagnostic.message,
+            } for diagnostic in source_snapshot.diagnostics)
+        if export_materials:
+            normal_updates, material_write_warnings = \
+                _write_material_resources(
+                    prepared_materials,
+                    source_root=resolved_source_root,
+                    texture_policy=normalized_policy,
+                    dry_run=False,
+                )
+            material_updates = recovery_material_updates + normal_updates
+            validation["warnings"].extend(material_write_warnings)
+
+    if not dry_run:
+        successful_material_uids = {
+            row["uid"] for row in material_updates if row["ok"]}
+        material_entries = [
+            row for row in material_entries
+            if row["uid"] in successful_material_uids]
 
     return {
         "ok": True,
@@ -416,5 +786,9 @@ def export_fbx_collection(
         "resource_entry": resource_entry,
         "materials": materials,
         "material_entries": material_entries,
+        "material_updates": material_updates,
+        "materials_exported": (
+            len(prepared_materials) if dry_run else
+            sum(1 for row in material_updates if row["ok"])),
         "validation": validation,
     }

@@ -12,9 +12,24 @@ import os
 import bpy
 
 from .. import prefs as prefs_mod
+from ..core.source_resolver import (
+    resolve_resource_for_writer,
+    scan_source_root,
+)
+from ..core.uid import ensure_uid
 from ..scene.export_composite import export_composite_collection
 from ..scene.export_fbx import export_fbx_collection
+from ..scene.export_material import (
+    prepare_blender_material_export,
+    write_prepared_material,
+)
 from ..scene.import_composite import import_composite_file
+from ..scene.source_manifest import (
+    abandon_staged_manifest,
+    commit_staged_manifest,
+    prepare_manifest_update,
+    stage_manifest,
+)
 
 
 LOG_TEXT_NAME = "mh_export_log"
@@ -70,7 +85,10 @@ class MH_OT_export_fbx(bpy.types.Operator):
             prefs = prefs_mod.get_prefs(context)
             report = export_fbx_collection(
                 collection, _directory(context.scene.mh_fbx_directory),
-                registry_path=prefs.registry_path)
+                registry_path=prefs.registry_path,
+                export_materials=context.scene.mh_fbx_export_materials,
+                source_root=prefs.source_root,
+                texture_policy=prefs.texture_policy)
         except (OSError, RuntimeError, ValueError) as exc:
             _log("export_fbx", {"ok": False, "error": str(exc)})
             self.report({"ERROR"}, str(exc))
@@ -104,9 +122,13 @@ class MH_OT_export_composite(bpy.types.Operator):
             self.report({"ERROR"}, "Choose a composite collection to export")
             return {"CANCELLED"}
         try:
+            prefs = prefs_mod.get_prefs(context)
             report = export_composite_collection(
                 collection,
                 _directory(context.scene.mh_composite_export_directory),
+                source_root=_directory(prefs.source_root),
+                registry_path=prefs.registry_path,
+                texture_policy=prefs.texture_policy,
             )
         except (OSError, RuntimeError, ValueError) as exc:
             _log("export_composite", {"ok": False, "error": str(exc)})
@@ -123,6 +145,98 @@ class MH_OT_export_composite(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class MH_OT_export_material(bpy.types.Operator):
+    bl_idname = "mh.export_material"
+    bl_label = "Export Material"
+    bl_description = "Export or update one material source by its stable UID"
+
+    def execute(self, context):
+        material = context.scene.mh_material
+        if material is None:
+            self.report({"ERROR"}, "Choose a material to export")
+            return {"CANCELLED"}
+        try:
+            prefs = prefs_mod.get_prefs(context)
+            source_root = _directory(prefs.source_root)
+            if not os.path.isdir(source_root):
+                raise ValueError(
+                    f"Project Source Root does not exist: {source_root}")
+            registry_path = (
+                os.path.abspath(bpy.path.abspath(prefs.registry_path))
+                if prefs.registry_path else None)
+            uid = ensure_uid(material)
+            resolution = resolve_resource_for_writer(
+                source_root,
+                uid,
+                expected_kind="material",
+                registry_path=registry_path,
+                texture_policy=prefs.texture_policy)
+            snapshot = resolution.snapshot
+            owner = resolution.owner
+            output_dir = (
+                os.path.dirname(owner.payload_path)
+                if owner is not None
+                else _directory(context.scene.mh_material_directory))
+            prepared = prepare_blender_material_export(
+                material,
+                output_dir,
+                source_root=source_root,
+                texture_policy=prefs.texture_policy,
+                target_payload_path=(owner.payload_path if owner else None),
+                owning_manifest_path=(
+                    owner.owning_manifest_path if owner else None),
+                existing_source=(
+                    owner.manifest_row["source"] if owner else None),
+            )
+            owner_dir = os.path.dirname(prepared.owning_manifest_path)
+            manifest = prepare_manifest_update(
+                owner_dir,
+                resources=[prepared.resource_row],
+                exporter_version="0.4.0",
+                blend_file=os.path.basename(bpy.data.filepath) or None,
+                source_root=source_root,
+            )
+            stage_manifest(owner_dir, manifest)
+            try:
+                written = write_prepared_material(
+                    prepared,
+                    source_root=source_root,
+                    texture_policy=prefs.texture_policy,
+                    force=manifest.is_recovery,
+                )
+                manifest_path = commit_staged_manifest(owner_dir)
+            except BaseException:
+                abandon_staged_manifest(owner_dir)
+                raise
+            report = {
+                "ok": True,
+                "uid": uid,
+                "path": prepared.payload_path,
+                "written": written,
+                "manifest_path": manifest_path,
+                "warnings": [
+                    row.disk_dict() for row in prepared.diagnostics
+                ] + [{
+                    "code": row.code,
+                    "subjects": ([row.uid] if row.uid else []),
+                    "message": row.message,
+                } for row in snapshot.diagnostics],
+            }
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("export_material", {"ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("export_material", report)
+        if report["warnings"]:
+            self.report(
+                {"WARNING"},
+                f"Material exported with {len(report['warnings'])} warning(s): "
+                f"{report['path']} — see {LOG_TEXT_NAME}")
+        else:
+            self.report({"INFO"}, f"Material exported: {report['path']}")
+        return {"FINISHED"}
+
+
 class MH_OT_import_composite(bpy.types.Operator):
     bl_idname = "mh.import_composite"
     bl_label = "Import Composite"
@@ -133,8 +247,20 @@ class MH_OT_import_composite(bpy.types.Operator):
 
     def execute(self, context):
         try:
+            prefs = prefs_mod.get_prefs(context)
+            source_root = _directory(prefs.source_root)
+            if not os.path.isdir(source_root):
+                raise ValueError(
+                    f"Project Source Root does not exist: {source_root}")
+            registry_path = (
+                os.path.abspath(bpy.path.abspath(prefs.registry_path))
+                if prefs.registry_path else None)
             report = import_composite_file(
-                _filepath(context.scene.mh_composite_import_path))
+                _filepath(context.scene.mh_composite_import_path),
+                source_root=source_root,
+                registry_path=registry_path,
+                texture_policy=prefs.texture_policy,
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             _log("import_composite", {"ok": False, "error": str(exc)})
             self.report({"ERROR"}, str(exc))
@@ -153,6 +279,7 @@ class MH_OT_import_composite(bpy.types.Operator):
 
 CLASSES = (
     MH_OT_export_fbx,
+    MH_OT_export_material,
     MH_OT_export_composite,
     MH_OT_import_composite,
 )
@@ -165,6 +292,20 @@ def register():
         type=bpy.types.Collection,
     )
     bpy.types.Scene.mh_fbx_directory = bpy.props.StringProperty(
+        name="Output Folder", subtype="DIR_PATH", default="")
+    bpy.types.Scene.mh_fbx_export_materials = bpy.props.BoolProperty(
+        name="Export Materials",
+        description=(
+            "Update every material used by the exported collection; "
+            "textures remain at their authored paths"),
+        default=True,
+    )
+    bpy.types.Scene.mh_material = bpy.props.PointerProperty(
+        name="Material",
+        description="Material exported as one .material resource",
+        type=bpy.types.Material,
+    )
+    bpy.types.Scene.mh_material_directory = bpy.props.StringProperty(
         name="Output Folder", subtype="DIR_PATH", default="")
     bpy.types.Scene.mh_composite_mode = bpy.props.EnumProperty(
         name="Mode",
@@ -195,8 +336,11 @@ def unregister():
         "mh_composite_export_collection",
         "mh_composite_import_path",
         "mh_composite_mode",
+        "mh_fbx_export_materials",
         "mh_fbx_directory",
         "mh_fbx_collection",
+        "mh_material_directory",
+        "mh_material",
     ):
         if hasattr(bpy.types.Scene, name):
             delattr(bpy.types.Scene, name)
