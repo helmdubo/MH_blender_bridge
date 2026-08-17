@@ -86,6 +86,15 @@ COMPOSITS: CA_WindowSet  (3 × window_a placements, один со scale+rotation
 - Чтение registry.json (D28), если есть: warning на неизвестный shader_class.
 - FBX-экспорт — через канон-настройки и cm-контекст-менеджер из reference-скрипта (`axis_forward='X'`, `axis_up='Z'`; mesh-hash считается ДО cm-конверсии — §9).
 
+### Чекпойнт «owner hands-on» (после B11, до B13)
+
+По готовности B10–B11 аддон передаётся владельцу для ручного мини-сценария:
+«коллекция из куба + композит из трёх ссылок на неё → Export → правка трансформа →
+Export → `diff_bundles` показывает один UPDATE_TRANSFORM, FBX не переэкспортирован».
+Цель — проверка UX одной кнопки, не корректности. Замечания по панели/логу —
+отдельными issue, B13 не блокируют. PR этапа B открывается draft'ом заранее —
+ревью схемных правок ведётся в нём.
+
 ### Блок 6 этапа B — Blender-импортер `.composite` (D21; отдельный PR, не блокирует старт C)
 - **B14.** `core/import_composite.py` + оператор Import Composite: референс `cmp_import.py`, но dependency-обход вместо модуль-глобалов, резолв ссылок по UID.
 - **B15.** Round-trip приёмка: export golden → import в чистый .blend → re-export → дифф пуст. Допустимое исключение: ложный UPDATE_GEOMETRY multi-object ресурсов, если внутренние uid не переживут FBX — проверить `use_custom_props` в обе стороны, зафиксировать примечанием в §9.2.
