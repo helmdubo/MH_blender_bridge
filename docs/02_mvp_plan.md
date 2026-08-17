@@ -1,8 +1,17 @@
 # План разработки: Blender → UE5 Composite Pipeline (MVP)
 
-Исходное состояние авторинга уже совпадает с dag4blend-моделью, и это главный актив:
-- **Сцена GEOMETRY**: каждая коллекция = один mesh-ресурс (будущий FBX → UStaticMesh).
-- **Сцена COMPOSITS**: Empty + `instance_collection` = placement, коллекция = composite definition.
+> **HISTORICAL / SUPERSEDED.** Этот документ сохранён только как история
+> планирования и не задаёт текущий контракт или порядок реализации. Актуальные
+> документы: `04_source_workflows.md` (нормативный freeze candidate v1) и
+> `06_final_v1_plan.md` (исполняемый план). В частности, все упоминания bundle,
+> `materials[]`, `external_dependencies`, Texture Root, старых import toggles и
+> старой последовательности B-блоков ниже являются неактуальными.
+
+Актуальная Blender-модель совпадает с dag4blend по разделению definition и
+placement. В сцене **GEOMETRY** definitions представлены sibling Collections:
+mesh collection содержит geometry, composite collection — Empty collection
+instances. Empty + `instance_collection` = placement/reference; фиксированная
+сцена COMPOSITS больше не является условием экспорта.
 
 Значит, авторинг-модель не проектируем — она есть. Проект = замена формата экспорта (.dag/.blk → source files) и целевого движка (daEditor → UE5).
 
@@ -12,11 +21,16 @@
 
 Один вертикальный сценарий, доказуемый на golden-сцене:
 
-1. Художник в Blender жмёт **Export Sources** → на диске появляются
-   `*.composite`, `meshes/*.mesh.fbx` и служебный `export_manifest.json`.
+1. Художник отдельными кнопками экспортирует выбранные mesh/composite
+   Collections в один source-каталог → появляются `*.mesh.fbx`,
+   `*.composite` и инкрементальный `export_manifest.json`.
 2. В UE watcher (или ручной Import) подхватывает → появляются `SM_*`, `CA_*` uassets.
 3. `CA_Building_A` перетаскивается в уровень → `AMHCompositeActor` разворачивается в компоненты StaticMesh с правильными трансформами (включая вложенный композит).
-4. В Blender: rename объекта, сдвиг placement, удаление одного узла, правка геометрии одного меша → **Export** → в UE Reimport → **обновляются только затронутые ассеты**, все размещённые в уровне актёры пересобираются, ничего лишнего не пересоздано (проверка по diff-логу).
+4. В Blender: rename объекта, сдвиг placement, удаление одного узла, правка
+   геометрии одного меша → повторный standalone Export соответствующей
+   definition → в UE Reimport → **обновляются только затронутые ассеты**, все
+   размещённые в уровне актёры пересобираются, ничего лишнего не пересоздано
+   (проверка по diff-логу).
 
 Всё, что не нужно для этого сценария — за пределами MVP.
 

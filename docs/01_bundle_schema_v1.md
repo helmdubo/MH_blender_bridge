@@ -1,5 +1,15 @@
 # 01 — Source Files Schema: Composite v1 + Manifest v2 (SPEC)
 
+> **HISTORICAL / SUPERSEDED.** Этот документ фиксирует bundle-прототип до
+> финальной заморозки standalone source schema v1. Он сохранён только как
+> история решений и старых фикстур и **не является входом для реализации или
+> legacy-reader**. Нормативная on-disk схема: `05_source_schema_v1.md`;
+> авторские workflows: `04_source_workflows.md`; план после freeze:
+> `06_final_v1_plan.md`. Не переносить отсюда Bundle Export, `mh.bundle_manifest`,
+> inline `materials[]`, `external_dependencies`, Texture Root, владение всем
+> каталогом или full-set delete. `source_root` из финального контракта — только
+> граница проекта для резолва и нормализации путей, а не bundle-корень.
+
 Статус: формат `*.composite` **зафиксирован как schema_version = 1**.
 `export_manifest.json` повышен до **schema_version = 2** по D31: материальные
 записи получили `content_hash`, необходимый для D25. Это единственная

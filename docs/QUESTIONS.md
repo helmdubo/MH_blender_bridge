@@ -181,10 +181,11 @@ mesh-ресурса в манифесте properties-поля нет. Роль �
 Минус: свойство дублируется в каждом placement'е. Если ресурсных свойств
 станет много — правильнее поле в манифесте через schema_version=2.
 
-**Статус.** РЕШЕНО (ревьювер, ADDENDUM-2; pre-freeze поправка): ресурсные
-properties — в манифест, optional bag `properties` у записи ресурса (§2).
-Ресурсные = asset-level (применяются при импорте геометрии, независимо от
-placements), узловые = placement-level, при компиляции дополняют ресурсные.
-Наследование в узлы убрано из извлечения. Это была последняя pre-freeze
-поправка v1; текущий manifest v2 введён позже только для material
-`content_hash` (D31), не для resource properties.
+**Статус.** РЕШЕНО (ADDENDUM-2, подтверждено freeze candidate standalone-схемы v1):
+ресурсные properties — optional bag `properties` в resource-row owning
+`mh.export_manifest` v1. Ресурсные = asset-level (применяются при импорте
+геометрии независимо от placements), узловые = placement-level; при компиляции
+они дополняют ресурсные. Наследование resource properties в узлы запрещено.
+Упоминания старого manifest v2 и inline `materials[]` считать историческими:
+материал теперь отдельный ресурс `.material`, а актуальная форма manifest-row
+зафиксирована в `05_source_schema_v1.md`.
