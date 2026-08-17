@@ -66,7 +66,8 @@ __all__ = [
 # --------------------------------------------------------------------------
 
 # The registry is an API of the validation reports (§6.2) and of the negative
-# tests; codes are stable and only grow through a schema_version note.
+# tests; codes are stable. Additive diagnostic-only growth is recorded by a
+# dated post-freeze migration note and does not change Source Schema bytes.
 # `MH_E_*` blocks the operation, `MH_W_*` only warns.
 ERROR_CODES = frozenset(
     {
@@ -83,6 +84,7 @@ ERROR_CODES = frozenset(
         "MH_E_EMPTY_RESOURCE_COLLECTION",
         "MH_E_NESTED_COMPOSITE_COLLECTION",
         "MH_E_INVALID_COLLECTION_OFFSET",
+        "MH_E_INVALID_LOD_HIERARCHY",
         # Standalone composite import preflight
         "MH_E_INVALID_COMPOSITE",
         "MH_E_UNSUPPORTED_NODE_KIND",
@@ -104,6 +106,7 @@ ERROR_CODES = frozenset(
         "MH_E_FOREIGN_UID_OWNER",
         "MH_E_NAME_MISMATCH",
         "MH_E_TARGET_NAME_COLLISION",
+        "MH_E_LOD_IMPORT_FAILED",
         # warnings
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",

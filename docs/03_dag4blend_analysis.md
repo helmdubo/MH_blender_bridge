@@ -1,7 +1,8 @@
 # dag4blend 2.12.0 → модель для Blender→UE5 composite pipeline
 
 > Исторический research-документ. При расхождении приоритет у Decision Log
-> в `00_research_summary.md` и текущей спеки `01_bundle_schema_v1.md`.
+> в `00_research_summary.md`, workflows `04_source_workflows.md` и замороженной
+> Source Schema v1 `05_source_schema_v1.md`.
 
 Разбор по реальному коду плагина (`cmp/cmp_import.py`, `cmp/cmp_export.py`, `cmp/composite_functions.py`, `cmp/cache_rw.py`, `cmp/node_properties.py`, `cmp/cmp_panels.py`, `colprops/colprops.py`, `object_properties/`, `dagormat/`, `exporter/exporter.py`).
 
@@ -81,7 +82,7 @@ node{                                // "random" node
 | dag4blend / .composit.blk | Наша модель (`UMHCompositeAsset` / FBX protocol) | Статус |
 |---|---|---|
 | Collection `type='composit'` | `UMHCompositeAsset` (Content Browser asset, `UAssetDefinition`) | v1 |
-| Collection `type='rendinst'` (`.lods` + `.lodNN`) | Mesh Resource → `UStaticMesh` (LODs внутри SM через FBX LOD group) | v1 |
+| Collection `type='rendinst'` (`.lods` + `.lodNN`) | D39: один Mesh Resource, LOD0 в primary FBX, LOD1+ отдельными FBX через manifest `lods[]` | v1 |
 | Collection `type='gameobj'` | `Kind = Actor`, `ActorClass` soft ref | v3 |
 | Empty + `instance_collection` | `FMHCompositeNode { NodeUID, ResourceUID, LocalTransform, Kind }` | v1 |
 | Empty без ресурса + parenting | `Kind = Group` (transform-only node) | v1 |
@@ -106,12 +107,27 @@ node{                                // "random" node
 | Соглашение в dag4blend | Явное поле у нас |
 |---|---|
 | префикс `random.` | `mh_kind = "variant_set"` |
-| суффикс `.lods` / `.lodNN` | `mh_kind = "mesh"` + LOD group в FBX |
+| точный root `<base>.lods` + direct children `<base>.lodNN` | `static_mesh` row: `.lod00` → `source`, `.lod01+` → отдельные payload-файлы в `lods[]` |
 | `name:type` в строке | `mh_kind` + `mh_resource_uid` |
 | `node.` префикс на Empty при импорте | `mh_kind = "group"` |
 | Empty vs Mesh как признак node/geometry | `mh_kind` на всём, что имеет семантику |
 
-Причина: `nodes_split` уже сейчас вынужден делать `re.search("\.lods($|\.\d*)")`, `search("^random\.\d*")` и т.п. — вся семантика восстанавливается регэкспами по именам. Для FBX-транспорта в UE, где импортер сам мангли имена, это гарантированно ломается.
+Причина: `nodes_split` уже сейчас вынужден делать `re.search("\.lods($|\.\d*)")`, `search("^random\.\d*")` и т.п. — вся семантика восстанавливается регэкспами по именам. Для FBX-транспорта в UE, где импортер сам мангли имена, это гарантированно ломается. D39 оставляет одно точное authoring-правило на границе Blender, но переносит результат в явные `source`/`lods[]`: UE не угадывает ресурсную структуру общими regex по FBX nodes.
+
+### 2.3 Активация замороженного LOD-контракта (D39)
+
+Выбор Collection с точным именем `<base>.lods` означает один logical
+`static_mesh` resource. Direct child `<base>.lod00` экспортируется в primary
+`.mesh.fbx`; каждый `<base>.lod01+` — в отдельный `.lod<level>.mesh.fbx`.
+Manifest-row имеет `lod_policy: "authored"`, primary `source` и `lods[]` с
+`level`, `source`, `content_hash` для уровней 1+. Custom UE importer добавляет
+эти payload-файлы как уровни одного UStaticMesh.
+
+Это не `FbxLODGroup`, не один packed FBX и не Empty/Null hierarchy. Каждый
+per-level payload имеет собственный semantic hash, hash-skip и recovery в
+рамках одной resource-row. Суффикс `.lods` снимается только при вычислении
+логического имени перед ASCII-валидацией; generic dots остаются ошибкой. Так
+D39 активирует, но не меняет замороженные поля Source Schema v1 из D13/Q5.
 
 ---
 
@@ -147,7 +163,9 @@ render.*, collision.*, material.*  — ваша существующая metadat
 1. **Name-only identity + `col['name']` override.** Плагину пришлось добавить отдельный оператор `DT_OT_SetColName` только чтобы обойти Blender-суффиксы. С GUID проблема исчезает.
 2. **Глобальный filesystem cache** (`pickle` в папке аддона, per-project). В UE есть Asset Registry; в Blender-аддоне — manifest, выгружаемый UE (UID → asset path), а не walk по диску.
 3. **Модуль-глобалы `dags_to_import`/`cmp_to_import`** и неограниченная рекурсия `read_cmp` без cycle detection.
-4. **Семантика через имена** (`random.`, `.lods`, `node.`, `name:type`).
+4. **Неявная семантика через имена** (`random.`, `node.`, `name:type`). Точная
+   `.lods`/`.lodNN` authoring-структура D39 — ограниченный входной convention;
+   на диске её смысл выражен manifest `source`/`lods[]`.
 5. **Ручная axis conversion** — FBX делает.
 6. **Плоские composit-коллекции** (запрет под-коллекций в `cmp_export`) — для авторинга в Blender можно разрешить группировку коллекциями, но экспорт-компилятор всё равно должен сплющить это в однозначную FBX-иерархию.
 

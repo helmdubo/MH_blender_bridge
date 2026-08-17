@@ -202,7 +202,7 @@ def export_composite(
         bundle_uid=collection_uid,
         bundle_name=collection.name,
         blend_file=os.path.basename(bpy.data.filepath) or "untitled.blend",
-        exporter_version="0.4.0",
+        exporter_version="0.4.1",
         composites=[composite],
     ))
     if validation["errors"]:
@@ -273,7 +273,7 @@ def export_composite(
         resource_entry["properties"] = composite.properties
     manifest = prepare_manifest_update(
         os.path.dirname(target), resources=[resource_entry],
-        exporter_version="0.4.0",
+        exporter_version="0.4.1",
         blend_file=os.path.basename(bpy.data.filepath) or None,
         source_root=resolved_source_root)
     # Fail closed for readers before replacing the payload. A failed payload

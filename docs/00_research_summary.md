@@ -61,6 +61,8 @@ props), обход Empty-графа из `cmp_export::write_node`, принци�
 `.composite` задаёт граф, resolver находит payload по UID, FBX только наполняет
 target Collection.** Никакой семантики, иерархии, placements или материальных
 определений внутри FBX. Один FBX детерминированно создаёт один UStaticMesh.
+Для authored LOD каждый per-level FBX D39 наполняет только свой уровень того же
+UStaticMesh; composite nodes из него так же не извлекаются.
 Причина: legacy scene import и Interchange по-разному мангли имена/иерархию;
 вывод composite semantics из FBX-иерархии хрупок; Blender FBX exporter
 разворачивает collection instances.
@@ -149,6 +151,8 @@ Blender == UE.
 **D13. LOD:** Blender FBX exporter не пишет FbxLODGroup → LOD-ы либо отдельными файлами
 per-level с добавлением в существующий SM, либо Nanite/generated. Зафиксировать выбор в схеме
 до реализации. В MVP — один LOD.
+**Статус:** резерв отдельных payload-файлов принят в QUESTION-5 и заморожен в
+Source Schema v1; D39 активирует этот уже существующий контракт в FBX writer.
 
 **D14. Break / Build New Composite (post-MVP):** Break растворяет один уровень, дети получают
 производные сиды (визуально нейтрально), VariantSet выходит уже разрешённым вариантом
@@ -412,6 +416,37 @@ dependency-closure export и не возвращение Bundle Export: дейс
 `MH_W_MATERIAL_NOT_FOUND` и не откатывают уже committed FBX; crash после
 material marker остаётся глобально fail-closed по D36 и требует recovery этого
 MaterialUID до следующего resource-write.
+
+**D39. [dagor-lod-source-files] Точная Dagor `.lods` authoring-структура
+активирует замороженные per-level LOD payload-файлы.** Если пользователь выбирает
+Collection с именем ровно `<base>.lods`, это один логический `static_mesh`-ресурс
+и одна manifest-row с `lod_policy: "authored"`. Непосредственная дочерняя
+Collection `<base>.lod00` экспортируется как primary `.mesh.fbx` из поля
+`source`; каждая `<base>.lod01` и выше экспортируется отдельным
+`.lod<level>.mesh.fbx` и записывается в `lods[]` как
+`{level, source, content_hash}`. FBX Empty/Null wrapper nodes и packed FBX для
+этого представления запрещены: custom UE importer добавляет отдельные файлы как
+уровни одного UStaticMesh по manifest-row.
+
+Суффикс `.lods` снимается только при вычислении логического resource name перед
+общей ASCII-валидацией. Это узкое структурное правило: generic dots в resource
+name остаются невалидными, а дочерние Collections принимаются только при точном
+соответствии `<base>.lodNN`. Каждый уровень имеет собственный semantic hash и
+hash-skip; marker/recovery охватывает единственную manifest-row и проверяет или
+восстанавливает её per-level payload-файлы. Решение не меняет байты Source
+Schema v1, а активирует уже замороженные D13/QUESTION-5 поля `lod_policy` и
+`lods[]`.
+
+**Post-freeze migration note — 2026-08-18 (diagnostics only):** в стабильный
+реестр кодов аддитивно добавлены `MH_E_INVALID_LOD_HIERARCHY` для блокирующей
+Blender-export диагностики неверной `<base>.lods`/`<base>.lodNN` authoring-
+структуры и зарезервированный `MH_E_LOD_IMPORT_FAILED` для будущего UE importer,
+когда импорт объявленного authored LOD payload не удался. Это расширение только
+машинного diagnostic API: JSON-поля, canonical form, hash inputs и любые
+байтово-значимые части Source Schema v1 не меняются. Реализация
+`MH_E_LOD_IMPORT_FAILED` относится к будущему UE-срезу и его draft `docs/07`;
+такого документа в текущем репозитории ещё нет, поэтому frozen `docs/05` не
+редактируется.
 
 ## 4. Известные риски (проверяются первыми)
 

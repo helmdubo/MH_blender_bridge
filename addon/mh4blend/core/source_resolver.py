@@ -613,6 +613,7 @@ def resolve_resource_for_writer(
         expected_source: str | None = None,
         registry_path: str | None = None,
         texture_policy: str = "transitional",
+        allow_missing_lod_payloads: bool = False,
         ) -> WriterResolution:
     """Resolve one writer owner, allowing only its one explicit crash marker.
 
@@ -622,6 +623,12 @@ def resolve_resource_for_writer(
     unchanged. Payload existence is deliberately not required in recovery: a
     crash may have happened before or after payload replacement, and the writer
     must replace it unconditionally before committing the marker.
+
+    An LOD-aware writer may set ``allow_missing_lod_payloads`` to repair an
+    owned mesh whose authored LOD payloads are absent. Existing LOD payloads
+    are still captured as opaque stable bytes, and absent paths are captured
+    as absence tokens. The default remains strict for writers which do not
+    prove that they will replace every missing authored LOD.
     """
     expected_source = _validate_writer_request(
         uid, expected_kind, expected_source)
@@ -635,7 +642,8 @@ def resolve_resource_for_writer(
             texture_policy=texture_policy)
         owner = _resolve_resource_for_writer_normal(
             snapshot, uid, expected_kind=expected_kind,
-            expected_source=expected_source)
+            expected_source=expected_source,
+            allow_missing_lod_payloads=allow_missing_lod_payloads)
         return WriterResolution(owner, snapshot, False)
     marker_path, marker, snapshot = recovery_state
     owner = _recovery_marker_row(
@@ -646,13 +654,17 @@ def resolve_resource_for_writer(
 
 def _resolve_resource_for_writer_normal(
         snapshot: SourceSnapshot, uid: str, *, expected_kind: str,
-        expected_source: str | None) -> ResolvedResource | None:
+        expected_source: str | None,
+        allow_missing_lod_payloads: bool = False,
+        ) -> ResolvedResource | None:
     """Resolve an owned payload as rewrite input, without trusting its schema.
 
     The manifest owner remains strict and authoritative. A regular primary
     payload is captured as opaque stable bytes; an absent primary is captured
     as an absence token. The standalone writer will decide whether to rewrite
-    or hash-skip it. Non-file entries and every authored LOD remain hard errors.
+    or hash-skip it. Non-file entries remain hard errors. Authored LOD absence
+    is a hard error unless the calling writer explicitly opts into repairing
+    missing LOD payloads.
     """
     entries = snapshot.owners.get(uid, ())
     hint = snapshot.registry_hints.get(uid)
@@ -696,7 +708,9 @@ def _resolve_resource_for_writer_normal(
         snapshot.payload_bytes[payload_path] = first
     else:
         snapshot.missing_payload_paths.add(payload_path)
-    _validate_lod_payloads(snapshot, manifest_path, row)
+    _validate_lod_payloads(
+        snapshot, manifest_path, row,
+        allow_missing=allow_missing_lod_payloads)
     result = ResolvedResource(
         payload_path=payload_path,
         owning_manifest_path=manifest_path,
@@ -816,8 +830,10 @@ def resolve_resource(
     return result
 
 
-def _validate_lod_payloads(snapshot: SourceSnapshot, manifest_path: str,
-                           row: dict) -> None:
+def _validate_lod_payloads(
+        snapshot: SourceSnapshot, manifest_path: str, row: dict, *,
+        allow_missing: bool = False,
+        ) -> None:
     """Require and snapshot every authored LOD payload for a mesh row."""
     uid = row["uid"]
     for lod in row.get("lods", []):
@@ -827,7 +843,16 @@ def _validate_lod_payloads(snapshot: SourceSnapshot, manifest_path: str,
                 os.path.dirname(manifest_path), *lod["source"].split("/")),
             f"resource {uid} LOD {lod['level']} source",
             owning_directory=os.path.dirname(manifest_path))
-        if not os.path.isfile(lod_path):
+        if os.path.lexists(lod_path):
+            if not os.path.isfile(lod_path):
+                _error(
+                    "MH_E_UNRESOLVED_EXTERNAL",
+                    f"resource {uid} LOD {lod['level']} payload path is not "
+                    f"a file: {lod_path}")
+        elif allow_missing:
+            snapshot.missing_payload_paths.add(lod_path)
+            continue
+        else:
             _error(
                 "MH_E_UNRESOLVED_EXTERNAL",
                 f"resource {uid} LOD {lod['level']} payload is missing: "
