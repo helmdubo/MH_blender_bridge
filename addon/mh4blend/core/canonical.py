@@ -74,17 +74,30 @@ ERROR_CODES = frozenset(
         "MH_E_DUPLICATE_NODE_UID",
         "MH_E_DUPLICATE_RESOURCE_UID",
         "MH_E_COMPOSITE_CYCLE",
+        "MH_E_AMBIGUOUS_RESOURCE_OWNER",
+        "MH_E_UNRESOLVED_EXTERNAL",
         "MH_E_DANGLING_PARENT",
         "MH_E_PARENT_CYCLE",
         # Blender export
         "MH_E_MISSING_COLLECTION_UID",
         "MH_E_EMPTY_RESOURCE_COLLECTION",
         "MH_E_NESTED_COMPOSITE_COLLECTION",
+        "MH_E_INVALID_COLLECTION_OFFSET",
+        # Standalone composite import preflight
+        "MH_E_INVALID_COMPOSITE",
+        "MH_E_UNSUPPORTED_NODE_KIND",
+        "MH_E_INVALID_RESOURCE_SOURCE",
+        "MH_E_INVALID_EXPORT_MANIFEST",
+        "MH_E_RESOURCE_KIND_MISMATCH",
+        "MH_E_RESOURCE_UID_MISMATCH",
         "MH_E_NAN_INF_VALUE",
         "MH_E_INVALID_SCALE",
         "MH_E_UID8_COLLISION",
         "MH_E_NON_ASCII_RESOURCE_NAME",
         # Blender export (materials/textures, D23/D27)
+        "MH_E_EMPTY_MATERIAL_SLOT",
+        "MH_E_INVALID_MATERIAL_VALUE",
+        "MH_E_MATERIAL_SLOT_CONFLICT",
         "MH_E_TEXTURE_OUTSIDE_ROOT",
         # UE import
         "MH_E_UNKNOWN_SCHEMA_VERSION",
@@ -92,7 +105,17 @@ ERROR_CODES = frozenset(
         "MH_E_NAME_MISMATCH",
         "MH_E_TARGET_NAME_COLLISION",
         # warnings
+        "MH_W_REGISTRY_INVALID",
+        "MH_W_REGISTRY_STALE",
+        "MH_W_COMPOSITE_CYCLE",
+        "MH_W_UNRESOLVED_RESOURCE",
+        "MH_W_TEXTURE_OUTSIDE_ROOT",
+        "MH_W_MATERIAL_NOT_FOUND",
+        "MH_W_MATERIAL_PAYLOAD_FALLBACK",
+        "MH_W_MATERIAL_SLOT_NOT_FOUND",
+        "MH_W_MATERIAL_SLOT_UNMAPPED",
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
+        "MH_W_UNKNOWN_SHADER_CLASS",
     }
 )
 
@@ -529,8 +552,9 @@ def hash_hex(data: bytes) -> str:
     """Return ``"xxh3:" + 16 lowercase hex chars`` of XXH3-64 over `data` (§8.3)."""
     if xxhash is None:
         raise RuntimeError(
-            "MH: the 'xxhash' python package is not installed in this Blender. "
-            "Run:  <blender>/<version>/python/bin/python -m pip install xxhash")
+            "MH: the bundled 'xxhash' runtime is unavailable. Reinstall the "
+            "MH Blender Bridge Extension ZIP with Get Extensions > Install "
+            "from Disk")
     return "xxh3:" + xxhash.xxh3_64(data).hexdigest()
 
 

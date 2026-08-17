@@ -26,7 +26,8 @@ MUTATIONS = (
 def run_blender_script(script_path):
     blender = os.environ.get("MH_BLENDER")
     if blender:
-        cmd = [blender, "-b", "--factory-startup", "-P", script_path]
+        cmd = [blender, "-b", "--factory-startup", "--python-exit-code", "1",
+               "-P", script_path]
     else:
         cmd = [sys.executable, script_path]
     shown = [os.path.basename(cmd[0])] + [

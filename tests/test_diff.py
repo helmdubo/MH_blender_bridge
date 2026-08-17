@@ -6,16 +6,20 @@ import copy
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "addon"))
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 from golden_uids import UIDS  # noqa: E402
+from diff_bundles import load_bundle  # noqa: E402
 from mh4blend.core.diff import diff_bundles  # noqa: E402
 from mh4blend.core.model import (  # noqa: E402
     IDENTITY_TRANSFORM,
     Composite,
     Manifest,
+    MaterialResource,
     MeshResource,
     Node,
     QuantizedTransform,
@@ -33,7 +37,7 @@ def build(nodes, meshes=()):
     composite = Composite(WS, "ca_windowset", nodes)
     manifest = Manifest(
         bundle_uid=UIDS["col/ca_building"], bundle_name="Golden",
-        blend_file="golden.blend", exporter_version="0.1.0",
+        blend_file="golden.blend", exporter_version="0.2.0",
         meshes=list(meshes), composites=[composite])
     doc = manifest_disk_dict(manifest, {WS: composite_hash(composite)})
     return doc, {WS: composite_disk_dict(composite)}
@@ -45,6 +49,18 @@ def node(uid, **overrides):
                 local_transform=IDENTITY_TRANSFORM, properties={})
     base.update(overrides)
     return Node(**base)
+
+
+def test_reference_loader_rejects_pending_manifest(tmp_path):
+    (tmp_path / "export_manifest.json").write_text(
+        '{"schema":"mh.bundle_manifest","resources":[]}',
+        encoding="utf-8")
+    (tmp_path / "export_manifest.json.tmp").write_text(
+        '{"schema":"mh.bundle_manifest","resources":[]}',
+        encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="export in progress"):
+        load_bundle(str(tmp_path))
 
 
 def run(old, new):
@@ -84,7 +100,7 @@ def test_node_create_and_remove():
 def test_composite_create_does_not_enumerate_nodes():
     empty_manifest = Manifest(
         bundle_uid=UIDS["col/ca_building"], bundle_name="Golden",
-        blend_file="golden.blend", exporter_version="0.1.0")
+        blend_file="golden.blend", exporter_version="0.2.0")
     old = (manifest_disk_dict(empty_manifest, {}), {})
     new = build([node(W1), node(W2)])
     report = run(old, new)
@@ -113,4 +129,22 @@ def test_decimal_spelling_does_not_fabricate_transform_diffs():
     transform["translation_cm"] = [0, 0, 0]        # ints vs 0.0 floats
     transform["scale"] = [1, 1.0, 1.00]
     report = diff_bundles(old[0], new[0], old[1], {WS: new_doc})
+    assert report["nodes"] == {}
+
+
+def test_sub_p6_material_edit_does_not_fabricate_structural_diff():
+    def with_material(value):
+        manifest, composites = build([node(W1)])
+        material = MaterialResource(
+            UIDS["mesh/wall_b"], "m_stone", "rendinst_simple",
+            params={"roughness": value})
+        semantic = Manifest(
+            UIDS["col/ca_building"], "Golden", "golden.blend", "0.2.0",
+            composites=[Composite(WS, "ca_windowset", [node(W1)])],
+            materials=[material])
+        return manifest_disk_dict(
+            semantic, {WS: composite_hash(semantic.composites[0])}), composites
+
+    report = run(with_material(0.25), with_material(0.2500004))
+    assert report["resources"] == {}
     assert report["nodes"] == {}

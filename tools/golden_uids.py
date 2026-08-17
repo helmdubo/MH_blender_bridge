@@ -26,9 +26,14 @@ def golden_uid(path: str) -> str:
 _PATHS = (
     # GEOMETRY: collection (public resource_uid), object, mesh datablock
     "col/wall_a", "obj/wall_a", "mesh/wall_a",
+    "obj/wall_a_trim", "mesh/wall_a_trim",
     "col/wall_b", "obj/wall_b", "mesh/wall_b",
     "col/window_a", "obj/window_a", "mesh/window_a",
     "col/decal_leak", "obj/decal_leak", "mesh/decal_leak",
+    # MATERIALS: one material is shared by wall_a/wall_b; wall_a has two
+    # ordered slots.  They intentionally have no dagormat in the golden file,
+    # exercising the rendinst_simple fallback without requiring dag4blend.
+    "material/wall_shared", "material/accent",
     # COMPOSITS: composite collections (CompositeDefinitionUID)
     "col/ca_windowset",
     "col/ca_building",

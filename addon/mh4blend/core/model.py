@@ -17,6 +17,7 @@ from .canonical import (
     nfc,
     resource_filename,
 )
+from .materials import material_content_hash, material_disk_payload
 
 __all__ = [
     "QuantizedTransform",
@@ -130,7 +131,18 @@ class MaterialResource:
     name: str
     shader_class: str
     params: dict = field(default_factory=dict)
-    textures: dict = field(default_factory=dict)  # slot -> texture_root-relative path
+    # slot -> authored texture path. Blender-relative ``//`` paths are
+    # resolved by the host adapter; files are referenced in place, not copied.
+    textures: dict = field(default_factory=dict)
+
+    @property
+    def content_hash(self) -> str:
+        """Canonical fingerprint of the UE material payload (not identity)."""
+        return material_content_hash(self.shader_class, self.params, self.textures)
+
+    def disk_payload(self) -> dict:
+        """Normalized semantic payload used by the manifest writer."""
+        return material_disk_payload(self.shader_class, self.params, self.textures)
 
 
 @dataclass
@@ -203,17 +215,18 @@ def manifest_disk_dict(manifest: Manifest, composite_hashes: dict) -> dict:
         resources.append(entry)
     resources.sort(key=lambda r: r["uid"].encode("utf-8"))
 
-    materials = [
-        {
-            "uid": m.uid,
+    materials = []
+    for material in manifest.materials:
+        payload = material.disk_payload()
+        materials.append({
+            "uid": material.uid,
             "kind": "material",
-            "name": nfc(m.name),
-            "shader_class": nfc(m.shader_class),
-            "params": _nfc_tree(m.params),
-            "textures": _nfc_tree(m.textures),
-        }
-        for m in manifest.materials
-    ]
+            "name": nfc(material.name),
+            "shader_class": payload["shader_class"],
+            "params": payload["params"],
+            "textures": payload["textures"],
+            "content_hash": material.content_hash,
+        })
     materials.sort(key=lambda m: m["uid"].encode("utf-8"))
 
     external = sorted(
@@ -222,7 +235,7 @@ def manifest_disk_dict(manifest: Manifest, composite_hashes: dict) -> dict:
 
     return {
         "schema": "mh.bundle_manifest",
-        "schema_version": 1,
+        "schema_version": 2,
         "exporter_version": manifest.exporter_version,
         "bundle_uid": manifest.bundle_uid,
         "bundle_name": nfc(manifest.bundle_name),

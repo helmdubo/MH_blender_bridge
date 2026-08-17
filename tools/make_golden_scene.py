@@ -94,6 +94,18 @@ def add_geometry_resource(scene, col_name, mesh, key):
     return col
 
 
+def make_material(name, key):
+    """Create a deterministic plain Blender material.
+
+    The golden scene deliberately does not register the reference dag4blend
+    addon: B4 must export ordinary Blender materials as rendinst_simple
+    placeholders as well as parse dagormat when that addon is enabled.
+    """
+    material = bpy.data.materials.new(name)
+    material["mh_uid"] = UIDS[f"material/{key}"]
+    return material
+
+
 def add_placement(comp_col, name, uid_key, instance_col=None, location=(0, 0, 0),
                   rotation_euler=(0, 0, 0), scale=(1, 1, 1), parent=None):
     """Empty placement node. instance_col=None -> kind=group (transform-only)."""
@@ -133,6 +145,29 @@ def build():
         scene_geo, "window_a", make_window_mesh("window_a"), "window_a")
     col_decal = add_geometry_resource(
         scene_geo, "decal_leak", make_decal_mesh("decal_leak"), "decal_leak")
+
+    # Second object in one resource: B4 must keep a deterministic aggregate
+    # material-slot table for multi-object FBX export.
+    trim_mesh = make_box_mesh("wall_a_trim", 0.5, 0.35, 0.25)
+    trim_mesh["mh_uid"] = UIDS["mesh/wall_a_trim"]
+    trim_obj = bpy.data.objects.new("wall_a_trim", trim_mesh)
+    trim_obj["mh_uid"] = UIDS["obj/wall_a_trim"]
+    trim_obj.location = (0.0, 0.0, 3.1)
+    col_wall_a.objects.link(trim_obj)
+
+    # Material coverage: shared identity across two mesh resources and two
+    # ordered slots on one mesh resource.  Face assignment makes the slot
+    # order semantically relevant to the FBX while metadata remains external.
+    mat_wall = make_material("m_wall_shared", "wall_shared")
+    mat_accent = make_material("m_accent", "accent")
+    col_wall_a.objects[0].data.materials.append(mat_wall)
+    col_wall_a.objects[0].data.materials.append(mat_accent)
+    for index, polygon in enumerate(col_wall_a.objects[0].data.polygons):
+        polygon.material_index = index % 2
+    col_wall_b.objects[0].data.materials.append(mat_wall)
+    col_window_a.objects[0].data.materials.append(mat_accent)
+    col_decal.objects[0].data.materials.append(mat_accent)
+    trim_mesh.materials.append(mat_accent)
     # Properties bag storage per QUESTION-6 decision: one custom prop per
     # schema key, prefixed mh_p_, full key with dots as is (mh_p_role,
     # mh_p_render.cast_shadow, ...). Everything under mh_p_ exports verbatim.

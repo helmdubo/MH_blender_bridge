@@ -6,7 +6,7 @@
 
 ## 1. Что мы строим
 
-DCC-driven composite asset pipeline: Blender → versioned Source Bundle → UE5.
+DCC-driven composite asset pipeline: Blender → versioned source files → UE5.
 Философия взята из DagorEngine (`.composit.blk` + `.dag` + daEditor composite entities),
 слабые места Dagor (name-based identity, filesystem resolver, отсутствие diff) — исправлены.
 
@@ -44,22 +44,39 @@ props), обход Empty-графа из `cmp_export::write_node`, принци�
 
 ## 3. Decision Log (обязателен к соблюдению)
 
-**D1. FBX — только геометрический payload одного ресурса.** Никакой семантики, иерархии,
-placements, материальных определений внутри FBX. Один FBX детерминированно создаёт один UStaticMesh.
-Причина: legacy scene import и Interchange по-разному мангли имена/иерархию; вывод composite
-semantics из FBX-иерархии хрупок; Blender FBX exporter разворачивает collection instances.
+> **Правило идентификаторов решений:** номер `Dnn` присваивается и ведётся только
+> этим репозиторием. Внешние директивы и аудиторские addendum ссылаются на решения
+> по стабильному slug в квадратных скобках; их локальная нумерация не резервирует
+> номер в этом журнале. При переносе директивы в Decision Log репозиторий назначает
+> следующий свободный номер, не меняя slug и смысл решения.
+
+> **Актуализация UX/источников:** D32–D38 ниже заменяют D2, D15, D17,
+> D21–D23, D27 и bundle-части D31 там, где они противоречат отдельным
+> FBX/Composite операциям.
+> Исторический текст оставлен для аудита решений, но не является заданием на
+> реализацию. Нормативный workflow — `04_source_workflows.md`.
+
+**D1. [fbx-geometry-payload] FBX — только геометрический payload одного ресурса.**
+Финальная формулировка контракта: **composite nodes никогда не извлекаются из FBX;
+`.composite` задаёт граф, resolver находит payload по UID, FBX только наполняет
+target Collection.** Никакой семантики, иерархии, placements или материальных
+определений внутри FBX. Один FBX детерминированно создаёт один UStaticMesh.
+Причина: legacy scene import и Interchange по-разному мангли имена/иерархию;
+вывод composite semantics из FBX-иерархии хрупок; Blender FBX exporter
+разворачивает collection instances.
 
 **D2. Bundle = каталог, не архив.** `*.composite` (JSON, один файл = один composite),
 `meshes/*.mesh.fbx` (один на mesh-ресурс), скрытый `export_manifest.json` — commit-marker,
 пишется последним, атомарная замена. Пользователь видит две сущности: composite-файл и
 геометрию — как `.composit.blk` и `.dag` в Dagor. Manifest = аналог невидимого `.folder.blk`/кеша.
 
-**D3. Шесть уровней identity:** BundleUID, ResourceUID (mesh datablock / material / actor class),
+**D3. Пять уровней identity:** ResourceUID (mesh datablock / material / actor class),
 CompositeDefinitionUID, NodeUID (узел в definition), PlacementUID (актёр в уровне),
 OccurrenceUID = Hash(PlacementUID, NodePathUID) — конкретное воплощение узла
 (NodePathUID = хеш пути NodeUID'ов от корня, т.к. один child может входить дважды).
 Имя — только display/package name/fallback. Rename ≠ Delete+Create. Linked duplicate =
 общий ResourceUID; Make Single User = новый ResourceUID.
+Исторический BundleUID удалён из текущей модели решением D33.
 
 **D4. Keyed random, НЕ последовательный RNG** (принято по внешнему ревью, важно):
 ```
@@ -101,18 +118,27 @@ attachment — опционален и только где семантичес�
 контроллер по ownership-индексу. Изменение BP не проходит через наш pipeline — штатный механизм UE.
 Post-MVP.
 
-**D10. Циклы composite-ссылок — hard error, три рубежа:** Blender-экспорт (DFS, локально +
-по registry), UE-импорт (топосортировка — детект бесплатно), компилятор (стек CompositeUID +
-error-заглушка в сцене + лимит глубины ~64; никогда не крэшить). Ромбы (переиспользование) —
-легальны: различать "в стеке" и "уже развёрнут по другому пути".
+**D10. [composite-cycle-policy] Циклы composite-ссылок диагностируются на всех
+рубежах, а severity зависит от операции.** Blender Import: back-edge превращается
+в unresolved-заглушку, остальной граф импортируется, код
+`MH_W_COMPOSITE_CYCLE`. Blender Export и UE Import: операция блокируется, код
+`MH_E_COMPOSITE_CYCLE`. Компилятор сохраняет защитный стек `CompositeUID` и
+лимит глубины, чтобы повреждённые внешние данные никогда не приводили к зависанию
+или крэшу. Нормативный инвариант реестра диагностик: **любой `MH_E_*` блокирует
+текущую операцию, любой `MH_W_*` её не блокирует**. Суффикс кода называет
+обнаруженный факт, а реакция импортёра описывается текстом диагностики. Ромбы
+(переиспользование) легальны: различать «в стеке» и «уже развёрнут по другому пути».
 
 **D11. UE-ассеты:** `UMHCompositeAsset` (импортируется из `.composite` через
 UFactory+FReimportHandler, read-only generic editor, VisibleAnywhere, SourceJsonSnapshot внутри),
-`UMHSourceBundle` (manifest: ResourceUID → SoftObjectPath + hashes),
+project Ledger/registry (ResourceUID → SoftObjectPath + hashes; конкретное имя
+UE-типа не фиксируется source schema),
 `AMHCompositeActor` (+ UActorFactory для drag&drop; PostSpawnActor → новый PlacementSeed;
 PostDuplicate — политика сида настраиваемая). Ссылки между композитами — FSoftObjectPath,
 заполняются при импорте из UID → Reference Viewer работает бесплатно. Auto-reimport через
-directory watcher по manifest-файлу. Asset Registry tags: CompositeUID, bundle, node count.
+directory watcher по manifest-файлам. Asset Registry tags:
+ResourceUID/CompositeUID и node count. Исторические `UMHSourceBundle` и
+bundle-tag superseded D33/D36.
 
 **D12. Транспорт трансформов:** аддон конвертирует в UE-конвенцию (см, Z-up, кватернион)
 на экспорте; на стороне UE нет матричной математики конверсии вообще. Геометрия идёт через
@@ -131,8 +157,10 @@ per-level с добавлением в существующий SM, либо Nan
 круг Blender↔UE замыкаем.
 
 **D15. Материалы в MVP:** существующая metadata-схема студии + порт текущих post-import
-скриптов как шаг Finalize. Отдельный materials.json — решение отложено. Материал — ресурс
-с UID в dependency graph (обязательно к моменту incremental reimport материалов).
+скриптов как шаг Finalize. Материал — ресурс с UID в dependency graph; записи хранятся
+в `export_manifest.json`, отдельного `materials.json` нет (окончательно уточнено D22/D30).
+**Статус: историческое решение; способ хранения material payload superseded D37
+[material-source-files].** Положение о материале как UID-ресурсе сохраняется.
 
 **D16. Миграция существующего контента:** операция Adopt Existing (привязка существующего
 uasset к UID по имени/пути с подтверждением) — обязательна до раскатки на реальный проект,
@@ -141,6 +169,8 @@ uasset к UID по имени/пути с подтверждением) — об
 **D17. Registry.json (UE → Blender):** обратный реестр (uid → kind, name, path, owner,
 для классов — DisplayName/PreviewBounds/Category/policies). В MVP опционален/пуст,
 нужен для внешних ссылок, forks, BP-дропдауна.
+**Статус: superseded D36 [uid-source-resolution] в части source-resolve:** registry
+является только приоритетным hint и не заменяет подтверждение owning manifest.
 
 **D18. Флаги диффа `UPDATE_RESOURCE` и `UPDATE_KIND`.** Ретаргет узла на другой
 ресурс (Make Single User) и смена вида узла (mesh → composite_ref) при живом
@@ -168,16 +198,22 @@ UE-пакетов). Все прочие строки (display_name, значен
 один .blend» отменено; манифест = квитанция транзакции экспорта. Операция
 Export Selection (dependency closure композита для передачи третьей стороне,
 флаг with-textures) — post-MVP.
+**Статус: основной принцип сохраняется; bundle-терминология, границы поиска и
+операции экспорта superseded D32, D33 и D36.**
 
 **D22. Материал — полноценный ресурс с UID уже в MVP.** Хранение — секцией
 `materials` в манифесте (отдельного materials.json НЕТ — решение владельца).
 Связь мешей с материалами — таблица `material_slots` у mesh-ресурса
 (`slot_name` → `material_uid`), НЕ парсинг имён из FBX.
+**Статус: хранение секцией `materials[]` superseded D37
+[material-source-files].** Материал остаётся полноценным UID-ресурсом, а
+`material_slots` остаётся единственным контрактом связи mesh → material.
 
 **D23. Текстуры — третий вид исходников.** Идентичность = относительный путь
 под `texture_root` (настройка аддона), БЕЗ UID — явное исключение из D3
 (носителя для UID нет; rename текстуры = REMOVE+CREATE с warning'ом).
 Общая текстурная библиотека (как в Dagor); bundle текстуры не копирует.
+**Статус: superseded D34 [texture-path-canonicalization].**
 
 **D24. Средняя стадия (Analyzer / Ledger / diff) — всегда наша**, работает по
 нашим файлам и в Interchange не переезжает. NodeContainer-pipeline — целевая
@@ -208,6 +244,8 @@ REMOVE+CREATE); коллизия имён в одном целевом ката�
 проекта с этими дефолтами. Дагоровские абсолютные пути в метаданных —
 временные: аддон нормализует под texture_root (вне root —
 `MH_E_TEXTURE_OUTSIDE_ROOT`); утилита однократного remap старого корня.
+**Статус: зеркалирование и `source_root` сохраняются; старая модель
+`texture_root`, remap и безусловная ошибка outside-root superseded D34.**
 
 **D28. Реестр shader_class** (уточняет D17). Список Master-материалов не
 ведётся руками: истина — папка `master_root` в UE-проекте. UE-плагин
@@ -218,12 +256,162 @@ shader_class → warning при экспорте (registry может быть �
 Master или исправьте shader_class»), импорт остальных ресурсов не блокируется.
 Кнопка Refresh registry в UE-плагине + автогенерация при startup-скане.
 
-**D29. Skeletal вне MVP, расширяемость подтверждена.** Схема резервирует
-`kind: "skeletal_mesh"` (только строка в схеме); сериализатор §9 — static-only,
-скелетка потребует отдельного тега `mh.skelser:1`, не трогая существующий;
+**D29. Skeletal вне MVP, расширяемость подтверждена.** Финальная source schema v1
+не резервирует и не принимает `kind: "skeletal_mesh"`: добавление kind меняет
+on-disk enum и потребует `schema_version: 2`. Скелетка также потребует отдельного
+тега `mh.skelser:1`, не меняя static serializer;
 cm-контекст-менеджер из reference-скрипта умеет skeletal-режим (`only_deform`) —
 при портировании ветка сохраняется за флагом. Блокирующих расширение решений
 в v1 нет.
+
+**D30. Blender-источник материалов MVP — `Material.dagormat`.** Аддон dag4blend
+должен быть включён при авторинге dagormat-материалов. `shader_class`, `optional`,
+`sides` и `textures` читаются из dagormat; `sides` попадает в `params`, пустые
+текстурные слоты не сериализуются. Если dagormat отсутствует или shader пуст,
+экспортируется валидная заглушка `rendinst_simple` с пустыми params/textures.
+UID хранится в `Material['mh_uid']`. Node-based Blender material не является
+альтернативным источником метаданных в MVP.
+Пустой Blender material slot блокирует экспорт: у него нет MaterialUID,
+поэтому section нельзя однозначно восстановить в UE. Один `slot_name`
+не может ссылаться на разные MaterialUID. В multi-object ресурсе
+порядок таблицы детерминирован ObjectUID, затем slot index; повторный
+MaterialUID не дублируется. UE связывает слоты по `slot_name`, а не
+по позиции в сводном массиве.
+
+**D31. Material fingerprint и версия манифеста (историческое pre-freeze
+решение).** Семантический `content_hash` материала считается по канон-форме
+`{shader_class, params, textures}`; `uid`, `name` и `kind` в fingerprint не
+входят, поэтому rename остаётся `RENAME`. **Статус: предложенные здесь manifest
+v2, bundle-поля и inline material payload полностью superseded D33 и D37.**
+Семантика material fingerprint сохранена D37; этот pre-freeze формат не является
+legacy-форматом production-кодека.
+
+**D32. [separate-source-operations] В пользовательском UX нет Bundle Export.**
+Все инструменты собраны в одной N-panel вкладке `MH`, но остаются независимыми
+секциями/операциями: `FBX Export`, `Composites` с подрежимами Import/Export и
+`Materials`. Общего запуска «экспортировать всё» нет. `source_root` при этом
+существует как единая проектная граница resolver'а, нормализации путей и
+зеркалирования в Content Browser; это не bundle, не Texture Root и не выбранная
+за пользователя папка экспорта. Composite Import v1 всегда выполняет recursive
+resolve и импорт найденной геометрии: переключателей `Recursive`/`With DAGs` нет.
+Будущий `Structure only` — отдельный режим из ROADMAP, не скрытая комбинация флагов.
+Решение supersedes D2/D21/D27 в части UX и единицы транзакции.
+
+**D33. [manifest-resource-receipt] Manifest — incremental directory-local
+квитанция собственных ресурсов, а не владение всем каталогом.** Соседний
+`export_manifest.json` имеет `schema: "mh.export_manifest"`, `schema_version: 1`.
+Единственная опись — `resources[]` с kind `static_mesh | composite | material`;
+строка каждого ресурса содержит `source`, относительный к owning manifest, и
+`content_hash`, а mesh-строка также несёт `material_slots`. Top-level
+`materials[]` и `external_dependencies[]` отсутствуют: зависимости вычисляются
+из `resource_uid` узлов `.composite` и `material_slots` mesh-строк. Каждая
+успешная операция атомарно обновляет payload и делает upsert только выбранного
+ресурса, сохраняя несвязанные строки; manifest не даёт права удалять остальные
+файлы каталога. Старые `mh.bundle_manifest`, BundleUID/BundleName и полная замена
+набора ресурсов superseded. Pre-freeze `materials[]` production-reader не
+получает: golden-артефакты регенерируются, локальные выгрузки при необходимости
+переносятся одноразовым внешним скриптом. Принятие точного SHA этого schema-doc
+commit внешним ревьювером означает финальную заморозку v1; любое следующее
+изменение on-disk схемы требует
+`schema_version: 2`.
+
+**D34. [texture-path-canonicalization] Текстурный путь — только строка
+`textures: {texN: string}`; `external_path` не хранится.** При извлечении Blender
+путь `//` сначала разворачивается относительно сохранённого `.blend`, затем все
+разделители нормализуются. Если абсолютный файл находится под `source_root`, на
+диск обязательно пишется относительный путь с `/`; вне `source_root` —
+нормализованный абсолютный путь. Следовательно, internal **тогда и только тогда**,
+когда записанная строка относительна; классификация вычисляется и не участвует в
+канон-форме отдельным флагом. Абсолютное представление файла внутри root запрещено,
+поэтому один файл не имеет двух канонических форм на разных машинах. Настройка
+`texture_policy: transitional | strict`, default `transitional`: внешний путь даёт
+`MH_W_TEXTURE_OUTSIDE_ROOT` при экспорте/импорте; `strict` повышает тот же факт до
+блокирующего `MH_E_TEXTURE_OUTSIDE_ROOT` для будущего CI. Текстуры не копируются,
+отдельных Texture Root/remap нет; зеркалирование D27 опирается на `source_root`.
+Решение supersedes D23 и старую текстурную часть D27.
+
+**D35. [composite-graph-source] Composite graph восстанавливается только из
+`.composite`, не из FBX.** Definition — Collection; каждый placement — Empty с
+`instance_collection`, трансформом и Custom Properties. Импорт всегда рекурсивно
+резолвит ссылки через D36, создаёт ровно одну sibling target Collection на
+ResourceUID, импортирует найденные FBX в эти Collections и собирает иерархию
+Empty-инстансов; порядок наполнения и сборки не является частью контракта.
+Неразрешённая ссылка сохраняет NodeUID и ResourceUID в заглушке, чтобы `Resolve
+Missing` мог наполнить ту же Collection без пересборки графа. Циклы обрабатываются
+по D10. Сам FBX — только geometry payload и не обязан содержать node/placement
+данные. `properties{}` поддерживаемых нод сохраняется lossless; reserved
+random/variant node kinds до отдельного контракта блокируются, а не угадываются.
+
+**D36. [uid-source-resolution] Любая внешняя UID-ссылка резолвится только внутри
+единого `source_root` и только через единственного owning manifest.** Правило
+одинаково для `static_mesh`, `composite` и `material`. `registry.json` —
+приоритетный candidate hint: `source_path` указывает на payload, опциональный
+`manifest_path` — на предполагаемый manifest. Истиной он не является. Resolver
+всегда сканирует все файлы с точным именем `export_manifest.json` под
+`source_root`, подтверждает registry-кандидат и проверяет уникальность владельца.
+Stale/invalid registry row даёт `MH_W_REGISTRY_STALE`/
+`MH_W_REGISTRY_INVALID` и fallback к результату scan; две manifest-строки одного
+UID дают блокирующий `MH_E_AMBIGUOUS_RESOURCE_OWNER`, а не выбор первой.
+`source_path`/`manifest_path` в registry относительны к `source_root`.
+Дисковый кеш до отдельного решения и замера запрещён.
+
+Honest-результат resolver'а:
+`uid -> {payload_path, owning_manifest_path, manifest_row}`. Резолв не завершён
+одним payload, потому что `material_slots`, `content_hash` и будущие `lods[]`
+живут в manifest-строке. `source` всегда относителен к owning manifest, а payload
+обязан оставаться под `source_root`. Транзакционный import/export фиксирует набор
+прочитанных manifests и перед commit проверяет, что они не изменились.
+
+Import при отсутствии ресурса не прерывает остальной граф: создаётся unresolved
+Empty/Collection с сохранёнными NodeUID/ResourceUID и
+`mh_unresolved=True`; Empty показывается красным cube-placeholder, а лог получает
+`MH_W_UNRESOLVED_RESOURCE`. `Resolve Missing`
+повторяет каскад и наполняет те же сущности. Export вычисляет зависимости из
+`.composite` и `material_slots`, ничего не записывая в `external_dependencies`:
+unresolved mesh/composite блокирует операцию `MH_E_UNRESOLVED_EXTERNAL`, а
+unresolved material, который текущая операция не должна экспортировать, даёт
+warning со списком и быстрым действием `Export materials…`; FBX-specific policy
+определена D38. Рекурсивный обход дедуплицирует ресурс по UID; cycle-policy — D10.
+
+**D37. [material-source-files] Материал — самостоятельный source-файл и обычный
+ресурс manifest.** Один `<sanitized_name>__<uid8>.material` со схемой
+`mh.material`, version 1 соответствует одному MI; payload содержит `uid`, `name`,
+`shader_class`, `params`, `textures`, а D34 задаёт единственную форму текстурных
+строк. Manifest хранит только общую resource-row с `uid`, kind `material`,
+`name`, `source` и `content_hash`; material-specific payload в row отсутствует,
+inline `materials[]` запрещён. Хеш считается по семантической
+канон-форме `{shader_class, params, textures}`, не по `uid`/`name`/kind.
+
+Первое размещение файла выбирается либо явно в секции `Materials` (Material +
+Directory), либо принятой owner-политикой FBX Export из D38. При следующих
+экспортах D36 находит существующую пару
+(payload, owning manifest), и это расположение всегда выигрывает: обновление идёт
+in place, повторный выбор папки не требуется. Rename меняет `name` внутри payload
+и manifest, но **не переименовывает файл автоматически**: соответствие
+`sanitized_name` текущему `name` не требуется и не проверяется, уникальность
+обеспечивает `uid8`. Ручной транзакционный `Rename file to match` относится к
+ROADMAP. Composite Export не размещает material payload; FBX Export следует D38.
+Shared material из общей папки резолвится один раз по UID независимо от числа
+mesh-потребителей и их каталогов. Решение supersedes inline-хранение D15, D22 и
+pre-freeze manifest-часть D31.
+
+**D38. [fbx-export-materials-toggle] FBX Export имеет явный Boolean `Export
+Materials`, default ON.** Это принятое владельцем post-freeze operational/UX
+amendment, совместимое с Source Schema v1: ни один JSON field, canonical byte или
+hash rule не меняется. При ON операция собирает каждый уникальный MaterialUID,
+использованный объектами выбранной Collection hierarchy. Уже существующий
+material payload резолвится по D36 и обновляется in place вместе со своим owning
+manifest; UID без владельца впервые создаётся рядом с выбранным FBX output и
+добавляется в тот же directory-local manifest. При OFF записываются только FBX и
+mesh resource-row; material payload/rows не создаются и не обновляются, а missing
+UID остаются в structured warning с действием `Export materials…`. Это не общий
+dependency-closure export и не возвращение Bundle Export: действие ограничено
+явным Boolean и material slots выбранной FBX Collection hierarchy. Текстуры в
+обоих режимах только ссылаются по D34 и никогда не копируются.
+Ошибки material extraction/preparation/write превращаются в
+`MH_W_MATERIAL_NOT_FOUND` и не откатывают уже committed FBX; crash после
+material marker остаётся глобально fail-closed по D36 и требует recovery этого
+MaterialUID до следующего resource-write.
 
 ## 4. Известные риски (проверяются первыми)
 
@@ -237,7 +425,7 @@ R3. Дубликаты UID при Ctrl+D в Blender — детект перед 
 
 | Термин | Значение |
 |---|---|
-| Bundle | внутренний технический термин: «транзакция экспорта» (каталог + манифест). В пользовательских доках и UI не используется; JSON-ключи схемы (`bundle_uid` и пр.) не переименовываются |
+| Bundle | устаревший термин прототипа; в текущем UX и manifest-контракте не используется |
 | Resource | переиспользуемое определение (mesh/material/actor class/composite) |
 | Composite (Definition) | граф узлов, файл `.composite`, ассет `UMHCompositeAsset` |
 | Node | узел definition (kind: group / mesh / composite_ref / variant_set / actor) |

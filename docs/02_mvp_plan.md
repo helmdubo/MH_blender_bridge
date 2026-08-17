@@ -1,10 +1,19 @@
 # План разработки: Blender → UE5 Composite Pipeline (MVP)
 
-Исходное состояние авторинга уже совпадает с dag4blend-моделью, и это главный актив:
-- **Сцена GEOMETRY**: каждая коллекция = один mesh-ресурс (будущий FBX → UStaticMesh).
-- **Сцена COMPOSITS**: Empty + `instance_collection` = placement, коллекция = composite definition.
+> **HISTORICAL / SUPERSEDED.** Этот документ сохранён только как история
+> планирования и не задаёт текущий контракт или порядок реализации. Актуальные
+> документы: `04_source_workflows.md` (нормативный freeze candidate v1) и
+> `06_final_v1_plan.md` (исполняемый план). В частности, все упоминания bundle,
+> `materials[]`, `external_dependencies`, Texture Root, старых import toggles и
+> старой последовательности B-блоков ниже являются неактуальными.
 
-Значит, авторинг-модель не проектируем — она есть. Проект = замена формата экспорта (.dag/.blk → bundle) и целевого движка (daEditor → UE5).
+Актуальная Blender-модель совпадает с dag4blend по разделению definition и
+placement. В сцене **GEOMETRY** definitions представлены sibling Collections:
+mesh collection содержит geometry, composite collection — Empty collection
+instances. Empty + `instance_collection` = placement/reference; фиксированная
+сцена COMPOSITS больше не является условием экспорта.
+
+Значит, авторинг-модель не проектируем — она есть. Проект = замена формата экспорта (.dag/.blk → source files) и целевого движка (daEditor → UE5).
 
 ---
 
@@ -12,10 +21,16 @@
 
 Один вертикальный сценарий, доказуемый на golden-сцене:
 
-1. Художник в Blender жмёт **Export Bundle** → на диске появляется bundle-каталог.
+1. Художник отдельными кнопками экспортирует выбранные mesh/composite
+   Collections в один source-каталог → появляются `*.mesh.fbx`,
+   `*.composite` и инкрементальный `export_manifest.json`.
 2. В UE watcher (или ручной Import) подхватывает → появляются `SM_*`, `CA_*` uassets.
 3. `CA_Building_A` перетаскивается в уровень → `AMHCompositeActor` разворачивается в компоненты StaticMesh с правильными трансформами (включая вложенный композит).
-4. В Blender: rename объекта, сдвиг placement, удаление одного узла, правка геометрии одного меша → **Export** → в UE Reimport → **обновляются только затронутые ассеты**, все размещённые в уровне актёры пересобираются, ничего лишнего не пересоздано (проверка по diff-логу).
+4. В Blender: rename объекта, сдвиг placement, удаление одного узла, правка
+   геометрии одного меша → повторный standalone Export соответствующей
+   definition → в UE Reimport → **обновляются только затронутые ассеты**, все
+   размещённые в уровне актёры пересобираются, ничего лишнего не пересоздано
+   (проверка по diff-логу).
 
 Всё, что не нужно для этого сценария — за пределами MVP.
 
@@ -74,15 +89,20 @@ COMPOSITS: CA_WindowSet  (3 × window_a placements, один со scale+rotation
 - Обход COMPOSITS: Empty-граф → flat node table; `instance_collection` → resource_uid; вложенный composite-collection → `composite_ref`.
 - Обход GEOMETRY: каждая коллекция → один FBX (`name__uid8.mesh.fbx`): выделение объектов коллекции, `bpy.ops.export_scene.fbx(use_selection=True, ...)` с зафиксированными параметрами (units, axes, smoothing, tangents — те же, что вы используете сейчас в ручном экспорте).
 - Инкрементальность с первого дня: content_hash по evaluated mesh (детерминированная сериализация verts/loops/UV/attrs + material slot names) → неизменённые FBX не переэкспортируются.
-- Атомарность: экспорт во временный каталог → hashes → manifest пишется последним → атомарная замена.
+- Атомарность: вся семантика и manifest вычисляются до первой записи;
+  prepared `export_manifest.json.tmp` служит fail-closed marker, изменённые
+  payload-файлы пишутся через adjacent `.tmp` + replace, marker продвигается
+  в stable manifest только после их успеха (§1.1 схемы).
 
 ### B3. Валидация
 Циклы composite-ссылок (DFS, показ цепочки), дубликаты UID, битые instance_collection, ресурс без UID, пустые коллекции. Отчёт — в текстовый лог (паттерн dag4blend `log()`).
 
 ### B4. Материалы (D22/D23, расширение B2)
-- Извлечение материальных записей из Blender-материалов (референс — `reference/studio_scripts/blender_export_matdata.py`): `shader_class`, params, textures.
+- Извлечение из `Material.dagormat`: `shader_class`, `optional`, `sides`, `textures`;
+  UID в `Material['mh_uid']`. Без dagormat — заглушка `rendinst_simple`.
 - Нормализация путей текстур под `texture_root` (forward slashes), валидация `MH_E_TEXTURE_OUTSIDE_ROOT`, утилита однократного remap старого корня (D27).
-- `material_slots` у mesh-ресурсов; секция `materials` манифеста (§2.1 схемы).
+- `material_slots` у mesh-ресурсов; секция `materials` и material `content_hash`
+  в manifest v2 (§2.1 схемы); отдельного `materials.json` нет.
 - Чтение registry.json (D28), если есть: warning на неизвестный shader_class.
 - FBX-экспорт — через канон-настройки и cm-контекст-менеджер из reference-скрипта (`axis_forward='X'`, `axis_up='Z'`; mesh-hash считается ДО cm-конверсии — §9).
 
@@ -129,8 +149,12 @@ Export → `diff_bundles` показывает один UPDATE_TRANSFORM, FBX н
 Приёмка: импорт golden-bundle создаёт правильные ассеты; каждая мутация → реимпорт → diff-отчёт совпадает с ожидаемым из A2; повторный импорт без изменений → всё UNCHANGED, ноль пересозданных ассетов.
 
 ### C3. Синхронизация (D26): watcher + startup-скан
-- Watcher: подписка IDirectoryWatcher на манифест-файлы под source_root, debounce.
-- Startup-скан: `OnAssetRegistryFilesLoaded` → манифесты vs Ledger, сравнение ТОЛЬКО по content_hash (не mtime); режим prompt/silent — настройка, default prompt.
+- Watcher: подписка IDirectoryWatcher на stable manifest rename под source_root,
+  debounce; каталог с `export_manifest.json.tmp` считается export-in-progress и
+  не импортируется (§1.1 схемы).
+- Startup-скан: сначала пропускает каталоги с pending marker, затем
+  `OnAssetRegistryFilesLoaded` → манифесты vs Ledger, сравнение ТОЛЬКО по
+  content_hash (не mtime); режим prompt/silent — настройка, default prompt.
 - CI-commandlet (`-run=MHImportManifests`) — post-MVP.
 - Первый коммит этапа C — автоматизация UE-половины axis-теста R1 (по сниппету из B3).
 

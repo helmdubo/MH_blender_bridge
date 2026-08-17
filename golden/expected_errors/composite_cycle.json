@@ -1,6 +1,6 @@
 {
   "schema": "mh.validation_report",
-  "schema_version": 1,
+  "schema_version": 2,
   "errors": [
     {
       "code": "MH_E_COMPOSITE_CYCLE",
@@ -9,5 +9,6 @@
         "b0ca6032-8884-534d-8ceb-20f4a4edb766"
       ]
     }
-  ]
+  ],
+  "warnings": []
 }
