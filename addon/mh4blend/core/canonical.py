@@ -33,7 +33,13 @@ import re
 import unicodedata
 from typing import Any, Iterable, Sequence
 
-import xxhash
+# Optional at import time so the addon can register inside a Blender whose
+# python lacks the package; any hashing call then fails with an actionable
+# message instead of the addon refusing to load.
+try:
+    import xxhash
+except ModuleNotFoundError:  # pragma: no cover - exercised only in Blender
+    xxhash = None
 
 __all__ = [
     "quantize",
@@ -521,6 +527,10 @@ def composite_canonical_form(doc: dict) -> dict:
 
 def hash_hex(data: bytes) -> str:
     """Return ``"xxh3:" + 16 lowercase hex chars`` of XXH3-64 over `data` (§8.3)."""
+    if xxhash is None:
+        raise RuntimeError(
+            "MH: the 'xxhash' python package is not installed in this Blender. "
+            "Run:  <blender>/<version>/python/bin/python -m pip install xxhash")
     return "xxh3:" + xxhash.xxh3_64(data).hexdigest()
 
 
