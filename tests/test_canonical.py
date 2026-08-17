@@ -68,6 +68,7 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_MISSING_COLLECTION_UID",
             "MH_E_EMPTY_RESOURCE_COLLECTION",
             "MH_E_NESTED_COMPOSITE_COLLECTION",
+            "MH_E_INVALID_LOD_HIERARCHY",
             "MH_E_NAN_INF_VALUE",
             "MH_E_INVALID_SCALE",
             "MH_E_INVALID_COLLECTION_OFFSET",
@@ -87,6 +88,7 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_FOREIGN_UID_OWNER",
             "MH_E_NAME_MISMATCH",
             "MH_E_TARGET_NAME_COLLISION",
+            "MH_E_LOD_IMPORT_FAILED",
             "MH_W_REGISTRY_INVALID",
             "MH_W_REGISTRY_STALE",
             "MH_W_COMPOSITE_CYCLE",
@@ -100,7 +102,7 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_W_UNKNOWN_SHADER_CLASS",
         }
     )
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 29
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 31
     assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 11
 
 
