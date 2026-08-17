@@ -280,10 +280,11 @@ def _cleanup_orphan_tmp(bundle_dir):
 
 
 def export_bundle(bundle_dir, geo_scene=None, cmp_scene=None,
-                  bundle_name=None):
+                  bundle_name=None, dry_run=False):
     """Run the full export into `bundle_dir`. Returns a report dict:
     {"validation": mh.validation_report, "written": [...], "skipped": [...],
      "deleted": [...], "ok": bool}. On validation errors nothing is written.
+    dry_run=True stops after validation (the Validate button).
     """
     geo_scene = geo_scene or bpy.data.scenes["GEOMETRY"]
     cmp_scene = cmp_scene or bpy.data.scenes["COMPOSITS"]
@@ -302,8 +303,8 @@ def export_bundle(bundle_dir, geo_scene=None, cmp_scene=None,
     else:
         rows = scene_errors
     validation = build_report(rows)
-    if validation["errors"]:
-        return {"ok": False, "validation": validation,
+    if validation["errors"] or dry_run:
+        return {"ok": not validation["errors"], "validation": validation,
                 "written": [], "skipped": [], "deleted": []}
 
     os.makedirs(os.path.join(bundle_dir, "meshes"), exist_ok=True)

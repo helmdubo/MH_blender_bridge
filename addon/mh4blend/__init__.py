@@ -19,8 +19,8 @@ bl_info = {
 
 def _bpy_modules():
     from . import prefs
-    from .ui import panels
-    return (prefs, panels)
+    from .ui import ops, panels
+    return (prefs, ops, panels)
 
 
 def register():

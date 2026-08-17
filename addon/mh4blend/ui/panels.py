@@ -1,8 +1,4 @@
-"""N-panel skeleton (pattern reference: dag4blend cmp_panels).
-
-Export/Validate operators arrive in B10/B11; until then the panel shows
-configuration state so the addon is installable from B1 on.
-"""
+"""N-panel (pattern reference: dag4blend cmp_panels)."""
 
 import bpy
 
@@ -19,13 +15,16 @@ class MH_PT_main(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         prefs = prefs_mod.get_prefs(context)
+
         box = layout.box()
-        box.label(text="Project roots", icon="FILE_FOLDER")
+        box.label(text="Project", icon="FILE_FOLDER")
         box.prop(prefs, "source_root", text="Source")
-        box.prop(prefs, "texture_root", text="Textures")
-        col = layout.column()
-        col.enabled = False
-        col.label(text="Export Bundle / Validate: stage B10-B11")
+        box.prop(context.scene, "mh_bundle_subdir")
+
+        col = layout.column(align=True)
+        col.operator("mh.export_bundle", icon="EXPORT")
+        col.operator("mh.validate", icon="CHECKMARK")
+        layout.label(text="Log: Text Editor > mh_export_log", icon="TEXT")
 
 
 def register():
