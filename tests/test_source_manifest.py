@@ -545,6 +545,104 @@ def test_commit_nontransient_replace_error_is_not_retried(
     assert directory_key not in source_manifest_mod._STAGED_LOCKS
 
 
+def _prepare_recovery_marker(directory):
+    commit(directory, prepare(directory, MESH))
+    interrupted = prepare(
+        directory, dict(MESH, content_hash="xxh3:0000000000000099"))
+    stage_manifest(str(directory), interrupted)
+    abandon_staged_manifest(str(directory))
+    marker_bytes = (directory / PENDING_MANIFEST_NAME).read_bytes()
+    recovery = prepare(
+        directory, dict(MESH, content_hash="xxh3:0000000000000088"))
+    return recovery, marker_bytes
+
+
+def test_recovery_replace_exhaustion_preserves_original_error_and_marker(
+        tmp_path, monkeypatch):
+    recovery, marker_bytes = _prepare_recovery_marker(tmp_path)
+    directory_key = source_manifest_mod._directory_key(str(tmp_path))
+    acquired = []
+    original_acquire = source_manifest_mod._acquire_file_lock
+
+    def tracked_acquire(path, owner):
+        stream = original_acquire(path, owner)
+        acquired.append(stream)
+        return stream
+
+    monkeypatch.setattr(
+        source_manifest_mod, "_acquire_file_lock", tracked_acquire)
+    replace_error = _windows_os_error(32)
+    cleanup_error = _windows_os_error(5)
+    replace_calls = []
+    cleanup_calls = []
+    sleeps = []
+    original_remove = source_manifest_mod.os.remove
+    with monkeypatch.context() as injected:
+        def fail_replace(source, destination):
+            replace_calls.append((source, destination))
+            raise replace_error
+
+        def fail_staging_cleanup(path):
+            if ".writing." in os.path.basename(path):
+                cleanup_calls.append(path)
+                raise cleanup_error
+            return original_remove(path)
+
+        injected.setattr(source_manifest_mod.os, "replace", fail_replace)
+        injected.setattr(source_manifest_mod.os, "remove", fail_staging_cleanup)
+        injected.setattr(source_manifest_mod.time, "sleep", sleeps.append)
+        with pytest.raises(OSError) as caught:
+            stage_manifest(str(tmp_path), recovery)
+    assert caught.value is replace_error
+    assert len(replace_calls) == 7
+    assert len(cleanup_calls) == 6
+    assert sum(sleeps) == pytest.approx(0.82)
+    assert (tmp_path / PENDING_MANIFEST_NAME).read_bytes() == marker_bytes
+    assert all(stream.closed for stream in acquired)
+    assert directory_key not in source_manifest_mod._STAGED_TOKENS
+    assert directory_key not in source_manifest_mod._STAGED_LOCKS
+
+    # Both filesystem locks were released despite replace+cleanup failure.
+    stage_manifest(str(tmp_path), recovery)
+    commit_staged_manifest(str(tmp_path))
+
+
+def test_recovery_nontransient_replace_error_is_immediate_and_cleanup_runs(
+        tmp_path, monkeypatch):
+    recovery, marker_bytes = _prepare_recovery_marker(tmp_path)
+    directory_key = source_manifest_mod._directory_key(str(tmp_path))
+    acquired = []
+    original_acquire = source_manifest_mod._acquire_file_lock
+
+    def tracked_acquire(path, owner):
+        stream = original_acquire(path, owner)
+        acquired.append(stream)
+        return stream
+
+    monkeypatch.setattr(
+        source_manifest_mod, "_acquire_file_lock", tracked_acquire)
+    replace_error = _windows_os_error(87)
+    replace_calls = []
+    sleeps = []
+    with monkeypatch.context() as injected:
+        def fail_replace(source, destination):
+            replace_calls.append((source, destination))
+            raise replace_error
+
+        injected.setattr(source_manifest_mod.os, "replace", fail_replace)
+        injected.setattr(source_manifest_mod.time, "sleep", sleeps.append)
+        with pytest.raises(OSError) as caught:
+            stage_manifest(str(tmp_path), recovery)
+    assert caught.value is replace_error
+    assert len(replace_calls) == 1
+    assert sleeps == []
+    assert (tmp_path / PENDING_MANIFEST_NAME).read_bytes() == marker_bytes
+    assert not list(tmp_path.glob(f"{PENDING_MANIFEST_NAME}.writing.*"))
+    assert all(stream.closed for stream in acquired)
+    assert directory_key not in source_manifest_mod._STAGED_TOKENS
+    assert directory_key not in source_manifest_mod._STAGED_LOCKS
+
+
 def test_reader_rejects_marker_created_during_manifest_read(tmp_path, monkeypatch):
     commit(tmp_path, prepare(tmp_path, MESH))
     original_read = source_manifest_mod._read_file_bytes
