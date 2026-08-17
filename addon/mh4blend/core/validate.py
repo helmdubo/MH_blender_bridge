@@ -203,21 +203,6 @@ def _check_material_values(manifest, errors):
     return invalid
 
 
-def _check_textures(manifest, errors, invalid_materials):
-    for material in manifest.materials:
-        if material.uid in invalid_materials:
-            continue
-        for slot, path in material.textures.items():
-            bad = (not isinstance(path, str) or not path or "\\" in path
-                   or path.startswith("/") or path.startswith("..")
-                   or "/../" in path or (len(path) > 1 and path[1] == ":"))
-            if bad:
-                errors.append(ValidationError(
-                    "MH_E_TEXTURE_OUTSIDE_ROOT", [material.uid],
-                    f"{slot}: '{path}' is not a texture_root-relative "
-                    "forward-slash path"))
-
-
 def _check_shader_classes(manifest, registry, warnings, invalid_materials):
     if registry is None:
         return
@@ -247,6 +232,5 @@ def validate_manifest(manifest, registry=None):
         _check_nodes(composite, errors)
     _check_composite_cycles(manifest, errors)
     invalid_materials = _check_material_values(manifest, errors)
-    _check_textures(manifest, errors, invalid_materials)
     _check_shader_classes(manifest, registry, warnings, invalid_materials)
     return build_report(errors, warnings)

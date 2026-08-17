@@ -1,10 +1,10 @@
-"""Export Sources / Validate operators (B11).
+"""Standalone FBX and composite operators.
 
-Log pattern per dag4blend: full machine report goes into the text block
-`mh_export_log` (Text Editor), the operator report line carries only the
-summary. The export directory is source_root/<scene subdir> (D27); the
-subdir is a per-file Scene property defaulting to '<blend name>'.
+Each button acts only on the collection/file selected beside it. There is no
+combined scene scan and no bundle export operator in the user interface.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -12,169 +12,177 @@ import os
 import bpy
 
 from .. import prefs as prefs_mod
-from ..scene.export_bundle import export_bundle
-from ..scene.material_extract import remap_dagormat_texture_paths
+from ..scene.export_composite import export_composite_collection
+from ..scene.export_fbx import export_fbx_collection
+from ..scene.import_composite import import_composite_file
+
 
 LOG_TEXT_NAME = "mh_export_log"
 
 
-def _log(report):
+def _json_default(value):
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return name
+    disk_dict = getattr(value, "disk_dict", None)
+    if callable(disk_dict):
+        return disk_dict()
+    return str(value)
+
+
+def _log(operation, report):
     text = bpy.data.texts.get(LOG_TEXT_NAME)
     if text is None:
         text = bpy.data.texts.new(LOG_TEXT_NAME)
-    text.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    row = {"operation": operation, "report": report}
+    text.write(json.dumps(
+        row, indent=2, ensure_ascii=False, default=_json_default) + "\n")
 
 
-def _bundle_dir(context):
-    prefs = prefs_mod.get_prefs(context)
-    if not prefs.source_root:
-        return None, "Set Source Root in the addon preferences first"
-    stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "untitled"
-    subdir = context.scene.mh_bundle_subdir or stem
-    if os.path.isabs(subdir):
-        return None, "Export Subdir must be relative to Source Root"
-    source_root = os.path.realpath(os.path.abspath(
-        bpy.path.abspath(prefs.source_root)))
-    target = os.path.realpath(os.path.abspath(os.path.join(source_root, subdir)))
-    try:
-        inside_root = os.path.commonpath(
-            [os.path.normcase(source_root), os.path.normcase(target)]) \
-            == os.path.normcase(source_root)
-    except ValueError:  # different drive letters on Windows
-        inside_root = False
-    if not inside_root or target == source_root:
-        return None, "Export Subdir must stay below Source Root"
-    return target, None
+def _directory(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Choose an output folder")
+    return os.path.abspath(bpy.path.abspath(value))
 
 
-class MH_OT_export_bundle(bpy.types.Operator):
-    bl_idname = "mh.export_bundle"
-    bl_label = "Export Sources"
-    bl_description = "Export GEOMETRY + COMPOSITS scenes as versioned source files"
+def _filepath(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Choose a .composite file")
+    path = os.path.abspath(bpy.path.abspath(value))
+    if not path.lower().endswith(".composite"):
+        raise ValueError("Import path must point to a .composite file")
+    if not os.path.isfile(path):
+        raise ValueError(f"Composite file does not exist: {path}")
+    return path
+
+
+class MH_OT_export_fbx(bpy.types.Operator):
+    bl_idname = "mh.export_fbx"
+    bl_label = "Export FBX"
+    bl_description = "Export only the selected collection as one FBX resource"
 
     def execute(self, context):
-        bundle_dir, problem = _bundle_dir(context)
-        if problem:
-            self.report({"ERROR"}, problem)
+        collection = context.scene.mh_fbx_collection
+        if collection is None:
+            self.report({"ERROR"}, "Choose a collection to export")
             return {"CANCELLED"}
-        prefs = prefs_mod.get_prefs(context)
-        report = export_bundle(
-            bundle_dir,
-            texture_root=bpy.path.abspath(prefs.texture_root),
-            registry_path=bpy.path.abspath(prefs.registry_path),
-        )
-        _log(report)
-        if not report["ok"]:
-            first = report["validation"]["errors"][0]
-            self.report(
-                {"ERROR"},
-                f"{first['code']} (+{len(report['validation']['errors']) - 1} "
-                f"more) — see '{LOG_TEXT_NAME}' text block")
+        try:
+            prefs = prefs_mod.get_prefs(context)
+            report = export_fbx_collection(
+                collection, _directory(context.scene.mh_fbx_directory),
+                registry_path=prefs.registry_path)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("export_fbx", {"ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        warning_count = len(report["validation"].get("warnings", []))
-        warning_suffix = (
-            f", {warning_count} warning(s) — see '{LOG_TEXT_NAME}'"
-            if warning_count else "")
-        manifest_state = (
-            "updated" if report["manifest_changed"]
-            else "refreshed" if report["manifest_written"]
-            else "unchanged")
-        self.report(
-            {"INFO"},
-            f"Export OK: {len(report['written'])} written, "
-            f"{len(report['skipped'])} unchanged, "
-            f"{len(report['deleted'])} deleted, manifest {manifest_state}"
-            f"{warning_suffix} -> {bundle_dir}")
-        return {"FINISHED"}
-
-
-class MH_OT_validate(bpy.types.Operator):
-    bl_idname = "mh.validate"
-    bl_label = "Validate"
-    bl_description = "Run export validation without writing anything"
-
-    def execute(self, context):
-        prefs = prefs_mod.get_prefs(context)
-        report = export_bundle(
-            "",
-            dry_run=True,
-            texture_root=bpy.path.abspath(prefs.texture_root),
-            registry_path=bpy.path.abspath(prefs.registry_path),
-        )
-        _log(report)
-        errors = report["validation"]["errors"]
-        if errors:
-            self.report(
-                {"ERROR"},
-                f"{len(errors)} problem(s), first: {errors[0]['code']} — "
-                f"see '{LOG_TEXT_NAME}' text block")
+        _log("export_fbx", report)
+        if not report.get("ok"):
+            errors = report.get("validation", {}).get("errors", [])
+            message = errors[0].get("code", "FBX validation failed") \
+                if errors else "FBX validation failed"
+            self.report({"ERROR"}, message)
             return {"CANCELLED"}
-        warnings = report["validation"].get("warnings", [])
-        if warnings:
+        warning_count = len(report.get("validation", {}).get("warnings", []))
+        if warning_count:
             self.report(
                 {"WARNING"},
-                f"Validation clean with {len(warnings)} warning(s) — "
-                f"see '{LOG_TEXT_NAME}' text block")
-        else:
-            self.report({"INFO"}, "Validation clean")
+                f"FBX exported with {warning_count} warning(s): "
+                f"{report['filepath']} — see {LOG_TEXT_NAME}")
+            return {"FINISHED"}
+        self.report({"INFO"}, f"FBX exported: {report['filepath']}")
         return {"FINISHED"}
 
 
-class MH_OT_remap_texture_root(bpy.types.Operator):
-    bl_idname = "mh.remap_texture_root"
-    bl_label = "Remap Old Texture Root"
+class MH_OT_export_composite(bpy.types.Operator):
+    bl_idname = "mh.export_composite"
+    bl_label = "Export Composite"
+    bl_description = "Export only the selected composite definition collection"
+
+    def execute(self, context):
+        collection = context.scene.mh_composite_export_collection
+        if collection is None:
+            self.report({"ERROR"}, "Choose a composite collection to export")
+            return {"CANCELLED"}
+        try:
+            report = export_composite_collection(
+                collection,
+                _directory(context.scene.mh_composite_export_directory),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("export_composite", {"ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("export_composite", report)
+        if not report.get("ok"):
+            errors = report.get("validation", {}).get("errors", [])
+            message = errors[0].get("code", "Composite validation failed") \
+                if errors else "Composite validation failed"
+            self.report({"ERROR"}, message)
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Composite exported: {report['path']}")
+        return {"FINISHED"}
+
+
+class MH_OT_import_composite(bpy.types.Operator):
+    bl_idname = "mh.import_composite"
+    bl_label = "Import Composite"
     bl_description = (
-        "One-shot rewrite of absolute dagormat texture paths from Old "
-        "Texture Root to Texture Root; paths outside the old root are kept")
+        "Import a composite and its reachable manifest dependencies into "
+        "the GEOMETRY scene")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        prefs = prefs_mod.get_prefs(context)
-        if not prefs.legacy_texture_root:
-            self.report({"ERROR"}, "Set Old Texture Root in addon preferences")
-            return {"CANCELLED"}
-        if not prefs.texture_root:
-            self.report({"ERROR"}, "Set Texture Root in addon preferences")
-            return {"CANCELLED"}
-
-        old_root = bpy.path.abspath(prefs.legacy_texture_root)
-        new_root = bpy.path.abspath(prefs.texture_root)
         try:
-            counts = remap_dagormat_texture_paths(old_root, new_root)
-        except ValueError as exc:
+            report = import_composite_file(
+                _filepath(context.scene.mh_composite_import_path))
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("import_composite", {"ok": False, "error": str(exc)})
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-
-        report = {
-            "schema": "mh.texture_remap_report",
-            "schema_version": 1,
-            "old_root": old_root,
-            "new_root": new_root,
-            **counts,
-        }
-        _log(report)
+        _log("import_composite", report)
+        unresolved = len(report.get("unresolved", []))
+        warning_count = len(report.get("warnings", []))
+        suffix = f", {unresolved} placeholder(s)" if unresolved else ""
+        if warning_count:
+            suffix += f", {warning_count} warning(s) — see {LOG_TEXT_NAME}"
         self.report(
             {"INFO"},
-            f"Remap complete: {counts['texture_paths_rewritten']} path(s) "
-            f"in {counts['materials_changed']} material(s), "
-            f"{counts['materials_skipped_read_only']} read-only skipped — see "
-            f"'{LOG_TEXT_NAME}'")
+            f"Composite imported: {report['root_collection'].name}{suffix}")
         return {"FINISHED"}
 
-    def invoke(self, context, _event):
-        return context.window_manager.invoke_confirm(self, _event)
 
-
-CLASSES = (MH_OT_export_bundle, MH_OT_validate, MH_OT_remap_texture_root)
+CLASSES = (
+    MH_OT_export_fbx,
+    MH_OT_export_composite,
+    MH_OT_import_composite,
+)
 
 
 def register():
-    bpy.types.Scene.mh_bundle_subdir = bpy.props.StringProperty(
-        name="Export Subdir",
-        description="Export directory under Source Root (D27); empty = "
-                    "'<blend name>'",
-        default="",
+    bpy.types.Scene.mh_fbx_collection = bpy.props.PointerProperty(
+        name="Collection",
+        description="Collection exported as one FBX resource",
+        type=bpy.types.Collection,
     )
+    bpy.types.Scene.mh_fbx_directory = bpy.props.StringProperty(
+        name="Output Folder", subtype="DIR_PATH", default="")
+    bpy.types.Scene.mh_composite_mode = bpy.props.EnumProperty(
+        name="Mode",
+        items=(
+            ("IMPORT", "Import", "Import a .composite source"),
+            ("EXPORT", "Export", "Export a composite collection"),
+        ),
+        default="IMPORT",
+    )
+    bpy.types.Scene.mh_composite_import_path = bpy.props.StringProperty(
+        name="Composite", subtype="FILE_PATH", default="")
+    bpy.types.Scene.mh_composite_export_collection = bpy.props.PointerProperty(
+        name="Collection",
+        description="Collection whose Empty instances are composite nodes",
+        type=bpy.types.Collection,
+    )
+    bpy.types.Scene.mh_composite_export_directory = bpy.props.StringProperty(
+        name="Output Folder", subtype="DIR_PATH", default="")
     for cls in CLASSES:
         bpy.utils.register_class(cls)
 
@@ -182,4 +190,13 @@ def register():
 def unregister():
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
-    del bpy.types.Scene.mh_bundle_subdir
+    for name in (
+        "mh_composite_export_directory",
+        "mh_composite_export_collection",
+        "mh_composite_import_path",
+        "mh_composite_mode",
+        "mh_fbx_directory",
+        "mh_fbx_collection",
+    ):
+        if hasattr(bpy.types.Scene, name):
+            delattr(bpy.types.Scene, name)

@@ -48,6 +48,8 @@ def main():
                 archive.write(full, arcname)
     names = zipfile.ZipFile(zip_path).namelist()
     assert "mh4blend/__init__.py" in names, "zip layout broken"
+    assert "mh4blend/scene/export_bundle.py" not in names, \
+        "retired Bundle Export API must not ship"
     print(f"built: {zip_path}  ({len(names)} files)")
     print("install: Blender > Edit > Preferences > Add-ons > "
           "(v) Install from Disk... > select this zip")

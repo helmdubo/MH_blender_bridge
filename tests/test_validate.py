@@ -117,7 +117,7 @@ def test_diamond_is_not_a_cycle():
     assert report["errors"] == []
 
 
-def test_zero_scale_ascii_name_uid8_and_texture_checks():
+def test_zero_scale_ascii_name_uid8_and_authored_texture_paths():
     bad_scale = QuantizedTransform((0, 0, 0), (0, 0, 0, 1000000), (1000000, 0, 1000000))
     composite = Composite(UIDS["col/ca_windowset"], "ca_windowset", [
         node("node/ca_windowset/window_1", transform=bad_scale)])
@@ -138,7 +138,7 @@ def test_zero_scale_ascii_name_uid8_and_texture_checks():
     report = validate_manifest(make_manifest(materials=[
         MaterialResource(UIDS["mesh/wall_b"], "m_x", "shader",
                          textures={"tex0": "C:/abs/path_tex_d.tif"})]))
-    assert ("MH_E_TEXTURE_OUTSIDE_ROOT", (UIDS["mesh/wall_b"],)) in codes(report)
+    assert report["errors"] == []
 
 
 def test_registry_warnings_are_non_blocking_and_missing_registry_is_silent():

@@ -2,8 +2,8 @@
 
 import sys
 import json
-import importlib
 from pathlib import Path
+import warnings
 
 import pytest
 
@@ -14,19 +14,10 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh4blend.scene.material_extract import (  # noqa: E402
     DEFAULT_SHADER_CLASS,
+    PROP_IMPORTED_MATERIAL_PAYLOAD,
     extract_collection_materials,
     normalize_texture_path,
-    remap_absolute_texture_path,
-    remap_dagormat_texture_paths,
 )
-from mh4blend.core.canonical import composite_content_hash  # noqa: E402
-from mh4blend.scene.export_bundle import (  # noqa: E402
-    _collect_duplicate_errors,
-    _gather,
-    export_bundle,
-)
-export_module = importlib.import_module(  # noqa: E402
-    "mh4blend.scene.export_bundle")
 
 
 class _TestTextures(bpy.types.PropertyGroup):
@@ -71,7 +62,7 @@ def _resource_with_object(name="Resource", object_uid="10000000-0000-0000-0000-0
     return collection, obj
 
 
-def test_extracts_only_dagormat_contract_and_normalizes_textures(tmp_path):
+def test_extracts_dagormat_contract_and_keeps_authored_texture_paths(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     blend_path = tmp_path / "authoring.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
@@ -88,8 +79,7 @@ def test_extracts_only_dagormat_contract_and_normalizes_textures(tmp_path):
     material.dagormat.textures.tex1 = ""
     obj.data.materials.append(material)
 
-    materials, slots = extract_collection_materials(
-        collection, str(texture_root))
+    materials, slots = extract_collection_materials(collection)
 
     assert len(materials) == 1
     extracted = materials[0]
@@ -98,9 +88,9 @@ def test_extracts_only_dagormat_contract_and_normalizes_textures(tmp_path):
     assert extracted.params["sides"] == 2
     assert extracted.params["roughness"] == 0.25
     assert extracted.params["tint"] == [0.1, 0.2, 0.3, 1.0]
-    assert extracted.textures == {"tex0": "metal_d.tif"}
-    assert normalize_texture_path(
-        "//textures/metal_d.tif", str(texture_root)) == "metal_d.tif"
+    assert extracted.textures == {"tex0": str(texture_root / "metal_d.tif")}
+    assert normalize_texture_path("//textures/metal_d.tif") == \
+        bpy.path.abspath("//textures/metal_d.tif")
     assert [(slot.slot_name, slot.material_uid) for slot in slots] == [
         ("Metal", extracted.uid)
     ]
@@ -116,7 +106,7 @@ def test_empty_shader_uses_minimal_placeholder(tmp_path):
     material.dagormat.textures.tex0 = str(tmp_path / "stale.tif")
     obj.data.materials.append(material)
 
-    materials, _slots = extract_collection_materials(collection, "")
+    materials, _slots = extract_collection_materials(collection)
 
     extracted = materials[0]
     assert extracted.shader_class == DEFAULT_SHADER_CLASS
@@ -124,109 +114,52 @@ def test_empty_shader_uses_minimal_placeholder(tmp_path):
     assert extracted.textures == {}
 
 
-@pytest.mark.parametrize(
-    "source, expected, changed",
-    [
-        (r"C:\Legacy\Textures\brick_d.tif",
-         r"D:\Project\Textures\brick_d.tif", True),
-        (r"c:\legacy\textures\Sub\..\brick_n.tif",
-         r"D:\Project\Textures\brick_n.tif", True),
-        (r"C:\Legacy\TexturesExtra\foreign.tif",
-         r"C:\Legacy\TexturesExtra\foreign.tif", False),
-        (r"C:\Legacy\Textures\..\outside.tif",
-         r"C:\Legacy\Textures\..\outside.tif", False),
-        (r"Z:\Library\foreign.tif", r"Z:\Library\foreign.tif", False),
-        ("/mnt/foreign/brick.tif", "/mnt/foreign/brick.tif", False),
-        (r"relative\brick.tif", r"relative\brick.tif", False),
-        ("//textures/brick.tif", "//textures/brick.tif", False),
-    ],
-)
-def test_one_shot_absolute_texture_remap_is_containment_safe(
-        source, expected, changed):
-    got, did_change = remap_absolute_texture_path(
-        source, r"C:\Legacy\Textures", r"D:\Project\Textures")
-    assert got == expected
-    assert did_change is changed
-
-
-def test_dagormat_texture_remap_rewrites_actual_property_group_once():
+def test_imported_manifest_payload_roundtrips_without_configured_dagormat():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    material = bpy.data.materials.new("LegacyPaths")
-    material.dagormat.textures.tex0 = \
-        r"C:\Legacy\Textures\building\wall_d.tif"
-    material.dagormat.textures.tex1 = r"textures\relative_n.tif"
-    material.dagormat.textures.tex2 = r"Z:\Foreign\wall_n.tif"
-
-    counts = remap_dagormat_texture_paths(
-        r"C:\Legacy\Textures", r"D:\Project\Textures",
-        materials=[material])
-
-    assert material.dagormat.textures.tex0 == \
-        r"D:\Project\Textures\building\wall_d.tif"
-    assert material.dagormat.textures.tex1 == r"textures\relative_n.tif"
-    assert material.dagormat.textures.tex2 == r"Z:\Foreign\wall_n.tif"
-    assert counts == {
-        "materials_scanned": 1,
-        "dagormat_materials": 1,
-        "materials_skipped_read_only": 0,
-        "materials_changed": 1,
-        "texture_paths_scanned": 3,
-        "texture_paths_rewritten": 1,
-    }
-
-    second_pass = remap_dagormat_texture_paths(
-        r"C:\Legacy\Textures", r"D:\Project\Textures",
-        materials=[material])
-    assert second_pass["materials_changed"] == 0
-    assert second_pass["texture_paths_rewritten"] == 0
-
-
-def test_dagormat_texture_remap_rolls_back_if_apply_fails():
-    class FailingTextures(dict):
-        fail = False
-
-        def __setitem__(self, key, value):
-            if self.fail and key == "tex1" and value.startswith("D:"):
-                raise RuntimeError("simulated read-only property")
-            super().__setitem__(key, value)
-
-    textures = FailingTextures({
-        "tex0": r"C:\Legacy\Textures\a.tif",
-        "tex1": r"C:\Legacy\Textures\b.tif",
+    collection, obj = _resource_with_object()
+    material = bpy.data.materials.new("ImportedMetal")
+    material["mh_uid"] = "30000000-0000-0000-0000-000000000003"
+    material[PROP_IMPORTED_MATERIAL_PAYLOAD] = json.dumps({
+        "uid": material["mh_uid"],
+        "kind": "material",
+        "name": "ImportedMetal",
+        "shader_class": "rendinst_layered",
+        "params": {"roughness": 0.25, "sides": 2},
+        "textures": {"tex0": r"A:\\assets\\metal_d.tif"},
+        "content_hash": "xxh3:ignored-on-read",
     })
-    textures.fail = True
-    dagormat = type("FakeDagormat", (), {"textures": textures})()
-    material = type("FakeMaterial", (), {
-        "dagormat": dagormat,
-        "is_editable": True,
-    })()
+    obj.data.materials.append(material)
 
-    with pytest.raises(RuntimeError, match="simulated read-only"):
-        remap_dagormat_texture_paths(
-            r"C:\Legacy\Textures", r"D:\Project\Textures",
-            materials=[material])
-
-    assert textures == {
-        "tex0": r"C:\Legacy\Textures\a.tif",
-        "tex1": r"C:\Legacy\Textures\b.tif",
-    }
+    extracted = extract_collection_materials(collection)[0][0]
+    assert extracted.uid == material["mh_uid"]
+    assert extracted.shader_class == "rendinst_layered"
+    assert extracted.params == {"roughness": 0.25, "sides": 2}
+    assert extracted.textures == {"tex0": r"A:\\assets\\metal_d.tif"}
 
 
-def test_dagormat_texture_remap_skips_read_only_material():
-    textures = {"tex0": r"C:\Legacy\Textures\a.tif"}
-    dagormat = type("FakeDagormat", (), {"textures": textures})()
-    material = type("FakeMaterial", (), {
-        "dagormat": dagormat,
-        "is_editable": False,
-    })()
+def test_invalid_imported_material_payload_is_machine_error():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, obj = _resource_with_object()
+    material = bpy.data.materials.new("BrokenImportedMaterial")
+    material[PROP_IMPORTED_MATERIAL_PAYLOAD] = "{not-json"
+    obj.data.materials.append(material)
 
-    counts = remap_dagormat_texture_paths(
-        r"C:\Legacy\Textures", r"D:\Project\Textures",
-        materials=[material])
+    with pytest.raises(ValueError, match="MH_E_INVALID_MATERIAL_VALUE"):
+        extract_collection_materials(collection)
 
-    assert textures["tex0"] == r"C:\Legacy\Textures\a.tif"
-    assert counts["materials_skipped_read_only"] == 1
-    assert counts["texture_paths_rewritten"] == 0
+
+def test_blender_relative_texture_requires_saved_blend():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, obj = _resource_with_object()
+    material = bpy.data.materials.new("RelativeTexture")
+    material.dagormat.shader_class = "rendinst_simple"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        material.dagormat.textures.tex0 = "//textures/a.tif"
+    obj.data.materials.append(material)
+
+    with pytest.raises(ValueError, match="MH_E_INVALID_MATERIAL_VALUE"):
+        extract_collection_materials(collection)
 
 
 def test_unsupported_optional_value_is_machine_error():
@@ -278,13 +211,13 @@ def test_multi_object_order_is_uid_then_slot_and_material_uid_is_unique(tmp_path
     earlier.data.materials.append(second)
     later.data.materials.append(second)  # repeated MaterialUID: first wins
 
-    materials, slots = extract_collection_materials(collection, str(tmp_path))
+    materials, slots = extract_collection_materials(collection)
 
     assert [material.name for material in materials] == ["First", "Second"]
     assert [slot.slot_name for slot in slots] == ["First", "Second"]
 
 
-def test_empty_slot_and_outside_texture_are_machine_errors(tmp_path):
+def test_empty_slot_is_error_and_texture_path_is_not_root_validated(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection, obj = _resource_with_object()
     material = bpy.data.materials.new("EmptySlot")
@@ -292,13 +225,14 @@ def test_empty_slot_and_outside_texture_are_machine_errors(tmp_path):
     obj.material_slots[0].material = None
 
     with pytest.raises(ValueError, match="MH_E_EMPTY_MATERIAL_SLOT"):
-        extract_collection_materials(collection, str(tmp_path))
+        extract_collection_materials(collection)
 
     obj.material_slots[0].material = material
     material.dagormat.shader_class = "rendinst_simple"
-    material.dagormat.textures.tex0 = str(tmp_path.parent / "outside.tif")
-    with pytest.raises(ValueError, match="MH_E_TEXTURE_OUTSIDE_ROOT"):
-        extract_collection_materials(collection, str(tmp_path))
+    authored = str(tmp_path.parent / "outside.tif")
+    material.dagormat.textures.tex0 = authored
+    materials, _slots = extract_collection_materials(collection)
+    assert materials[0].textures == {"tex0": authored}
 
 
 def test_same_slot_name_cannot_point_to_different_material_uids():
@@ -329,245 +263,3 @@ def test_same_slot_name_cannot_point_to_different_material_uids():
 
     with pytest.raises(ValueError, match="MH_E_MATERIAL_SLOT_CONFLICT"):
         extract_collection_materials(collection)
-
-
-def test_gather_wires_materials_slots_and_registry_warning(tmp_path):
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    collection, obj = _resource_with_object()
-    geo_scene = next(scene for scene in bpy.data.scenes
-                     if scene.name == "GEOMETRY")
-    cmp_scene = bpy.data.scenes.new("COMPOSITS")
-    bpy.context.window.scene = geo_scene
-
-    material = bpy.data.materials.new("KnownShape")
-    material.dagormat.shader_class = "rendinst_layered"
-    obj.data.materials.append(material)
-
-    manifest, _composites, _objects, errors = _gather(
-        geo_scene, cmp_scene, "MaterialTest", texture_root=str(tmp_path))
-    assert errors == []
-    assert len(manifest.materials) == 1
-    assert manifest.meshes[0].material_slots[0].material_uid \
-        == manifest.materials[0].uid
-
-    registry = tmp_path / "registry.json"
-    registry.write_text(
-        '{"schema":"mh.registry","schema_version":1,'
-        '"shader_classes":["rendinst_simple"]}',
-        encoding="utf-8",
-    )
-    report = export_bundle(
-        "", geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="MaterialTest", dry_run=True,
-        texture_root=str(tmp_path), registry_path=str(registry),
-    )
-    assert report["ok"]
-    assert [row["code"] for row in report["validation"]["warnings"]] == [
-        "MH_W_UNKNOWN_SHADER_CLASS"
-    ]
-
-    unreadable = export_bundle(
-        "", geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="MaterialTest", dry_run=True,
-        texture_root=str(tmp_path),
-        registry_path=str(tmp_path / "missing-registry.json"),
-    )
-    assert unreadable["ok"]
-    assert [row["code"] for row in unreadable["validation"]["warnings"]] == [
-        "MH_W_REGISTRY_INVALID"
-    ]
-
-
-def test_duplicate_material_uids_are_detected_before_gather():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    collection, first_obj = _resource_with_object()
-    geo_scene = next(scene for scene in bpy.data.scenes
-                     if scene.name == "GEOMETRY")
-    cmp_scene = bpy.data.scenes.new("COMPOSITS")
-
-    mesh = bpy.data.meshes.new("SecondMesh")
-    mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
-    second_obj = bpy.data.objects.new("SecondObject", mesh)
-    second_obj["mh_uid"] = "20000000-0000-0000-0000-000000000002"
-    collection.objects.link(second_obj)
-
-    shared_uid = "aaaaaaaa-0000-0000-0000-000000000001"
-    first = bpy.data.materials.new("First")
-    first["mh_uid"] = shared_uid
-    second = bpy.data.materials.new("Second")
-    second["mh_uid"] = shared_uid
-    first_obj.data.materials.append(first)
-    second_obj.data.materials.append(second)
-
-    errors = _collect_duplicate_errors(geo_scene, cmp_scene)
-    assert [(row.code, row.subjects) for row in errors] == [
-        ("MH_E_DUPLICATE_RESOURCE_UID", [shared_uid])
-    ]
-
-
-def test_shared_mesh_datablock_is_not_a_duplicate_resource_uid():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    collection, first_obj = _resource_with_object()
-    geo_scene = next(scene for scene in bpy.data.scenes
-                     if scene.name == "GEOMETRY")
-    cmp_scene = bpy.data.scenes.new("COMPOSITS")
-    first_obj.data["mh_uid"] = "aaaaaaaa-0000-0000-0000-000000000001"
-
-    second_obj = bpy.data.objects.new("LinkedObject", first_obj.data)
-    second_obj["mh_uid"] = "20000000-0000-0000-0000-000000000002"
-    collection.objects.link(second_obj)
-
-    assert _collect_duplicate_errors(geo_scene, cmp_scene) == []
-
-
-def test_nan_material_value_blocks_before_destination_is_created(tmp_path):
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    collection, obj = _resource_with_object()
-    geo_scene = next(scene for scene in bpy.data.scenes
-                     if scene.name == "GEOMETRY")
-    cmp_scene = bpy.data.scenes.new("COMPOSITS")
-    material = bpy.data.materials.new("InvalidNumber")
-    material.dagormat.shader_class = "rendinst_simple"
-    material.dagormat.optional["bad_number"] = float("nan")
-    obj.data.materials.append(material)
-    destination = tmp_path / "must_not_exist"
-
-    report = export_bundle(
-        str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="InvalidMaterial", texture_root=str(tmp_path))
-
-    assert not report["ok"]
-    assert [row["code"] for row in report["validation"]["errors"]] == [
-        "MH_E_NAN_INF_VALUE"
-    ]
-    assert report["manifest_changed"] is False
-    assert not destination.exists()
-
-
-def test_pending_manifest_is_fail_closed_and_next_export_recovers(
-        tmp_path, monkeypatch):
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    _collection, obj = _resource_with_object()
-    geo_scene = next(scene for scene in bpy.data.scenes
-                     if scene.name == "GEOMETRY")
-    cmp_scene = bpy.data.scenes.new("COMPOSITS")
-    destination = tmp_path / "source_set"
-
-    first = export_bundle(
-        str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="CrashRecovery", texture_root=str(tmp_path))
-    stable_manifest = destination / "export_manifest.json"
-    pending_manifest = destination / "export_manifest.json.tmp"
-    first_doc = json.loads(stable_manifest.read_text(encoding="utf-8"))
-    assert first["manifest_written"]
-    assert not pending_manifest.exists()
-
-    obj.data.vertices[0].co.x += 0.25
-
-    def simulated_fbx_failure(*_args, **_kwargs):
-        raise RuntimeError("simulated FBX failure")
-
-    monkeypatch.setattr(
-        export_module, "_export_collection_fbx", simulated_fbx_failure)
-    with pytest.raises(RuntimeError, match="simulated FBX failure"):
-        export_bundle(
-            str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-            bundle_name="CrashRecovery", texture_root=str(tmp_path))
-
-    assert pending_manifest.exists()
-    assert json.loads(stable_manifest.read_text(encoding="utf-8")) == first_doc
-
-    monkeypatch.undo()
-    recovered = export_bundle(
-        str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="CrashRecovery", texture_root=str(tmp_path))
-    assert recovered["manifest_changed"]
-    assert recovered["manifest_written"]
-    assert not pending_manifest.exists()
-    assert json.loads(stable_manifest.read_text(encoding="utf-8")) != first_doc
-
-
-def test_stale_pending_manifest_is_committed_even_when_semantics_match(
-        tmp_path):
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    _collection, _obj = _resource_with_object()
-    geo_scene = next(scene for scene in bpy.data.scenes
-                     if scene.name == "GEOMETRY")
-    cmp_scene = bpy.data.scenes.new("COMPOSITS")
-    destination = tmp_path / "source_set"
-    first = export_bundle(
-        str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="PendingRecovery", texture_root=str(tmp_path))
-    assert first["manifest_written"]
-    stable_manifest = destination / "export_manifest.json"
-    pending_manifest = destination / "export_manifest.json.tmp"
-    pending_manifest.write_bytes(stable_manifest.read_bytes())
-
-    recovered = export_bundle(
-        str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="PendingRecovery", texture_root=str(tmp_path))
-
-    assert not recovered["manifest_changed"]
-    assert recovered["manifest_written"]
-    assert recovered["written"] == [
-        next(entry["source"] for entry in
-             json.loads(stable_manifest.read_text(encoding="utf-8"))["resources"]
-             if entry["kind"] == "static_mesh")
-    ]
-    assert not pending_manifest.exists()
-
-
-def test_recovery_rewrites_payload_replaced_before_failed_commit(
-        tmp_path, monkeypatch):
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    _collection, _obj = _resource_with_object()
-    geo_scene = next(scene for scene in bpy.data.scenes
-                     if scene.name == "GEOMETRY")
-    cmp_scene = bpy.data.scenes.new("COMPOSITS")
-    composite = bpy.data.collections.new("CrashComposite")
-    composite["mh_uid"] = "30000000-0000-0000-0000-000000000003"
-    cmp_scene.collection.children.link(composite)
-    node = bpy.data.objects.new("CrashNode", None)
-    node["mh_uid"] = "40000000-0000-0000-0000-000000000004"
-    composite.objects.link(node)
-    destination = tmp_path / "source_set"
-
-    first = export_bundle(
-        str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="CrashRevert", texture_root=str(tmp_path))
-    assert first["ok"]
-    stable_manifest = destination / "export_manifest.json"
-    pending_manifest = destination / "export_manifest.json.tmp"
-    node["mh_p_crash_probe"] = "state_b"
-
-    def fail_final_commit(_source, _target):
-        raise RuntimeError("simulated commit failure")
-
-    monkeypatch.setattr(
-        export_module, "_promote_pending_manifest", fail_final_commit)
-    with pytest.raises(RuntimeError, match="simulated commit failure"):
-        export_bundle(
-            str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-            bundle_name="CrashRevert", texture_root=str(tmp_path))
-    assert pending_manifest.exists()
-
-    # Authoring returns to A while the on-disk composite is still B. Recovery
-    # must not trust A's stable manifest for hash-skip decisions.
-    del node["mh_p_crash_probe"]
-    monkeypatch.undo()
-    recovered = export_bundle(
-        str(destination), geo_scene=geo_scene, cmp_scene=cmp_scene,
-        bundle_name="CrashRevert", texture_root=str(tmp_path))
-    stable_doc = json.loads(stable_manifest.read_text(encoding="utf-8"))
-    composite_entry = next(
-        entry for entry in stable_doc["resources"]
-        if entry["kind"] == "composite")
-    composite_doc = json.loads(
-        (destination / composite_entry["source"]).read_text(encoding="utf-8"))
-
-    assert not recovered["manifest_changed"]
-    assert recovered["manifest_written"]
-    assert len(recovered["written"]) == 2  # one mesh + one composite
-    assert not pending_manifest.exists()
-    assert composite_content_hash(composite_doc) == \
-        composite_entry["content_hash"]

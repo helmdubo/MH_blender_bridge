@@ -131,7 +131,9 @@ class MaterialResource:
     name: str
     shader_class: str
     params: dict = field(default_factory=dict)
-    textures: dict = field(default_factory=dict)  # slot -> texture_root-relative path
+    # slot -> authored texture path. Blender-relative ``//`` paths are
+    # resolved by the host adapter; files are referenced in place, not copied.
+    textures: dict = field(default_factory=dict)
 
     @property
     def content_hash(self) -> str:

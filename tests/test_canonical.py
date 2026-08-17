@@ -68,6 +68,13 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_NESTED_COMPOSITE_COLLECTION",
             "MH_E_NAN_INF_VALUE",
             "MH_E_INVALID_SCALE",
+            "MH_E_INVALID_COLLECTION_OFFSET",
+            "MH_E_INVALID_COMPOSITE",
+            "MH_E_UNSUPPORTED_NODE_KIND",
+            "MH_E_INVALID_RESOURCE_SOURCE",
+            "MH_E_INVALID_EXPORT_MANIFEST",
+            "MH_E_RESOURCE_KIND_MISMATCH",
+            "MH_E_RESOURCE_UID_MISMATCH",
             "MH_E_UID8_COLLISION",
             "MH_E_NON_ASCII_RESOURCE_NAME",
             "MH_E_EMPTY_MATERIAL_SLOT",
@@ -79,12 +86,16 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_NAME_MISMATCH",
             "MH_E_TARGET_NAME_COLLISION",
             "MH_W_REGISTRY_INVALID",
+            "MH_W_MATERIAL_NOT_FOUND",
+            "MH_W_MATERIAL_PAYLOAD_FALLBACK",
+            "MH_W_MATERIAL_SLOT_NOT_FOUND",
+            "MH_W_MATERIAL_SLOT_UNMAPPED",
             "MH_W_RESOURCE_FAR_FROM_ORIGIN",
             "MH_W_UNKNOWN_SHADER_CLASS",
         }
     )
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 20
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 3
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 27
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 7
 
 
 def test_error_codes_shape() -> None:

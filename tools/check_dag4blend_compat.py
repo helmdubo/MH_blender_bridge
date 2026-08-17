@@ -64,8 +64,7 @@ def main():
         material.dagormat.textures["tex1"] = ""
         obj.data.materials.append(material)
 
-        materials, slots = extract_collection_materials(
-            collection, texture_root)
+        materials, slots = extract_collection_materials(collection)
         assert len(materials) == 1
         extracted = materials[0]
         assert extracted.shader_class == "rendinst_simple"
@@ -79,9 +78,7 @@ def main():
             "micro_detail_layer_uv_scale": 16.371,
             "sides": 0,
         }
-        assert extracted.textures == {
-            "tex0": "manmade_common/metal_rust_a_tex_d.tif",
-        }
+        assert extracted.textures == {"tex0": texture_path}
         assert len(slots) == 1
         assert slots[0].slot_name == "m_metal_rust"
         assert slots[0].material_uid == extracted.uid
