@@ -95,6 +95,9 @@ class Composite:
     uid: str
     name: str
     nodes: list  # list[Node]
+    # Asset-level bag (§2, QUESTION-9) — goes to the manifest resource entry,
+    # NOT into the .composite file and never inherited by nodes.
+    properties: dict = field(default_factory=dict)
 
     def filename(self) -> str:
         return resource_filename(self.name, self.uid, ".composite")
@@ -112,6 +115,7 @@ class MeshResource:
     name: str
     content_hash: str  # xxh3:... over the §9 stream
     material_slots: list = field(default_factory=list)  # list[MaterialSlot]
+    properties: dict = field(default_factory=dict)  # asset-level bag (§2, Q9)
 
     def filename(self) -> str:
         return resource_filename(self.name, self.uid, ".mesh.fbx")
@@ -183,15 +187,20 @@ def manifest_disk_dict(manifest: Manifest, composite_hashes: dict) -> dict:
                 {"slot_name": nfc(s.slot_name), "material_uid": s.material_uid}
                 for s in mesh.material_slots
             ]
+        if mesh.properties:
+            entry["properties"] = _nfc_tree(mesh.properties)
         resources.append(entry)
     for composite in manifest.composites:
-        resources.append({
+        entry = {
             "uid": composite.uid,
             "kind": "composite",
             "name": nfc(composite.name),
             "source": composite.filename(),
             "content_hash": composite_hashes[composite.uid],
-        })
+        }
+        if composite.properties:
+            entry["properties"] = _nfc_tree(composite.properties)
+        resources.append(entry)
     resources.sort(key=lambda r: r["uid"].encode("utf-8"))
 
     materials = [

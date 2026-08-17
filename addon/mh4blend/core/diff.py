@@ -103,10 +103,14 @@ def diff_bundles(old_manifest, new_manifest, old_composites, new_composites,
         if moved:
             flags.append("MOVE")
         kind = new.get("kind")
+        if old.get("properties") != new.get("properties"):
+            # asset-level bag (§2, Q9) — any resource kind
+            flags.append("UPDATE_PROPERTIES")
         if kind == "static_mesh":
             if old.get("content_hash") != new.get("content_hash"):
                 flags.append("UPDATE_GEOMETRY")
-            if old.get("material_slots") != new.get("material_slots"):
+            if (old.get("material_slots") != new.get("material_slots")
+                    and "UPDATE_PROPERTIES" not in flags):
                 flags.append("UPDATE_PROPERTIES")
         elif kind == "material":
             if (old.get("params") != new.get("params")

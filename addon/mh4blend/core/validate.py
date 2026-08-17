@@ -11,7 +11,22 @@ subjects sorted bytewise; messages are human-only and never compared.
 
 from .canonical import ERROR_CODES, validate_resource_name
 
-__all__ = ["ValidationError", "validate_manifest", "build_report"]
+__all__ = ["ValidationError", "MHValidationError", "validate_manifest",
+           "build_report"]
+
+
+class MHValidationError(ValueError):
+    """Raised where extraction cannot continue; carries the machine code and
+    subject UIDs so the caller can turn it into a report row."""
+
+    def __init__(self, code, subjects, message=""):
+        assert code in ERROR_CODES, f"unknown error code {code}"
+        self.code = code
+        self.subjects = sorted(subjects)
+        super().__init__(f"{code}: {message}")
+
+    def as_row(self):
+        return ValidationError(self.code, self.subjects, str(self))
 
 
 class ValidationError:

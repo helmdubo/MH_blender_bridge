@@ -63,15 +63,15 @@ def test_golden_structure():
     assert gp_wall.local_transform.translation == (50000, 0, 0)
 
 
-def test_decal_role_inherited_from_resource_collection():
+def test_node_bags_are_placement_level_only():
+    """Q9 resolution: resource-collection mh_p_* never leaks into node bags;
+    it becomes the manifest resource entry's bag (asserted at export, B10)."""
     composites = extract(GOLDEN)
     cb = composites[UIDS["col/ca_building"]]
-    leak = next(n for n in cb.nodes
-                if n.node_uid == UIDS["node/ca_building/leak_decal"])
-    assert leak.properties == {"role": "decal"}  # TODO(QUESTION-9) semantics
-    wall = next(n for n in cb.nodes
-                if n.node_uid == UIDS["node/ca_building/wall_main"])
-    assert wall.properties == {}
+    for node in cb.nodes:
+        assert node.properties == {}, node.display_name
+    # composite collections carry their own (empty in golden) asset-level bag
+    assert cb.properties == {}
 
 
 def test_reparent_mutation_extracts_new_parent_and_transform():
