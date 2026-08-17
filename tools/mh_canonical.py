@@ -78,10 +78,13 @@ ERROR_CODES = frozenset(
         "MH_E_INVALID_SCALE",
         "MH_E_UID8_COLLISION",
         "MH_E_NON_ASCII_RESOURCE_NAME",
+        # Blender export (materials/textures, D23/D27)
+        "MH_E_TEXTURE_OUTSIDE_ROOT",
         # UE import
         "MH_E_UNKNOWN_SCHEMA_VERSION",
         "MH_E_FOREIGN_UID_OWNER",
         "MH_E_NAME_MISMATCH",
+        "MH_E_TARGET_NAME_COLLISION",
         # warnings
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
     }
