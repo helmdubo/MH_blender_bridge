@@ -65,14 +65,16 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_INVALID_SCALE",
             "MH_E_UID8_COLLISION",
             "MH_E_NON_ASCII_RESOURCE_NAME",
+            "MH_E_TEXTURE_OUTSIDE_ROOT",
             "MH_E_UNKNOWN_SCHEMA_VERSION",
             "MH_E_FOREIGN_UID_OWNER",
             "MH_E_NAME_MISMATCH",
+            "MH_E_TARGET_NAME_COLLISION",
             "MH_W_RESOURCE_FAR_FROM_ORIGIN",
         }
     )
-    # §6.1 as written: 15 blocking codes and 1 warning
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 15
+    # §6.1 as written: 17 blocking codes and 1 warning (D23/D27 added two)
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 17
     assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 1
 
 

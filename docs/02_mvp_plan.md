@@ -20,7 +20,7 @@
 Всё, что не нужно для этого сценария — за пределами MVP.
 
 **В MVP не входит** (но схема данных их резервирует):
-VariantSet / weights / keyed random (Kind и seed-поля в схеме есть, компилятор их не трогает); seed_policy; Actor/BP-узлы; Break / Build New Composite; Level Instance / PLA / ISM-таргеты (только StaticMeshComponent); материалы beyond "перенос текущих post-import скриптов"; orphan review UI (просто список в логе); Blender-импортер `.composite`; ownership/fork между .blend-файлами (один bundle = один .blend).
+VariantSet / weights / keyed random (Kind и seed-поля в схеме есть, компилятор их не трогает); seed_policy; Actor/BP-узлы; Break / Build New Composite; Level Instance / PLA / ISM-таргеты (только StaticMeshComponent); orphan review UI (просто список в логе); skeletal (D29). Blender-импортер `.composite` — В MVP (блок 6 этапа B, D21: исходники = экспортированные файлы, .blend вне VCS); материалы — полноценные ресурсы уже в MVP (D22), ownership — через VCS (D21).
 
 ---
 
@@ -79,7 +79,27 @@ COMPOSITS: CA_WindowSet  (3 × window_a placements, один со scale+rotation
 ### B3. Валидация
 Циклы composite-ссылок (DFS, показ цепочки), дубликаты UID, битые instance_collection, ресурс без UID, пустые коллекции. Отчёт — в текстовый лог (паттерн dag4blend `log()`).
 
-Приёмка этапа B: экспорт golden-сцены и всех мутаций; JSON-диффы между экспортами мутаций совпадают с ожидаемыми из A2 (это проверяется скриптом, UE ещё не нужен).
+### B4. Материалы (D22/D23, расширение B2)
+- Извлечение материальных записей из Blender-материалов (референс — `reference/studio_scripts/blender_export_matdata.py`): `shader_class`, params, textures.
+- Нормализация путей текстур под `texture_root` (forward slashes), валидация `MH_E_TEXTURE_OUTSIDE_ROOT`, утилита однократного remap старого корня (D27).
+- `material_slots` у mesh-ресурсов; секция `materials` манифеста (§2.1 схемы).
+- Чтение registry.json (D28), если есть: warning на неизвестный shader_class.
+- FBX-экспорт — через канон-настройки и cm-контекст-менеджер из reference-скрипта (`axis_forward='X'`, `axis_up='Z'`; mesh-hash считается ДО cm-конверсии — §9).
+
+### Чекпойнт «owner hands-on» (после B11, до B13)
+
+По готовности B10–B11 аддон передаётся владельцу для ручного мини-сценария:
+«коллекция из куба + композит из трёх ссылок на неё → Export → правка трансформа →
+Export → `diff_bundles` показывает один UPDATE_TRANSFORM, FBX не переэкспортирован».
+Цель — проверка UX одной кнопки, не корректности. Замечания по панели/логу —
+отдельными issue, B13 не блокируют. PR этапа B открывается draft'ом заранее —
+ревью схемных правок ведётся в нём.
+
+### Блок 6 этапа B — Blender-импортер `.composite` (D21; отдельный PR, не блокирует старт C)
+- **B14.** `core/import_composite.py` + оператор Import Composite: референс `cmp_import.py`, но dependency-обход вместо модуль-глобалов, резолв ссылок по UID.
+- **B15.** Round-trip приёмка: export golden → import в чистый .blend → re-export → дифф пуст. Допустимое исключение: ложный UPDATE_GEOMETRY multi-object ресурсов, если внутренние uid не переживут FBX — проверить `use_custom_props` в обе стороны, зафиксировать примечанием в §9.2.
+
+Приёмка этапа B: экспорт golden-сцены и всех мутаций; JSON-диффы между экспортами мутаций совпадают с ожидаемыми из A2 (это проверяется скриптом, UE ещё не нужен); негативные сцены дают ожидаемые `expected_errors`.
 
 ---
 
@@ -87,23 +107,32 @@ COMPOSITS: CA_WindowSet  (3 × window_a placements, один со scale+rotation
 
 Плагин `MimirComposite` (editor-модуль + тонкий runtime-модуль для AMHCompositeActor).
 
+Таргет: **UE 5.7.4**, код совместим с 5.8 (без deprecated-API 5.7; сборочная
+проверка на 5.8 — в CI-матрицу, когда появится CI).
+
 ### C1. Классы данных
 - `UMHCompositeAsset`: CompositeUID, `TArray<FMHCompositeNode>`, AssetImportData, SourceJsonSnapshot.
 - `FMHCompositeNode`: NodeUID, ParentUID, DisplayName, Kind, LocalTransform, ResourceUID, `FSoftObjectPath Resource`, PropertyBag(raw). Поля Variants/SeedPolicy — объявлены, не используются.
-- `UMHSourceBundle`: BundleUID, таблица ResourceUID → {SoftObjectPath, content_hash, source file}, дата/версия последнего импорта.
+- `UMHImportLedger` (терминология D26; бывш. UMHSourceBundle): таблица ResourceUID → {SoftObjectPath, applied content_hash, source file}, дата/версия последнего импорта. Applied-хеши — база трёхстороннего сравнения материалов (D25).
 - `UAssetDefinition_*` для обоих (цвет, категория, read-only generic editor).
 
 ### C2. Импорт
 - `UMHCompositeFactory : UFactory, FReimportHandler` для `.composite`.
-- `UMHBundleImporter` (subsystem, вызывается фабрикой manifest'а или кнопкой): parse manifest → diff с UMHSourceBundle (по content_hash) → топосортировка (детект циклов) → **план**: [import mesh FBX ×N, create/update MI, import composites в порядке зависимостей] → выполнение → обновление UMHSourceBundle.
+- `UMHManifestImporter` (терминология D26; бывш. UMHBundleImporter — subsystem, вызывается фабрикой manifest'а или кнопкой): parse manifest → diff с UMHImportLedger (по content_hash) → топосортировка (детект циклов) → **план**: [import mesh FBX ×N, create/update MI, import composites в порядке зависимостей] → выполнение → обновление Ledger'а.
+- Целевые пути ассетов — вычисляются по D27 (content_root + относительный путь источника + префикс SM_/MI_/T_/CA_); смена каталога источника при том же UID = MOVE ассета.
+- Material Builder: трёхстороннее сравнение base/theirs/ours (D25) → UPDATE / LOCAL_EDIT / CONFLICT (интерактивный keep/overwrite в Preview; headless — политика проекта, default overwrite). Master по `<master_root>/<shader_class>`; registry.json генерируется из master_root (D28, кнопка Refresh + автогенерация при startup-скане); отсутствующий Master — ошибка материала в отчёте, не блокирующая остальной импорт.
+- Finalize-реестр — порт правил из `reference/studio_scripts/ue5_postprocess_materials.py`: decal (основной сигнал `mh_p_role="decal"`; legacy-суффикс `_decal/_decals` — fallback с warning'ом «проставьте mh_p_role»), Max Lumen Mesh Cards = 32 (настройка), UCX-чистка, texture suffix постобработка (§12 схемы).
 - Geometry backend: `IGeometryImportBackend` с одной реализацией `FLegacyFbxBackend` — legacy static mesh import "один FBX → один SM" (UFbxFactory / AssetTools), + перенос ваших текущих post-import Python-правил как C++/Python шаг Finalize (Nanite, collision, decal shadows и т.д. — прямой порт существующих скриптов).
 - Резолв `resource_uid → SoftObjectPath` при импорте композита через UMHSourceBundle; неразрешённый UID → warning-узел, импорт не падает.
 - Preview в MVP = **текстовый diff-отчёт** в Message Log/Output (CREATE/UPDATE/RENAME/REMOVE/UNCHANGED по каждому ресурсу и узлу). Окно с тремя колонками — после MVP; но отчёт генерится из того же плана, что исполняется (принцип единого FResolvedImportPlan соблюдён с первого дня).
 
 Приёмка: импорт golden-bundle создаёт правильные ассеты; каждая мутация → реимпорт → diff-отчёт совпадает с ожидаемым из A2; повторный импорт без изменений → всё UNCHANGED, ноль пересозданных ассетов.
 
-### C3. Watcher
-Auto-reimport директории bundle (Editor Preferences API либо своя подписка на IDirectoryWatcher по manifest-файлу). Полдня работы, огромный UX-выигрыш.
+### C3. Синхронизация (D26): watcher + startup-скан
+- Watcher: подписка IDirectoryWatcher на манифест-файлы под source_root, debounce.
+- Startup-скан: `OnAssetRegistryFilesLoaded` → манифесты vs Ledger, сравнение ТОЛЬКО по content_hash (не mtime); режим prompt/silent — настройка, default prompt.
+- CI-commandlet (`-run=MHImportManifests`) — post-MVP.
+- Первый коммит этапа C — автоматизация UE-половины axis-теста R1 (по сниппету из B3).
 
 ---
 
@@ -138,4 +167,11 @@ A (schema+scene) ──► B (аддон) ──► C (импорт) ──► D
 4. Break / Build New Composite (порты `nodes_split`/`nodes_to_composite`).
 5. Actor/BP-узлы + registry placeable-классов.
 6. Level Instance таргет для крупных детерминированных поддеревьев.
-7. Blender-импортер `.composite` (замыкание круга, порт `cmp_import`).
+7. CI-commandlet `-run=MHImportManifests` (D26).
+8. Export Selection — dependency closure композита для передачи третьей стороне, флаг with-textures (D21).
+9. `FInterchangeGeometryBackend` — NodeContainer-pipeline как геометрический backend, приёмка по golden-сравнению с legacy (D24).
+
+Примечание: Blender-импортер `.composite` из этого списка ИЗЪЯТ — по D21 он
+обязательная часть системы (блок 6 этапа B, второй PR).
+
+Долгосрочные направления с критериями пересмотра — `docs/ROADMAP.md`.
