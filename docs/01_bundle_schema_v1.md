@@ -1,7 +1,8 @@
 # 01 — Bundle Schema v1 (SPEC)
 
-Статус: **ЗАФИКСИРОВАНА — schema_version = 1** (заморожена по итогам ревью владельца,
-этап A; решения Q1–Q8 и правки ревью внесены). Любое изменение схемы дальше —
+Статус: **ЗАФИКСИРОВАНА — schema_version = 1** (заморожена по итогам ревью владельца:
+этап A + пакет решений D21–D29 директивы этапа B — секции materials/текстуры/
+зеркалирование путей внесены до заморозки). Любое изменение схемы дальше —
 только через повышение `schema_version` и migration-заметку.
 
 Принцип №1 (проверяется каждым решением): **Identity = адрес, а не имя и не порядок.**
@@ -112,6 +113,49 @@ Recovery: осиротевшие `*.tmp` зачищаются следующим
 - `lod_policy: "authored" | "generated" | "nanite"`, default `"generated"`;
 - screen sizes и reduction settings — resolved-свойства UE-стороны, в bundle
   не входят и не резервируются.
+
+Резерв kind (D29): `"skeletal_mesh"` — валидное значение kind ресурса, в MVP не
+реализуется; сериализация скелетки потребует отдельного тега `mh.skelser:1`
+(§9 остаётся static-only).
+
+### 2.1 Секция `materials` (D22)
+
+Материал — ресурс с UID; записи сортируются по uid; отдельного materials.json нет.
+
+```json
+{
+  "uid": "<uuid>", "kind": "material", "name": "m_stucco_concrete",
+  "shader_class": "rendinst_perlin_layered",
+  "params": { "mask_gamma": [0.1, 1.0, 1.0, 1.0], "micro_detail_layer": 0 },
+  "textures": { "tex0": "manmade_common/textures/whitewash_plain_a_tex_d.tif" }
+}
+```
+
+Правила:
+- `shader_class` → Master-материал по пути `<master_root>/<shader_class>`
+  (настройка проекта UE; alias-словарь, default пустой). Реестр — D28:
+  генерируется UE-плагином из папки master_root; неизвестный shader_class
+  на экспорте — warning, отсутствующий Master на импорте — ошибка материала
+  в diff-отчёте, не блокирующая остальные ресурсы.
+- `params`: скаляр → scalar param, массив 4 float → vector param (LinearColor);
+  имена параметров = ключи как есть. `sides` и незнакомые ключи — passthrough
+  в params (принцип broken_properties).
+- Пустые tex-слоты не пишутся.
+- Пути текстур — относительные под `texture_root`, forward slashes; путь вне
+  root — ошибка `MH_E_TEXTURE_OUTSIDE_ROOT`.
+- У mesh-ресурса появляется таблица связи (НЕ парсинг имён из FBX):
+  `material_slots: [{ "slot_name": "...", "material_uid": "<uuid>" }]` —
+  порядок = порядок слотов.
+
+### 2.2 Зеркалирование путей (D27)
+
+Bundle-каталоги живут в дереве `source_root` (настройка аддона). Целевой путь
+UE **вычисляется, не хранится**: `content_root` (настройка проекта UE) +
+относительный путь каталога источника + имя ассета (префиксы SM_/MI_/T_/CA_ —
+настройка проекта с этими дефолтами). Перемещение источника между папками при
+том же UID = операция `MOVE` в диффе (§7.2), не REMOVE+CREATE. Коллизия имён
+двух ресурсов в одном целевом каталоге — ошибка Analyzer'а
+(`MH_E_TARGET_NAME_COLLISION`), никаких молчаливых суффиксов.
 
 ## 3. Файл `*.composite`
 
@@ -300,6 +344,8 @@ schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — пре�
 | `MH_E_UNKNOWN_SCHEMA_VERSION` | UE import | schema_version не поддержан |
 | `MH_E_FOREIGN_UID_OWNER` | UE import | UID уже принадлежит другому bundle |
 | `MH_E_NAME_MISMATCH` | UE import | `name` ресурса в манифесте ≠ `name` внутри `.composite` (файл правили руками) |
+| `MH_E_TEXTURE_OUTSIDE_ROOT` | Blender export | путь текстуры вне `texture_root` (§2.1, D23/D27) |
+| `MH_E_TARGET_NAME_COLLISION` | UE import | два ресурса дают одно имя ассета в одном целевом каталоге (§2.2, D27) |
 | `MH_W_RESOURCE_FAR_FROM_ORIGIN` | Blender export (warning) | bbox коллекции-ресурса далеко от origin (§9.3) |
 
 ### 6.2 Машинный формат отчёта валидации
@@ -355,7 +401,14 @@ schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — пре�
 | `REPARENT` | node | изменился `parent_uid` |
 | `UPDATE_RESOURCE` | node | узел ссылается на другой `resource_uid` (например, Make Single User перевесил placement на новый ресурс) |
 | `UPDATE_KIND` | node | изменился `kind` узла при живом node_uid (замена mesh-placement на composite_ref и т.п.; почти всегда вместе с UPDATE_RESOURCE) |
+| `MOVE` | resource | каталог источника сменился при том же UID (D27) → перемещение ассета в Content Browser |
+| `LOCAL_EDIT` | resource | только UE-Analyzer с Ledger (D25): ресурс правили руками в UE, источник не менялся |
+| `CONFLICT` | resource | только UE-Analyzer с Ledger (D25): разошлись и источник, и UE-копия |
 | `EXTERNAL_UNRESOLVED` | resource | ссылка на UID вне bundle, не разрешимая на момент импорта |
+
+`LOCAL_EDIT` и `CONFLICT` вычислимы только трёхсторонним сравнением
+base/theirs/ours (D25) — эталонный `tools/diff_bundles.py`, сравнивающий два
+bundle без Ledger'а, их **никогда не эмитит**.
 
 Смена `kind` — НЕ REMOVE+CREATE: UID жив — сущность та же (принцип №1).
 
@@ -482,8 +535,13 @@ NaN/Inf в любом квантуемом поле — ошибка валид�
 
 ## 9. Сериализация mesh для content_hash
 
-Вход — evaluated mesh (после модификаторов) каждого объекта коллекции-ресурса.
+Вход — evaluated mesh (после модификаторов) каждого объекта коллекции-ресурса,
+**в метрах Blender, ДО cm-конверсии**: канонический FBX-экспорт масштабирует
+геометрию ×100 временным контекст-менеджером
+(`_temporary_ue_centimeter_export_state`, reference/studio_scripts), и hash
+обязан считаться по авторскому состоянию, а не по временно изменённому.
 Выход — байтовый поток → XXH3-64 → `xxh3:...` в манифесте.
+Сериализация — static-only; skeletal (D29) получит отдельный тег `mh.skelser:1`.
 
 ### 9.1 Общие правила кодирования
 
@@ -601,3 +659,24 @@ scale_UE = ( sx,  sy,  sz )
   молча испортить. Нулевой scale по любой оси — тоже ошибка (вырожденная матрица).
 - **NaN/Inf** в любой компоненте — ошибка валидации.
 - `translation_cm` — p=3, `scale` — p=6 (§8.2).
+
+## 12. Текстуры (D23, D27)
+
+Текстуры — третий вид исходников, идентичность = **относительный путь под
+`texture_root`** (forward slashes), БЕЗ UID — явное исключение из D3: носителя
+для UID у файла текстуры нет; rename/перемещение текстуры = REMOVE+CREATE
+с warning'ом в отчёте. Общая текстурная библиотека: bundle текстуры НЕ копирует,
+ссылается путями. Один файл = один Texture2D на проект; путь в Content Browser —
+зеркало пути под root (D27).
+
+Суффикс-правила UE Texture Builder (канон — reference/studio_scripts):
+
+| Суффикс имени | sRGB | Compression |
+|---|---|---|
+| `_tex_d` \| `_d` | true | TC_DEFAULT |
+| `_tex_n` \| `_n` | false (linear) | TC_BC7 |
+| `_tex_m` \| `_m` | true | TC_DEFAULT |
+
+Абсолютные пути в legacy-метаданных нормализуются аддоном под `texture_root`
+на экспорте; путь вне root — `MH_E_TEXTURE_OUTSIDE_ROOT`. Утилита однократного
+remap старого корня на новый — в аддоне (D27).
