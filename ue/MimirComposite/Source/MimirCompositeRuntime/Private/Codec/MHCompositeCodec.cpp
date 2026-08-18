@@ -1,10 +1,8 @@
 #include "Codec/MHCompositeCodec.h"
 
+#include "Codec/MHCodecJson.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
-#include "Policies/CondensedJsonPrintPolicy.h"
-#include "Serialization/JsonSerializer.h"
-#include "Serialization/JsonWriter.h"
 
 namespace UE::MimirComposite
 {
@@ -13,7 +11,7 @@ namespace
 
 constexpr int32 TransformPrecision = 6;
 
-FMHCanonicalResult Invalid(const TCHAR* Message)
+FMHCanonicalResult InvalidComposite(const TCHAR* Message)
 {
 	return FMHCanonicalResult::Failure(FString::Printf(TEXT("MH_E_INVALID_COMPOSITE: %s"), Message));
 }
@@ -27,14 +25,6 @@ bool GetFiniteNumber(const TSharedPtr<FJsonValue>& Value, double& OutNumber)
 	return FMath::IsFinite(OutNumber);
 }
 
-bool SerializeCompactObject(const TSharedPtr<FJsonObject>& Object, FString& OutJson)
-{
-	OutJson.Reset();
-	const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutJson);
-	return FJsonSerializer::Serialize(Object.ToSharedRef(), Writer);
-}
-
 FMHCanonicalResult ParseVector(
 	const TSharedPtr<FJsonValue>& Value,
 	const int32 ExpectedLength,
@@ -44,14 +34,14 @@ FMHCanonicalResult ParseVector(
 	OutComponents.Reset();
 	if (!Value.IsValid() || Value->Type != EJson::Array || Value->AsArray().Num() != ExpectedLength)
 	{
-		return Invalid(*FString::Printf(TEXT("%s must contain exactly %d numbers"), FieldName, ExpectedLength));
+		return InvalidComposite(*FString::Printf(TEXT("%s must contain exactly %d numbers"), FieldName, ExpectedLength));
 	}
 	for (const TSharedPtr<FJsonValue>& Item : Value->AsArray())
 	{
 		double Number = 0.0;
 		if (!GetFiniteNumber(Item, Number))
 		{
-			return Invalid(*FString::Printf(TEXT("%s must contain finite numbers"), FieldName));
+			return InvalidComposite(*FString::Printf(TEXT("%s must contain finite numbers"), FieldName));
 		}
 		OutComponents.Add(Number);
 	}
@@ -62,7 +52,7 @@ FMHCanonicalResult ParseTransform(const TSharedPtr<FJsonValue>& Value, FMHCompos
 {
 	if (!Value.IsValid() || Value->Type != EJson::Object)
 	{
-		return Invalid(TEXT("local_transform must be an object"));
+		return InvalidComposite(TEXT("local_transform must be an object"));
 	}
 	const TSharedPtr<FJsonObject> Object = Value->AsObject();
 	if (Object->Values.Num() != 3 ||
@@ -70,7 +60,7 @@ FMHCanonicalResult ParseTransform(const TSharedPtr<FJsonValue>& Value, FMHCompos
 		!Object->Values.Contains(TEXT("rotation_quat")) ||
 		!Object->Values.Contains(TEXT("scale")))
 	{
-		return Invalid(TEXT("local_transform must contain exactly translation_cm, rotation_quat and scale"));
+		return InvalidComposite(TEXT("local_transform must contain exactly translation_cm, rotation_quat and scale"));
 	}
 
 	TArray<double> Translation;
@@ -103,7 +93,7 @@ FMHCanonicalResult ParseTransform(const TSharedPtr<FJsonValue>& Value, FMHCompos
 		}
 		if (AuthoredTick != CanonicalQuaternion[Index])
 		{
-			return Invalid(TEXT("rotation_quat must be normalized and sign-canonicalized"));
+			return InvalidComposite(TEXT("rotation_quat must be normalized and sign-canonicalized"));
 		}
 	}
 
@@ -137,14 +127,14 @@ FMHCanonicalResult ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNo
 {
 	if (!Value.IsValid() || Value->Type != EJson::Object)
 	{
-		return Invalid(TEXT("nodes entries must be objects"));
+		return InvalidComposite(TEXT("nodes entries must be objects"));
 	}
 	const TSharedPtr<FJsonObject> Object = Value->AsObject();
 
 	const TSharedPtr<FJsonValue> KindValue = Object->TryGetField(TEXT("kind"));
 	if (!KindValue.IsValid() || KindValue->Type != EJson::String)
 	{
-		return Invalid(TEXT("node kind must be a string"));
+		return InvalidComposite(TEXT("node kind must be a string"));
 	}
 	const FString Kind = KindValue->AsString();
 	bool bNeedsResource = false;
@@ -170,13 +160,13 @@ FMHCanonicalResult ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNo
 	}
 	else
 	{
-		return Invalid(*FString::Printf(TEXT("unknown node kind %s"), *Kind));
+		return InvalidComposite(*FString::Printf(TEXT("unknown node kind %s"), *Kind));
 	}
 
 	const int32 ExpectedFields = bNeedsResource ? 7 : 6;
 	if (Object->Values.Num() != ExpectedFields)
 	{
-		return Invalid(TEXT("node carries unknown or missing fields"));
+		return InvalidComposite(TEXT("node carries unknown or missing fields"));
 	}
 	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Object->Values)
 	{
@@ -187,21 +177,21 @@ FMHCanonicalResult ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNo
 			(bNeedsResource && Key == TEXT("resource_uid"));
 		if (!bKnown)
 		{
-			return Invalid(*FString::Printf(TEXT("unknown node field %s"), *Key));
+			return InvalidComposite(*FString::Printf(TEXT("unknown node field %s"), *Key));
 		}
 	}
 
 	const TSharedPtr<FJsonValue> NodeUid = Object->TryGetField(TEXT("node_uid"));
 	if (!NodeUid.IsValid() || NodeUid->Type != EJson::String || !MHIsCanonicalUuid(NodeUid->AsString()))
 	{
-		return Invalid(TEXT("node_uid must be a canonical lowercase UUID"));
+		return InvalidComposite(TEXT("node_uid must be a canonical lowercase UUID"));
 	}
 	OutNode.NodeUid = NodeUid->AsString();
 
 	const TSharedPtr<FJsonValue> ParentUid = Object->TryGetField(TEXT("parent_uid"));
 	if (!ParentUid.IsValid())
 	{
-		return Invalid(TEXT("parent_uid is required"));
+		return InvalidComposite(TEXT("parent_uid is required"));
 	}
 	if (ParentUid->Type == EJson::Null)
 	{
@@ -213,13 +203,13 @@ FMHCanonicalResult ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNo
 	}
 	else
 	{
-		return Invalid(TEXT("parent_uid must be null or a canonical lowercase UUID"));
+		return InvalidComposite(TEXT("parent_uid must be null or a canonical lowercase UUID"));
 	}
 
 	const TSharedPtr<FJsonValue> DisplayName = Object->TryGetField(TEXT("display_name"));
 	if (!DisplayName.IsValid() || DisplayName->Type != EJson::String)
 	{
-		return Invalid(TEXT("display_name must be a string"));
+		return InvalidComposite(TEXT("display_name must be a string"));
 	}
 	FMHCanonicalResult Result = MHNormalizeNfc(DisplayName->AsString(), OutNode.DisplayName);
 	if (!Result.bSuccess)
@@ -233,7 +223,7 @@ FMHCanonicalResult ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNo
 		if (!ResourceUid.IsValid() || ResourceUid->Type != EJson::String ||
 			!MHIsCanonicalUuid(ResourceUid->AsString()))
 		{
-			return Invalid(TEXT("resource_uid must be a canonical lowercase UUID"));
+			return InvalidComposite(TEXT("resource_uid must be a canonical lowercase UUID"));
 		}
 		OutNode.ResourceUid = ResourceUid->AsString();
 	}
@@ -251,11 +241,11 @@ FMHCanonicalResult ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNo
 	const TSharedPtr<FJsonValue> Properties = Object->TryGetField(TEXT("properties"));
 	if (!Properties.IsValid() || Properties->Type != EJson::Object)
 	{
-		return Invalid(TEXT("node properties must be an object"));
+		return InvalidComposite(TEXT("node properties must be an object"));
 	}
-	if (!SerializeCompactObject(Properties->AsObject(), OutNode.PropertiesJson))
+	if (!CodecJson::CompactObject(Properties->AsObject(), OutNode.PropertiesJson))
 	{
-		return Invalid(TEXT("node properties cannot be serialized"));
+		return InvalidComposite(TEXT("node properties cannot be serialized"));
 	}
 	return FMHCanonicalResult::Success();
 }
@@ -267,7 +257,7 @@ FMHCanonicalResult ValidateHierarchy(const TArray<FMHCompositeNode>& Nodes)
 	{
 		if (IndexByUid.Contains(Nodes[Index].NodeUid))
 		{
-			return Invalid(*FString::Printf(TEXT("duplicate node_uid %s"), *Nodes[Index].NodeUid));
+			return InvalidComposite(*FString::Printf(TEXT("duplicate node_uid %s"), *Nodes[Index].NodeUid));
 		}
 		IndexByUid.Add(Nodes[Index].NodeUid, Index);
 	}
@@ -275,7 +265,7 @@ FMHCanonicalResult ValidateHierarchy(const TArray<FMHCompositeNode>& Nodes)
 	{
 		if (!Node.ParentUid.IsEmpty() && !IndexByUid.Contains(Node.ParentUid))
 		{
-			return Invalid(*FString::Printf(TEXT("dangling parent_uid %s"), *Node.ParentUid));
+			return InvalidComposite(*FString::Printf(TEXT("dangling parent_uid %s"), *Node.ParentUid));
 		}
 	}
 	for (const FMHCompositeNode& Node : Nodes)
@@ -354,25 +344,25 @@ FMHCanonicalResult MHParseCompositeV2(
 	FMHCanonicalResult Result = MHParseJsonUtf8(Bytes, RootValue);
 	if (!Result.bSuccess)
 	{
-		return Invalid(*Result.Error);
+		return InvalidComposite(*Result.Error);
 	}
 	if (!RootValue.IsValid() || RootValue->Type != EJson::Object)
 	{
-		return Invalid(TEXT("document must be an object"));
+		return InvalidComposite(TEXT("document must be an object"));
 	}
 	const TSharedPtr<FJsonObject> Root = RootValue->AsObject();
 
 	const TSharedPtr<FJsonValue> Schema = Root->TryGetField(TEXT("schema"));
 	if (!Schema.IsValid() || Schema->Type != EJson::String || Schema->AsString() != TEXT("mh.composite"))
 	{
-		return Invalid(TEXT("schema must be mh.composite"));
+		return InvalidComposite(TEXT("schema must be mh.composite"));
 	}
 	const TSharedPtr<FJsonValue> SchemaVersion = Root->TryGetField(TEXT("schema_version"));
 	int64 Version = 0;
 	if (!SchemaVersion.IsValid() || SchemaVersion->Type != EJson::Number ||
 		!SchemaVersion->TryGetNumber(Version))
 	{
-		return Invalid(TEXT("schema_version must be an integer"));
+		return InvalidComposite(TEXT("schema_version must be an integer"));
 	}
 	if (Version == 1)
 	{
@@ -388,7 +378,7 @@ FMHCanonicalResult MHParseCompositeV2(
 
 	if (Root->Values.Num() != 6)
 	{
-		return Invalid(TEXT("document carries unknown or missing top-level fields"));
+		return InvalidComposite(TEXT("document carries unknown or missing top-level fields"));
 	}
 	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Root->Values)
 	{
@@ -396,21 +386,21 @@ FMHCanonicalResult MHParseCompositeV2(
 		if (Key != TEXT("schema") && Key != TEXT("schema_version") && Key != TEXT("uid") &&
 			Key != TEXT("name") && Key != TEXT("properties") && Key != TEXT("nodes"))
 		{
-			return Invalid(*FString::Printf(TEXT("unknown top-level field %s"), *Key));
+			return InvalidComposite(*FString::Printf(TEXT("unknown top-level field %s"), *Key));
 		}
 	}
 
 	const TSharedPtr<FJsonValue> Uid = Root->TryGetField(TEXT("uid"));
 	if (!Uid.IsValid() || Uid->Type != EJson::String || !MHIsCanonicalUuid(Uid->AsString()))
 	{
-		return Invalid(TEXT("uid must be a canonical lowercase UUID"));
+		return InvalidComposite(TEXT("uid must be a canonical lowercase UUID"));
 	}
 	OutDocument.Uid = Uid->AsString();
 
 	const TSharedPtr<FJsonValue> Name = Root->TryGetField(TEXT("name"));
 	if (!Name.IsValid() || Name->Type != EJson::String)
 	{
-		return Invalid(TEXT("name must be a string"));
+		return InvalidComposite(TEXT("name must be a string"));
 	}
 	if (!MHIsValidResourceName(Name->AsString()))
 	{
@@ -422,17 +412,17 @@ FMHCanonicalResult MHParseCompositeV2(
 	const TSharedPtr<FJsonValue> Properties = Root->TryGetField(TEXT("properties"));
 	if (!Properties.IsValid() || Properties->Type != EJson::Object)
 	{
-		return Invalid(TEXT("top-level properties must be an object"));
+		return InvalidComposite(TEXT("top-level properties must be an object"));
 	}
-	if (!SerializeCompactObject(Properties->AsObject(), OutDocument.ResourcePropertiesJson))
+	if (!CodecJson::CompactObject(Properties->AsObject(), OutDocument.ResourcePropertiesJson))
 	{
-		return Invalid(TEXT("top-level properties cannot be serialized"));
+		return InvalidComposite(TEXT("top-level properties cannot be serialized"));
 	}
 
 	const TSharedPtr<FJsonValue> Nodes = Root->TryGetField(TEXT("nodes"));
 	if (!Nodes.IsValid() || Nodes->Type != EJson::Array)
 	{
-		return Invalid(TEXT("nodes must be an array"));
+		return InvalidComposite(TEXT("nodes must be an array"));
 	}
 	for (const TSharedPtr<FJsonValue>& NodeValue : Nodes->AsArray())
 	{

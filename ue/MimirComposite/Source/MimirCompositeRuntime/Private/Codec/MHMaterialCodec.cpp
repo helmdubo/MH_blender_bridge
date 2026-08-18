@@ -1,29 +1,19 @@
 #include "Codec/MHMaterialCodec.h"
 
+#include "Codec/MHCodecJson.h"
 #include "Codec/MHCompositeCodec.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
-#include "Policies/CondensedJsonPrintPolicy.h"
-#include "Serialization/JsonSerializer.h"
-#include "Serialization/JsonWriter.h"
 
 namespace UE::MimirComposite
 {
 namespace
 {
 
-FMHCanonicalResult Invalid(const TCHAR* Message)
+FMHCanonicalResult InvalidMaterial(const TCHAR* Message)
 {
 	return FMHCanonicalResult::Failure(
 		FString::Printf(TEXT("MH_E_INVALID_MATERIAL_VALUE: %s"), Message));
-}
-
-bool SerializeCompactObject(const TSharedPtr<FJsonObject>& Object, FString& OutJson)
-{
-	OutJson.Reset();
-	const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutJson);
-	return FJsonSerializer::Serialize(Object.ToSharedRef(), Writer);
 }
 
 bool IsTextureSlotName(const FString& Key)
@@ -53,25 +43,25 @@ FMHCanonicalResult MHParseMaterialV1(
 	FMHCanonicalResult Result = MHParseJsonUtf8(Bytes, RootValue);
 	if (!Result.bSuccess)
 	{
-		return Invalid(*Result.Error);
+		return InvalidMaterial(*Result.Error);
 	}
 	if (!RootValue.IsValid() || RootValue->Type != EJson::Object)
 	{
-		return Invalid(TEXT("document must be an object"));
+		return InvalidMaterial(TEXT("document must be an object"));
 	}
 	const TSharedPtr<FJsonObject> Root = RootValue->AsObject();
 
 	const TSharedPtr<FJsonValue> Schema = Root->TryGetField(TEXT("schema"));
 	if (!Schema.IsValid() || Schema->Type != EJson::String || Schema->AsString() != TEXT("mh.material"))
 	{
-		return Invalid(TEXT("schema must be mh.material"));
+		return InvalidMaterial(TEXT("schema must be mh.material"));
 	}
 	int64 Version = 0;
 	const TSharedPtr<FJsonValue> SchemaVersion = Root->TryGetField(TEXT("schema_version"));
 	if (!SchemaVersion.IsValid() || SchemaVersion->Type != EJson::Number ||
 		!SchemaVersion->TryGetNumber(Version))
 	{
-		return Invalid(TEXT("schema_version must be an integer"));
+		return InvalidMaterial(TEXT("schema_version must be an integer"));
 	}
 	if (Version != 1)
 	{
@@ -82,7 +72,7 @@ FMHCanonicalResult MHParseMaterialV1(
 
 	if (Root->Values.Num() != 7)
 	{
-		return Invalid(TEXT("document carries unknown or missing top-level fields"));
+		return InvalidMaterial(TEXT("document carries unknown or missing top-level fields"));
 	}
 	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Root->Values)
 	{
@@ -91,21 +81,21 @@ FMHCanonicalResult MHParseMaterialV1(
 			Key != TEXT("name") && Key != TEXT("shader_class") && Key != TEXT("params") &&
 			Key != TEXT("textures"))
 		{
-			return Invalid(*FString::Printf(TEXT("unknown top-level field %s"), *Key));
+			return InvalidMaterial(*FString::Printf(TEXT("unknown top-level field %s"), *Key));
 		}
 	}
 
 	const TSharedPtr<FJsonValue> Uid = Root->TryGetField(TEXT("uid"));
 	if (!Uid.IsValid() || Uid->Type != EJson::String || !MHIsCanonicalUuid(Uid->AsString()))
 	{
-		return Invalid(TEXT("uid must be a canonical lowercase UUID"));
+		return InvalidMaterial(TEXT("uid must be a canonical lowercase UUID"));
 	}
 	OutDocument.Uid = Uid->AsString();
 
 	const TSharedPtr<FJsonValue> Name = Root->TryGetField(TEXT("name"));
 	if (!Name.IsValid() || Name->Type != EJson::String)
 	{
-		return Invalid(TEXT("name must be a string"));
+		return InvalidMaterial(TEXT("name must be a string"));
 	}
 	if (!MHIsValidResourceName(Name->AsString()))
 	{
@@ -117,7 +107,7 @@ FMHCanonicalResult MHParseMaterialV1(
 	const TSharedPtr<FJsonValue> ShaderClass = Root->TryGetField(TEXT("shader_class"));
 	if (!ShaderClass.IsValid() || ShaderClass->Type != EJson::String || ShaderClass->AsString().IsEmpty())
 	{
-		return Invalid(TEXT("shader_class must be a non-empty string"));
+		return InvalidMaterial(TEXT("shader_class must be a non-empty string"));
 	}
 	Result = MHNormalizeNfc(ShaderClass->AsString(), OutDocument.ShaderClass);
 	if (!Result.bSuccess)
@@ -128,32 +118,32 @@ FMHCanonicalResult MHParseMaterialV1(
 	const TSharedPtr<FJsonValue> Params = Root->TryGetField(TEXT("params"));
 	if (!Params.IsValid() || Params->Type != EJson::Object)
 	{
-		return Invalid(TEXT("params must be an object"));
+		return InvalidMaterial(TEXT("params must be an object"));
 	}
-	if (!SerializeCompactObject(Params->AsObject(), OutDocument.ParamsJson))
+	if (!CodecJson::CompactObject(Params->AsObject(), OutDocument.ParamsJson))
 	{
-		return Invalid(TEXT("params cannot be serialized"));
+		return InvalidMaterial(TEXT("params cannot be serialized"));
 	}
 
 	const TSharedPtr<FJsonValue> Textures = Root->TryGetField(TEXT("textures"));
 	if (!Textures.IsValid() || Textures->Type != EJson::Object)
 	{
-		return Invalid(TEXT("textures must be an object"));
+		return InvalidMaterial(TEXT("textures must be an object"));
 	}
 	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Textures->AsObject()->Values)
 	{
 		if (!IsTextureSlotName(Pair.Key))
 		{
-			return Invalid(*FString::Printf(TEXT("unknown texture slot %s"), *Pair.Key));
+			return InvalidMaterial(*FString::Printf(TEXT("unknown texture slot %s"), *Pair.Key));
 		}
 		if (!Pair.Value.IsValid() || Pair.Value->Type != EJson::String || Pair.Value->AsString().IsEmpty())
 		{
-			return Invalid(*FString::Printf(TEXT("texture slot %s must be a non-empty string"), *Pair.Key));
+			return InvalidMaterial(*FString::Printf(TEXT("texture slot %s must be a non-empty string"), *Pair.Key));
 		}
 	}
-	if (!SerializeCompactObject(Textures->AsObject(), OutDocument.TexturesJson))
+	if (!CodecJson::CompactObject(Textures->AsObject(), OutDocument.TexturesJson))
 	{
-		return Invalid(TEXT("textures cannot be serialized"));
+		return InvalidMaterial(TEXT("textures cannot be serialized"));
 	}
 	return FMHCanonicalResult::Success();
 }

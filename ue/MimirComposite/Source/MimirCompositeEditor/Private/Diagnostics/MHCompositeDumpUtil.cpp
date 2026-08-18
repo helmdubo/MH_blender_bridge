@@ -200,9 +200,9 @@ bool BuildDump(const FString& FilePath, const FString& SourceRoot, FDumpOutput& 
         {
             Out.Warnings.AddUnique(Warning);
         }
-        for (const FString& Error : Wave.Errors)
+        for (const FString& WaveError : Wave.Errors)
         {
-            Out.Errors.AddUnique(Error);
+            Out.Errors.AddUnique(WaveError);
         }
     }
     else

@@ -56,7 +56,19 @@ writer (`addon/mh4blend/core/fbx_passport.py`, `PASSPORT_PROPERTY`) пишет
 
 ## Статус валидации
 
-Код написан в облачной сессии без UE 5.7 toolchain: строгая сборка и
-headless-прогон `Automation RunTests Mimir` ещё НЕ выполнялись. Первый шаг
-на машине владельца: собрать плагин, прогнать `Mimir.C0.*` + `Mimir.C1.*`,
-затем `-run=MHCompositeDump` на реальном `.composite`.
+Код написан в облачной сессии без UE 5.7 toolchain. Первая сборка на машине
+владельца (VS 2022, `MimirHead_portfolioEditor Win64 Development`) выявила две
+ошибки, обе исправлены:
+
+- unity-build склеивал `MHCompositeCodec.cpp` и `MHMaterialCodec.cpp`, у
+  которых совпадали имена helper'ов в анонимных namespace (`Invalid`,
+  `SerializeCompactObject`) — C2084. Общий сериализатор вынесен в
+  `Private/Codec/MHCodecJson.h`, диагностические helper'ы разведены по именам
+  (`InvalidComposite` / `InvalidMaterial`);
+- `MHCompositeDumpUtil.cpp` затенял локальную `Error` переменной цикла —
+  C4456, а модуль собирается с `bWarningsAsErrors`.
+
+Модули `MimirCompositeTests` и остальной Editor-код компилятор принял
+полностью. Следующий шаг: пересборка, `Automation RunTests Mimir`
+(`Mimir.C0.*` + `Mimir.C1.*`), затем полевой прогон — Import `.composite` в
+Content Browser и Tools → Mimir → дампы.
