@@ -204,3 +204,89 @@ mesh-ресурса в манифесте properties-поля нет. Роль �
 **Next-cycle clarification (reviewer):** material manifest-row намеренно не
 имеет bag `properties`; asset-level semantic material properties живут в
 `.material.params`. Это уточнение wording, а не новое поле frozen v1.
+
+---
+
+## UE-QUESTION-10: Передача ADR v2 и Combined-LOD amendment
+
+**Контекст.** При первичном чтении C0 в ветке отсутствовали
+`ADR_V2_passport_first.md` и `AMENDMENT_combined_lod_fbx.md`, поэтому нельзя
+было проверить seam'ы v2 и окончательную LOD-модель.
+
+**Вопрос.** Какие документы являются обязательными для UE C0?
+
+**Статус.** РЕШЕНО (владелец/ревьювер): оба документа переданы в `docs/` до
+первого UE-коммита. Для C0 `mh.fbxdump:1` сразу показывает `mh_lod_level` каждого
+узла и сводку уровней; группировка в `SourceModel[N]` и LOD-валидации относятся
+к C2. Resolver и change detector остаются строго за seam'ами из ADR.
+
+---
+
+## UE-QUESTION-11: Общие golden-векторы канонизации путей
+
+**Контекст.** Frozen §5.3 задаёт path-канонизацию, но текущий
+`golden/canonical_vectors.json` ещё не содержит общих path-векторов.
+
+**Вопрос.** Как зафиксировать C++-поведение до появления межфронтового golden?
+
+**Статус.** РЕШЕНО (ревьювер): C0 содержит отдельную C++ contract-таблицу по
+frozen §5.3. Blender-исполнитель, как владелец Python-эталона всех vectors,
+добавляет общие path-векторы в `golden/canonical_vectors.json` следующим своим
+коммитом. После их появления C++-таблица не удаляется: оба набора обязаны
+сверяться и давать двойное покрытие.
+
+**Задача Blender-исполнителю.** Добавить path-векторы §5.3 в общий golden и
+перекрёстную ссылку на `UE-QUESTION-11`; frozen-байты существующих vectors не
+менять.
+
+---
+
+## UE-QUESTION-12: Минимальное покрытие `mh.fbxdump` в C0
+
+**Контекст.** В C0 доступна одна осевая FBX-фикстура; Combined-LOD,
+multi-object, UCX и socket fixtures будут созданы Blender-стороной позднее.
+
+**Вопрос.** Достаточна ли одна fixture для тега `mh.fbxdump:1`?
+
+**Статус.** РЕШЕНО (ревьювер): для C0 достаточно `axis_probe.fbx`, но по ней
+обязательны два закоммиченных expected-дампа — summary и `--full`. Расширение
+покрытия переносится в C2 вместе с fixtures из AMENDMENT §6; форматный тег в C1
+из-за Combined-LOD меняться не должен.
+
+---
+
+## UE-QUESTION-13: Точное имя FBX property для паспорта
+
+**Контекст.** ADR задаёт схему `mh.fbx_passport` и carrier, а Combined-LOD
+отдельно фиксирует `mh_lod_level`. Однако обязательные документы не ратифицируют
+точное имя custom property паспорта. Нормативно необязательный spike G1
+использует имя `mh_fbx_passport`.
+
+**Вопрос.** Подтвердить ли `mh_fbx_passport` как окончательное имя carrier'а?
+
+**Предложение UE-исполнителя.** В C0 `mh.fbxdump` перечисляет все user-defined
+`mh_*` свойства, диагностически распознаёт provisional `mh_fbx_passport` и
+паспортную JSON-схему, но не делает это имя authority для маппера.
+
+**Статус.** ОТКРЫТ. До решения действует указанное наименее связывающее
+поведение; в коде — `TODO(QUESTION-13)`.
+
+---
+
+## UE-QUESTION-14: Объём массивов `mh.fbxdump:1 --full`
+
+**Контекст.** §7.1 говорит «полные массивы — `--full`», а §7 перечисляет для
+будущего mapper'а позиции, полигоны, material index, split normals, smoothing,
+UV и color attrs. Принятая минимальная форма C0 и доступная `axis_probe.fbx`
+фиксируют в `--full` raw control points, polygon indices и per-polygon material
+index; mapper-facing layer arrays относятся к C2 и пока не имеют общих fixtures.
+
+**Вопрос.** Должен ли тег `mh.fbxdump:1` уже в C0 включать normals/smoothing/
+UV/colors, или принят topology-only `--full` с расширением expected-спеки в C2?
+
+**Предложение UE-исполнителя.** До решения считать C0-дамп диагностикой raw
+topology, не authority полного C2 mapper'а; не проектировать layer layout без
+fixtures из AMENDMENT §6. Решение о совместимом расширении или новом теге
+принять до начала C2.
+
+**Статус.** ОТКРЫТ. C1 не меняет `mh.fbxdump:1`; C2 не начинается до ответа.
