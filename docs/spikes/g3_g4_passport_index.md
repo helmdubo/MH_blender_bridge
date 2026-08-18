@@ -1,8 +1,18 @@
 # G3/G4 — local passport index and payload publication spikes
 
-Status: **pure local half PASS; integration gate remains BLOCKED.** These files
-are executable evidence, not production add-on code and not a normative v2
-schema. Source Schema v1 remains active.
+> **SPIKE EVIDENCE ONLY / INDEX ARCHITECTURE SUPERSEDED.** Active Clean Sources
+> v2 uses a stateless Blender writer: every explicit Export performs target
+> collision guard, tmp→atomic rename and exits, with no hash-skip, diff, source
+> scan or index update. Blender may build an optional lazy cache only on first
+> Import Composite; UE startup/watcher compares scans with Ledger. Therefore
+> all shared/local writer-index behavior and any «Source Schema v1 remains
+> active» statement below are non-normative. Atomic publication/crash
+> measurements remain useful evidence.
+> Historical `MH_W_MISSING_MATERIAL` below maps to active
+> `MH_W_MATERIAL_NOT_FOUND`; do not add the old spelling to production registry.
+
+Historical status: **pure local half PASS; integration gate remained BLOCKED.**
+The files are executable spike evidence, not production add-on code or schema.
 
 The combined-LOD amendment supersedes the earlier per-LOD-file wording in the
 passport-first ADR for this spike:

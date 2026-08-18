@@ -1,227 +1,286 @@
-# 07 — UE Import Contract v1 (r3, к передаче в разработку)
+# 07 — UE Import Contract for Clean Sources v2 (ACTIVE)
 
-Статус: контракт этапа C для плагина `MimirComposite` (UE **5.7.4**, совместимость
-5.8). Работает ПРОТИВ действующей Source Schema v1 (docs/05). ADR-V2
-(passport-first) принят как направление и учтён здесь только двумя вещами:
-резолвер строится за интерфейсом (замена реализации при приёмке v2 не трогает
-ничего выше), чтение FBX-паспорта — опциональная сверка. Всё остальное v2 —
-вне скоупа C. Компилятор/актёр/Rebuild — этап D, отдельный контракт.
+Статус: контракт этапа C для `MimirComposite`, UE 5.7.4 (целевой compatibility
+5.8). Имя `r3` историческое. Старый manifest resolver/watcher, optional passport,
+Source Schema v1 runtime и общий local index полностью superseded.
 
-r3 = r2 + консолидация решений после ревью: слот-сверка, Verify Materials,
-Export Material to Source (force), resolver seam, паспорт-чтение, именованные
-C2-кейсы.
+UE является **reader**: startup/watcher сканирует primary payloads и сравнивает
+их с Ledger. Blender explicit writer всегда пишет и не сообщает diff.
 
-Модули: `MimirCompositeRuntime` (классы ассетов), `MimirCompositeEditor`
-(импорт, синхронизация, UI, commandlets), `MimirCompositeTests`.
+Модули: `MimirCompositeRuntime`, `MimirCompositeEditor`,
+`MimirCompositeTests`.
 
-## 1. Транзакции
+## 1. Reader transaction and batch
 
-Blender экспортирует standalone per-resource; UE импортирует батчем по
-стабильному снапшоту manifest-set под `source_root` (05 §9.2; pending
-`*.tmp`-маркер или изменение манифестов между preflight и apply →
-`MH_E_INVALID_EXPORT_MANIFEST`, отмена). Импорт не транзакционен на уровне
-пакетов: пер-ресурсная изоляция ошибок (`MH_E_*` блокирует свой ресурс, батч
-продолжается), Ledger коммитится только для успешных, единый отчёт.
-Инвариант диагностик: `MH_E_*` блокирует операцию, `MH_W_*` — никогда.
+Source snapshot состоит из валидированных `*.mesh.fbx`, `*.material`,
+`*.composite` под `source_root`. Manifest/marker не сканируются.
 
-## 2. Классы
+Startup scan default — silent auto-import. Optional setting `prompt` показывает
+plan до Execute. Watcher использует тот же pipeline для изменившихся payloads.
 
-**`UMHCompositeAsset`** (Runtime): образ `mh.composite`: CompositeUid, Name,
-TArray<FMHCompositeNode>{NodeUid, ParentUid, Kind, DisplayName, ResourceUid,
-LocalTransform, PropertyBag}, SourceJsonSnapshot, AssetImportData. Read-only
-(VisibleAnywhere). Reserved kinds → `MH_E_UNSUPPORTED_NODE_KIND`. Узел несёт
-ResourceUid (истина) + FSoftObjectPath ResolvedAsset (заполняет импортер —
-Reference Viewer/кук бесплатно).
-
-**`UMHImportLedger`** (Editor-домен, ассет в `<content_root>/_MH/Ledger`):
-`FGuid → {Kind, Asset, SourceRelPath, AppliedContentHash, ImportedAt}` (+
-mtime/size текстур). Производный артефакт: потеря = полный реимпорт.
-
-**`UMHManifestImporter`** (EditorSubsystem): **единственный публичный вход**
-`ImportSources(Scope)`; стадии приватные, не экспонируются; частичность —
-только диффом:
-
-```
-Snapshot → Resolve → Analyze/Diff → Plan
-→ Textures → Materials → Geometry → Composites → Finalize
-→ LedgerCommit → Report
+```text
+Scan/StableBytes -> Parse Identity -> Resolve -> Analyze vs Ledger -> Plan
+-> Textures -> Materials -> Geometry -> Composites -> Finalize
+-> LedgerCommit -> Report
 ```
 
-## 3. Resolver — ЗА ИНТЕРФЕЙСОМ (требование ADR-V2)
+Batch не является транзакцией UE packages: `MH_E_*` блокирует свой resource,
+остальные продолжаются. Ledger обновляется только для успешных. `MH_W_*` не
+блокирует.
 
-`IMHSourceResolver`: `Resolve(uid) → {payload_path, owning_manifest_path,
-manifest_row} | Unresolved | Ambiguous`. Реализация этапа C —
-`FMHManifestScanResolver`: порт 05 §6 (registry-hint с подтверждением полным
-сканом; единственный owning manifest; ноль владельцев = unresolved, два =
-`MH_E_AMBIGUOUS_RESOURCE_OWNER`; сканируются только `export_manifest.json`;
-дискового кеша нет). Будущая v2-реализация (passport/local-index) обязана
-встать под тот же интерфейс — выше интерфейса зависимостей от способа
-резолва быть не должно (проверяется ревью C1).
+## 2. Runtime/editor classes
 
-Канон-библиотека C++ (квантование, NFC через ICU движка, канон-JSON, XXH3-64,
-path-канонизация 05 §5.3) обязана проходить `golden/canonical_vectors.json` —
-gate C0, блокирующий.
+**`UMHCompositeAsset`** (Runtime): CompositeUid, Name, ResourceProperties,
+TArray nodes `{NodeUid, ParentUid, Kind, DisplayName, ResourceUid,
+LocalTransform, PropertyBag}`, SourceJsonSnapshot, AssetImportData. Node хранит
+ResourceUID authority и resolved FSoftObjectPath.
 
-## 4. Analyzer / дифф / отчёт
+**`UMHImportLedger`** (Editor, `<content_root>/_MH/Ledger`):
 
-Структурное сравнение (snapshot, Ledger); content_hash — fast-path. Формат
-`mh.diff_report` v1 (CREATE/REMOVE/RENAME/MOVE/UPDATE_GEOMETRY/
+```text
+ResourceUID -> {
+  Kind, Asset, SourcePath,
+  AppliedGeometryHash, AppliedDescriptorHash,
+  PayloadFingerprint, ImportedAt, ImportStatus
+}
+```
+
+Для materials/composites semantic hashes вычисляются из canonical payload.
+Ledger — производный reader state вне source tree. Потеря запускает full startup
+scan/import; source data не теряются.
+
+**`UMHSourceImporter`** (EditorSubsystem) — публичный вход
+`ImportSources(Scope)`. Стадии приватные; частичный import выражается Plan,
+а не отдельными обходными API.
+
+## 3. Resolver and conflicts
+
+`IMHSourceResolver::Resolve(uid)` возвращает candidate payload paths и
+resolved/conflict status. Реализация читает embedded identity:
+
+- FBX — mandatory Carrier B `mh.fbx_passport` byte consensus;
+- material — `mh.material:1` self-identity;
+- composite — только `mh.composite:2` self-identity. Composite v1 не является
+  runtime candidate; migrator отмечает его
+  `MH_W_LEGACY_COMPOSITE_V1_MIGRATION_REQUIRED`.
+
+Missing/malformed/unknown passport quarantines FBX с
+`MH_E_PASSPORT_INVALID`. Manifest fallback и warning-only passport отсутствуют.
+
+Conflict matrix:
+
+| Source state | UE action |
+|---|---|
+| New valid UID | auto-import silently by default; prompt optional |
+| Ledger old path gone, one new candidate same UID | MOVE + log |
+| Multiple candidates, equal fingerprint | import one semantic resource, `MH_W_DUPLICATE_IDENTICAL_PAYLOAD`, log all paths |
+| Multiple candidates, divergent fingerprint | `MH_E_DIVERGENT_REVISIONS`, manual choice |
+| No valid candidate for required edge | `MH_E_RESOURCE_NOT_FOUND`, unresolved node/resource |
+| Missing/malformed identity | quarantine |
+
+Mtime never selects a revision. Reader confirms bytes after per-file stability.
+
+Canonical C++ library (NFC, canonical JSON, UUID/path, XXH3, descriptor hash)
+must pass `golden/canonical_vectors.json` at C0.
+
+## 4. Analyzer, diff and report
+
+Diff is entirely reader-side. UE compares current embedded semantic state with
+Ledger:
+
+- static mesh geometry hash changed → `UPDATE_GEOMETRY`;
+- descriptor changed only → resource/property/material-slot update;
+- source path changed with same UID → `MOVE`;
+- canonical material/composite changed → `UPDATE_PROPERTIES`/
+  `UPDATE_RESOURCE` as appropriate;
+- hashes equal after explicit source rewrite → `NO_CHANGE`.
+
+Payload fingerprint is a stability/external-modification signal, not semantic
+identity. Changed fingerprint with equal semantic hashes does not reimport the
+asset. Reader reports `MH_W_PAYLOAD_EXTERNAL_MODIFIED`; before accepting or
+overwriting an unaccounted revision it raises
+`MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED`. Ledger is not silently
+advanced past that confirmation gate.
+
+`mh.diff_report` keeps CREATE/REMOVE/RENAME/MOVE/UPDATE_GEOMETRY/
 UPDATE_TRANSFORM/UPDATE_PROPERTIES/REPARENT/UPDATE_RESOURCE/UPDATE_KIND/
-EXTERNAL_UNRESOLVED). **Parity-gate:** на golden-наборах отчёт байт-в-байт
-равен `tools/diff_bundles.py`. UE-only флаги `LOCAL_EDIT`/`CONFLICT` — вне
-parity. Отчёт: Message Log (категория Mimir) + JSON в Saved/ для CI.
+EXTERNAL_UNRESOLVED. UE-only `LOCAL_EDIT`/`CONFLICT` remain outside parity.
+`tools/diff_bundles.py` is an independent payload/passport reader; parity gate
+uses the same fixtures, never manifests.
+
+Report goes to Message Log category Mimir and JSON under Saved/ for CI.
+
+Reader snapshot diagnostics are fail-closed:
+
+- `MH_E_SOURCE_INDEX_INVALID` — ephemeral scan/index cannot be interpreted;
+- `MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT` — candidate escapes `source_root`;
+- `MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED` — source changed between Plan and Apply.
+
+These names describe reader snapshots, not a shared/persistent Blender writer
+index and do not create a Rebuild UX.
 
 ## 5. Textures
 
-Идентичность = путь; один файл → один UTexture2D;
-`<content_root>/<путь под source_root>/T_<basename>` (D27-зеркало). External
-absolute (transitional) → `MH_W_TEXTURE_OUTSIDE_ROOT`, в
-`<content_root>/_External/<hash>/`. Суффиксы: `*_d|*_tex_d` → sRGB on;
-`*_n|*_tex_n` → sRGB off + Normalmap; `*_m|*_tex_m` → sRGB on. Реимпорт по
-mtime/size (Ledger). Basename-каскад и Actualize (ADR-V2 §5) — Blender-сторона;
-UE-commandlet `MHActualizeTexturePaths` — задача пост-C3, в C-гейты не входит.
+Texture identity remains path-based. Resolve:
 
-## 6. Materials
+```text
+exact normalized path -> unique basename under texture_root -> unresolved
+```
 
-Master: `shader_class → <master_root>/<shader_class>` (+ alias-map); не
-найден → `MH_E_MASTER_MATERIAL_NOT_FOUND` (блокирует только материал).
-MI `<content_root>/<путь>/MI_<name>`, parent=Master; скаляр→Scalar,
-массив4→Vector(LinearColor), texN→TextureParameter `texN`; ключ вне Master —
-warning.
+Unique basename actualizes `.material`; multiple matches produce
+`MH_W_TEXTURE_BASENAME_AMBIGUOUS`. Commandlet
+`-run=MHActualizeTexturePaths` emits fixed/ambiguous/missing.
 
-**Трёхстороннее сравнение (D25):** base=AppliedContentHash (Ledger),
-theirs=hash `.material`, ours=канон-хеш фактических параметров MI.
-theirs≠base ∧ ours=base → молчаливый UPDATE; theirs=base ∧ ours≠base →
-`LOCAL_EDIT` (MI не трогать); оба ≠ → `CONFLICT` → `conflict_policy`
-(prompt|overwrite|keep; UI prompt, headless overwrite).
+Internal texture maps to `<content_root>/<relative-path>/T_<basename>`.
+External absolute in transitional policy warns and maps under
+`<content_root>/_External/<hash>/`; strict policy blocks. Suffix policy:
+diffuse `_d|_tex_d` sRGB on, normal `_n|_tex_n` sRGB off/Normalmap, masks
+project-configured. Reimport fast-path may use mtime/size, confirmed by bytes
+when needed.
 
-### 6.1 Export Material to Source (writeback, решение владельца — force)
+## 6. Materials and three-way state
 
-Явная операция на MI (кнопка в Details/контекст CB + batch из Verify
-Materials): дамп фактических параметров → канон-форма → **перезапись
-`.material`** атомарным протоколом + manifest upsert + Ledger
-(AppliedContentHash=новый; LOCAL_EDIT снимается по построению). Перед записью —
-диалог с построчным диффом «файл ↔ MI»; если файл новее применённого
-(theirs≠base) — явная строка «файл содержит неприменённые изменения, будут
-потеряны». Force: подтверждение перезаписывает всегда. Отказ только при
-непереносимом (параметр вне схемы, static switch, переопределённый parent) —
-`MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` с перечнем. Каждый writeback — событие в
-Message Log/отчёте.
+Master resolution: `shader_class -> <master_root>/<shader_class>` plus aliases.
+Missing master gives `MH_E_MASTER_MATERIAL_NOT_FOUND` for that material.
+Material Instance path mirrors source, prefix `MI_`. Scalar/vector/texN map to
+Master parameters; unknown parameter warns.
 
-## 7. Geometry — `FMHFbxBackend` (основной backend)
+Three-way comparison:
 
-Прямой FBX SDK (third-party модуль движка), без UFbxFactory.
+```text
+base   = applied material semantic hash in Ledger
+theirs = current .material canonical hash
+ours   = canonical hash of current MI parameters
+```
 
-- **Сырая сцена**: ConvertScene не вызывается; конверсия — своя по §11 схемы
-  (подтверждена R1). Заявленные файлом axis/units сверяются с канон-настройками
-  экспорта; расхождение → `MH_E_GEOMETRY_SOURCE_MISMATCH`.
-- Узлы: render-меши → FMeshDescription (перечень полей зеркален §9 mesh-hash:
-  позиции, полигоны, per-face material index, split normals, smoothing,
-  UV-слои, color attrs); `UCX_*` → collision; `SOCKET_*` → sockets; прочее —
-  warning, игнор.
-- **Слот-сверка**: PolygonGroup-имена файла сверяются со `slot_name`
-  manifest-row; расхождение в любую сторону → `MH_W_SLOT_MISMATCH` с перечнем.
-  Назначение MI — по material_slots (uid→MI из Ledger) ДО PostEditChange;
-  слот без записи → warning + дефолт-материал.
-- **Паспорт (опционально в v1)**: custom properties `mh_*`, если присутствуют
-  в файле, читаются и сверяются с manifest-row (uid/kind/name); расхождение →
-  `MH_W_PASSPORT_MANIFEST_MISMATCH`. Отсутствие паспорта в v1 — норма, без
-  warning'а. (Обязательность и authority — v2, вне скоупа.)
-- **LOD (Combined-LOD amendment)**: один FBX содержит все уровни. Маппер
-  группирует render mesh-узлы по integer custom property `mh_lod_level`
-  (`absent` = 0 только для single-LOD) и за один проход собирает
-  `SourceModel[N].MeshDescription`. Имена узлов и `.lodNN` suffix не читаются.
-  Заявленный в passport `lod_levels` обязан совпасть с фактическим множеством,
-  иначе `MH_E_LOD_PASSPORT_MISMATCH`. Sparse levels и slot уровня 1+, которого
-  нет в LOD0, делают malformed весь mesh-ресурс. `lod_policy=nanite` → Nanite
-  settings on; authored screen sizes в ROADMAP, пока
-  `bAutoComputeLODScreenSize=true`.
-- **Reimport-in-place (нормативно)**: обновление существующего SM через
-  CreateMeshDescription/CommitMeshDescription/Build/PostEditChange в тот же
-  объект; пересоздание ассета запрещено.
-- Legacy-фолбэк `FLegacyFbxBackend` (UFbxFactory, materials off) — parity-
-  эталон и аварийный переключатель (`geometry_backend`, default `mh_fbx`).
-- **R1-automation — первый коммит**: axis_probe через оба backend'а против
-  чисел RISK_RESULTS.
+- theirs != base and ours == base → apply source update;
+- theirs == base and ours != base → `LOCAL_EDIT`, do not overwrite MI;
+- both differ → `CONFLICT`, apply configured prompt/overwrite/keep policy.
 
-### 7.1 `mh.fbxdump` (диагностика, вне frozen-контракта)
+### 6.1 Export Material to Source
 
-Commandlet `-run=MHFbxDump <file> [--full]`: сырой граф сцены → канонический
-JSON (узлы, TRS как записаны, counts, имена слотов, наличие passport-properties,
-`mh_lod_level` каждого mesh-узла и сводка уровней, заявленные
-axis/units/exporter). Числа квантованы; полные массивы — `--full`.
-Дампы golden-фикстур коммитятся как expected-спецификация маппера. Тег
-`mh.fbxdump:1`.
+Explicit force operation dumps MI parameters to `.material`, shows line diff and
+warning when source has unapplied changes, then writes temporary + atomic
+replace. No manifest/registry/Ledger transaction. After successful write the
+normal watcher reader observes payload and commits Ledger after import.
+
+Per-target lock timeout gives `MH_E_PAYLOAD_LOCK_TIMEOUT` with zero source
+writes. Referenced missing material uses the existing
+`MH_W_MATERIAL_NOT_FOUND`; spelling `MH_W_MISSING_MATERIAL` is not introduced.
+
+Non-roundtrippable static switches/parent/unknown schema block with
+`MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`. Every writeback is logged.
+
+## 7. Geometry — `FMHFbxBackend`
+
+Direct FBX SDK backend, without `UFbxFactory`:
+
+- validate mandatory Carrier B before mapping;
+- use declared axis/units and project conversion; mismatch →
+  `MH_E_GEOMETRY_SOURCE_MISMATCH`;
+- render mesh nodes → FMeshDescription with positions, polygons, per-face
+  material index, normals/smoothing, UV and color attributes;
+- `UCX_*` → collision, `SOCKET_*` → sockets;
+- other nodes warn/ignore;
+- slots come from passport `material_slots`, MaterialUID resolves through
+  current Plan/Ledger; FBX polygon groups are cross-check only.
+
+### 7.1 Combined-LOD
+
+One FBX contains all levels. Mapper groups mesh nodes by integer
+`mh_lod_level` (`absent` → 0 only) and builds
+`SourceModel[N].MeshDescription` in one pass. Names/`.lodNN` suffixes are not
+read.
+
+- actual levels must equal passport `lod_levels`;
+- levels must be dense `0..N`;
+- LOD1+ slots subset LOD0;
+- UCX/SOCKET belong to LOD0; authored on LOD1+ warns/ignores;
+- malformed level blocks whole resource;
+- authored screen sizes ROADMAP, current auto-compute.
+
+Reimport updates the same UStaticMesh through MeshDescription commit/build;
+recreating the asset is prohibited.
+
+### 7.2 `mh.fbxdump`
+
+`-run=MHFbxDump <file> [--full]` prints canonical passport, Model graph,
+per-node `mh_lod_level`, level summary, slots, axis/units and counts. Golden
+dumps define mapper fixtures. Tag `mh.fbxdump:1` may bump when dump format
+changes; it is not source schema.
+
+Legacy `FLegacyFbxBackend` may remain a test comparison backend only. It cannot
+accept missing passport or become production manifest fallback.
 
 ## 8. Composites
 
-Фабрика `.composite` → `UMHCompositeAsset` `<content_root>/<путь>/CA_<name>`
-(UFactory+FReimportHandler). Топосорт по вычисленным зависимостям; цикл →
-`MH_E_COMPOSITE_CYCLE` (блокируются композиты цикла). Недостающий ресурс →
-ассет создаётся, узел unresolved, ошибка в отчёте.
+Factory accepts only `mh.composite` schema_version 2. Top-level properties map
+to asset ResourceProperties; node properties remain placement-level.
+
+Dependencies are computed from `nodes[].resource_uid`; topological plan imports
+children before parent. Cycle → `MH_E_COMPOSITE_CYCLE`. Missing resource keeps
+an unresolved node and reports it; graph is never inferred from FBX names.
+
+Reimport updates the same `UMHCompositeAsset`.
 
 ## 9. Finalize
 
-Реестр правил (порт reference-скрипта; имя+условие+действие, лог):
-`role=decal` / legacy-суффикс `_decal(s)` (fallback+warning) → маркер-тег;
-Lumen Mesh Cards (настройка, 32); UCX-чистка; прочее по README карты
-портирования. Только на ассетах текущего плана.
+Finalize rules operate only on assets in the current successful Plan. Current
+examples: `role=decal`, Lumen Mesh Cards, UCX cleanup. Legacy name suffix may be
+diagnostic fallback only where separately approved; it never determines source
+identity.
 
-## 10. Синхронизация
+## 10. Startup, watcher and commandlets
 
-- Watcher: IDirectoryWatcher на `export_manifest.json` под root (за тонкой
-  абстракцией `IMHChangeDetector` — v2 сменит точку наблюдения на
-  fingerprints/local index, выше абстракции изменений быть не должно);
-  debounce ≥1s; очередь при PIE.
-- Startup-скан: OnAssetRegistryFilesLoaded, сравнение по content_hash (не
-  mtime); режим `prompt|silent` (default prompt: «N ресурсов обновились —
-  Import All / Show Diff / Later»).
-- CI-commandlet `-run=MHImportSources` (headless-политики, exit-code по
-  `MH_E_*`).
-- **Verify Materials**: кнопка + commandlet `-run=MHVerifyMaterials` — Analyze
-  без Execute по ВСЕМ материалам Ledger'а (ours vs theirs), отчёт
-  рассинхронов; из отчёта — batch Fix (переприменить из файлов) и batch
-  Export to Source (§6.1).
-- Registry-генератор: `mh.registry` v1 из Ledger + `shader_classes` сканом
-  master_root; Refresh-кнопка + после каждого успешного импорта.
+- Startup starts after Asset Registry files load.
+- It scans three primary extensions under `source_root`.
+- `startup_scan_mode=silent` is default; `prompt` is optional.
+- Watcher observes primary payload changes, debounce >= 1 s, queues during PIE.
+- Both paths call the same resolver/analyzer/Plan pipeline.
+- `-run=MHImportSources` uses headless policy and nonzero exit on errors.
+- `-run=MHVerifyMaterials` performs Analyze-only ours/theirs/base report.
+- `-run=MHActualizeTexturePaths` repairs only unique basename matches.
 
-## 11. Настройки (UDeveloperSettings)
+There is no watcher on `export_manifest.json`, no registry generator and no
+artist Rebuild index action.
 
-`source_root` (обязательная), `content_root` (`/Game/MH`), `master_root`,
-`registry_output_path`, префиксы `SM_/MI_/T_/CA_`, `texture_policy`
-(transitional), `conflict_policy` (prompt), `startup_scan_mode` (prompt),
-`lumen_cards_max` (32), shader_class alias-map, `geometry_backend`
-(`mh_fbx`|`legacy`).
+## 11. Settings (`UDeveloperSettings`)
 
-## 12. Вне скоупа C
+- `source_root` required;
+- `content_root` default `/Game/MH`;
+- `master_root` and shader aliases;
+- asset prefixes `SM_/MI_/T_/CA_`;
+- `texture_root` default `source_root`;
+- `texture_policy` default transitional;
+- `conflict_policy` default prompt for MI three-way conflicts;
+- `startup_scan_mode` default **silent**, optional prompt;
+- `lumen_cards_max` default 32;
+- production `geometry_backend=mh_fbx`.
 
-Компилятор/актёр/ActorFactory/Rebuild (этап D); reserved kinds; Break/Build;
-ISM/LI; Adopt Existing; Interchange/USD; Skeletal; запись source-файлов из UE
-(read-only; исключения: registry-файл и явный writeback §6.1);
-v2-authority (паспорт обязателен, local index) — только за seam'ами §3/§10.
-Участие в spike G1 (ADR-V2): маленькая задача — подтвердить чтение
-паспорт-properties выбранного carrier'а через SDK; по запросу
-Blender-исполнителя.
+Ledger location is editor-owned and not configurable into source tree.
+
+## 12. Out of C scope
+
+Composite actor/compiler/ActorFactory/Rebuild (stage D), reserved node kinds,
+ISM/LI, Interchange/USD, skeletal, authored LOD screen distances, Export
+Selection closure. Source write is read-only except explicit Material writeback.
+
+Manifest resolver, optional passport, per-file LOD, shared local index and
+registry generation are not roadmap: they are superseded architecture.
 
 ## 13. Gates
 
-- **C0**: каркас 5.7.4; канон-библиотека проходит canonical_vectors;
-  fbxdump + закоммиченные дампы golden-фикстур; R1-automation (оба backend'а).
-  *Внешний аудит.*
-- **C1**: codecs + resolver (за IMHSourceResolver) + analyzer,
-  commandlet-testable; diff-parity со всеми golden-мутациями + M8/M9;
-  ревью подтверждает отсутствие зависимостей от способа резолва выше seam.
-  *Внешний аудит.*
-- **C2**: фабрики/Ledger/builders; FMHFbxBackend; mesh-parity против legacy
-  (допуски явные); Combined-LOD кейс (правка геометрии lod01 в Blender →
-  реэкспорт единого FBX → один `UPDATE_GEOMETRY` ресурса → в UE пересобраны все
-  SourceModel, UStaticMesh обновлён in place);
-  повторный импорт → пустой дифф, ноль пересозданий; именованные кейсы:
-  «material-only edit» (один UPDATE_PROPERTIES, ноль geometry-операций,
-  MI тот же объект), «MI drift при неизменном файле» (LOCAL_EDIT, файл не
-  затирает), three-way обе политики; слот-сверка. *Внешний аудит.*
-- **C3**: watcher + startup-скан + registry + commandlets (ImportSources,
-  VerifyMaterials) + writeback §6.1. *Внешний аудит.*
-- **C4**: owner field acceptance — сквозной прогон на реальном source_root:
-  Export → авто-подхват → LOCAL_EDIT/CONFLICT вручную → writeback →
-  Verify Materials → M8/M9 руками. После — контракт этапа D.
+- **C0:** 5.7.4 skeleton; canonical vectors; mandatory Carrier B fbxdump;
+  axis/geometry mapping measurements. External audit.
+- **C1:** payload codecs + resolver + Ledger analyzer commandlet-testable;
+  parity against payload/passport golden M8/M9/M10; startup silent/prompt;
+  duplicate/divergent matrix. External audit.
+- **C2:** factories/builders; Combined-LOD including multi-object LOD1 and
+  UCX/SOCKET; edit LOD1 → one `UPDATE_GEOMETRY`; explicit no-op source rewrite
+  → `NO_CHANGE`; material-only update; MI LOCAL_EDIT/CONFLICT; reimport same
+  objects. External audit.
+- **C3:** watcher, startup, Import/Verify/Actualize commandlets, material
+  writeback; crash/stability/duplicate events. External audit.
+- **C4:** owner field acceptance on real source root: Blender explicit export →
+  startup/watcher auto-import → Combined-LOD/material/composite updates →
+  LOCAL_EDIT/CONFLICT/writeback → same UE assets.

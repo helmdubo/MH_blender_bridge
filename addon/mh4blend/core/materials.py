@@ -151,7 +151,7 @@ def _normalized_material(
 
 
 def material_disk_payload(shader_class: str, params: dict, textures: dict) -> dict:
-    """Return the normalized payload written into ``export_manifest.json``."""
+    """Return normalized material semantics for the self-contained payload."""
     disk, _canonical = _normalized_material(shader_class, params, textures)
     return disk
 

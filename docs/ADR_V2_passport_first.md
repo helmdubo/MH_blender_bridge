@@ -1,208 +1,153 @@
-# ADR-V2 — MH Source Protocol v2: Passport-First (направление принято, реализация через spikes)
+# ADR-V2 — Passport-first authority for Clean Sources v2
 
-Статус: этот документ ЗАМЕНЯЕТ отозванный AMENDMENT v1.1. Направление
-passport-first принято владельцем как ADR; текущая **Source Schema v1 остаётся
-действующим контрактом** до приёмки v2 (dual-read на весь переход). Ярлык
-«v1.1» упразднён: меняется authority-модель — это **MH Source Protocol v2**.
-Версии форматов независимы: `mh.fbx_passport:1` (новый),
-`mh.material` schema_version 1 (без изменений), `mh.composite` schema_version 2
-(перенос resource-properties внутрь), `mh.local_index` — implementation detail.
+Статус: **ACCEPTED, ACTIVE NOW**. Этот ADR уточняет
+`05_source_schema_v1.md`; название того файла историческое. Старые положения
+этого ADR о «v1 остаётся активным», dual-read, uid8 filenames и ожидании
+spike-результатов до объявления v2 полностью superseded документом
+**CONTRACT — MH Source Protocol v2: Clean Sources**.
 
-Реализация НЕ начинается с переписывания экспортёра. Порядок: spikes G1–G4
-(§8) → фиксация v2-нормы → миграция. Исключения, которые можно делать сразу,
-перечислены в §9.
+## 1. Решение authority
 
-**Combined-LOD override — 2026-08-18:** обязательный документ
-`AMENDMENT_combined_lod_fbx.md` заменяет per-file LOD-части §1.1, §1.2, §1.6
-и G1/G3 ниже. Один mesh UID имеет один FBX; паспорт заявляет `lod_levels`, а
-фактический уровень хранится как `mh_lod_level` на mesh Model node. Geometry
-hash использует `mh.meshser:2`.
+Source tree содержит только `*.mesh.fbx`, `*.composite`, `*.material`.
+Embedded passport/self-identity payload является истиной. UE Ledger и optional
+Blender Import Composite cache находятся вне дерева и принадлежат readers.
+Manifest runtime, registry hints и sidecar ownership больше не существуют.
 
-## 1. Принятые решения (по итогам внешнего ревью; в Decision Log отдельными ADR)
+Legacy `export_manifest.json` читается только one-shot migration operator. Его
+production fallback или «временный» dual-read запрещены: они создают две
+конкурирующие authority-модели.
 
-### 1.1 Три величины вместо одного content_hash
+## 2. FBX passport и carrier
 
-| Величина | Что это | Кто считает | Где живёт |
-|---|---|---|---|
-| `geometry_hash` | семантический hash mh.meshser:2 всех LOD (evaluated Blender-геометрия, до cm) | только Blender-экспортёр | паспорт FBX + local index |
-| `descriptor_hash` | hash канон-формы паспорта БЕЗ самого поля hash | обе стороны | local index (в паспорт не пишется) |
-| `payload_fingerprint` | byte-hash (или size+mtime fast-path) записанного файла | кто угодно | только local index |
+Нормативная схема `mh.fbx_passport:1` задана в 05 §4. Carrier B финален:
+каноническая JSON-строка `mh.fbx_passport` дублируется на каждой
+экспортируемой FBX Model node. Reader требует наличие и bytewise consensus всех
+копий. Любое расхождение, malformed JSON или unknown version карантинирует
+payload с `MH_E_PASSPORT_INVALID`.
 
-Rebuild/scan никогда не «пересчитывает» geometry_hash из FBX — он читает его
-из паспорта и сверяет payload_fingerprint. Расхождение fingerprint при
-неизменном паспорте = файл менялся сторонней программой → статус
-`external_modified` (`MH_W_PAYLOAD_EXTERNAL_MODIFIED`), ресурс требует
-подтверждения, не считается корректным молча.
+Transport gate остаётся блокирующим implementation gate, а не выбором carrier:
+до включения writer требуется доказать сохранность на двух Blender FBX путях,
+в UE backend, после re-export, на shared datablocks/custom normals, длинном
+JSON, Combined-LOD и без изменения pivot/hierarchy.
 
-### 1.2 Паспорт FBX — полный состав (канонический JSON, одна строка-property)
+## 3. Geometry, descriptor и reader-side fingerprint
 
-```json
-{
-  "schema": "mh.fbx_passport",
-  "schema_version": 1,
-  "resource_uid": "2db5574c-…",
-  "kind": "static_mesh",
-  "name": "wall_a",
-  "lod_levels": [0, 1],
-  "lod_policy": "authored",
-  "geometry_hash": "xxh3:9f2c01ab34cd56ef",
-  "material_slots": [
-    { "slot_name": "wall_surface",
-      "material_uid": "7d995e54-…",
-      "material_name_hint": "m_stucco" }
-  ],
-  "properties": { "role": "wall" },
-  "exporter": "mh4blend 0.x"
-}
+| Величина | Кто вычисляет | Authority/storage |
+|---|---|---|
+| `geometry_hash` | Blender exporter по `mh.meshser:2` | FBX passport + reader state |
+| `descriptor_hash` | reader по passport без hash fields | UE Ledger / optional Blender import cache |
+| `payload_fingerprint` | reader scanner по bytes | UE Ledger / optional Blender import cache |
+
+Reader scan читает `geometry_hash` из passport и не реконструирует его из FBX.
+Fingerprint mismatch при неизменных semantic hashes означает внешнюю правку:
+`MH_W_PAYLOAD_EXTERNAL_MODIFIED`, подтверждение пользователем.
+
+Нормативное правило explicit Blender writer:
+
+```text
+collision guard -> temporary sibling -> atomic replace -> exit
 ```
 
-- `material_name_hint` — только диагностика («material 7d99 (m_stucco) не
-  найден»), в identity и в descriptor_hash участвует, но никогда не заменяет
-  `.material.name` и не используется для резолва.
-- Один UID имеет ровно один combined FBX и один общий geometry_hash. Паспорт
-  заявляет полный `lod_levels`; фактический integer `mh_lod_level` хранится на
-  каждой mesh Model node. Scanner не выводит уровень из имени файла/узла.
-- `.composite`: resource-level properties переносятся ВНУТРЬ файла
-  (top-level `properties`) — это и есть bump до `mh.composite` schema_version 2.
-- `.material` самодостаточен уже сейчас; его текстурные зависимости — внешние
-  по определению (см. §5).
+Каждый пользовательский Export **всегда** пишет requested payload(s), включая
+semantic no-op. Writer не читает Ledger/cache, не строит diff и не обновляет
+index. `geometry_hash` и вычисляемый `descriptor_hash` нужны UE startup/watcher,
+которые сравнивают payload с Ledger: no-op → `NO_CHANGE`, geometry change →
+`UPDATE_GEOMETRY`, metadata-only change → descriptor/property update.
 
-### 1.3 Правило записи FBX (закрывает stale passport)
+## 4. Clean filenames
 
-```
-write_fbx = geometry_hash_changed OR descriptor_hash_changed
-            OR payload_missing OR recovery_required
-```
+Primary paths имеют форму `<sanitized_name>.mesh.fbx`, `.composite`,
+`.material`. UID suffix отсутствует. Filename — display concern; resolve идёт
+только по embedded UID.
 
-Metadata-only изменения (MaterialUID слота, rename, properties, lod_policy)
-обязаны переписывать файл. Тест-мутации на каждый случай — в G2-spike.
+Clean-name collision в одном каталоге при разных UID блокируется
+`MH_E_NAME_COLLISION_DIFFERENT_UID`; разрешённые действия: Rename mine, Fork
+existing as new resource, Cancel. Silent overwrite, mtime winner и присвоение
+художнику чужого имени запрещены. Одинаковые filenames в разных каталогах
+легальны.
 
-### 1.4 Carrier паспорта — выбирается spike'ом G1, кандидат по умолчанию — B
+## 5. Conflict matrix
 
-Вариант B: паспорт-JSON дублируется custom property на КАЖДУЮ экспортируемую
-Model-ноду; ридер собирает все копии и требует побайтового равенства
-(расхождение = malformed → quarantine). Альтернативы A (sentinel Empty) и
-C (пост-запись через parser) остаются в G1 как запасные. Проверить оба
-Blender FBX-пути (python и новый нативный C++ на базе ufbx), влияние на
-pivot/иерархию, длинные JSON, shared datablocks, custom normals.
-
-### 1.5 Conflict matrix (заменяет «паспорт всегда выигрывает»)
-
-| Состояние | Реакция |
+| Наблюдение | Реакция |
 |---|---|
-| UID неизвестен проекту | Adopt as new resource |
-| UID известен, старый файл исчез, новый один | MOVE (авто, лог) |
-| UID известен, оба файла есть, fingerprints равны | duplicate-copy warning (предложить удалить копию) |
-| UID известен, оба файла есть, fingerprints различны | **hard conflict** `MH_E_DIVERGENT_REVISIONS` — только ручной выбор |
-| Loose file выбран вручную | диалог: Update existing / **Fork as New Resource** / Cancel |
-| Паспорта нет | legacy-резолв через манифест (dual-read) либо явный adopt |
-| Паспорт malformed / незнакомая версия | quarantine, `MH_E_PASSPORT_INVALID` |
+| UID отсутствует в UE Ledger, payload валиден | startup/watcher auto-import (silent default; prompt optional) |
+| Старый path исчез, новый unique path имеет тот же UID | MOVE автоматически + log |
+| Два существующих path одного UID, fingerprints равны | `MH_W_DUPLICATE_IDENTICAL_PAYLOAD` |
+| Два path одного UID, fingerprints различны | `MH_E_DIVERGENT_REVISIONS`, ручной выбор |
+| Loose file выбран вручную | Update existing / Fork as New Resource / Cancel |
+| Embedded identity отсутствует | runtime quarantine; `MH_W_LEGACY_PAYLOAD_NO_PASSPORT` только в migrator |
+| Passport malformed/unknown/без consensus | `MH_E_PASSPORT_INVALID`, quarantine |
 
-**Fork as New Resource** — обязательная операция: новый ResourceUID; при
-форке композита — перезапись внутренних ссылок на форкнутые же ресурсы по
-выбору пользователя; оригинальные UID проекта не затрагиваются.
+Passport «всегда выигрывает» только в доказанном MOVE: прежнего кандидата нет,
+новый один и валиден. При двух живых divergent revisions автоматического
+победителя нет.
 
-### 1.6 Index — локальный производный кеш ВНЕ дерева исходников
+**Fork as New Resource** создаёт новый UID и не изменяет оригинал. Для
+composite пользователь отдельно выбирает closure внутренних ссылок, который
+форкается вместе с root.
 
-- Расположение: `%LOCALAPPDATA%/MimirHead/MHBridge/<project_uid>/index.json`
-  (и аналог на других ОС). В source tree служебных файлов НЕТ вообще —
-  требование владельца о стерильном дереве выполняется буквально.
-- Формат — JSON (два независимых кодека Python/C++, диагностика глазами);
-  sqlite отклонён. Побайтовое совпадение сериализаций двух реализаций НЕ
-  требуется — это кеш, нормируется только payload-контракт.
-- Содержимое — честная картина кандидатов, не только UID→path:
-  `path → {fingerprint, parsed_passport|parse_status}`;
-  `uid → {candidate_paths[], resolved|conflict status, lod_levels}`.
-- Index удаляем в любой момент без потери чего-либо; Blender и UE держат
-  каждый свой.
+## 6. Reader state: Blender lazy cache и UE Ledger
 
-### 1.7 Согласованность: eventual, транзакция «payload+index» упразднена
+Общего project index контракта нет.
 
-Payload публикуется атомарно (tmp→rename, как раньше) и является истиной.
-Index догоняет: watcher/скан видит новый fingerprint → перечитывает паспорт →
-чинит кеш. Lock нужен только против одновременной записи ОДНОГО payload'а
-двумя процессами одной машины (короткий per-file lock при экспорте);
-глобальный index.lock и журнальные маркеры по дереву — упразднены. Crash
-recovery = обычная работа watcher'а; специального протокола нет, потому что
-нет распределённого состояния.
+- Blender writer stateless относительно source root.
+- Blender **Import Composite** при первом вызове молча строит optional lazy
+  resolver cache. Cache — implementation accelerator; stale/missing состояние
+  вызывает silent scan. Artist-facing Rebuild отсутствует.
+- UE startup сканирует payloads и сравнивает их с Ledger. Default behavior —
+  silent auto-import; project preference может включить prompt.
+- UE watcher выполняет тот же per-file scan/Ledger comparison для изменений.
 
-### 1.8 Отклонено (решения владельца)
+Reader state находится вне source tree и удаляем без потери source data. Writer
+никогда его не обновляет. Atomic publication не образует транзакцию с cache или
+Ledger; per-file lock относится только к requested export target.
 
-- **Transfer package (.mhpack) — отклонён.** Внутренняя пересылка — loose
-  files: получатель кладёт файл(ы) в дерево, система читает паспорта и
-  называет недостающие зависимости по имени (name_hint). Дозапросить файл у
-  отправителя — нормальный человеческий шаг; сборка closure перед отправкой —
-  перекладывание машинной работы на человека. Для ВНЕШНЕЙ передачи
-  (клиент/аутсорс) остаётся Export Selection (dependency closure) в ROADMAP.
-- Центральный `.mh/` в source tree — отклонён (см. 1.6).
-- Бинарный index — отклонён (ROADMAP-порог прежний).
+## 7. Texture resolution
 
-## 5. Текстуры: резолв по basename и актуализация путей (dag4blend-паритет)
+Material сохраняет texture path, а resolver использует каскад:
 
-Требование владельца: как в dag4blend — если текстура существует где-то в
-дереве проекта, система находит её по конечному имени файла и актуализирует
-путь в материале.
+```text
+exact normalized path -> unique basename under texture_root -> unresolved
+```
 
-- Идентичность текстуры остаётся путём (D23 в силе), но резолв получает
-  каскад: **точный путь → поиск по basename под texture_root → unresolved**.
-- Поиск по basename: ровно одно совпадение → путь считается устаревшим,
-  предлагается/выполняется актуализация; несколько совпадений →
-  `MH_W_TEXTURE_BASENAME_AMBIGUOUS`, автопочинки нет, выбор за пользователем;
-  ноль → unresolved с именем файла в диагностике.
-- **Актуализация — это правка `.material`** (путь в `textures.texN`):
-  выполняется (а) автоматически при Blender-импорте материала со stale-путём
-  и единственным кандидатом (поведение dag4blend), с записью в лог;
-  (б) массовой операцией **Actualize Texture Paths** (аддон-оператор +
-  UE-commandlet): пройти по всем материалам, починить пути, отчёт
-  fixed/ambiguous/missing. Правка легально меняет hash материала →
-  штатный UPDATE_PROPERTIES → MI обновится обычным конвейером.
-- Инвариант для дерева: дубликаты basename в texture_root легальны, но
-  исключают автопочинку затронутых имён — Actualize-отчёт их перечисляет;
-  рекомендация воркфлоу — уникальные имена текстур (в Dagor это фактическая
-  норма).
-- Local index кеширует таблицу `basename → paths[]` для скорости; истина —
-  дерево.
+Unique basename позволяет актуализировать `.material`; ambiguous basename даёт
+`MH_W_TEXTURE_BASENAME_AMBIGUOUS` без автопочинки. **Actualize Texture Paths**
+существует в Blender и как UE commandlet и выдаёт fixed/ambiguous/missing.
+Texture files не копируются. Полная canonical/path policy — 05 §8.
 
-## 8. Spike-gates (по ревью; выполняются ДО правки нормативных доков)
+## 8. Combined-LOD
 
-- **G1 Passport transport** (первый, блокирующий): carrier B против A/C на
-  реальных файлах — один/несколько объектов, shared datablock, custom
-  normals, длинный JSON, LOD-набор; оба Blender FBX-пути; чтение в UE
-  (SDK) и в Blender (io_scene_fbx / собственный минимальный ридер);
-  re-export; отсутствие влияния на pivot/иерархию. Выход: зафиксированный
-  carrier + замеры.
-- **G2 Metadata-only update**: пять мутаций из 1.3 — паспорт и index нигде
-  не остаются stale.
-- **G3 Rebuild & conflicts**: вся матрица 1.5 + combined-LOD passport/node
-  mismatch + missing
-  material + legacy без паспорта + malformed + Fork.
-- **G4 Crash semantics**: crash до/после rename payload'а; два писателя;
-  Blender+UE одновременно; удалённый/устаревший index; копирование через
-  sync-папку.
+Один mesh UID — один FBX. Passport хранит `lod_levels`; `mh_lod_level` является
+integer property mesh Model node. Level никогда не выводится из filename или
+node name. Geometry hash `mh.meshser:2` покрывает все уровни и auxiliary
+UCX/SOCKET; изменение любого уровня переписывает общий payload.
 
-Только после зелёных G1–G4: правка 05 → v2, миграционная утилита
-(манифесты → паспорта, dual-read до полного покрытия, отчёт), удаление
-распределённых манифестов из воркфлоу.
+Нормативные ограничения и diagnostics —
+`AMENDMENT_combined_lod_fbx.md`. Старые per-file LOD rows superseded и доступны
+только migration path.
 
-## 9. Что делать сейчас (не дожидаясь spikes)
+## 9. Loose transfer и отклонённые варианты
 
-- **Blender-исполнитель**: G1-spike — первая задача (ветка, вне main).
-  Параллельно легально: перенос composite resource-properties внутрь файла
-  (mh.composite v2 — независимый bump, нужен при любом исходе);
-  Actualize Texture Paths (§5 — не зависит от паспортов);
-  правило записи 1.3 как рефакторинг экспортёра (полезно и в v1).
-- **UE-исполнитель**: этап C продолжается ПРОТИВ ДЕЙСТВУЮЩЕЙ v1 без
-  остановки; резолвер держать за интерфейсом (seam уже есть) — замена
-  manifest-scan на passport/index-резолв при приёмке v2 не должна трогать
-  ничего выше интерфейса. Чтение паспорта FBX добавить в FMHFbxBackend как
-  опциональное (если есть — сверка с манифестом, warning при расхождении):
-  это безопасно в v1 и станет обязательным в v2.
-- **Ревьюверу**: этот ADR — на второй круг вместе с результатами G1.
+Внутристудийная передача использует loose payload files. Получатель кладёт их
+в source tree; resolver читает embedded identity и перечисляет отсутствующие
+UID dependencies по hints. `.mhpack`, центральный `.mh/`, общий project index,
+mtime-based identity и runtime manifest fallback отклонены.
 
-## 10. Правки документов (после G-gates, не сейчас)
+Export Selection с dependency closure остаётся ROADMAP для внешней передачи и
+не меняет primary payload contract.
 
-05 → MH Source Protocol v2 (authority: passport-first; resolver: index-as-
-cache; манифесты — legacy-read); 04 — workflows loose/fork/actualize;
-07 — §3 резолвер за seam, §10 watcher по fingerprints; Decision Log — ADR'ы
-из §1 + отклонения из 1.8; golden — переписать M8/M9/M10 + матрица 1.5 как
-негативный набор.
+## 10. Implementation order
+
+Немедленное принятие v2 не отменяет gates:
+
+1. carrier transport proof;
+2. clean always-write exporters/passports и одновременное удаление manifest,
+   hash-skip, diff и index-update из writer flow;
+3. Blender lazy Import Composite resolver + UE startup/watcher Ledger diff,
+   conflict matrix, Fork, texture actualization;
+4. migration-only legacy reader и v2 importer;
+5. crash/concurrency receipts;
+6. UE parity и дальнейшие C/D gates.
+
+До gate 2 UE не должен создавать новый per-file-LOD или manifest runtime path;
+после gate 2 оба фронта работают только против Clean Sources v2.

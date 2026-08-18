@@ -9,36 +9,25 @@ No scene names, bundle directories or texture roots participate in this API.
 import contextlib
 import os
 import re
+import uuid
 
 import bpy
 from mathutils import Matrix
 
-from ..core.canonical import nfc, resource_filename, validate_resource_name
+from ..core.canonical import nfc, sanitize_name, validate_resource_name
+from ..core.fbx_passport import (
+    PASSPORT_PROPERTY,
+    canonical_passport,
+    make_fbx_passport,
+    read_fbx_passport,
+)
 from ..core.meshser import MeshAuxRecord, mesh_content_hash
-from ..core.model import Manifest, MeshResource
-from ..core.source_resolver import (
-    assert_source_snapshot_stable,
-    pending_writer_uid,
-    resolve_resource,
-    resolve_resource_for_writer,
-    scan_source_root,
-)
+from ..core.model import MaterialSlot, MeshResource
+from ..core.payload_publish_v2 import payload_lock
 from ..core.uid import PROP_UID, ensure_uid, find_duplicate_uids
-from ..core.validate import MHValidationError, ValidationWarning, validate_manifest
+from ..core.validate import MHValidationError
 from .composite_extract import _bag
-from .export_material import (
-    prepare_material_resource_export,
-    write_prepared_material,
-)
-from .material_extract import extract_materials_from_objects
 from .mesh_extract import _record_for_object
-from .source_manifest import (
-    MANIFEST_NAME,
-    abandon_staged_manifest,
-    commit_staged_manifest,
-    prepare_manifest_update,
-    stage_manifest,
-)
 
 __all__ = [
     "FBX_EXPORT_KWARGS",
@@ -66,7 +55,7 @@ FBX_EXPORT_KWARGS = dict(
 )
 
 BLENDER_METERS_TO_UE_CENTIMETERS = 100.0
-EXPORTER_VERSION = "0.5.0"
+EXPORTER_VERSION = "0.6.0"
 
 
 _LODS_ROOT_RE = re.compile(
@@ -426,21 +415,6 @@ def _assert_output_under_root(output_dir, source_root):
             "FBX output folder must be inside Project Source Root")
 
 
-def _material_owners(snapshot, materials):
-    owners = {}
-    for material in materials:
-        resolved = resolve_resource(
-            snapshot, material.uid, expected_kind="material")
-        if resolved is None:
-            continue
-        owners[material.uid] = {
-            "payload_path": resolved.payload_path,
-            "owning_manifest_path": resolved.owning_manifest_path,
-            "manifest_row": resolved.manifest_row,
-        }
-    return owners
-
-
 def _object_material_slot_pairs(objects):
     """Return every authored FBX slot mapping, without UID de-duplication."""
     pairs = set()
@@ -456,88 +430,30 @@ def _object_material_slot_pairs(objects):
     return pairs
 
 
-def _prepare_materials_tolerant(
-        materials, output_dir, *, source_root, texture_policy, owners):
-    prepared = []
-    warnings = []
-    for material in materials:
-        owner = owners.get(material.uid)
-        try:
-            prepared.append(prepare_material_resource_export(
-                material,
-                output_dir,
-                source_root=source_root,
-                texture_policy=texture_policy,
-                target_payload_path=(
-                    owner["payload_path"] if owner else None),
-                owning_manifest_path=(
-                    owner["owning_manifest_path"] if owner else None),
-                existing_source=(
-                    owner["manifest_row"]["source"] if owner else None),
-            ))
-        except (OSError, RuntimeError, ValueError) as exc:
-            warnings.append(ValidationWarning(
-                "MH_W_MATERIAL_NOT_FOUND", [material.uid],
-                f"material export preparation failed; geometry will still "
-                f"export: {exc}",
-            ).disk_dict())
-    return prepared, warnings
-
-
-def _write_material_resources(
-        prepared_materials, *, source_root, texture_policy, dry_run):
-    updates = []
-    warnings = []
-    for prepared in prepared_materials:
-        owner_dir = os.path.dirname(prepared.owning_manifest_path)
-        written = False
-        manifest_written = False
-        try:
-            if not dry_run:
-                manifest = prepare_manifest_update(
-                    owner_dir,
-                    resources=[prepared.resource_row],
-                    exporter_version=EXPORTER_VERSION,
-                    blend_file=os.path.basename(bpy.data.filepath) or None,
-                    source_root=source_root,
-                )
-                stage_manifest(owner_dir, manifest)
-                try:
-                    written = write_prepared_material(
-                        prepared,
-                        source_root=source_root,
-                        texture_policy=texture_policy,
-                        force=manifest.is_recovery,
-                    )
-                    commit_staged_manifest(owner_dir)
-                    manifest_written = True
-                except BaseException:
-                    abandon_staged_manifest(owner_dir)
-                    raise
-            updates.append({
-                "ok": True,
-                "uid": prepared.document["uid"],
-                "path": prepared.payload_path,
-                "written": written,
-                "manifest_path": prepared.owning_manifest_path,
-                "manifest_written": manifest_written,
-            })
-        except (OSError, RuntimeError, ValueError) as exc:
-            uid = prepared.document["uid"]
-            warnings.append(ValidationWarning(
-                "MH_W_MATERIAL_NOT_FOUND", [uid],
-                f"material export failed; geometry remains exported: {exc}",
-            ).disk_dict())
-            updates.append({
-                "ok": False,
-                "uid": uid,
-                "path": prepared.payload_path,
-                "written": False,
-                "manifest_path": prepared.owning_manifest_path,
-                "manifest_written": False,
-                "error": str(exc),
-            })
-    return updates, warnings
+def _extract_material_slots(objects):
+    """Extract only FBX descriptor bindings, never material payload data."""
+    slots = []
+    uid_by_slot_name = {}
+    for obj in sorted(objects, key=lambda item: item[PROP_UID]):
+        for index, slot in enumerate(obj.material_slots):
+            material = slot.material
+            if material is None:
+                raise MHValidationError(
+                    "MH_E_EMPTY_MATERIAL_SLOT", [obj[PROP_UID]],
+                    f"'{obj.name}' material slot {index} is empty")
+            material_uid = ensure_uid(material)
+            slot_name = str(slot.name or material.name)
+            previous = uid_by_slot_name.get(slot_name)
+            if previous is not None and previous != material_uid:
+                raise MHValidationError(
+                    "MH_E_MATERIAL_SLOT_CONFLICT",
+                    [previous, material_uid],
+                    f"slot name '{slot_name}' maps to different materials")
+            if previous is None:
+                uid_by_slot_name[slot_name] = material_uid
+                slots.append(MaterialSlot(
+                    slot_name=slot_name, material_uid=material_uid))
+    return slots
 
 
 def _export_selected_fbx(filepath):
@@ -546,7 +462,7 @@ def _export_selected_fbx(filepath):
 
 
 @contextlib.contextmanager
-def _temporary_lod_level_properties(levels):
+def _temporary_lod_level_properties(levels, implicit_level0=()):
     """Expose combined-LOD membership to FBX and restore authoring data."""
     saved = []
     try:
@@ -556,6 +472,12 @@ def _temporary_lod_level_properties(levels):
                 previous = obj["mh_lod_level"] if existed else None
                 saved.append((obj, existed, previous))
                 obj["mh_lod_level"] = int(level)
+        for obj in implicit_level0:
+            existed = "mh_lod_level" in obj
+            previous = obj["mh_lod_level"] if existed else None
+            saved.append((obj, existed, previous))
+            if existed:
+                del obj["mh_lod_level"]
         yield
     finally:
         for obj, existed, previous in saved:
@@ -567,52 +489,71 @@ def _temporary_lod_level_properties(levels):
                 del obj["mh_lod_level"]
 
 
-def _static_mesh_descriptor(row):
-    """Return normalized metadata carried by an FBX rewrite decision.
+@contextlib.contextmanager
+def _temporary_passport_properties(objects, passport_text):
+    """Put Carrier B on every exported MESH Model and restore ID properties."""
+    saved = []
+    try:
+        for obj in objects:
+            if obj.type != "MESH":
+                continue
+            existed = PASSPORT_PROPERTY in obj
+            previous = obj[PASSPORT_PROPERTY] if existed else None
+            saved.append((obj, existed, previous))
+            obj[PASSPORT_PROPERTY] = passport_text
+        yield
+    finally:
+        for obj, existed, previous in saved:
+            if obj is None or obj.name not in bpy.data.objects:
+                continue
+            if existed:
+                obj[PASSPORT_PROPERTY] = previous
+            elif PASSPORT_PROPERTY in obj:
+                del obj[PASSPORT_PROPERTY]
 
-    Optional manifest fields are normalized to their frozen-v1 defaults so
-    omission and an explicit default compare equal. Combined LOD membership
-    and geometry live in the meshser:2 content hash; ``lod_policy`` remains
-    descriptor metadata.
-    """
-    lod_policy = row.get("lod_policy", "generated")
-    return {
-        "name": row["name"],
-        "material_slots": row.get("material_slots", []),
-        "properties": row.get("properties", {}),
-        "lod_policy": lod_policy,
-    }
+
+def _clean_fbx_filename(resource_name):
+    validate_resource_name(resource_name)
+    return f"{sanitize_name(resource_name)}.mesh.fbx"
 
 
-def _bind_existing_mesh_location(
-        owner, resource_entry, payload_exports):
-    """Keep an owned v1 mesh at the path already assigned to its UID."""
-    owner_dir = os.path.dirname(owner.owning_manifest_path)
-    existing_row = owner.manifest_row
-    existing_sources = {0: existing_row["source"]}
-    for payload in payload_exports:
-        source = existing_sources.get(payload["level"], payload["filename"])
-        payload["filename"] = source
-        payload["filepath"] = os.path.join(
-            owner_dir, *source.split("/"))
+def _passport_material_slots(materials, objects):
+    names = {material[PROP_UID]: material.name for material in materials}
+    rows = [{
+        "slot_name": nfc(slot_name),
+        "material_uid": material_uid,
+        "material_name_hint": nfc(names[material_uid]),
+    } for slot_name, material_uid in _object_material_slot_pairs(objects)]
+    return sorted(rows, key=lambda row: row["slot_name"])
 
-    resource_entry["source"] = payload_exports[0]["filename"]
-    return owner_dir, owner.payload_path
+
+def _assert_existing_target_uid(filepath, resource_uid):
+    """Validate an existing clean-name target and reject foreign identity."""
+    if not os.path.lexists(filepath):
+        return None
+    if not os.path.isfile(filepath):
+        raise ValueError(
+            "MH_E_PASSPORT_INVALID: FBX target exists but is not a file: "
+            f"{filepath}")
+    current = read_fbx_passport(filepath)
+    current_uid = current.document["resource_uid"]
+    if current_uid != resource_uid:
+        raise ValueError(
+            "MH_E_NAME_COLLISION_DIFFERENT_UID: clean FBX target "
+            f"'{filepath}' owns resource {current_uid}, not {resource_uid}")
+    return current
 
 
 def export_fbx_collection(
-        collection, output_dir, *, dry_run=False, registry_path="",
-        export_materials=False, source_root="",
-        texture_policy="transitional"):
+        collection, output_dir, *, dry_run=False, source_root=""):
     """Export one selected collection as one static-mesh resource.
 
     A regular collection writes one FBX. A recognized dag4blend ``.lods``
     hierarchy also writes one FBX containing every authored level; each model
     node carries a temporary integer ``mh_lod_level`` custom property.
 
-    Returns a structured report containing the domain objects and their
-    manifest-ready entries. The exporter stages the incremental manifest
-    before replacing the payload and promotes it only after FBX succeeds.
+    The FBX is the v2 source-of-truth payload. Its canonical passport is copied
+    to every exported MESH Model. No export manifest is read or written here.
     """
     if collection is None:
         raise ValueError("collection is required")
@@ -642,6 +583,16 @@ def export_fbx_collection(
             "mesh objects in itself or recursive child collections")
 
     resource_uid = ensure_uid(collection)
+    filename = _clean_fbx_filename(resource_name)
+    resolved_output_dir = os.path.abspath(
+        bpy.path.abspath(os.fspath(output_dir)))
+    filepath = os.path.join(resolved_output_dir, filename)
+    resolved_source_root = None
+    if isinstance(source_root, (str, os.PathLike)) and str(source_root).strip():
+        resolved_source_root = _resolved_source_root(source_root)
+        _assert_output_under_root(resolved_output_dir, resolved_source_root)
+    _assert_existing_target_uid(filepath, resource_uid)
+
     for obj in objects:
         ensure_uid(obj)
         if obj.data is not None:
@@ -670,16 +621,15 @@ def export_fbx_collection(
             "MH_E_DUPLICATE_RESOURCE_UID", [uid],
             "materials in the selected collection share one mh_uid")
 
+    materials = used_materials
     if lod_structure is None:
-        materials, material_slots = extract_materials_from_objects(objects)
+        material_slots = _extract_material_slots(objects)
     else:
         _level0, _collection0, level0_objects = payload_levels[0]
-        materials, material_slots = extract_materials_from_objects(
-            level0_objects)
+        material_slots = _extract_material_slots(level0_objects)
         base_slots = _object_material_slot_pairs(level0_objects)
         for level, _child, level_objects in payload_levels[1:]:
-            _level_materials, _level_slots = \
-                extract_materials_from_objects(level_objects)
+            _extract_material_slots(level_objects)
             missing_slots = sorted(
                 _object_material_slot_pairs(level_objects) - base_slots
             )
@@ -730,396 +680,82 @@ def export_fbx_collection(
         material_slots=material_slots,
         properties=_bag(collection),
     )
-    filename = resource_filename(
-        resource_name, resource_uid, ".mesh.fbx")
-    resolved_output_dir = os.path.abspath(
-        bpy.path.abspath(os.fspath(output_dir)))
-    filepath = os.path.join(resolved_output_dir, filename)
-    payload_exports = [{
-        "level": 0,
-        "objects": export_objects,
-        "filename": filename,
-        "content_hash": combined_hash,
-    }]
-    for payload in payload_exports:
-        payload["filepath"] = os.path.join(
-            resolved_output_dir, payload["filename"])
-
-    prepared_materials = []
-    material_updates = []
-    source_snapshot = None
-    material_owners = {}
-    missing_material_uids = []
-    material_prepare_warnings = []
-    recovery_material_updates = []
-    recovery_material_entries = []
-    deferred_materials = []
-    normalized_policy = str(texture_policy).lower()
-    resolved_source_root = None
-    if isinstance(source_root, (str, os.PathLike)) and str(source_root).strip():
-        resolved_source_root = _resolved_source_root(source_root)
-        _assert_output_under_root(resolved_output_dir, resolved_source_root)
-    if export_materials:
-        if resolved_source_root is None:
-            resolved_source_root = _resolved_source_root(source_root)
-    materials_to_prepare = list(materials)
-    pending = pending_writer_uid(resolved_source_root) \
-        if resolved_source_root is not None else None
-    if pending is not None:
-        if pending.kind == "material":
-            if not export_materials:
-                raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: pending material "
-                    f"{pending.uid} blocks geometry-only FBX export")
-            if dry_run:
-                raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: dry-run cannot recover a "
-                    "pending material transaction")
-            material_by_uid = {material.uid: material for material in materials}
-            recovery_material = material_by_uid.get(pending.uid)
-            if recovery_material is None:
-                raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: pending material recovery "
-                    f"{pending.uid} is not used by the selected FBX")
-            resolution = resolve_resource_for_writer(
-                resolved_source_root,
-                pending.uid,
-                expected_kind="material",
-                registry_path=(
-                    os.path.abspath(bpy.path.abspath(registry_path))
-                    if registry_path else None),
-                texture_policy=normalized_policy,
-            )
-            source_snapshot = resolution.snapshot
-            recovery_owners = {
-                pending.uid: {
-                    "payload_path": resolution.owner.payload_path,
-                    "owning_manifest_path": (
-                        resolution.owner.owning_manifest_path),
-                    "manifest_row": resolution.owner.manifest_row,
-                },
-            }
-            recovery_prepared, recovery_prepare_warnings = \
-                _prepare_materials_tolerant(
-                    [recovery_material],
-                    resolved_output_dir,
-                    source_root=resolved_source_root,
-                    texture_policy=normalized_policy,
-                    owners=recovery_owners,
-                )
-            if recovery_prepare_warnings or not recovery_prepared:
-                detail = recovery_prepare_warnings[0]["message"] \
-                    if recovery_prepare_warnings else "recovery preparation failed"
-                raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: pending material "
-                    f"{pending.uid} cannot recover: {detail}")
-            recovery_material_entries = [
-                recovery_prepared[0].resource_row]
-            recovery_material_updates, recovery_write_warnings = \
-                _write_material_resources(
-                    recovery_prepared,
-                    source_root=resolved_source_root,
-                    texture_policy=normalized_policy,
-                    dry_run=False,
-                )
-            if recovery_write_warnings or not recovery_material_updates[0]["ok"]:
-                detail = recovery_material_updates[0].get(
-                    "error", "recovery write failed")
-                raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: pending material "
-                    f"{pending.uid} recovery failed: {detail}")
-            materials_to_prepare = [
-                material for material in materials
-                if material.uid != pending.uid]
-        elif pending.kind == "static_mesh":
-            if pending.uid != resource_uid:
-                raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: pending static mesh "
-                    f"{pending.uid} is not the selected FBX {resource_uid}")
-            if dry_run:
-                raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: dry-run cannot recover a "
-                    "pending static mesh transaction")
-            if export_materials:
-                deferred_materials = materials_to_prepare
-            materials_to_prepare = []
-        else:
-            raise ValueError(
-                "MH_E_INVALID_EXPORT_MANIFEST: pending "
-                f"{pending.kind} {pending.uid} blocks FBX export")
-    if materials_to_prepare and resolved_source_root is not None:
-        resolved_registry_path = (
-            os.path.abspath(bpy.path.abspath(registry_path))
-            if registry_path else None)
-        source_snapshot = scan_source_root(
-            resolved_source_root,
-            registry_path=resolved_registry_path,
-            texture_policy=normalized_policy)
-        material_owners = _material_owners(
-            source_snapshot, materials_to_prepare)
-    if export_materials:
-        prepared_materials, material_prepare_warnings = \
-            _prepare_materials_tolerant(
-                materials_to_prepare,
-                resolved_output_dir,
-                source_root=resolved_source_root,
-                texture_policy=normalized_policy,
-                owners=material_owners,
-            )
-    else:
-        missing_material_uids = sorted(
-            material.uid for material in materials
-            if material.uid not in material_owners)
-
-    resource_entry = {
-        "uid": resource.uid,
-        "kind": "static_mesh",
-        "name": nfc(resource.name),
-        "source": filename,
-        "content_hash": resource.content_hash,
-    }
-    if material_slots:
-        resource_entry["material_slots"] = [
-            {"slot_name": nfc(slot.slot_name),
-             "material_uid": slot.material_uid}
-            for slot in material_slots
-        ]
-    if lod_structure is not None:
-        resource_entry["lod_policy"] = "authored"
-    if resource.properties:
-        resource_entry["properties"] = resource.properties
-    material_entries = recovery_material_entries + [
-        prepared.resource_row for prepared in prepared_materials]
-
-    registry = None
-    adapter_warnings = []
-    if registry_path:
-        resolved_registry = os.path.abspath(bpy.path.abspath(registry_path))
-        try:
-            with open(resolved_registry, encoding="utf-8") as stream:
-                registry = stream.read()
-        except (OSError, UnicodeError) as exc:
-            adapter_warnings.append(ValidationWarning(
-                "MH_W_REGISTRY_INVALID", [resource_uid], str(exc)).disk_dict())
-    validation = validate_manifest(Manifest(
-        bundle_uid=resource_uid,
-        bundle_name=resource_name,
-        blend_file=os.path.basename(bpy.data.filepath) or "untitled.blend",
-        exporter_version=EXPORTER_VERSION,
-        meshes=[resource],
-        materials=materials,
-    ), registry=registry)
-    validation["warnings"] = adapter_warnings + validation.get("warnings", [])
+    lod_policy = "authored" if lod_structure is not None else "generated"
+    passport_slot_objects = (
+        payload_levels[0][2] if lod_structure is not None else objects)
+    passport_slots = _passport_material_slots(
+        materials, passport_slot_objects)
+    passport = make_fbx_passport(
+        resource_uid=resource_uid,
+        name=nfc(resource_name),
+        lod_levels=[level for level, _child, _objects in payload_levels],
+        lod_policy=lod_policy,
+        geometry_hash=combined_hash,
+        material_slots=passport_slots,
+        properties=resource.properties,
+        exporter=f"mh4blend {EXPORTER_VERSION}",
+    )
+    passport_text = canonical_passport(passport)
+    validation = {"errors": [], "warnings": []}
     if lod_structure is not None and lod_structure["ignored_aux"]:
         ignored = ", ".join(
             f"LOD{level} '{name}'"
             for level, name in lod_structure["ignored_aux"])
-        validation["warnings"].append(ValidationWarning(
-            "MH_W_LOD_AUX_NODE_IGNORED",
-            [resource_uid],
-            f"higher-LOD auxiliary nodes were ignored: {ignored}",
-        ).disk_dict())
-    validation["warnings"].extend(material_prepare_warnings)
-    if source_snapshot is not None:
-        validation["warnings"].extend({
-            "code": diagnostic.code,
-            "subjects": ([diagnostic.uid] if diagnostic.uid else []),
-            "message": diagnostic.message,
-        } for diagnostic in source_snapshot.diagnostics)
-    if missing_material_uids:
-        validation["warnings"].append(ValidationWarning(
-            "MH_W_MATERIAL_NOT_FOUND",
-            missing_material_uids,
-            "FBX references materials that are not exported under Project "
-            "Source Root; enable Export Materials or use Export materials",
-        ).disk_dict())
-    for prepared in prepared_materials:
-        validation["warnings"].extend(
-            diagnostic.disk_dict() for diagnostic in prepared.diagnostics)
-    if validation["errors"]:
-        return {
-            "ok": False,
-            "filepath": filepath,
-            "written": False,
-            "manifest_path": os.path.join(resolved_output_dir, MANIFEST_NAME),
-            "manifest_written": False,
-            "validation": validation,
-            "resource": resource,
-            "resource_entry": resource_entry,
-            "materials": materials,
-            "material_entries": material_entries,
-            "material_updates": material_updates,
-        }
+        validation["warnings"].append({
+            "code": "MH_W_LOD_AUX_NODE_IGNORED",
+            "subjects": [resource_uid],
+            "message": f"higher-LOD auxiliary nodes were ignored: {ignored}",
+        })
 
+    payload_updates = [{"filepath": filepath, "written": False}]
     written = False
-    manifest_written = False
-    manifest_path = os.path.join(resolved_output_dir, MANIFEST_NAME)
-    payload_updates = [{
-        "level": payload["level"],
-        "filepath": payload["filepath"],
-        "written": False,
-    } for payload in payload_exports]
+    tmp = os.path.join(
+        resolved_output_dir,
+        f".{filename}.mh-tmp-{os.getpid()}-{uuid.uuid4().hex}")
     if not dry_run:
-        resolved_registry_path = (
-            os.path.abspath(bpy.path.abspath(registry_path))
-            if registry_path else None)
-        mesh_resolution = resolve_resource_for_writer(
-            resolved_source_root,
-            resource_uid,
-            expected_kind="static_mesh",
-            expected_source=None,
-            registry_path=resolved_registry_path,
-            texture_policy=normalized_policy,
-        )
-        mesh_owner = mesh_resolution.owner
-        mesh_snapshot = mesh_resolution.snapshot
-        mesh_recovery = mesh_resolution.recovery
-
-        if mesh_owner is not None:
-            if "lods" in mesh_owner.manifest_row:
-                raise ValueError(
-                    "MH_E_DEPRECATED_LOD_ROWS: static_mesh rows with lods[] "
-                    "must be migrated before combined-LOD export")
-            resolved_output_dir, filepath = _bind_existing_mesh_location(
-                mesh_owner, resource_entry, payload_exports)
-            manifest_path = mesh_owner.owning_manifest_path
-            for payload, update in zip(payload_exports, payload_updates):
-                update["filepath"] = payload["filepath"]
-
-        existing_payloads = {}
-        descriptor_changed = False
-        if mesh_owner is not None:
-            existing_row = mesh_owner.manifest_row
-            descriptor_changed = (
-                _static_mesh_descriptor(existing_row)
-                != _static_mesh_descriptor(resource_entry)
-            )
-            existing_payloads[0] = {
-                "source": existing_row["source"],
-                "content_hash": existing_row["content_hash"],
-            }
-        for payload, update in zip(payload_exports, payload_updates):
-            existing = existing_payloads.get(payload["level"])
-            hash_matches = (
-                existing is not None
-                and existing["source"] == payload["filename"]
-                and existing["content_hash"] == payload["content_hash"]
-                and os.path.isfile(payload["filepath"])
-            )
-            payload["write"] = (
-                mesh_recovery
-                or not hash_matches
-                or (payload["level"] == 0 and descriptor_changed)
-            )
-        assert_source_snapshot_stable(mesh_snapshot)
-        manifest = prepare_manifest_update(
-            resolved_output_dir,
-            resources=[resource_entry],
-            exporter_version=EXPORTER_VERSION,
-            blend_file=os.path.basename(bpy.data.filepath) or None,
-            source_root=resolved_source_root,
-        )
-        stage_manifest(
-            resolved_output_dir,
-            manifest,
-            snapshot_guard=lambda: assert_source_snapshot_stable(
-                mesh_snapshot),
-        )
-        tmp_paths = [payload["filepath"] + ".tmp"
-                     for payload in payload_exports]
-        for tmp in tmp_paths:
-            with contextlib.suppress(OSError):
-                os.remove(tmp)
-        try:
-            for payload, update in zip(payload_exports, payload_updates):
-                if not payload["write"]:
-                    continue
-                tmp = payload["filepath"] + ".tmp"
-                if lod_structure is not None:
-                    lod_levels = [
-                        (level, child, level_objects)
-                        for level, child, level_objects in payload_levels
-                    ]
-                else:
-                    lod_levels = []
-                with _temporary_lod_level_properties(lod_levels):
-                    with _temporary_selection_context(
-                            scene, payload["objects"]):
-                        with _temporary_ue_centimeter_export_state(
-                                payload["objects"]):
-                            _export_selected_fbx(tmp)
-                os.replace(tmp, payload["filepath"])
-                update["written"] = True
+        os.makedirs(resolved_output_dir, exist_ok=True)
+        lod_properties = payload_levels if lod_structure is not None else []
+        implicit_lod0 = aux_objects if lod_structure is not None \
+            else export_objects
+        with payload_lock(filepath, source_root=resolved_source_root):
+            # The preflight above gives an early artist-facing error; this
+            # locked recheck closes the two-writer collision race.
+            _assert_existing_target_uid(filepath, resource_uid)
+            try:
+                with _temporary_passport_properties(
+                        export_objects, passport_text):
+                    with _temporary_lod_level_properties(
+                            lod_properties, implicit_lod0):
+                        with _temporary_selection_context(
+                                scene, export_objects):
+                            with _temporary_ue_centimeter_export_state(
+                                    export_objects):
+                                _export_selected_fbx(tmp)
+                staged = read_fbx_passport(tmp)
+                mesh_model_count = sum(
+                    obj.type == "MESH" for obj in export_objects)
+                if (staged.canonical_text != passport_text
+                        or staged.copy_count != mesh_model_count):
+                    raise ValueError(
+                        "MH_E_PASSPORT_INVALID: staged FBX Carrier B does "
+                        "not match the intended passport/model count")
+                _assert_existing_target_uid(filepath, resource_uid)
+                os.replace(tmp, filepath)
+                payload_updates[0]["written"] = True
                 written = True
-            manifest_path = commit_staged_manifest(resolved_output_dir)
-            manifest_written = True
-        except BaseException:
-            abandon_staged_manifest(resolved_output_dir)
-            raise
-        finally:
-            for tmp in tmp_paths:
+            finally:
                 with contextlib.suppress(OSError):
                     os.remove(tmp)
-        if deferred_materials:
-            resolved_registry_path = (
-                os.path.abspath(bpy.path.abspath(registry_path))
-                if registry_path else None)
-            source_snapshot = scan_source_root(
-                resolved_source_root,
-                registry_path=resolved_registry_path,
-                texture_policy=normalized_policy)
-            deferred_owners = _material_owners(
-                source_snapshot, deferred_materials)
-            deferred_prepared, deferred_warnings = \
-                _prepare_materials_tolerant(
-                    deferred_materials,
-                    resolved_output_dir,
-                    source_root=resolved_source_root,
-                    texture_policy=normalized_policy,
-                    owners=deferred_owners,
-                )
-            prepared_materials.extend(deferred_prepared)
-            material_entries.extend(
-                prepared.resource_row for prepared in deferred_prepared)
-            validation["warnings"].extend(deferred_warnings)
-            validation["warnings"].extend({
-                "code": diagnostic.code,
-                "subjects": ([diagnostic.uid] if diagnostic.uid else []),
-                "message": diagnostic.message,
-            } for diagnostic in source_snapshot.diagnostics)
-        if export_materials:
-            normal_updates, material_write_warnings = \
-                _write_material_resources(
-                    prepared_materials,
-                    source_root=resolved_source_root,
-                    texture_policy=normalized_policy,
-                    dry_run=False,
-                )
-            material_updates = recovery_material_updates + normal_updates
-            validation["warnings"].extend(material_write_warnings)
-
-    if not dry_run:
-        successful_material_uids = {
-            row["uid"] for row in material_updates if row["ok"]}
-        material_entries = [
-            row for row in material_entries
-            if row["uid"] in successful_material_uids]
 
     return {
         "ok": True,
         "filepath": filepath,
         "written": written,
-        "manifest_path": manifest_path,
-        "manifest_written": manifest_written,
         "objects_exported": len(export_objects),
         "payload_updates": payload_updates,
         "resource": resource,
-        "resource_entry": resource_entry,
         "materials": materials,
-        "material_entries": material_entries,
-        "material_updates": material_updates,
-        "materials_exported": (
-            len(prepared_materials) if dry_run else
-            sum(1 for row in material_updates if row["ok"])),
+        "passport": passport,
+        "passport_text": passport_text,
         "validation": validation,
     }

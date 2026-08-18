@@ -1,128 +1,169 @@
-# AMENDMENT — Combined-LOD FBX (решение владельца, обязательное)
+# Combined-LOD FBX — normative v2 profile
 
-Статус: нормативная правка, вносится НЕМЕДЛЕННО в оба фронта (Blender-агент:
-экспортёр/извлечение; UE-агент: FMHFbxBackend §7 и gate C2 — до того, как
-будет написан per-file LOD-путь). Отменяет per-file LOD-схему
-(`.lod<N>.mesh.fbx`, `lods[]` manifest rows) из 05 §3.2/§3.3 и соответствующие
-пункты 07 r3 §7 и ADR-V2 §1.2. Формальное оформление — в пакете
-MH Source Protocol v2 (это schema-значимое изменение; до объявления v2
-действует как approved amendment с migration note).
+Статус: **ACTIVE NOW** как часть MH Source Protocol v2. Этот документ больше
+не является временной поправкой к v1. Его прежние uid8/manifest/per-file LOD
+формулировки superseded Clean Sources CONTRACT и сохранены только как
+миграционный контекст §7.
 
-Мотивация (Decision Log): один mesh-ресурс = ОДИН файл на диске, включая все
-уровни детализации. FMHFbxBackend разбирает файл сам — прежний технический
-блокер (FbxLODGroup недоступен Blender-экспортёру, legacy-фабрике нужен
-per-file путь) снят. Владелец осознанно принимает цену: любая правка любого
-LOD-уровня = полный реэкспорт и полный реимпорт ресурса.
+Мотивация: один static mesh resource = один FBX на диске, включая все уровни
+детализации. Владелец осознанно принимает цену: правка любого LOD полностью
+реэкспортирует и реимпортирует этот ресурс.
 
-## 1. Формат файла
+## 1. Формат payload
 
-`<name>__<uid8>.mesh.fbx` содержит узлы ВСЕХ LOD-уровней ресурса.
+`<sanitized_name>.mesh.fbx` содержит mesh nodes всех LOD-уровней ресурса.
 
-**Принадлежность узла уровню — явный атрибут, НЕ имя:** каждый экспортируемый
-mesh-узел несёт custom property `mh_lod_level : int` (0, 1, 2, …).
-Узел без свойства = уровень 0 (single-LOD ассеты не требуют ничего).
-Имена узлов уровнем НЕ управляют; суффиксы `lod00/lod01` в именах — допустимая
-человеческая конвенция без семантики (маппер их не читает).
+Принадлежность задаёт явная custom property `mh_lod_level : int` на mesh Model
+node. Node без свойства относится к level 0. Имена node, `.lod00` suffix и
+порядок FBX nodes семантики уровня не несут.
 
-- Несколько узлов на уровень — легально (multi-object ресурс на каждом LOD).
-- `UCX_*` и `SOCKET_*` принадлежат уровню 0 всегда; на узлах уровней 1+ —
-  warning `MH_W_LOD_AUX_NODE_IGNORED`, игнор.
-- Разрывы в номерах уровней (0,1,3 без 2) — ошибка `MH_E_LOD_LEVELS_SPARSE`.
-- Материальные слоты уровней 1+ обязаны быть подмножеством слотов уровня 0;
-  нарушение — `MH_E_LOD_SLOT_NOT_IN_BASE`.
+- Несколько mesh nodes на один level легальны.
+- Фактический набор уровней обязан быть dense `0..N`; разрыв даёт
+  `MH_E_LOD_LEVELS_SPARSE`.
+- `UCX_*` и `SOCKET_*` относятся к level 0. Auxiliary node, авторенный внутри
+  level `1+`, игнорируется с `MH_W_LOD_AUX_NODE_IGNORED`.
+- Material slots уровней `1+` обязаны быть подмножеством slots level 0;
+  нарушение даёт `MH_E_LOD_SLOT_NOT_IN_BASE`.
 
-## 2. Blender-сторона (экспортёр/извлечение)
+## 2. Blender authoring и export
 
-- Авторинг не меняется: дагоровская структура `name.lods` → `name.lod00`,
-  `name.lod01`, … (dag4blend-совместимость сохраняется).
-- Экспорт ресурса: объекты ВСЕХ `lodNN`-коллекций контейнера — одним
-  `export_scene.fbx`-вызовом; `mh_lod_level` проставляется объектам из номера
-  их коллекции внутри временного export-контекста (тот же паттерн, что
-  cm-менеджер: проставить → экспортировать → откатить), либо персистентно —
-  решение исполнителя, зафиксировать в коде комментарием.
-- **mesh content_hash покрывает все уровни**: сериализация §9 расширяется —
-  объекты всех LOD-коллекций в общем потоке, порядок: (lod_level asc,
-  затем mh_uid asc), lod_level (uint32) пишется в поток per-object. Это
-  изменение перечня/порядка полей ⇒ **bump тега `mh.meshser:1` → `mh.meshser:2`**
-  (штатный механизм 05: смена тега легально меняет все mesh-хеши; диффы после
-  апгрейда честно покажут UPDATE_GEOMETRY по всем мешам один раз).
-- Правило записи FBX (ADR-V2 1.3) не меняется: правка любого уровня меняет
-  geometry_hash → полный реэкспорт файла (принятая цена).
+Dag4blend-compatible authoring остаётся:
 
-## 3. Manifest / схема
-
-- `lods[]`-строки НЕ эмитятся; поле объявляется deprecated (читатели обязаны
-  падать на нём с `MH_E_DEPRECATED_LOD_ROWS` после миграции — тихо
-  игнорировать нельзя, это признак старого экспорта).
-- `lod_policy` (`authored|generated|nanite`) остаётся в manifest-row/паспорте;
-  `authored` теперь означает «уровни внутри файла».
-- Один `source`, один `content_hash` на mesh-ресурс — как у всех.
-
-## 4. Паспорт (ADR-V2, правка §1.2)
-
-- Per-file поле `mh_lod_level` из паспорта УДАЛЯЕТСЯ (уровень — свойство узла,
-  не файла); правило «один UID = один файл на lod_level» из scanner'а
-  упраздняется — один UID = один файл, точка.
-- В паспорт добавляется `"lod_levels": [0, 1, 2]` — заявленный состав уровней
-  (диагностика полноты при loose-переносе; маппер сверяет с фактическими
-  узлами: расхождение → `MH_E_LOD_PASSPORT_MISMATCH`).
-
-## 5. UE-сторона (07 r3 §7, правка)
-
-- Маппер FMHFbxBackend группирует mesh-узлы по `mh_lod_level` →
-  `SourceModel[N].MeshDescription` одним проходом; screen sizes — авто
-  (bAutoComputeLODScreenSize) в C-этапе, авторские дистанции — ROADMAP.
-- Пункт «каждый .lod<N>.mesh.fbx разбирается тем же маппером» — удалить;
-  `MH_E_LOD_IMPORT_FAILED` как отдельный код не нужен (malformed уровень =
-  malformed ресурс).
-- fbxdump: печатает `mh_lod_level` per-node и сводку уровней — дампы
-  golden-фикстур обновить.
-- C2 LOD-кейс переформулируется: «правка геометрии lod01 в Blender →
-  реэкспорт единого файла → один UPDATE_GEOMETRY ресурса → в UE пересобраны
-  все SourceModel, ассет тот же объект (reimport-in-place)».
-
-## 6. Golden
-
-- LOD-фикстура: контейнер `name.lods` с двумя уровнями, второй уровень —
-  два объекта (multi-object на не-нулевом LOD); негативные: sparse levels,
-  slot-not-in-base, aux-node на LOD1.
-- Мутации: edit_lod1_geometry (ожидание: UPDATE_GEOMETRY, один ресурс);
-  add_lod_level; remove_lod_level.
-
-## 7. Миграция
-
-Production readers остаются строгими: любое поле `lods`, включая пустой массив,
-даёт `MH_E_DEPRECATED_LOD_ROWS`. Legacy-исключение в addon-кодек не добавляется.
-
-Одноразовая внешняя утилита сначала проверяет основной и все объявленные LOD
-payload, сохраняет **точные исходные байты** в non-scanned backup, затем атомарно
-удаляет из активного манифеста только выбранную legacy-строку. Payload-файлы она
-не удаляет и не объединяет. UID намеренно остаётся без владельца до следующего
-действия художника:
-
-```powershell
-python tools/migrate_per_file_lods.py `
-  D:\project\asset\export_manifest.json `
-  10000000-0000-0000-0000-000000000001 `
-  --source-root D:\project
+```text
+<base>.lods
+  <base>.lod00
+  <base>.lod01
+  ...
 ```
 
-После receipt с `next_action = "re-export selected .lods collection with same
-UID"` нужно немедленно экспортировать соответствующую Blender-коллекцию
-`<name>.lods` с тем же ResourceUID. Это создаёт один Combined-LOD FBX и новую
-строгую manifest-row. Старые payload остаются на диске как неавторитетные файлы;
-их очистка — отдельная ручная/VCS-операция после проверки результата.
+Только direct `<base>.lodNN` Collections принадлежат container. Extractor
+валидирует ровно один `lod00`, unique numeric levels и отсутствие gaps. Суффикс
+является Blender authoring convention; в transport metadata он не переносится.
 
-До реэкспорта точный legacy-манифест можно вернуть только если активные prepared
-bytes не изменились и UID всё ещё отсутствует:
+Exporter собирает объекты всех levels и выполняет один FBX export. Перед
+вызовом он временно назначает `mh_lod_level`, затем гарантированно восстанавливает
+исходные Custom Properties в `finally`. Persistent mutation допустима только
+если отдельный implementation decision и field UX это явно примут; default v2
+— временный export context.
 
-```powershell
-python tools/migrate_per_file_lods.py `
-  D:\project\asset\export_manifest.json `
-  10000000-0000-0000-0000-000000000001 `
-  --restore
+Single-LOD Collection экспортируется тем же writer с `lod_levels: [0]`; явная
+node property `0` не обязательна.
+
+## 3. Passport и validation
+
+FBX passport содержит один resource UID и полный заявленный состав:
+
+```json
+{
+  "schema": "mh.fbx_passport",
+  "schema_version": 1,
+  "kind": "static_mesh",
+  "lod_policy": "authored",
+  "lod_levels": [0, 1]
+}
 ```
 
-Существующий backup, pending-marker, неоднозначный UID, выход source за каталог
-владельца/`source_root`, отсутствующий или не-regular payload блокируют миграцию
-до любых изменений активного манифеста.
+Fragment выше не является полным passport; полная required форма — 05 §4.
+Per-file `mh_lod_level` в passport запрещён: level принадлежит node, не файлу.
+Reader группирует mesh nodes по property и сверяет фактический dense set с
+`lod_levels`. Несовпадение даёт `MH_E_LOD_PASSPORT_MISMATCH` и блокирует ресурс.
+
+`lod_policy=authored` означает, что уровни находятся внутри этого FBX.
+`generated`/`nanite` сохраняются как resource policy, но не разрешают reader'у
+игнорировать заявленный/фактический mismatch.
+
+## 4. Durable hash и reader diff
+
+Combined-LOD использует `mh.meshser:2`. Все export-affecting mesh data и
+auxiliary UCX/SOCKET входят в общий semantic stream. Порядок объектов:
+
+```text
+(lod_level ascending, mh_uid ascending)
+```
+
+Для каждого объекта level записывается `uint32`. Auxiliary nodes нормативно
+принадлежат level 0 и также участвуют в durable stream. Поэтому UE reader
+обнаруживает изменение collision/socket geometry как geometry change.
+
+Explicit Blender Export всегда перезаписывает requested FBX независимо от
+hashes. Любое изменение level, material assignment, auxiliary payload или level
+set меняет общий `geometry_hash`; UE startup/watcher сравнивает его с Ledger и
+классифицирует `UPDATE_GEOMETRY`. Semantic no-op тоже пишет FBX, но reader
+классифицирует `NO_CHANGE`. Обновление с `mh.meshser:1` один раз честно даёт
+`UPDATE_GEOMETRY` для всех mesh resources.
+
+## 5. UE import
+
+`FMHFbxBackend` одним проходом:
+
+1. валидирует Carrier B consensus;
+2. читает integer `mh_lod_level` с mesh nodes (missing → 0);
+3. валидирует dense levels, passport set и material-slot subset;
+4. собирает nodes одного уровня в `SourceModel[N].MeshDescription`;
+5. применяет UCX/SOCKET только к level 0;
+6. обновляет существующий StaticMesh in place.
+
+Screen sizes в текущем C-slice вычисляются автоматически через
+`bAutoComputeLODScreenSize`; authored distances — ROADMAP. Отдельный
+`MH_E_LOD_IMPORT_FAILED` не нужен: malformed level делает malformed весь
+resource и операция использует точный validation code причины.
+
+`fbxdump` печатает passport UID, `mh_lod_level` per node и сводку уровней.
+
+## 6. Golden и gates
+
+Позитивная fixture: `<base>.lods` с levels 0 и 1; level 1 содержит два mesh
+objects. Негативные fixtures:
+
+- sparse `0, 1, 3`;
+- slot на LOD1, отсутствующий в LOD0;
+- auxiliary node, авторенный в LOD1;
+- passport `lod_levels` mismatch;
+- divergent Carrier B copies.
+
+Мутации:
+
+- `edit_lod1_geometry` → один `UPDATE_GEOMETRY`, один combined payload;
+- `add_lod_level` → rewrite того же payload и новый passport set;
+- `remove_lod_level` → rewrite того же payload;
+- `edit_ucx_geometry` → rewrite того же payload;
+- no-op explicit export → payload rewritten, reader result `NO_CHANGE`.
+
+C2 field case: правка geometry LOD1 в Blender → re-export единого FBX → один
+resource `UPDATE_GEOMETRY` → UE пересобирает все SourceModels, сохраняя тот же
+asset object (reimport-in-place).
+
+## 7. Migration from legacy per-file LOD
+
+Production resolver не читает `lods[]`, legacy manifests или
+`.lod<N>.mesh.fbx` как resource set. Legacy reader существует только во внешней
+one-shot utility/full v1→v2 migration operator.
+
+Migration discovery emits
+`MH_W_DEPRECATED_PER_LOD_PASSPORT_MIGRATION_REQUIRED`; legacy FBX без passport
+uses `MH_W_LEGACY_PAYLOAD_NO_PASSPORT`. Оба warning разрешены только в migrator.
+
+Безопасная подготовка старой выгрузки обязана:
+
+1. проверить отсутствие pending legacy marker;
+2. найти ровно одну выбранную static-mesh row по UID;
+3. проверить primary и все declared LOD payload как regular files внутри
+   допустимого legacy root;
+4. проверить unrelated rows строгим legacy codec;
+5. ничего не писать при ambiguity, missing/non-file, path escape или backup
+   collision;
+6. сохранить точные исходные bytes в non-scanned backup;
+7. атомарно подготовить состояние к немедленному re-export из Blender;
+8. не удалять legacy payload автоматически;
+9. выдать structured receipt и безопасный restore только пока prepared state
+   не изменился.
+
+Предпочтительный следующий шаг — re-export исходной `<base>.lods` Collection с
+тем же ResourceUID. Он создаёт один clean `<base>.mesh.fbx` с паспортом и
+`mh.meshser:2`. Полная v2 migration после проверки удаляет legacy manifest;
+runtime dual-read после этого не сохраняется.
+
+Существующая `tools/migrate_per_file_lods.py` является внешним переходным
+инструментом для старых локальных выгрузок, а не библиотекой production reader.
+Её receipt/restore safety остаются обязательными до поглощения полной v2
+migration operator.

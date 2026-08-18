@@ -106,6 +106,7 @@ def _inventory(root: str, real_root: str) -> tuple[str, ...]:
             # marker staging by this same operation.
             if (filename in {".mh_source_root.lock", ".mh_manifest_writer.lock"}
                     or filename == "export_manifest.json.tmp"
+                    or ".mh-tmp-" in filename
                     or ".writing." in filename):
                 continue
             path = os.path.normpath(os.path.abspath(os.path.join(

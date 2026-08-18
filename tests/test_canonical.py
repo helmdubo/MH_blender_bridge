@@ -72,6 +72,21 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_LOD_LEVELS_SPARSE",
             "MH_E_LOD_SLOT_NOT_IN_BASE",
             "MH_E_DEPRECATED_LOD_ROWS",
+            "MH_E_NAME_COLLISION_DIFFERENT_UID",
+            "MH_E_PASSPORT_INVALID",
+            "MH_E_DIVERGENT_REVISIONS",
+            "MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED",
+            "MH_E_PAYLOAD_LOCK_TIMEOUT",
+            "MH_E_RESOURCE_NOT_FOUND",
+            "MH_E_SOURCE_INDEX_INVALID",
+            "MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT",
+            "MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED",
+            "MH_E_PENDING_EXPORT_MARKER",
+            "MH_E_V1_MIGRATION_INVALID",
+            "MH_E_V1_MIGRATION_FAILED",
+            "MH_E_V1_MIGRATION_CLEANUP_FAILED",
+            "MH_E_V1_MIGRATION_IDENTITY_MISMATCH",
+            "MH_E_MIGRATION_MESH_COLLECTION_NOT_FOUND",
             "MH_E_NAN_INF_VALUE",
             "MH_E_INVALID_SCALE",
             "MH_E_INVALID_COLLECTION_OFFSET",
@@ -106,10 +121,17 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_W_MATERIAL_SLOT_UNMAPPED",
             "MH_W_RESOURCE_FAR_FROM_ORIGIN",
             "MH_W_UNKNOWN_SHADER_CLASS",
+            "MH_W_PAYLOAD_EXTERNAL_MODIFIED",
+            "MH_W_NO_EMBEDDED_IDENTITY",
+            "MH_W_DEPRECATED_PER_LOD_PASSPORT_MIGRATION_REQUIRED",
+            "MH_W_DUPLICATE_IDENTICAL_PAYLOAD",
+            "MH_W_FBX_CARRIER_READER_UNAVAILABLE",
+            "MH_W_LEGACY_PAYLOAD_NO_PASSPORT",
+            "MH_W_LEGACY_COMPOSITE_V1_MIGRATION_REQUIRED",
         }
     )
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 34
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 14
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 49
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 21
 
 
 def test_error_codes_shape() -> None:
@@ -662,13 +684,13 @@ def test_sanitize_name_stays_total_for_unvalidated_input() -> None:
 
 def test_resource_filename_shape() -> None:
     uid = "2db5574c-3aca-43cc-9ab5-8242403e18cd"
-    assert resource_filename("wall_a", uid, ".mesh.fbx") == "wall_a__2db5574c.mesh.fbx"
+    assert resource_filename("wall_a", uid, ".mesh.fbx") == "wall_a.mesh.fbx"
     assert (
         resource_filename("Window Set A", "f53d93af-94c3-472f-98d0-ff36eb93c417", ".composite")
-        == "window_set_a__f53d93af.composite"
+        == "window_set_a.composite"
     )
-    assert resource_filename("CON", uid, ".composite") == "_con__2db5574c.composite"
-    assert resource_filename("con 1", uid, ".composite") == "con_1__2db5574c.composite"
+    assert resource_filename("CON", uid, ".composite") == "_con.composite"
+    assert resource_filename("con 1", uid, ".composite") == "con_1.composite"
 
 
 def test_resource_filename_validates_the_name_first() -> None:
@@ -679,13 +701,9 @@ def test_resource_filename_validates_the_name_first() -> None:
         assert str(excinfo.value).startswith("MH_E_NON_ASCII_RESOURCE_NAME")
 
 
-def test_resource_filename_validates_uid8() -> None:
-    with pytest.raises(ValueError):
-        resource_filename("wall_a", "2DB5574C-3aca-43cc-9ab5-8242403e18cd", ".mesh.fbx")
-    with pytest.raises(ValueError):
-        resource_filename("wall_a", "2db5574", ".mesh.fbx")
-    with pytest.raises(ValueError):
-        resource_filename("wall_a", "not-a-uid-at-all", ".mesh.fbx")
+def test_resource_filename_never_exposes_uid() -> None:
+    assert resource_filename(
+        "wall_a", "not-a-uid-at-all", ".mesh.fbx") == "wall_a.mesh.fbx"
 
 
 # ==========================================================================

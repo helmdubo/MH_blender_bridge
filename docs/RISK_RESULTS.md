@@ -1,5 +1,13 @@
 # RISK_RESULTS — результаты go/no-go проверок
 
+> **MEASUREMENT EVIDENCE / POLICY PARTLY SUPERSEDED.** Числа axis/FBX transport
+> остаются воспроизводимыми evidence. Все выводы ниже, предлагающие production
+> `hash-skip`, local/shared index или «ничего не писать при no-op», superseded
+> Clean Sources v2. Нормативно каждый Blender Export всегда пишет requested
+> payload (`collision guard -> tmp -> atomic rename -> exit`), а semantic diff
+> выполняет UE startup/watcher против Ledger. Не использовать старые policy
+> verdicts этого файла как implementation requirement.
+
 ## R1. Axis/handedness (D12, §11 схемы)
 
 Гипотеза: `pos_UE = (x·100, −y·100, z·100)`, `quat_UE = (−qx, qy, −qz, qw)` при

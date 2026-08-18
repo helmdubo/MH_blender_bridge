@@ -1,208 +1,203 @@
-# 06 — Final Source Schema v1: execution plan
+# 06 — MH Source Protocol v2 implementation plan
 
-Статус: актуальный план для замороженной Source Schema v1 с совместимым
-post-freeze operational/UX amendment D38 `[fbx-export-materials-toggle]`.
-Amendment не меняет JSON/canonical bytes и не переоткрывает G0. План заменяет
-Blender-последовательность из `02_mvp_plan.md`. Нельзя начинать следующий gate до
-приёмки предыдущего. Крупные срезы проверяет внешний аудитор; field acceptance
-в Blender выполняет owner.
+Статус: active execution plan Clean Sources v2. Имя файла historical. Прежний
+Final v1 plan и ранний v2 план с hash-skip/shared index superseded. Writer и
+reader разводятся жёстко:
 
-## G0 — Schema package и FINAL v1 FREEZE
+```text
+Blender Export: collision guard -> tmp -> atomic rename -> exit
+UE read: startup/watcher scan -> compare with Ledger -> import/diff
+```
 
-Scope: только contracts/docs, без Blender implementation.
+Каждый explicit Export всегда пишет requested payload(s). Writer не делает
+hash-skip, diff, source-root scan, cache/Ledger read или index update. Крупные
+gates принимает внешний аудитор; field acceptance выполняет owner.
 
-Статус: **FINAL v1 FROZEN**. После freeze разрешены wording и operational/UX
-уточнения без изменения on-disk bytes; любое byte-significant изменение создаёт
-новую schema version.
+## V2-G0 — Documentation freeze
 
 Deliverables:
 
-1. Финальная схема `mh.export_manifest` v1: только `resources[]`; kinds
-   `static_mesh`, `composite`, `material`; `material_slots` только у mesh;
-   `source` относительно owning manifest.
-2. Финальная схема `mh.material` v1 и canonical hash rules; подтверждение
-   неизменённой `mh.composite` v1 как единственного источника node graph.
-3. Decision Log: D1 в форме «`.composite` задаёт граф, resolver находит payload
-   по UID, FBX только наполняет target Collection»; свободные repository IDs
-   для `uid-source-resolution` и `material-source-files`; правило «номера
-   присваивает repo, директивы ссылаются на decision slug».
-4. Нормативные resolver, texture-policy, unique-owner, cycle и diagnostics
-   contracts из `04_source_workflows.md`.
-5. Реестр кодов с инвариантой `MH_E_*` blocks / `MH_W_*` never blocks.
-6. Формы и expected outcomes M8/M9 зафиксированы нормативно; физические
-   golden/canonical artifacts регенерируются в G1/G4 без legacy-reader.
+1. Clean Sources v2 — единственный active contract.
+2. Sterile tree, clean filenames, mandatory embedded identity/passports.
+3. Combined-LOD one-resource/one-FBX и `mh.meshser:2`.
+4. Stateless always-write Blender exporters.
+5. Blender lazy cache только для Import Composite.
+6. UE startup/watcher Ledger diff; silent auto-import default, prompt optional.
+7. Frozen v1 и legacy manifests — migration-only.
+
+Gate: JSON examples/Markdown fences/cross-links валидны; legacy terms встречаются
+только в migration/historical context; внешний аудитор принимает doc commit.
+
+## V2-G1 — Carrier B transport proof (blocking)
+
+Матрица реальных FBX:
+
+- один/несколько objects, shared datablock, custom normals;
+- длинная canonical passport JSON;
+- single/Combined-LOD, multi-object LOD1, UCX/SOCKET;
+- оба Blender FBX paths, UE `FMHFbxBackend`, Blender import→re-export;
+- pivots/hierarchy/transforms до/после.
+
+Gate: `mh.fbx_passport` есть на каждой Model node; copies byte-identical;
+malformed/missing/mismatch даёт `MH_E_PASSPORT_INVALID`; carrier не портит
+payload. Fallback carrier требует нового owner/reviewer decision.
+
+## V2-G2 — Stateless explicit writers
+
+### G2.1 Common publication
+
+- strict passport/material/composite codecs;
+- canonical JSON/NFC/path primitives и `mh.meshser:2`;
+- clean-name sanitizer;
+- target-only collision guard;
+- temporary sibling + flush/close + atomic replace + per-file lock;
+- никакого manifest, source scan, hash-skip, diff, Ledger/cache/index update.
+
+Writer computes `geometry_hash` for passport. `descriptor_hash` and semantic
+comparison belong to readers.
+
+### G2.2 Material writer
+
+- каждый Export пишет requested
+  `<Directory>/<sanitized_name>.material`;
+- target same UID → replace, different UID →
+  `MH_E_NAME_COLLISION_DIFFERENT_UID`;
+- `rendinst_simple` fallback;
+- texture paths без copies.
+
+### G2.3 FBX writer
+
+- каждый Export пишет requested `<Directory>/<sanitized_name>.mesh.fbx`;
+- mandatory Carrier B;
+- Combined-LOD одним file/call;
+- `mh.meshser:2` покрывает LOD и UCX/SOCKET;
+- Export Materials ON всегда пишет затронутые materials в requested Directory;
+  OFF даёт zero material writes;
+- Blender state восстанавливается в `finally`.
+
+### G2.4 Composite writer
+
+- каждый Export пишет requested `<sanitized_name>.composite` v2;
+- top-level resource properties;
+- authoring graph validation/cycle check;
+- disk dependencies не сканируются; missing resources обнаруживает reader.
+
+### G2.5 Gates
+
+- source output содержит только primary extensions;
+- повторный semantic no-op физически переписывает target;
+- writer report не содержит diff/skip claim;
+- target collision разных UID даёт zero writes;
+- export того же UID в другой folder разрешён;
+- ON/OFF material writes и отсутствие texture copies;
+- packaged ZIP, Blender integration и внешний audit green.
+
+После G2 UE начинает читать v2. До G2 он не создаёт новый manifest/per-file LOD
+runtime.
+
+## V2-G3 — Blender Import Composite resolver
+
+Deliverables:
+
+1. Первый Import Composite молча сканирует primary payloads под `source_root`.
+2. Optional lazy cache существует только для этого importer.
+3. Cache miss/stale автоматически вызывает scan; artist-facing Rebuild нет.
+4. UID conflict matrix, Fork и unresolved placeholders.
+5. Recursive child composites/FBX/materials always ON.
+6. Resolve Missing наполняет те же Collections/Empties.
+7. Texture exact→basename actualization.
 
 Gate:
 
-- все JSON-примеры документа парсятся, а schema/path/hash rules проходят
-  byte-level review;
-- в нормативных документах нет двух описаний одного v1 поля;
-- внешний аудитор принимает doc commit как **FINAL v1 FREEZE**;
-- после gate любое byte-significant изменение — только `schema_version = 2`.
+- import работает с отсутствующим/удалённым cache без user action;
+- writer никогда не читает/обновляет cache;
+- identical duplicates логируются, divergent revisions блокируются;
+- missing/malformed passport quarantined;
+- semantic import→re-export round-trip;
+- M8/M9/M10 Blender fixtures и внешний audit receipt.
 
-Pre-freeze artifacts не получают production legacy-reader. При необходимости
-разрешён отдельный одноразовый migration script для локальных тестовых файлов.
-
-## G1 — Pure codecs, dependency analyzer и resolver
-
-Scope: Blender-free Python.
+## V2-G4 — UE startup/watcher Ledger reader
 
 Deliverables:
 
-1. Strict codecs для final `mh.export_manifest` v1, `mh.material` v1 и текущего
-   `mh.composite` v1.
-2. Canonical material serialization/hash, включая path normalization:
-   `//`-вход после host expansion; под `source_root` → relative с `/`; вне root
-   → normalized absolute; никаких stored `external_path` flags.
-3. `texture_policy` diagnostics: transitional warning и strict error.
-4. Manifest scanner под единственным `source_root`, без disk cache.
-5. Registry-hint reader (`source_path`, optional `manifest_path`) с обязательным
-   подтверждением полного scan.
-6. Resolver result:
-   `uid -> {payload_path, owning_manifest_path, manifest_row}`; kind/UID/source
-   checks; unique-owner ambiguity error; stale registry warning+fallback.
-7. Dependency analyzer: edges вычисляются из `.composite.nodes[].resource_uid` и
-   mesh `material_slots[].material_uid`, но нигде не сериализуются.
-8. Transaction-source snapshot: pending/changed manifest обнаруживается до
-   apply.
+1. Startup full scan primary payloads.
+2. Default silent auto-import; optional project preference prompt.
+3. Watcher per-file stability и тот же comparison path.
+4. Ledger хранит предыдущие semantic hashes/fingerprint/path/import result вне
+   source tree.
+5. Reader-side classifications: `NO_CHANGE`, geometry/properties/move/conflict.
+6. Batch order:
 
-Tests/gate:
+```text
+textures -> materials -> geometry -> composites -> finalize -> ledger
+```
 
-- internal/external path table, включая Windows drive, UNC, `..`, slash case и
-  absolute-inside-root canonicalization;
-- stale/wrong-kind/out-of-root registry hints;
-- zero/one/two owning manifests;
-- missing payload, UID/kind mismatch, pending marker и manifest mutation;
-- nested graph, deduplication, missing edge и cycle classification;
-- no code path accepts pre-freeze `materials[]` as final v1;
-- pure suite green и внешний audit receipt.
+Gate:
 
-## G2 — Standalone writers
+- explicit no-op export переписывает file, UE даёт `NO_CHANGE` и не пересобирает
+  asset;
+- LOD1/UCX edit даёт один `UPDATE_GEOMETRY` combined resource;
+- metadata-only passport/material change даёт соответствующий reader diff;
+- new valid UID auto-imports silently by default; prompt mode asks;
+- MOVE only when old path gone/new unique;
+- identical duplicate logged; divergent UID revision requires manual choice;
+- existing UE asset reimports in place.
 
-Порядок внутри gate: Material → FBX → Composite.
+## V2-G5 — Migration-only legacy reader
 
-### G2.1 Material writer
+- full no-write preflight frozen v1 tree;
+- uid8 → clean names with collision report;
+- manifest mesh metadata → FBX passport;
+- composite v1/resource properties → composite v2;
+- per-file LOD → Combined-LOD re-export same UID;
+- manifests removed only after payload validation;
+- structured receipt, exact backup, conditional restore;
+- production Blender/UE packages do not import legacy codec.
 
-- отдельный `.material` payload и material resource-row;
-- первый export использует Folder явного Material Export либо каталог FBX при
-  включённом `Export Materials`;
-- повторный export находит unique owner и обновляет существующий source in
-  place, независимо от текущего display-name/Folder;
-- rename payload не переименовывает файл;
-- canonical hash-skip и общий atomic payload+manifest protocol.
+Gate: success fixture плюс pending/collision/escape/missing/non-file/ambiguous
+zero-write refusals; restore только при неизменённом prepared state; migrated
+tree импортируется без manifest.
 
-### G2.2 FBX writer
+## V2-G6 — Crash/concurrency
 
-- один Collection → один FBX;
-- mesh row содержит slot-name → MaterialUID;
-- Boolean `Export Materials`, default ON;
-- ON дедуплицирует материалы выбранной Collection hierarchy: unique owner
-  обновляется in place, UID без owner создаётся рядом с выбранным FBX output;
-- OFF записывает только FBX/mesh-row и не меняет material payload/rows;
-- missing material в OFF/failed-material ветке не блокирует geometry export:
-  structured warning + список для **Export materials…**;
-- runtime order: geometry commit → material upserts; доказанный pending
-  MaterialUID является исключением и recovery'ится первым по fail-closed §9.1;
-- texture files не копируются ни в одной ветке.
+Writer cases: crash before/after replace; two writers same target; target UID
+changes between guard and replace; Blender state rollback. Expected payload is
+old or new valid bytes, never partial.
 
-### G2.3 Composite writer
+Reader cases: startup while files change; watcher duplicate events; stale
+Blender lazy cache; stale/deleted UE Ledger; sync-folder duplicates. Reader
+revalidates current bytes and never resolves divergent revision by mtime.
 
-- одна composite Collection → один `.composite`;
-- node graph только из Empty Collection Instances;
-- external mesh/composite UID обязан разрешаться тем же resolver;
-- cycle и unresolved non-material edge блокируют export;
-- dependency closure не экспортируется и не записывается в manifest.
+## UE-C2+ — Asset/composite vertical slice
 
-Tests/gate:
+Combined-LOD case: edit LOD1 → explicit export rewrites single FBX → startup/
+watcher compares against Ledger → one `UPDATE_GEOMETRY` → all SourceModels
+rebuild in place. A subsequent no-op export rewrites source file but yields
+`NO_CHANGE`.
 
-- upsert сохраняет чужие rows/files;
-- повтор без изменений — hash-skip;
-- staged failure оставляет fail-closed marker и восстанавливается только
-  разрешённым writer;
-- material rename остаётся update одного существующего файла;
-- ON обновляет shared material у существующего owner, а новый material впервые
-  размещает рядом с FBX; OFF даёт warning без material writes;
-- повторяющиеся MaterialUID экспортируются один раз;
-- Blender integration suite green, затем внешний audit receipt.
+Full slice: Blender composite export → UE startup/watcher imports assets → actor
+placement → Blender transform/geometry/material edit → explicit export → reader
+diff → reimport/recompile same UE objects.
 
-## G3 — Recursive importer и UI
+## Final owner acceptance
 
-### G3.1 Import core
+1. Source tree sterile, clean filenames without UID suffix.
+2. Every Export visibly rewrites requested payload; no skip/index status in UX.
+3. FBX Export Materials ON/OFF and no texture copies.
+4. Combined-LOD plus UCX/SOCKET reader diff.
+5. Import Composite first-use silent scan and recursive Resolve Missing.
+6. UE startup silent auto-import; optional prompt mode.
+7. Watcher/Ledger no-op versus semantic changes.
+8. Duplicate/divergent conflicts without mtime winner.
 
-- root `.composite` запускает dependency wave;
-- recursive composites и найденные FBX всегда ON;
-- ResourceUID dedup создаёт одну sibling definition Collection под `GEOMETRY`;
-- materials резолвятся непосредственно по MaterialUID;
-- transactional preflight/apply/rollback использует стабильный manifest set;
-- missing resource сохраняет NodeUID/ResourceUID в красном unresolved Empty;
-- **Resolve Missing** рекурсивно наполняет найденное поддерево в тех же
-  Empty/Collections, не пересоздавая существующие узлы;
-- Blender-import cycle back-edge даёт `MH_W_COMPOSITE_CYCLE` placeholder и не
-  останавливает остальной graph;
+Only owner field receipt completes vertical v2.
 
-### G3.2 UI
+## ROADMAP
 
-- одна N-panel вкладка `MH`;
-- секция `FBX Export`: Collection, Folder, `Export Materials` default ON,
-  Export FBX;
-- секция `Composites`: Import path / Export Collection+Folder, Import/Export;
-- секция `Materials`: Material, first-export Folder, Export Material;
-- `source_root`, optional registry path и `texture_policy` в project settings;
-- быстрый переход **Export materials…** из FBX OFF/failed warning report;
-- нет Bundle Export, Texture Root, `Recursive` или `With dags/FBX` toggles;
-- structured log отображает UID, owning manifest и resolver reason.
+- Structure only import;
+- authored LOD screen distances;
+- Export Selection closure for external transfer;
+- texture mirroring/copy policy.
 
-Tests/gate:
-
-- export → clean Blender import → re-export semantic round-trip;
-- unresolved на любой глубине, поздний Resolve Missing без смены identity;
-- cycle W на Blender-import, E на Blender-export;
-- dagormat present/absent и lossless JSON fallback;
-- packaged ZIP register/unregister и relevant tests проходят последовательно;
-- owner выполняет короткую UX-приёмку, внешний аудитор принимает gate.
-
-## G4 — Golden M8/M9 и field acceptance
-
-### M8 `external_resource`
-
-- `libB` владеет `lamp_set` composite и `lamp_mesh` static mesh; `lamp_set`
-  ссылается на `lamp_mesh`, а root composite из `libA` — на `lamp_set`;
-- resolver находит unique owner через общий `source_root`;
-- без `libB` виден unresolved, возврат + Resolve Missing наполняет тот же target;
-- duplicate UID owner даёт ambiguity error.
-
-### M9 `shared_material`
-
-- один `.material` в `common/materials/`;
-- два mesh resources из разных owning manifests ссылаются на один MaterialUID;
-- материал импортируется один раз;
-- его UPDATE_PROPERTIES не обновляет FBX resources.
-- FBX/ON обновляет существующий owner in place и не создаёт копию;
-- новый UID при ON создаётся рядом с FBX, OFF оставляет material bytes/rows
-  неизменными; texture files не копируются.
-
-Final receipts:
-
-1. Machine-readable expected artifacts/diffs для M8/M9.
-2. Полный pure + Blender suite, packaged-addon smoke и hash артефакта.
-3. Внешний audit полного среза.
-4. Owner field acceptance: реальный проектный `source_root`, dag4blend/dagormat,
-   cross-directory recursion, missing→resolve, shared material и transitional
-   external texture, обе ветки `Export Materials`.
-
-Только после owner acceptance Blender v1 slice считается завершённым. UE watcher,
-asset import и placement compilation продолжаются по актуальным post-Blender
-этапам проекта, используя замороженные v1 source contracts.
-
-## Не входит в этот execution slice
-
-- автоматический dependency-closure export за пределами явно ограниченного
-  material-set выбранной FBX Collection hierarchy;
-- `Structure only` import;
-- ручной `Rename file to match`;
-- disk cache manifest index;
-- texture copying/mirroring implementation;
-- production legacy-reader pre-freeze форматов.
-
-Эти пункты могут войти в ROADMAP только отдельными решениями; они не должны
-расширять v1 on-disk schema молча.
+ROADMAP cannot reintroduce writer diff/index/manifest authority without a new
+normative decision.

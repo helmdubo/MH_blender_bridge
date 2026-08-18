@@ -1,8 +1,16 @@
 # G1 — FBX passport transport (Blender receipt)
 
-Status: **Blender half PASS; full G1 BLOCKED on the independent UE FBX SDK
-read.** This is a spike receipt, not a change to Source Schema v1 and not a
-production codec.
+> **SPIKE EVIDENCE ONLY.** Active contract is Clean Sources v2 in
+> `docs/05_source_schema_v1.md`; Carrier B key is normative
+> `mh.fbx_passport`. This receipt's provisional `mh_fbx_passport`, MESH-only
+> wording and any Source Schema v1 statements are superseded. The measurements
+> remain evidence; full carrier acceptance still requires the independent UE
+> FBX SDK half plus all current Model-node/Combined-LOD/auxiliary cases.
+
+Status of this historical receipt: **Blender half PASS; full G1 BLOCKED on the
+independent UE FBX SDK read.** It is not a production codec.
+Capability probes use `MH_W_FBX_CARRIER_READER_UNAVAILABLE`; production FBX
+import remains fail-closed until the reader exists.
 
 ## Decision from this half-gate
 

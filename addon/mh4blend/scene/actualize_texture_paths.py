@@ -7,39 +7,18 @@ import os
 
 from ..core.material_source import (
     prepare_material_export,
+    validate_material_document,
     write_material_payload_atomic,
-)
-from ..core.source_resolver import (
-    assert_source_snapshot_stable,
-    resolve_resource,
-    scan_source_root,
 )
 from ..core.texture_actualize import (
     actualize_material_document,
     assert_texture_tree_stable,
     capture_texture_tree,
 )
-from .source_manifest import (
-    abandon_staged_manifest,
-    commit_staged_manifest,
-    prepare_manifest_update,
-    stage_manifest,
-)
 
-EXPORTER_VERSION = "0.5.0"
+EXPORTER_VERSION = "0.6.0"
 
 __all__ = ["actualize_texture_paths"]
-
-
-def _material_uids(snapshot) -> tuple[str, ...]:
-    return tuple(sorted(
-        uid for uid, entries in snapshot.owners.items()
-        if any(row.get("kind") == "material" for _manifest, row in entries)))
-
-
-def _guard(resolver_snapshot, texture_snapshot) -> None:
-    assert_source_snapshot_stable(resolver_snapshot)
-    assert_texture_tree_stable(texture_snapshot)
 
 
 def _result_row(uid: str, name: str, slot: str, result) -> dict:
@@ -60,28 +39,19 @@ def _result_row(uid: str, name: str, slot: str, result) -> dict:
 
 
 def actualize_texture_paths(
-        source_root: str, *, registry_path: str | None = None,
-        texture_policy: str = "transitional") -> dict:
-    """Repair uniquely resolvable stale texture paths in all v1 materials.
-
-    Source Schema v1 permits one resource upsert per marker transaction, so a
-    mass run commits materials one at a time. Each commit gets a fresh global
-    manifest snapshot and is guarded by both that snapshot and the immutable
-    basename-index pathname set. A failure therefore leaves at most the
-    current material's ordinary fail-closed recovery marker.
-    """
+        source_root: str, *, texture_policy: str = "transitional") -> dict:
+    """Repair uniquely resolvable paths in every self-contained material."""
     root = os.path.normpath(os.path.abspath(source_root))
     texture_snapshot = capture_texture_tree(root)
-    inventory_snapshot = scan_source_root(
-        root, registry_path=registry_path, texture_policy=texture_policy)
-    uids = _material_uids(inventory_snapshot)
-    assert_source_snapshot_stable(inventory_snapshot)
+    material_paths = tuple(sorted(
+        path for path in texture_snapshot.files
+        if path.lower().endswith(".material")))
     assert_texture_tree_stable(texture_snapshot)
 
     report = {
         "ok": True,
         "source_root": root,
-        "materials_scanned": len(uids),
+        "materials_scanned": len(material_paths),
         "materials_updated": [],
         "fixed": [],
         "ambiguous": [],
@@ -89,28 +59,14 @@ def actualize_texture_paths(
         "exact": 0,
         "warnings": [],
     }
-    for diagnostic in inventory_snapshot.diagnostics:
-        report["warnings"].append({
-            "code": diagnostic.code,
-            "subjects": ([diagnostic.uid] if diagnostic.uid else []),
-            "message": diagnostic.message,
-        })
-
-    for uid in uids:
-        # Earlier iterations legitimately changed manifest bytes. Re-scan so
-        # the next resource transaction starts from the committed authority.
-        snapshot = scan_source_root(
-            root, registry_path=registry_path, texture_policy=texture_policy)
-        if _material_uids(snapshot) != uids:
-            raise RuntimeError(
-                "MH_E_INVALID_EXPORT_MANIFEST: material owner set changed "
-                "during texture actualization")
-        owner = resolve_resource(snapshot, uid, expected_kind="material")
-        if owner is None:  # Defensive: the stable UID inventory says it exists.
-            raise RuntimeError(
-                f"MH_E_UNRESOLVED_EXTERNAL: material {uid} disappeared")
-        document = json.loads(
-            snapshot.payload_bytes[owner.payload_path].decode("utf-8"))
+    for material_path in material_paths:
+        with open(material_path, "rb") as stream:
+            original_bytes = stream.read()
+        document, diagnostics = validate_material_document(
+            json.loads(original_bytes.decode("utf-8")), source_root=root,
+            texture_policy=texture_policy)
+        uid = document["uid"]
+        report["warnings"].extend(row.disk_dict() for row in diagnostics)
         updated, results = actualize_material_document(
             document, texture_snapshot)
         fixes = [(slot, result) for slot, result in results
@@ -125,33 +81,27 @@ def actualize_texture_paths(
                 textures=updated["textures"],
                 source_root=root,
                 texture_policy=texture_policy,
-                target_payload_path=owner.payload_path,
-                owning_manifest_path=owner.owning_manifest_path,
-                existing_source=owner.manifest_row["source"],
+                target_payload_path=material_path,
             )
-            owner_dir = os.path.dirname(owner.owning_manifest_path)
-            manifest = prepare_manifest_update(
-                owner_dir,
-                resources=[prepared.resource_row],
-                exporter_version=EXPORTER_VERSION,
-                source_root=root,
-            )
-            stage_manifest(
-                owner_dir, manifest,
-                snapshot_guard=lambda current=snapshot: _guard(
-                    current, texture_snapshot),
-            )
-            try:
-                write_material_payload_atomic(
-                    prepared,
-                    force=manifest.is_recovery,
-                    source_root=root,
-                    texture_policy=texture_policy,
-                )
-                commit_staged_manifest(owner_dir)
-            except BaseException:
-                abandon_staged_manifest(owner_dir)
-                raise
+            assert_texture_tree_stable(texture_snapshot)
+            def unchanged_material_guard():
+                assert_texture_tree_stable(texture_snapshot)
+                try:
+                    with open(material_path, "rb") as stream:
+                        current = stream.read()
+                except OSError as exc:
+                    raise RuntimeError(
+                        "MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: material "
+                        f"disappeared during actualization: {material_path}"
+                    ) from exc
+                if current != original_bytes:
+                    raise RuntimeError(
+                        "MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: material "
+                        f"changed during actualization: {material_path}")
+            write_material_payload_atomic(
+                prepared, force=True, source_root=root,
+                texture_policy=texture_policy,
+                pre_replace_guard=unchanged_material_guard)
             report["materials_updated"].append(uid)
 
         for slot, result in results:

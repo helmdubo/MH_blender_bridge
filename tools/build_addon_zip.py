@@ -88,8 +88,16 @@ def main() -> None:
     if missing:
         raise SystemExit(
             "extension package is missing: " + ", ".join(sorted(missing)))
-    if "scene/export_bundle.py" in names:
-        raise SystemExit("retired Bundle Export API must not ship")
+    retired_runtime_paths = {
+        "scene/export_bundle.py",
+        "scene/source_manifest.py",
+        "core/source_resolver.py",
+    }
+    shipped_retired = retired_runtime_paths & names
+    if shipped_retired:
+        raise SystemExit(
+            "retired manifest/bundle runtime must not ship: "
+            + ", ".join(sorted(shipped_retired)))
 
     digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     print(f"built: {zip_path}")

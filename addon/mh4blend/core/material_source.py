@@ -1,10 +1,8 @@
-"""Strict, Blender-free ``mh.material`` Source Schema v1 codec.
+"""Strict, Blender-free self-contained ``mh.material`` codec.
 
-The material payload is independent from the owning ``export_manifest.json``.
-This module prepares both documents' material-specific pieces, but deliberately
-does not resolve owners or update manifests: the global source resolver owns
-that decision.  A caller either supplies the resolved payload/manifest pair or
-supplies a directory for first creation.
+MH Source Protocol v2 stores all material identity and metadata in the payload
+itself.  Export directories contain only human-named ``*.material`` files;
+there is no owning manifest or directory-local inventory.
 """
 
 from __future__ import annotations
@@ -18,12 +16,13 @@ import re
 import uuid
 from typing import Any, Iterable
 
-from .canonical import nfc, resource_filename, validate_resource_name
+from .canonical import nfc, sanitize_name, validate_resource_name
 from .materials import (
     MaterialValueError,
     material_content_hash,
     material_disk_payload,
 )
+from .payload_publish_v2 import atomic_publish_bytes
 
 __all__ = [
     "MATERIAL_SCHEMA",
@@ -33,22 +32,16 @@ __all__ = [
     "PreparedMaterialExport",
     "build_material_document",
     "canonicalize_texture_path",
-    "commit_material_payload",
     "first_create_material_path",
     "material_payload_bytes",
-    "material_payload_matches",
-    "material_resource_row",
     "prepare_material_export",
-    "stage_material_payload",
     "validate_material_document",
-    "validate_material_resource_row",
     "write_material_payload_atomic",
 ]
 
 
 MATERIAL_SCHEMA = "mh.material"
 MATERIAL_SCHEMA_VERSION = 1
-MANIFEST_NAME = "export_manifest.json"
 MATERIAL_SUFFIX = ".material"
 TEXTURE_POLICIES = frozenset({"transitional", "strict"})
 _MATERIAL_FIELDS = frozenset({
@@ -89,22 +82,17 @@ class MaterialDiagnostic:
 
 @dataclass(frozen=True)
 class PreparedMaterialExport:
-    """Validated material payload plus its owning-manifest row.
-
-    ``owning_manifest_path`` is explicit even for first creation.  This keeps
-    the transaction seam honest: a higher-level writer stages that manifest,
-    then atomically replaces ``payload_path``, then promotes the marker.
-    """
+    """Validated self-contained material payload and its destination."""
 
     document: dict
-    resource_row: dict
     payload_path: str
-    owning_manifest_path: str
     diagnostics: tuple[MaterialDiagnostic, ...]
 
     @property
     def content_hash(self) -> str:
-        return self.resource_row["content_hash"]
+        return material_content_hash(
+            self.document["shader_class"], self.document["params"],
+            self.document["textures"])
 
 
 def _error(path: str, message: str, code: str = "MH_E_INVALID_MATERIAL_VALUE"):
@@ -393,65 +381,12 @@ def validate_material_document(
     return normalized, diagnostics
 
 
-def _validate_relative_source(source: Any, uid: str) -> str:
-    if not isinstance(source, str) or not source:
-        _error("source", "must be a non-empty relative path")
-    if "\\" in source or _path_flavour(source) is not None:
-        _error("source", "must be relative and use forward slashes")
-    normalized = posixpath.normpath(source)
-    if (normalized != source or normalized in {".", ".."}
-            or normalized.startswith("../")):
-        _error("source", "must be a normalized path without dot segments")
-    expected = f"__{uid[:8]}{MATERIAL_SUFFIX}"
-    if not posixpath.basename(source).endswith(expected):
-        _error("source", f"basename must end with {expected!r}")
-    return source
-
-
-def material_resource_row(document: dict, source: str) -> dict:
-    """Build the exact manifest row for a validated material document."""
-    uid = _validate_uid(document.get("uid"))
-    name = _validate_name(document.get("name"))
-    source = _validate_relative_source(source, uid)
-    return {
-        "uid": uid,
-        "kind": "material",
-        "name": name,
-        "source": source,
-        "content_hash": material_content_hash(
-            document["shader_class"], document["params"],
-            document["textures"]),
-    }
-
-
-def validate_material_resource_row(row: Any) -> dict:
-    fields = {"uid", "kind", "name", "source", "content_hash"}
-    if not isinstance(row, dict):
-        _error("resource", "material row must be an object")
-    if set(row) != fields:
-        _error("resource", "material row must contain exactly "
-               + ", ".join(sorted(fields)))
-    uid = _validate_uid(row["uid"], "resource.uid")
-    if row["kind"] != "material":
-        _error("resource.kind", "must be 'material'")
-    name = _validate_name(row["name"])
-    source = _validate_relative_source(row["source"], uid)
-    content_hash = row["content_hash"]
-    if (not isinstance(content_hash, str)
-            or not re.fullmatch(r"xxh3:[0-9a-f]{16}", content_hash)):
-        _error("resource.content_hash", "must be xxh3 plus 16 lowercase hex digits")
-    return {
-        "uid": uid, "kind": "material", "name": name,
-        "source": source, "content_hash": content_hash,
-    }
-
-
 def first_create_material_path(
         output_dir: str | os.PathLike, name: str, uid: str) -> str:
     uid = _validate_uid(uid)
     name = _validate_name(name)
     return os.path.abspath(os.path.join(
-        os.fspath(output_dir), resource_filename(name, uid, MATERIAL_SUFFIX)))
+        os.fspath(output_dir), sanitize_name(name) + MATERIAL_SUFFIX))
 
 
 def _assert_under_source_root(path: str, source_root: str | os.PathLike,
@@ -468,21 +403,37 @@ def _assert_under_source_root(path: str, source_root: str | os.PathLike,
     return absolute
 
 
+def _assert_material_target_owner(
+        payload_path: str, expected_uid: str, *,
+        source_root: str | os.PathLike, texture_policy: str) -> None:
+    """Reject an occupied clean path that does not prove expected identity."""
+    if not os.path.exists(payload_path):
+        return
+    try:
+        with open(payload_path, "rb") as stream:
+            existing_raw = json.loads(stream.read().decode("utf-8"))
+        existing, _ = validate_material_document(
+            existing_raw, source_root=source_root,
+            texture_policy=texture_policy)
+    except (OSError, UnicodeError, json.JSONDecodeError,
+            MaterialSourceError) as exc:
+        raise MaterialSourceError(
+            "MH_E_PASSPORT_INVALID", "payload_path",
+            "occupied material path has no valid embedded identity") from exc
+    if existing["uid"] != expected_uid:
+        raise MaterialSourceError(
+            "MH_E_NAME_COLLISION_DIFFERENT_UID", "payload_path",
+            f"clean filename is owned by {existing['uid']}")
+
+
 def prepare_material_export(
         *, uid: str, name: str, shader_class: str, params: dict,
         textures: dict, source_root: str | os.PathLike,
         texture_policy: str = "transitional",
         output_dir: str | os.PathLike | None = None,
-        target_payload_path: str | os.PathLike | None = None,
-        owning_manifest_path: str | os.PathLike | None = None,
-        existing_source: str | None = None) -> PreparedMaterialExport:
-    """Prepare first-create or resolved-owner material output.
-
-    For an existing UID, the global resolver supplies ``target_payload_path``
-    and ``owning_manifest_path`` (and may supply the manifest row's
-    ``existing_source`` for an exact ownership check).  Without a target this
-    function performs first-create naming in ``output_dir``.
-    """
+        target_payload_path: str | os.PathLike | None = None) \
+        -> PreparedMaterialExport:
+    """Prepare a clean-name first export or a UID-resolved in-place update."""
     document, diagnostics = build_material_document(
         uid=uid, name=name, shader_class=shader_class, params=params,
         textures=textures, source_root=source_root,
@@ -493,36 +444,17 @@ def prepare_material_export(
             raise ValueError(
                 "output_dir is required for first material export")
         payload_path = first_create_material_path(output_dir, name, uid)
-        manifest_path = (os.path.join(os.fspath(output_dir), MANIFEST_NAME)
-                         if owning_manifest_path is None
-                         else os.fspath(owning_manifest_path))
     else:
         payload_path = os.path.abspath(os.fspath(target_payload_path))
-        if owning_manifest_path is None:
-            raise ValueError(
-                "owning_manifest_path is required for an existing material")
-        manifest_path = os.fspath(owning_manifest_path)
 
     payload_path = _assert_under_source_root(
         payload_path, source_root, "payload_path")
-    manifest_path = _assert_under_source_root(
-        manifest_path, source_root, "owning_manifest_path")
-    if os.path.basename(manifest_path) != MANIFEST_NAME:
-        _error("owning_manifest_path", f"must name {MANIFEST_NAME}")
-    manifest_dir = os.path.dirname(manifest_path)
-    try:
-        source = os.path.relpath(payload_path, manifest_dir).replace("\\", "/")
-    except ValueError as exc:
-        raise MaterialSourceError(
-            "MH_E_INVALID_RESOURCE_SOURCE", "source", str(exc)) from exc
-    source = _validate_relative_source(source, uid)
-    if existing_source is not None and source != existing_source:
-        _error("source", "resolved payload path does not match owning manifest row",
-               "MH_E_INVALID_RESOURCE_SOURCE")
-    row = material_resource_row(document, source)
+    _assert_material_target_owner(
+        payload_path, uid, source_root=source_root,
+        texture_policy=texture_policy)
     return PreparedMaterialExport(
-        document=document, resource_row=row, payload_path=payload_path,
-        owning_manifest_path=manifest_path, diagnostics=diagnostics)
+        document=document, payload_path=payload_path,
+        diagnostics=diagnostics)
 
 
 def material_payload_bytes(document: dict) -> bytes:
@@ -530,65 +462,25 @@ def material_payload_bytes(document: dict) -> bytes:
         document, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
 
 
-def material_payload_matches(
-        path: str | os.PathLike, document: dict, *,
-        source_root: str | os.PathLike,
-        texture_policy: str = "transitional") -> bool:
-    try:
-        with open(path, "rb") as stream:
-            existing = json.loads(stream.read().decode("utf-8"))
-        normalized, _diagnostics = validate_material_document(
-            existing, source_root=source_root, texture_policy=texture_policy)
-    except (OSError, UnicodeError, json.JSONDecodeError, MaterialSourceError):
-        return False
-    return normalized == document
-
-
-def stage_material_payload(
-        prepared: PreparedMaterialExport, *, temp_path: str | None = None) -> str:
-    """Write a complete sibling temp payload; do not replace stable output."""
-    path = temp_path or prepared.payload_path + ".tmp"
-    os.makedirs(os.path.dirname(prepared.payload_path), exist_ok=True)
-    try:
-        with open(path, "wb") as stream:
-            stream.write(material_payload_bytes(prepared.document))
-            stream.flush()
-            os.fsync(stream.fileno())
-    except Exception:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        raise
-    return path
-
-
-def commit_material_payload(
-        prepared: PreparedMaterialExport, staged_path: str | os.PathLike) -> str:
-    """Atomically replace the stable payload from a completely written temp."""
-    os.replace(os.fspath(staged_path), prepared.payload_path)
-    return prepared.payload_path
-
-
 def write_material_payload_atomic(
         prepared: PreparedMaterialExport, *, force: bool = False,
         source_root: str | os.PathLike,
-        texture_policy: str = "transitional") -> bool:
-    """Replace one payload atomically; caller owns manifest marker ordering.
+        texture_policy: str = "transitional",
+        pre_replace_guard=None) -> bool:
+    """Replace one self-contained payload atomically.
 
-    Returns ``True`` when bytes were replaced and ``False`` for a semantic +
-    metadata hash-skip.  Recovery callers pass ``force=True``.
+    An explicit artist export always writes. ``force`` remains a compatibility
+    keyword for callers from the pre-v2 prototype and has no effect.
     """
-    if not force and material_payload_matches(
-            prepared.payload_path, prepared.document,
-            source_root=source_root, texture_policy=texture_policy):
-        return False
-    staged = stage_material_payload(prepared)
-    try:
-        commit_material_payload(prepared, staged)
-    finally:
-        try:
-            os.remove(staged)
-        except OSError:
-            pass
+    def guarded_owner_check():
+        _assert_material_target_owner(
+            prepared.payload_path, prepared.document["uid"],
+            source_root=source_root, texture_policy=texture_policy)
+        if pre_replace_guard is not None:
+            pre_replace_guard()
+
+    atomic_publish_bytes(
+        prepared.payload_path, material_payload_bytes(prepared.document),
+        source_root=source_root,
+        pre_replace_guard=guarded_owner_check)
     return True

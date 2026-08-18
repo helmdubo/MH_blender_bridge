@@ -23,18 +23,10 @@ class MHAddonPreferences(bpy.types.AddonPreferences):
         default="transitional",
     )
 
-    registry_path: bpy.props.StringProperty(
-        name="Source Registry (from UE)",
-        description="Optional UID and shader-class hint registry from UE",
-        subtype="FILE_PATH",
-        default="",
-    )
-
     def draw(self, _context):
         layout = self.layout
         layout.prop(self, "source_root")
         layout.prop(self, "texture_policy")
-        layout.prop(self, "registry_path")
 
 
 def get_prefs(context):
