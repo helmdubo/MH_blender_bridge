@@ -1,33 +1,13 @@
 #include "Diagnostics/MHFbxDumpCommandlet.h"
 
-#include "Canonical/MHCanonical.h"
-#include "Containers/StringConv.h"
 #include "Diagnostics/MHFbxDump.h"
 #include "Dom/JsonObject.h"
-#include "Dom/JsonValue.h"
 #include "Misc/Parse.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHFbxDumpCommandlet)
 
 DEFINE_LOG_CATEGORY_STATIC(LogMHFbxDump, Display, All);
 
-namespace
-{
-bool SerializeCanonical(const TSharedPtr<FJsonObject>& Root, FString& OutJson, FString& OutError)
-{
-    TArray<uint8> Bytes;
-    const UE::MimirComposite::FMHCanonicalResult Result =
-        UE::MimirComposite::MHCanonicalJsonBytes(MakeShared<FJsonValueObject>(Root), Bytes);
-    if (!Result.bSuccess)
-    {
-        OutError = Result.Error;
-        return false;
-    }
-    const FUTF8ToTCHAR Converted(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()), Bytes.Num());
-    OutJson = FString(Converted.Length(), Converted.Get());
-    return true;
-}
-}
 
 UMHFbxDumpCommandlet::UMHFbxDumpCommandlet(const FObjectInitializer& ObjectInitializer)
     : Super(ObjectInitializer)
@@ -80,7 +60,7 @@ int32 UMHFbxDumpCommandlet::Main(const FString& Params)
     }
 
     FString Json;
-    if (!SerializeCanonical(Root, Json, Error))
+    if (!MH::FbxDump::SerializeCanonical(Root, Json, Error))
     {
         UE_LOG(LogMHFbxDump, Error, TEXT("MH_E_FBX_DUMP_SERIALIZE_FAILED: %s"), *Error);
         return 1;

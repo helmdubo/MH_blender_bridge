@@ -17,4 +17,10 @@ MIMIRCOMPOSITEEDITOR_API bool BuildDom(
     bool bFull,
     TSharedPtr<FJsonObject>& OutRoot,
     FString& OutError);
+
+/** Serializes a dump DOM as the canonical one-line JSON string. */
+MIMIRCOMPOSITEEDITOR_API bool SerializeCanonical(
+    const TSharedPtr<FJsonObject>& Root,
+    FString& OutJson,
+    FString& OutError);
 }

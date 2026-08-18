@@ -21,8 +21,13 @@ public class MimirCompositeEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new[]
             {
+                "DesktopPlatform",
                 "Json",
+                "MessageLog",
                 "Projects",
+                "Slate",
+                "SlateCore",
+                "ToolMenus",
                 "UnrealEd"
             });
 

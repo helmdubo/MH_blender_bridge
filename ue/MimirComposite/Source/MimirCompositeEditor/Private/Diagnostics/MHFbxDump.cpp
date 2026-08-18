@@ -706,3 +706,23 @@ bool MH::FbxDump::BuildDom(
     OutRoot = Root;
     return true;
 }
+
+bool MH::FbxDump::SerializeCanonical(
+    const TSharedPtr<FJsonObject>& Root,
+    FString& OutJson,
+    FString& OutError)
+{
+    OutJson.Reset();
+    OutError.Reset();
+    TArray<uint8> Bytes;
+    const UE::MimirComposite::FMHCanonicalResult Result =
+        UE::MimirComposite::MHCanonicalJsonBytes(MakeShared<FJsonValueObject>(Root), Bytes);
+    if (!Result.bSuccess)
+    {
+        OutError = Result.Error;
+        return false;
+    }
+    const FUTF8ToTCHAR Converted(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()), Bytes.Num());
+    OutJson = FString(Converted.Length(), Converted.Get());
+    return true;
+}

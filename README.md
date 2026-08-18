@@ -205,3 +205,19 @@ payload'ы под `source_root`, рекурсивно раскрывает `comp
 resolve-статус каждого ресурса (unresolved / duplicate / divergent / cycle).
 В редакторе `.composite` v2 импортируется фабрикой в read-only
 `UMHCompositeAsset` (Content Browser → Import).
+
+### Полевые тесты в UI редактора
+
+- **Импорт `.composite`:** обычный **Import** в Content Browser (или
+  drag&drop файла). Фабрика зарегистрирована на расширение `composite`,
+  редактор сам выбирает наш импортёр и создаёт read-only `UMHCompositeAsset`;
+  правый клик по ассету → **Reimport** обновляет его in place.
+- **Tools → Mimir → Mimir FBX Dump…** — выбрать FBX: паспорт Carrier B
+  (identity либо причина карантина) уходит в Message Log «Mimir», а
+  канонические `*.summary.json` / `*.full.json` — в `Saved/MimirDumps/`.
+- **Tools → Mimir → Mimir Composite Dump…** — выбрать `.composite`, затем
+  каталог `source_root` (Cancel = слепок одного файла): иерархия, resolve-
+  статусы, дубликаты/divergent/циклы — в Message Log «Mimir».
+- Кастомный импорт геометрии `.mesh.fbx` в UStaticMesh (наш `FMHFbxBackend`,
+  Combined-LOD, слоты из паспорта) — gate C2; до него FBX в Content Browser
+  импортируется штатным UE-импортёром.
