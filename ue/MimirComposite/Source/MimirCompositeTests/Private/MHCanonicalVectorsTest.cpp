@@ -6,6 +6,7 @@
 #include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
+#include "Misc/Paths.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -210,6 +211,25 @@ bool RunPathContractTable(FAutomationTestBase& Test)
 		bPassed = false;
 	}
 	return bPassed;
+}
+
+bool RunInt64QuantizationBoundary(FAutomationTestBase& Test)
+{
+	int64 Quantized = 0;
+	const FMHCanonicalResult UpperOverflow = MHQuantize(9223372036854775808.0, 0, Quantized);
+	if (UpperOverflow.bSuccess)
+	{
+		Test.AddError(TEXT("quantization must reject the exclusive int64 upper boundary"));
+		return false;
+	}
+
+	const FMHCanonicalResult LowerBoundary = MHQuantize(-9223372036854775808.0, 0, Quantized);
+	if (!LowerBoundary.bSuccess || Quantized != MIN_int64)
+	{
+		Test.AddError(TEXT("quantization must accept the inclusive int64 lower boundary"));
+		return false;
+	}
+	return true;
 }
 
 } // namespace Private
@@ -453,6 +473,7 @@ bool FMHCanonicalVectorsTest::RunTest(const FString& Parameters)
 		bPassed = false;
 	}
 	bPassed &= Private::RunPathContractTable(*this);
+	bPassed &= Private::RunInt64QuantizationBoundary(*this);
 	return bPassed;
 }
 

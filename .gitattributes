@@ -1,3 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 golden/canonical_vectors.json text eol=lf
+golden/fbxdump/*.json text eol=lf

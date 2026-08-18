@@ -945,7 +945,9 @@ FMHCanonicalResult MHQuantize(const double Value, const int32 Precision, int64& 
 		Scale *= 10.0;
 	}
 	const double Scaled = Value * Scale;
-	if (!FMath::IsFinite(Scaled) || Scaled < static_cast<double>(MIN_int64) || Scaled > static_cast<double>(MAX_int64))
+	constexpr double Int64MinInclusive = -9223372036854775808.0;
+	constexpr double Int64MaxExclusive = 9223372036854775808.0;
+	if (!FMath::IsFinite(Scaled) || Scaled < Int64MinInclusive || Scaled >= Int64MaxExclusive)
 	{
 		return FMHCanonicalResult::Failure(TEXT("MH_E_NAN_INF_VALUE: quantized value overflows int64"));
 	}

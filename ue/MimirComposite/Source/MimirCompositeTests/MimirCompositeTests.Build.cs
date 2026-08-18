@@ -4,6 +4,7 @@ public class MimirCompositeTests : ModuleRules
 {
     public MimirCompositeTests(ReadOnlyTargetRules Target) : base(Target)
     {
+        // C0 tests exercise editor-only import backends and headless commandlets.
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         bWarningsAsErrors = true;
 
