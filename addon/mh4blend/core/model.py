@@ -96,8 +96,9 @@ class Composite:
     uid: str
     name: str
     nodes: list  # list[Node]
-    # Asset-level bag (§2, QUESTION-9) — goes to the manifest resource entry,
-    # NOT into the .composite file and never inherited by nodes.
+    # Asset-level bag. mh.composite v2 stores it in the payload itself; it is
+    # never inherited by nodes. Frozen v1 readers obtain it from the owning
+    # manifest row instead.
     properties: dict = field(default_factory=dict)
 
     def filename(self) -> str:
@@ -168,17 +169,29 @@ def _nfc_tree(value):
     return value
 
 
-def composite_disk_dict(composite: Composite) -> dict:
-    """On-disk `*.composite` document (§3, §8.1): fixed key order, nodes
-    sorted by node_uid, quantized decimals."""
+def composite_disk_dict(composite: Composite, *, schema_version: int = 2) -> dict:
+    """Build one ``mh.composite`` payload with deterministic key/node order.
+
+    Production writers emit v2, where the payload owns resource-level
+    ``properties``. ``schema_version=1`` remains only as a frozen-fixture and
+    migration seam; it reproduces the accepted v1 bytes without rewriting the
+    old golden corpus.
+    """
+    if schema_version not in {1, 2} or isinstance(schema_version, bool):
+        raise ValueError("composite schema_version must be integer 1 or 2")
     nodes = sorted(composite.nodes, key=lambda n: n.node_uid.encode("utf-8"))
-    return {
+    document = {
         "schema": "mh.composite",
-        "schema_version": 1,
+        "schema_version": schema_version,
         "uid": composite.uid,
         "name": nfc(composite.name),
-        "nodes": [node.disk_dict() for node in nodes],
     }
+    if schema_version == 2:
+        # Present even when empty: this is the v2 authority boundary, not an
+        # optional manifest-style decoration.
+        document["properties"] = _nfc_tree(composite.properties)
+    document["nodes"] = [node.disk_dict() for node in nodes]
+    return document
 
 
 def manifest_disk_dict(manifest: Manifest, composite_hashes: dict) -> dict:
@@ -210,8 +223,6 @@ def manifest_disk_dict(manifest: Manifest, composite_hashes: dict) -> dict:
             "source": composite.filename(),
             "content_hash": composite_hashes[composite.uid],
         }
-        if composite.properties:
-            entry["properties"] = _nfc_tree(composite.properties)
         resources.append(entry)
     resources.sort(key=lambda r: r["uid"].encode("utf-8"))
 
@@ -246,6 +257,7 @@ def manifest_disk_dict(manifest: Manifest, composite_hashes: dict) -> dict:
     }
 
 
-def composite_hash(composite: Composite) -> str:
+def composite_hash(composite: Composite, *, schema_version: int = 2) -> str:
     """content_hash of a composite — over the exact disk dict (§8)."""
-    return composite_content_hash(composite_disk_dict(composite))
+    return composite_content_hash(composite_disk_dict(
+        composite, schema_version=schema_version))

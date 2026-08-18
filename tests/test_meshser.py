@@ -32,6 +32,31 @@ def quad(material_index=0):
     )
 
 
+def empty_record():
+    return MeshObjectRecord(
+        transform=IDENTITY,
+        positions=[],
+        polygons=[],
+        split_normals=None,
+        use_smooth=[],
+    )
+
+
+def test_meshser2_multi_lod_immutable_cross_language_vector():
+    items = [
+        (0, "00000000-0000-4000-8000-000000000001", empty_record()),
+        (2, "00000000-0000-4000-8000-000000000002", empty_record()),
+    ]
+    stream = serialize_mesh_resource(items)
+
+    assert stream[:20] == (
+        b"\x0c\x00\x00\x00mh.meshser:2\x02\x00\x00\x00")
+    assert int.from_bytes(stream[20:24], "little") == 0
+    assert int.from_bytes(stream[177:181], "little") == 2
+    assert len(stream) == 334
+    assert mesh_content_hash(items) == "xxh3:74365800b27bfad2"
+
+
 def test_deterministic_and_sensitive_to_geometry():
     a = mesh_content_hash([("uid-a", quad())])
     assert a == mesh_content_hash([("uid-a", quad())])
@@ -61,14 +86,31 @@ def test_slot_rename_and_uv_layer_rename_change_hash():
     assert mesh_content_hash([("u", renamed_uv)]) != base
 
 
-def test_object_order_is_by_uid_not_input_order():
+def test_object_order_is_by_lod_then_uid_not_input_order():
     a, b = quad(), quad()
     b.positions[0] = (0.5, 0.0, 0.0)
-    forward = serialize_mesh_resource([("aaa", a), ("bbb", b)])
-    backward = serialize_mesh_resource([("bbb", b), ("aaa", a)])
+    forward = serialize_mesh_resource([(0, "aaa", a), (1, "bbb", b)])
+    backward = serialize_mesh_resource([(1, "bbb", b), (0, "aaa", a)])
     assert forward == backward
-    swapped_uids = serialize_mesh_resource([("bbb", a), ("aaa", b)])
-    assert swapped_uids != forward
+    same_level = serialize_mesh_resource([(0, "aaa", a), (0, "bbb", b)])
+    swapped_uids = serialize_mesh_resource([(0, "bbb", a), (0, "aaa", b)])
+    assert swapped_uids != same_level
+
+
+def test_lod_level_is_encoded_and_two_tuple_means_lod0():
+    record = quad()
+    assert (serialize_mesh_resource([("uid", record)])
+            == serialize_mesh_resource([(0, "uid", record)]))
+    assert (serialize_mesh_resource([(1, "uid", record)])
+            != serialize_mesh_resource([(0, "uid", record)]))
+
+
+def test_lod_level_requires_uint32():
+    import pytest
+
+    for invalid in (-1, 2 ** 32, 1.0, True):
+        with pytest.raises(ValueError, match="uint32"):
+            serialize_mesh_resource([(invalid, "uid", quad())])
 
 
 def test_transform_participates_in_hash():

@@ -166,8 +166,9 @@ mesh `material_slots`; их денормализованная копия не �
 uid -> { payload_path, owning_manifest_path, manifest_row }
 ```
 
-Именно manifest-row несёт `content_hash`, `material_slots` и будущие поля вроде
-`lods[]`; наличие одного payload-файла не завершает resolve.
+Именно manifest-row несёт `content_hash`, `material_slots` и `lod_policy`;
+наличие одного payload-файла без owning row не завершает resolve. По D40 все
+authored LOD находятся внутри этого единственного FBX; `lods[]` deprecated.
 
 Standalone writer делает UID-upsert и сохраняет несвязанные строки и файлы.
 Он не удаляет orphan-строки и не меняет `kind` существующего UID. Payload и

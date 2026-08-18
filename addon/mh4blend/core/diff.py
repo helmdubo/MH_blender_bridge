@@ -43,6 +43,13 @@ def _canon_nodes(composite_doc):
     return {node["node_uid"]: node for node in canon["nodes"]}
 
 
+def _composite_properties(resource_row, composite_doc):
+    """Select the versioned authority while v1 and v2 coexist."""
+    if composite_doc.get("schema_version") == 2:
+        return composite_doc.get("properties")
+    return resource_row.get("properties", {})
+
+
 def _diff_nodes(old_doc, new_doc):
     """Node-space diff of one composite present in both versions."""
     old_nodes = _canon_nodes(old_doc)
@@ -103,10 +110,9 @@ def diff_bundles(old_manifest, new_manifest, old_composites, new_composites,
         if moved:
             flags.append("MOVE")
         kind = new.get("kind")
-        if old.get("properties") != new.get("properties"):
-            # asset-level bag (§2, Q9) — any resource kind
-            flags.append("UPDATE_PROPERTIES")
         if kind == "static_mesh":
+            if old.get("properties") != new.get("properties"):
+                flags.append("UPDATE_PROPERTIES")
             if old.get("content_hash") != new.get("content_hash"):
                 flags.append("UPDATE_GEOMETRY")
             if (old.get("material_slots") != new.get("material_slots")
@@ -118,6 +124,9 @@ def diff_bundles(old_manifest, new_manifest, old_composites, new_composites,
                     or old.get("shader_class") != new.get("shader_class")):
                 flags.append("UPDATE_PROPERTIES")
         elif kind == "composite":
+            if _composite_properties(old, old_composites[uid]) != \
+                    _composite_properties(new, new_composites[uid]):
+                flags.append("UPDATE_PROPERTIES")
             node_ops = _diff_nodes(old_composites[uid], new_composites[uid])
             if node_ops:
                 nodes[uid] = dict(sorted(node_ops.items()))

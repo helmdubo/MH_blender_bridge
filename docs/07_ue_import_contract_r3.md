@@ -127,9 +127,15 @@ Message Log/отчёте.
   в файле, читаются и сверяются с manifest-row (uid/kind/name); расхождение →
   `MH_W_PASSPORT_MANIFEST_MISMATCH`. Отсутствие паспорта в v1 — норма, без
   warning'а. (Обязательность и authority — v2, вне скоупа.)
-- **LOD**: `lods[]` → каждый `.lod<N>.mesh.fbx` тем же маппером в
-  `SourceModel[N]`; malformed LOD — ошибка ресурса. `lod_policy=nanite` →
-  Nanite settings on.
+- **LOD (Combined-LOD amendment)**: один FBX содержит все уровни. Маппер
+  группирует render mesh-узлы по integer custom property `mh_lod_level`
+  (`absent` = 0 только для single-LOD) и за один проход собирает
+  `SourceModel[N].MeshDescription`. Имена узлов и `.lodNN` suffix не читаются.
+  Заявленный в passport `lod_levels` обязан совпасть с фактическим множеством,
+  иначе `MH_E_LOD_PASSPORT_MISMATCH`. Sparse levels и slot уровня 1+, которого
+  нет в LOD0, делают malformed весь mesh-ресурс. `lod_policy=nanite` → Nanite
+  settings on; authored screen sizes в ROADMAP, пока
+  `bAutoComputeLODScreenSize=true`.
 - **Reimport-in-place (нормативно)**: обновление существующего SM через
   CreateMeshDescription/CommitMeshDescription/Build/PostEditChange в тот же
   объект; пересоздание ассета запрещено.
@@ -141,8 +147,9 @@ Message Log/отчёте.
 ### 7.1 `mh.fbxdump` (диагностика, вне frozen-контракта)
 
 Commandlet `-run=MHFbxDump <file> [--full]`: сырой граф сцены → канонический
-JSON (узлы, TRS как записаны, counts, имена слотов, наличие паспорт-properties,
-заявленные axis/units/exporter). Числа квантованы; полные массивы — `--full`.
+JSON (узлы, TRS как записаны, counts, имена слотов, наличие passport-properties,
+`mh_lod_level` каждого mesh-узла и сводка уровней, заявленные
+axis/units/exporter). Числа квантованы; полные массивы — `--full`.
 Дампы golden-фикстур коммитятся как expected-спецификация маппера. Тег
 `mh.fbxdump:1`.
 
@@ -206,7 +213,9 @@ Blender-исполнителя.
   ревью подтверждает отсутствие зависимостей от способа резолва выше seam.
   *Внешний аудит.*
 - **C2**: фабрики/Ledger/builders; FMHFbxBackend; mesh-parity против legacy
-  (допуски явные); LOD-кейс (правка lod01 → один UPDATE, lod00 skip);
+  (допуски явные); Combined-LOD кейс (правка геометрии lod01 в Blender →
+  реэкспорт единого FBX → один `UPDATE_GEOMETRY` ресурса → в UE пересобраны все
+  SourceModel, UStaticMesh обновлён in place);
   повторный импорт → пустой дифф, ноль пересозданий; именованные кейсы:
   «material-only edit» (один UPDATE_PROPERTIES, ноль geometry-операций,
   MI тот же объект), «MI drift при неизменном файле» (LOCAL_EDIT, файл не

@@ -69,6 +69,9 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_EMPTY_RESOURCE_COLLECTION",
             "MH_E_NESTED_COMPOSITE_COLLECTION",
             "MH_E_INVALID_LOD_HIERARCHY",
+            "MH_E_LOD_LEVELS_SPARSE",
+            "MH_E_LOD_SLOT_NOT_IN_BASE",
+            "MH_E_DEPRECATED_LOD_ROWS",
             "MH_E_NAN_INF_VALUE",
             "MH_E_INVALID_SCALE",
             "MH_E_INVALID_COLLECTION_OFFSET",
@@ -88,12 +91,15 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_FOREIGN_UID_OWNER",
             "MH_E_NAME_MISMATCH",
             "MH_E_TARGET_NAME_COLLISION",
-            "MH_E_LOD_IMPORT_FAILED",
+            "MH_E_LOD_PASSPORT_MISMATCH",
             "MH_W_REGISTRY_INVALID",
             "MH_W_REGISTRY_STALE",
             "MH_W_COMPOSITE_CYCLE",
             "MH_W_UNRESOLVED_RESOURCE",
             "MH_W_TEXTURE_OUTSIDE_ROOT",
+            "MH_W_TEXTURE_BASENAME_AMBIGUOUS",
+            "MH_W_TEXTURE_NOT_FOUND",
+            "MH_W_LOD_AUX_NODE_IGNORED",
             "MH_W_MATERIAL_NOT_FOUND",
             "MH_W_MATERIAL_PAYLOAD_FALLBACK",
             "MH_W_MATERIAL_SLOT_NOT_FOUND",
@@ -102,8 +108,8 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_W_UNKNOWN_SHADER_CLASS",
         }
     )
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 31
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 11
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 34
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 14
 
 
 def test_error_codes_shape() -> None:

@@ -115,14 +115,27 @@ def _node(uid, kind, name, resource_uid=None, parent_uid=None,
     return row
 
 
-def _document(uid, name, nodes):
-    return {
+def _document(uid, name, nodes, *, schema_version=1, properties=None):
+    document = {
         "schema": "mh.composite",
-        "schema_version": 1,
+        "schema_version": schema_version,
         "uid": uid,
         "name": name,
         "nodes": nodes,
     }
+    if schema_version == 2:
+        document["properties"] = properties or {}
+        # Match the normative v2 writer order even though JSON object order is
+        # not part of import semantics.
+        document = {
+            "schema": document["schema"],
+            "schema_version": document["schema_version"],
+            "uid": document["uid"],
+            "name": document["name"],
+            "properties": document["properties"],
+            "nodes": document["nodes"],
+        }
+    return document
 
 
 def _write_json(path, document):
@@ -412,7 +425,7 @@ def test_unchanged_composite_hash_skips_payload_rewrite(
     assert payload_path.read_bytes() == original_payload
 
 
-def test_manifest_only_composite_change_skips_payload_rewrite(
+def test_composite_property_change_rewrites_v2_payload_not_manifest_row(
         tmp_path, monkeypatch):
     definition = bpy.data.collections.new("root_cmp")
     definition[PROP_UID] = ROOT_UID
@@ -423,22 +436,29 @@ def test_manifest_only_composite_change_skips_payload_rewrite(
     definition["mh_p_category"] = "building"
     module = importlib.import_module("mh4blend.scene.export_composite")
     writes = []
-    monkeypatch.setattr(
-        module, "_write_json_atomic",
-        lambda path, document: writes.append((path, document)))
+    real_write = module._write_json_atomic
+
+    def record_write(path, document):
+        writes.append((path, document))
+        return real_write(path, document)
+
+    monkeypatch.setattr(module, "_write_json_atomic", record_write)
 
     updated = export_composite_collection(
         definition, str(tmp_path), source_root=str(tmp_path))
 
-    assert updated["written"] is False
+    assert updated["written"] is True
     assert updated["manifest_written"] is True
-    assert writes == []
-    assert payload_path.read_bytes() == original_payload
+    assert len(writes) == 1
+    assert payload_path.read_bytes() != original_payload
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    assert payload["properties"] == {"category": "building"}
     manifest = json.loads(
         (tmp_path / "export_manifest.json").read_text(encoding="utf-8"))
     row = next(item for item in manifest["resources"]
                if item["uid"] == ROOT_UID)
-    assert row["properties"] == {"category": "building"}
+    assert "properties" not in row
 
 
 def test_missing_owned_composite_payload_is_rebuilt(tmp_path):
@@ -694,8 +714,41 @@ def test_dependency_import_builds_collections_instances_and_custom_props(tmp_pat
         == (1.0, 2.0, 3.0)
 
     source = json.loads(root_path.read_text(encoding="utf-8"))
-    round_trip = composite_disk_dict(extract_composite(root))
+    round_trip = composite_disk_dict(
+        extract_composite(root), schema_version=1)
     assert round_trip == source
+
+
+def test_v2_recursive_import_uses_payload_properties_and_roundtrips(tmp_path):
+    root_path = _write_dependency_fixture(tmp_path)
+    manifest_path = tmp_path / "export_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    child_row = next(row for row in manifest["resources"]
+                     if row["uid"] == CHILD_UID)
+    child_path = tmp_path / child_row["source"]
+
+    root_doc = json.loads(root_path.read_text(encoding="utf-8"))
+    root_doc["schema_version"] = 2
+    root_doc["properties"] = {"category": "payload", "seed": 7}
+    root_doc = {key: root_doc[key] for key in (
+        "schema", "schema_version", "uid", "name", "properties", "nodes")}
+    child_doc = json.loads(child_path.read_text(encoding="utf-8"))
+    child_doc["schema_version"] = 2
+    child_doc["properties"] = {"category": "child"}
+    child_doc = {key: child_doc[key] for key in (
+        "schema", "schema_version", "uid", "name", "properties", "nodes")}
+    _write_json(root_path, root_doc)
+    _write_json(child_path, child_doc)
+
+    report = import_composite_file(str(root_path), import_fbx=False)
+    assert report["ok"]
+    root = _collection_by_uid(ROOT_UID)
+    child = _collection_by_uid(CHILD_UID)
+    assert root["mh_p_category"] == "payload"
+    assert root["mh_p_seed"] == 7
+    assert child["mh_p_category"] == "child"
+    assert composite_disk_dict(extract_composite(root)) == root_doc
+    assert composite_disk_dict(extract_composite(child)) == child_doc
 
 
 def test_reimport_updates_same_collection_and_node_in_place(tmp_path):
@@ -945,6 +998,36 @@ def test_unknown_composite_node_field_is_rejected_before_mutation(tmp_path):
     assert bpy.data.scenes.get("GEOMETRY") is None
 
 
+@pytest.mark.parametrize("mutate,code", [
+    (lambda document: document.update(schema_version=3),
+     "MH_E_UNKNOWN_SCHEMA_VERSION"),
+    (lambda document: document.update(future_field=True),
+     "MH_E_INVALID_COMPOSITE"),
+    (lambda document: document.__setitem__("properties", []),
+     "MH_E_INVALID_COMPOSITE"),
+])
+def test_v2_composite_envelope_is_strict_before_mutation(
+        tmp_path, mutate, code):
+    path = tmp_path / _source_name(ROOT_UID, "composite", "strict")
+    document = _document(
+        ROOT_UID, "root_cmp", [], schema_version=2, properties={})
+    mutate(document)
+    _write_json(path, document)
+    with pytest.raises(CompositeImportError, match=code):
+        import_composite_file(str(path), import_fbx=False)
+    assert bpy.data.scenes.get("GEOMETRY") is None
+
+
+def test_v1_rejects_v2_properties_field_before_mutation(tmp_path):
+    path = tmp_path / _source_name(ROOT_UID, "composite", "strict_v1")
+    document = _document(ROOT_UID, "root_cmp", [])
+    document["properties"] = {}
+    _write_json(path, document)
+    with pytest.raises(CompositeImportError, match="MH_E_INVALID_COMPOSITE"):
+        import_composite_file(str(path), import_fbx=False)
+    assert bpy.data.scenes.get("GEOMETRY") is None
+
+
 def _write_material_integrity_fixture(tmp_path):
     mesh_row = _resource(
         MESH_UID, "static_mesh", "mesh_a",
@@ -962,6 +1045,137 @@ def _write_material_integrity_fixture(tmp_path):
     material_path = tmp_path / _source_name(
         MATERIAL_UID, "material", "slot_mat")
     return root_path, material_path
+
+
+def _write_texture_actualize_fixture(tmp_path, textures):
+    mesh_row = _resource(
+        MESH_UID, "static_mesh", "mesh_a",
+        _source_name(MESH_UID, "static_mesh", "missing"))
+    mesh_row["material_slots"] = [
+        {"slot_name": "slot_mat", "material_uid": MATERIAL_UID}]
+    material = {
+        "uid": MATERIAL_UID,
+        "name": "slot_mat",
+        "shader_class": "rendinst_simple",
+        "params": {"sides": 0},
+        "textures": textures,
+    }
+    root_path = _write_mesh_import_fixture(
+        tmp_path, [mesh_row], [material])
+    material_path = tmp_path / _source_name(
+        MATERIAL_UID, "material", "slot_mat")
+    return root_path, material_path, tmp_path / "export_manifest.json"
+
+
+def test_composite_import_actualizes_unique_texture_and_manifest_hash(
+        tmp_path):
+    root_path, material_path, manifest_path = \
+        _write_texture_actualize_fixture(
+            tmp_path, {"tex0": "old/library/wall_d.tif"})
+    candidate = tmp_path / "textures" / "walls" / "wall_d.tif"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_bytes(b"texture")
+
+    report = import_composite_file(
+        str(root_path), source_root=str(tmp_path), import_fbx=False)
+
+    document = json.loads(material_path.read_text(encoding="utf-8"))
+    assert document["textures"] == {
+        "tex0": "textures/walls/wall_d.tif"}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    material_row = next(
+        row for row in manifest["resources"] if row["uid"] == MATERIAL_UID)
+    assert material_row["content_hash"] == material_content_hash(
+        document["shader_class"], document["params"], document["textures"])
+    actualization = report["texture_actualization"]
+    assert actualization["materials_scanned"] == 1
+    assert actualization["materials_updated"] == [MATERIAL_UID]
+    assert [(row["slot"], row["resolved_path"])
+            for row in actualization["fixed"]] == [
+                ("tex0", "textures/walls/wall_d.tif")]
+    assert actualization["ambiguous"] == []
+    assert actualization["missing"] == []
+
+
+def test_composite_import_ambiguous_and_missing_textures_are_warnings(
+        tmp_path):
+    root_path, material_path, manifest_path = \
+        _write_texture_actualize_fixture(tmp_path, {
+            "tex0": "old/library/wall_n.tif",
+            "tex1": "old/library/missing_a.tif",
+        })
+    for directory in ("library_a", "library_b"):
+        path = tmp_path / directory / "wall_n.tif"
+        path.parent.mkdir()
+        path.write_bytes(directory.encode("ascii"))
+    stable_material = material_path.read_bytes()
+    stable_manifest = manifest_path.read_bytes()
+
+    report = import_composite_file(
+        str(root_path), source_root=str(tmp_path), import_fbx=False)
+
+    assert material_path.read_bytes() == stable_material
+    assert manifest_path.read_bytes() == stable_manifest
+    actualization = report["texture_actualization"]
+    assert actualization["materials_updated"] == []
+    assert actualization["ambiguous"][0]["candidates"] == [
+        "library_a/wall_n.tif", "library_b/wall_n.tif"]
+    assert actualization["missing"][0]["basename"] == "missing_a.tif"
+    warning_codes = {row["code"] for row in report["warnings"]}
+    assert "MH_W_TEXTURE_BASENAME_AMBIGUOUS" in warning_codes
+    assert "MH_W_TEXTURE_NOT_FOUND" in warning_codes
+
+
+def test_second_composite_import_sees_actualized_path_as_stable_exact(
+        tmp_path):
+    root_path, material_path, manifest_path = \
+        _write_texture_actualize_fixture(
+            tmp_path, {"tex0": "old/library/wall_d.tif"})
+    candidate = tmp_path / "textures" / "wall_d.tif"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"texture")
+    first = import_composite_file(
+        str(root_path), source_root=str(tmp_path), import_fbx=False)
+    assert first["texture_actualization"]["materials_updated"] == [
+        MATERIAL_UID]
+    stable_material = material_path.read_bytes()
+    stable_manifest = manifest_path.read_bytes()
+
+    second = import_composite_file(
+        str(root_path), source_root=str(tmp_path), import_fbx=False)
+
+    assert material_path.read_bytes() == stable_material
+    assert manifest_path.read_bytes() == stable_manifest
+    assert second["texture_actualization"]["materials_updated"] == []
+    assert second["texture_actualization"]["fixed"] == []
+    assert second["texture_actualization"]["exact"] == 1
+
+
+def test_texture_actualization_failure_precedes_all_blender_mutation(
+        tmp_path, monkeypatch):
+    root_path, material_path, _manifest_path = \
+        _write_texture_actualize_fixture(
+            tmp_path, {"tex0": "old/library/wall_d.tif"})
+    candidate = tmp_path / "textures" / "wall_d.tif"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"texture")
+    stable_payload = material_path.read_bytes()
+    baseline = _blend_id_state()
+    module = importlib.import_module("mh4blend.scene.import_composite")
+
+    def fail_payload(*_args, **_kwargs):
+        raise RuntimeError("injected texture actualization failure")
+
+    monkeypatch.setattr(module, "write_material_payload_atomic", fail_payload)
+    with pytest.raises(
+            RuntimeError, match="injected texture actualization failure"):
+        import_composite_file(
+            str(root_path), source_root=str(tmp_path), import_fbx=False)
+
+    assert material_path.read_bytes() == stable_payload
+    assert (tmp_path / "export_manifest.json.tmp").is_file()
+    assert _blend_id_state() == baseline
+    assert bpy.data.scenes.get("GEOMETRY") is None
 
 
 @pytest.mark.parametrize(("field", "value", "code"), [

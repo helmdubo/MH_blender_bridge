@@ -17,6 +17,7 @@ from ..core.source_resolver import (
     scan_source_root,
 )
 from ..core.uid import ensure_uid
+from ..scene.actualize_texture_paths import actualize_texture_paths
 from ..scene.export_composite import export_composite_collection
 from ..scene.export_fbx import export_fbx_collection
 from ..scene.export_material import (
@@ -197,7 +198,7 @@ class MH_OT_export_material(bpy.types.Operator):
             manifest = prepare_manifest_update(
                 owner_dir,
                 resources=[prepared.resource_row],
-                exporter_version="0.4.1",
+                exporter_version="0.5.0",
                 blend_file=os.path.basename(bpy.data.filepath) or None,
                 source_root=source_root,
             )
@@ -239,6 +240,45 @@ class MH_OT_export_material(bpy.types.Operator):
                 f"{report['path']} — see {LOG_TEXT_NAME}")
         else:
             self.report({"INFO"}, f"Material exported: {report['path']}")
+        return {"FINISHED"}
+
+
+class MH_OT_actualize_texture_paths(bpy.types.Operator):
+    bl_idname = "mh.actualize_texture_paths"
+    bl_label = "Actualize Texture Paths"
+    bl_description = (
+        "Repair stale paths in exported .material files when exactly one "
+        "matching texture basename exists under Project Source Root")
+
+    def execute(self, context):
+        try:
+            prefs = prefs_mod.get_prefs(context)
+            source_root = _directory(prefs.source_root)
+            if not os.path.isdir(source_root):
+                raise ValueError(
+                    f"Project Source Root does not exist: {source_root}")
+            registry_path = (
+                os.path.abspath(bpy.path.abspath(prefs.registry_path))
+                if prefs.registry_path else None)
+            report = actualize_texture_paths(
+                source_root,
+                registry_path=registry_path,
+                texture_policy=prefs.texture_policy,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("actualize_texture_paths", {"ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("actualize_texture_paths", report)
+        warning_count = len(report["ambiguous"]) + len(report["missing"])
+        message = (
+            f"Texture paths: {len(report['fixed'])} fixed, "
+            f"{len(report['ambiguous'])} ambiguous, "
+            f"{len(report['missing'])} missing")
+        if warning_count:
+            self.report({"WARNING"}, message + f" — see {LOG_TEXT_NAME}")
+        else:
+            self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
@@ -285,6 +325,7 @@ class MH_OT_import_composite(bpy.types.Operator):
 CLASSES = (
     MH_OT_export_fbx,
     MH_OT_export_material,
+    MH_OT_actualize_texture_paths,
     MH_OT_export_composite,
     MH_OT_import_composite,
 )

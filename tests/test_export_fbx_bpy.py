@@ -149,7 +149,8 @@ def test_exports_selected_collection_joined_and_restores_host_state(tmp_path):
     assert "SiblingMesh" not in imported_names
 
 
-def test_dag4blend_lods_exports_frozen_authored_payloads_roundtrip(tmp_path):
+def test_dag4blend_lods_exports_one_combined_authored_payload_roundtrip(
+        tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     root, _lod0, _lod1, object0, object1 = _build_lod_collection()
     object0.location = (1.25, -2.0, 3.5)
@@ -163,12 +164,15 @@ def test_dag4blend_lods_exports_frozen_authored_payloads_roundtrip(tmp_path):
     assert report["ok"]
     assert report["objects_exported"] == 2
     primary = Path(report["filepath"])
-    lod1_path = Path(report["payload_updates"][1]["filepath"])
     assert primary.name.startswith("sovmod_garage_shell_a_type_a__")
     assert primary.name.endswith(".mesh.fbx")
-    assert lod1_path.name.endswith(".lod1.mesh.fbx")
-    assert primary.is_file() and lod1_path.is_file()
-    assert len(list(tmp_path.glob("*.mesh.fbx"))) == 2
+    assert primary.is_file()
+    assert len(list(tmp_path.glob("*.mesh.fbx"))) == 1
+    assert report["payload_updates"] == [{
+        "level": 0,
+        "filepath": str(primary),
+        "written": True,
+    }]
     manifest = json.loads(
         (tmp_path / "export_manifest.json").read_text(encoding="utf-8"))
     assert len(manifest["resources"]) == 1
@@ -177,22 +181,18 @@ def test_dag4blend_lods_exports_frozen_authored_payloads_roundtrip(tmp_path):
     assert row["source"] == primary.name
     assert row["content_hash"] == report["resource_entry"]["content_hash"]
     assert row["lod_policy"] == "authored"
-    assert row["lods"] == [{
-        "level": 1,
-        "source": lod1_path.name,
-        "content_hash": report["resource_entry"]["lods"][0]["content_hash"],
-    }]
+    assert "lods" not in row
+    assert "mh_lod_level" not in object0
+    assert "mh_lod_level" not in object1
     assert object0.matrix_basis == original0
     assert object1.matrix_basis == original1
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.fbx(filepath=str(primary))
-    assert bpy.data.objects.get("GarageLOD0Mesh") is not None
-    assert bpy.data.objects.get("GarageLOD1Mesh") is None
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.fbx(filepath=str(lod1_path))
-    assert bpy.data.objects.get("GarageLOD0Mesh") is None
-    assert bpy.data.objects.get("GarageLOD1Mesh") is not None
+    imported0 = bpy.data.objects.get("GarageLOD0Mesh")
+    imported1 = bpy.data.objects.get("GarageLOD1Mesh")
+    assert imported0 is not None and imported0["mh_lod_level"] == 0
+    assert imported1 is not None and imported1["mh_lod_level"] == 1
 
 
 def test_dag4blend_duplicate_suffix_and_path_metadata_use_plain_base(tmp_path):
@@ -210,8 +210,7 @@ def test_dag4blend_duplicate_suffix_and_path_metadata_use_plain_base(tmp_path):
     assert report["resource_entry"]["source"].startswith(
         "sovmod_garage_shell_a_type_a__")
     assert report["resource_entry"]["lod_policy"] == "authored"
-    assert report["resource_entry"]["lods"][0]["source"].endswith(
-        ".lod1.mesh.fbx")
+    assert "lods" not in report["resource_entry"]
 
 
 def test_dag4blend_valid_custom_name_overrides_semantic_resource_name(tmp_path):
@@ -250,13 +249,12 @@ def test_dag4blend_lods_allows_subset_and_exports_deduplicated_material_union(
     assert len(report["material_entries"]) == 2
 
 
-def test_dag4blend_lods_hash_skip_and_changed_level_are_per_payload(
+def test_dag4blend_lods_hash_skip_and_any_level_change_rewrites_combined_fbx(
         tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     root, _lod0, _lod1, _object0, object1 = _build_lod_collection()
     initial = export_fbx_collection(root, tmp_path, source_root=tmp_path)
     primary = Path(initial["filepath"])
-    lod1_path = Path(initial["payload_updates"][1]["filepath"])
     calls = []
 
     def write_fbx(path):
@@ -274,23 +272,21 @@ def test_dag4blend_lods_hash_skip_and_changed_level_are_per_payload(
     object1.data.update()
     changed = export_fbx_collection(root, tmp_path, source_root=tmp_path)
     assert changed["written"] is True
-    assert changed["resource_entry"]["content_hash"] == \
+    assert changed["resource_entry"]["content_hash"] != \
         initial["resource_entry"]["content_hash"]
-    assert calls == [str(lod1_path) + ".tmp"]
+    assert calls == [str(primary) + ".tmp"]
     assert changed["payload_updates"] == [
-        {"level": 0, "filepath": str(primary), "written": False},
-        {"level": 1, "filepath": str(lod1_path), "written": True},
+        {"level": 0, "filepath": str(primary), "written": True},
     ]
-    assert len(list(tmp_path.glob("*.mesh.fbx"))) == 2
+    assert len(list(tmp_path.glob("*.mesh.fbx"))) == 1
 
 
-def test_dag4blend_lods_repairs_missing_higher_payload(tmp_path, monkeypatch):
+def test_dag4blend_lods_repairs_missing_combined_payload(tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     root, _lod0, _lod1, _object0, _object1 = _build_lod_collection()
     initial = export_fbx_collection(root, tmp_path, source_root=tmp_path)
     primary = Path(initial["filepath"])
-    lod1_path = Path(initial["payload_updates"][1]["filepath"])
-    lod1_path.unlink()
+    primary.unlink()
     calls = []
 
     def rebuild(path):
@@ -301,37 +297,29 @@ def test_dag4blend_lods_repairs_missing_higher_payload(tmp_path, monkeypatch):
     repaired = export_fbx_collection(root, tmp_path, source_root=tmp_path)
 
     assert repaired["written"] is True
-    assert calls == [str(lod1_path) + ".tmp"]
-    assert primary.is_file()
-    assert lod1_path.read_bytes() == b"repaired higher LOD"
+    assert calls == [str(primary) + ".tmp"]
+    assert primary.read_bytes() == b"repaired higher LOD"
 
 
-def test_dag4blend_lods_recovery_forces_every_declared_payload(
+def test_dag4blend_lods_recovery_forces_combined_payload(
         tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     root, _lod0, _lod1, object0, object1 = _build_lod_collection()
     initial = export_fbx_collection(root, tmp_path, source_root=tmp_path)
     primary = Path(initial["filepath"])
-    lod1_path = Path(initial["payload_updates"][1]["filepath"])
     object0.data.vertices[0].co.x += 0.25
     object1.data.vertices[0].co.x += 0.5
     object0.data.update()
     object1.data.update()
-    failed_calls = []
+    def fail_combined(_path):
+        raise RuntimeError("injected combined LOD failure")
 
-    def fail_second(path):
-        failed_calls.append(path)
-        if path == str(lod1_path) + ".tmp":
-            raise RuntimeError("injected LOD1 failure")
-        Path(path).write_bytes(b"interrupted LOD0")
-
-    monkeypatch.setattr(export_fbx_module, "_export_selected_fbx", fail_second)
-    with pytest.raises(RuntimeError, match="injected LOD1 failure"):
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", fail_combined)
+    with pytest.raises(RuntimeError, match="injected combined LOD failure"):
         export_fbx_collection(root, tmp_path, source_root=tmp_path)
     marker = tmp_path / "export_manifest.json.tmp"
     assert marker.is_file()
-    assert failed_calls == [
-        str(primary) + ".tmp", str(lod1_path) + ".tmp"]
 
     recovery_calls = []
 
@@ -343,10 +331,9 @@ def test_dag4blend_lods_recovery_forces_every_declared_payload(
     recovered = export_fbx_collection(root, tmp_path, source_root=tmp_path)
 
     assert recovered["written"] is True
-    assert recovery_calls == [
-        str(primary) + ".tmp", str(lod1_path) + ".tmp"]
+    assert recovery_calls == [str(primary) + ".tmp"]
     assert [update["written"] for update in recovered["payload_updates"]] == [
-        True, True]
+        True]
     assert not marker.exists()
 
 
@@ -403,9 +390,102 @@ def test_dag4blend_lods_rejects_malformed_or_leaf_selection(tmp_path, case):
         root.children.link(duplicate)
         _mesh_object("DuplicateLOD0Mesh", duplicate)
 
-    with pytest.raises(ValueError, match="MH_E_INVALID_LOD_HIERARCHY"):
+    expected_code = (
+        "MH_E_LOD_LEVELS_SPARSE"
+        if case in {"missing_lod0", "lod_gap"}
+        else "MH_E_INVALID_LOD_HIERARCHY"
+    )
+    with pytest.raises(ValueError, match=expected_code):
         export_fbx_collection(
             selected, tmp_path, dry_run=True, source_root=tmp_path)
+
+
+def test_dag4blend_lod_slot_must_exist_in_lod0(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, _lod0, _lod1, object0, object1 = _build_lod_collection()
+    base_material = bpy.data.materials.new("BaseOnlySlot")
+    higher_material = bpy.data.materials.new("HigherOnlySlot")
+    base_material.dagormat.shader_class = "rendinst_simple"
+    higher_material.dagormat.shader_class = "rendinst_simple"
+    object0.data.materials.append(base_material)
+    object1.data.materials.append(higher_material)
+
+    with pytest.raises(ValueError, match="MH_E_LOD_SLOT_NOT_IN_BASE"):
+        export_fbx_collection(
+            root, tmp_path, dry_run=True, source_root=tmp_path)
+
+
+def test_dag4blend_higher_lod_aux_mesh_is_ignored_with_warning(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, _lod0, lod1, _object0, _object1 = _build_lod_collection()
+    _mesh_object("UCX_GarageCollision", lod1)
+
+    report = export_fbx_collection(
+        root, tmp_path, dry_run=True, source_root=tmp_path)
+
+    assert report["ok"]
+    assert report["objects_exported"] == 2
+    warning = next(
+        row for row in report["validation"]["warnings"]
+        if row["code"] == "MH_W_LOD_AUX_NODE_IGNORED")
+    assert "UCX_GarageCollision" in warning["message"]
+
+
+def test_dag4blend_lod0_aux_nodes_export_but_do_not_change_geometry_hash(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, lod0, _lod1, _object0, _object1 = _build_lod_collection()
+    collision = _mesh_object("UCX_GarageCollision", lod0)
+    socket = bpy.data.objects.new("SOCKET_Roof", None)
+    lod0.objects.link(socket)
+    seen = []
+
+    def inspect_and_write(path):
+        seen.append((
+            {obj.name for obj in bpy.context.selected_objects},
+            collision["mh_lod_level"],
+            socket["mh_lod_level"],
+        ))
+        Path(path).write_bytes(b"combined geometry and aux")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", inspect_and_write)
+    with_aux = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+    hash_with_aux = with_aux["resource_entry"]["content_hash"]
+
+    lod0.objects.unlink(collision)
+    lod0.objects.unlink(socket)
+    without_aux = export_fbx_collection(
+        root, tmp_path, dry_run=True, source_root=tmp_path)
+
+    assert seen == [({
+        "GarageLOD0Mesh", "GarageLOD1Mesh",
+        "UCX_GarageCollision", "SOCKET_Roof",
+    }, 0, 0)]
+    assert with_aux["objects_exported"] == 4
+    assert hash_with_aux == without_aux["resource_entry"]["content_hash"]
+    assert "mh_lod_level" not in collision
+    assert "mh_lod_level" not in socket
+
+
+def test_dag4blend_temporary_lod_properties_restore_exactly(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, _lod0, _lod1, object0, object1 = _build_lod_collection()
+    object0["mh_lod_level"] = "artist-authored-value"
+    seen = []
+
+    def inspect_and_write(path):
+        seen.append((object0["mh_lod_level"], object1["mh_lod_level"]))
+        Path(path).write_bytes(b"combined LOD payload")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", inspect_and_write)
+    export_fbx_collection(root, tmp_path, source_root=tmp_path)
+
+    assert seen == [(0, 1)]
+    assert object0["mh_lod_level"] == "artist-authored-value"
+    assert "mh_lod_level" not in object1
 
 
 def test_reports_direct_texture_paths_and_never_copies_textures(tmp_path):
@@ -742,7 +822,7 @@ def test_hash_skip_snapshot_race_blocks_before_marker(tmp_path, monkeypatch):
     assert row["content_hash"] == "xxh3:1111111111111111"
 
 
-def test_metadata_only_mesh_update_skips_fbx_and_updates_manifest(
+def test_metadata_only_mesh_update_rewrites_fbx_and_updates_manifest(
         tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     selected = bpy.data.collections.new("MetadataOnlyMesh")
@@ -751,30 +831,209 @@ def test_metadata_only_mesh_update_skips_fbx_and_updates_manifest(
     initial = export_fbx_collection(
         selected, tmp_path, source_root=tmp_path)
     payload = Path(initial["filepath"])
-    original_mtime = payload.stat().st_mtime_ns
     original_hash = initial["resource_entry"]["content_hash"]
     selected["mh_p_category"] = "architecture"
     calls = []
 
-    def unexpected_fbx(path):
+    def rewrite_metadata(path):
         calls.append(path)
-        Path(path).write_bytes(b"unexpected metadata payload rewrite")
+        Path(path).write_bytes(b"metadata-carrying payload rewrite")
 
     monkeypatch.setattr(
-        export_fbx_module, "_export_selected_fbx", unexpected_fbx)
+        export_fbx_module, "_export_selected_fbx", rewrite_metadata)
     updated = export_fbx_collection(
         selected, tmp_path, source_root=tmp_path)
 
     assert updated["resource_entry"]["content_hash"] == original_hash
-    assert updated["written"] is False
+    assert updated["written"] is True
     assert updated["manifest_written"] is True
-    assert calls == []
-    assert payload.stat().st_mtime_ns == original_mtime
+    assert calls == [str(payload) + ".tmp"]
+    assert payload.read_bytes() == b"metadata-carrying payload rewrite"
     manifest = json.loads(
         Path(updated["manifest_path"]).read_text(encoding="utf-8"))
     row = next(item for item in manifest["resources"]
                if item["uid"] == selected["mh_uid"])
     assert row["properties"] == {"category": "architecture"}
+
+
+@pytest.mark.parametrize("mutation", ["material_uid", "slot_name"])
+def test_material_slot_descriptor_mutation_rewrites_fbx(
+        tmp_path, monkeypatch, mutation):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    selected = bpy.data.collections.new("MaterialDescriptorMesh")
+    bpy.context.scene.collection.children.link(selected)
+    obj = _mesh_object("MaterialDescriptorObject", selected)
+    material = bpy.data.materials.new("DescriptorMaterial")
+    material.dagormat.shader_class = "rendinst_simple"
+    obj.data.materials.append(material)
+    initial = export_fbx_collection(
+        selected, tmp_path, source_root=tmp_path)
+    payload = Path(initial["filepath"])
+    initial_hash = initial["resource_entry"]["content_hash"]
+
+    if mutation == "material_uid":
+        material["mh_uid"] = "11111111-2222-4333-8444-555555555555"
+    else:
+        material.name = "RenamedDescriptorMaterial"
+    calls = []
+
+    def rewrite_metadata(path):
+        calls.append(path)
+        Path(path).write_bytes(mutation.encode("ascii"))
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", rewrite_metadata)
+    updated = export_fbx_collection(
+        selected, tmp_path, source_root=tmp_path)
+
+    if mutation == "material_uid":
+        assert updated["resource_entry"]["content_hash"] == initial_hash
+    else:
+        assert updated["resource_entry"]["content_hash"] != initial_hash
+    assert updated["written"] is True
+    assert calls == [str(payload) + ".tmp"]
+    assert updated["resource_entry"]["material_slots"] != \
+        initial["resource_entry"]["material_slots"]
+
+
+def test_resource_rename_rewrites_existing_payload_in_place(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    selected = bpy.data.collections.new("OriginalResourceName")
+    bpy.context.scene.collection.children.link(selected)
+    _mesh_object("RenameDescriptorObject", selected)
+    owner_dir = tmp_path / "original_owner"
+    initial = export_fbx_collection(
+        selected, owner_dir, source_root=tmp_path)
+    original_payload = Path(initial["filepath"])
+    original_manifest = Path(initial["manifest_path"])
+    requested_dir = tmp_path / "artist_selected_another_folder"
+    selected.name = "RenamedResource"
+    calls = []
+
+    def rewrite_metadata(path):
+        calls.append(path)
+        Path(path).write_bytes(b"renamed descriptor")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", rewrite_metadata)
+    updated = export_fbx_collection(
+        selected, requested_dir, source_root=tmp_path)
+
+    assert updated["written"] is True
+    assert Path(updated["filepath"]) == original_payload
+    assert Path(updated["manifest_path"]) == original_manifest
+    assert updated["resource_entry"]["source"] == original_payload.name
+    assert updated["payload_updates"][0]["filepath"] == str(original_payload)
+    assert calls == [str(original_payload) + ".tmp"]
+    assert not requested_dir.exists()
+    manifest = json.loads(original_manifest.read_text(encoding="utf-8"))
+    row = next(item for item in manifest["resources"]
+               if item["uid"] == selected["mh_uid"])
+    assert row["name"] == "RenamedResource"
+    assert row["source"] == original_payload.name
+
+
+def test_explicit_v1_descriptor_defaults_still_hash_skip(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    selected = bpy.data.collections.new("ExplicitDefaultsMesh")
+    bpy.context.scene.collection.children.link(selected)
+    _mesh_object("ExplicitDefaultsObject", selected)
+    initial = export_fbx_collection(
+        selected, tmp_path, source_root=tmp_path)
+    manifest_path = Path(initial["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    row = next(item for item in manifest["resources"]
+               if item["uid"] == selected["mh_uid"])
+    row["material_slots"] = []
+    row["properties"] = {}
+    row["lod_policy"] = "generated"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", calls.append)
+
+    updated = export_fbx_collection(
+        selected, tmp_path, source_root=tmp_path)
+
+    assert updated["written"] is False
+    assert calls == []
+
+
+def test_existing_lods_row_is_deprecated_even_when_empty(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    selected = bpy.data.collections.new("DeprecatedLodRows")
+    bpy.context.scene.collection.children.link(selected)
+    _mesh_object("DeprecatedLodRowsObject", selected)
+    initial = export_fbx_collection(
+        selected, tmp_path, source_root=tmp_path)
+    manifest_path = Path(initial["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["resources"][0]["lods"] = []
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="MH_E_DEPRECATED_LOD_ROWS"):
+        export_fbx_collection(selected, tmp_path, source_root=tmp_path)
+
+    assert not (tmp_path / "export_manifest.json.tmp").exists()
+
+
+def test_lod_policy_descriptor_mutation_rewrites_combined_fbx(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, _lod0, _lod1, _object0, _object1 = _build_lod_collection()
+    initial = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+    primary = Path(initial["filepath"])
+    manifest_path = Path(initial["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["resources"][0]["lod_policy"] = "nanite"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    calls = []
+
+    def rewrite_metadata(path):
+        calls.append(path)
+        Path(path).write_bytes(b"authored policy restored")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", rewrite_metadata)
+    updated = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+
+    assert updated["written"] is True
+    assert calls == [str(primary) + ".tmp"]
+    assert updated["payload_updates"] == [
+        {"level": 0, "filepath": str(primary), "written": True},
+    ]
+
+
+def test_declared_lod_set_mutation_rewrites_combined_fbx(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, _lod0, _lod1, _object0, _object1 = _build_lod_collection()
+    initial = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+    primary = Path(initial["filepath"])
+    base = "sovmod_garage_shell_a_type_a"
+    lod2 = bpy.data.collections.new(base + ".lod02")
+    root.children.link(lod2)
+    _mesh_object("GarageLOD2Mesh", lod2)
+    calls = []
+
+    def write_payload(path):
+        calls.append(path)
+        Path(path).write_bytes(b"updated descriptor or new LOD")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", write_payload)
+    updated = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+
+    assert updated["written"] is True
+    assert calls == [str(primary) + ".tmp"]
+    assert updated["payload_updates"] == [
+        {"level": 0, "filepath": str(primary), "written": True},
+    ]
 
 
 def test_changed_geometry_rewrites_fbx_payload(tmp_path, monkeypatch):

@@ -53,6 +53,8 @@ FBX_EXPORT_KWARGS = dict(
     use_selection=True,
     use_custom_props=True,
     use_mesh_modifiers=True,
+    object_types={"MESH", "EMPTY"},
+    bake_anim=False,
     apply_unit_scale=True,
     apply_scale_options="FBX_SCALE_UNITS",
     global_scale=1.0,
@@ -64,7 +66,7 @@ FBX_EXPORT_KWARGS = dict(
 )
 
 BLENDER_METERS_TO_UE_CENTIMETERS = 100.0
-EXPORTER_VERSION = "0.4.1"
+EXPORTER_VERSION = "0.5.0"
 
 
 _LODS_ROOT_RE = re.compile(
@@ -74,20 +76,44 @@ _LOD_LEAF_RE = re.compile(
     r"^(?P<base>.+)\.lod(?P<level>\d{2})(?:\.\d{3})?$")
 
 
-def _collection_mesh_objects(collection):
-    """Return the recursive mesh membership without assigning semantics."""
+def _collection_objects(collection):
+    """Return recursive, pointer-deduplicated collection membership."""
     objects = getattr(collection, "all_objects", collection.objects)
     result = []
     seen = set()
     for obj in objects:
-        if obj.type != "MESH":
-            continue
         identity = obj.as_pointer()
         if identity in seen:
             continue
         seen.add(identity)
         result.append(obj)
     return result
+
+
+def _is_static_mesh_aux(obj):
+    upper_name = obj.name.upper()
+    return (
+        obj.type == "MESH" and upper_name.startswith("UCX_")
+    ) or (
+        obj.type == "EMPTY" and upper_name.startswith("SOCKET_")
+    )
+
+
+def _collection_resource_objects(collection):
+    members = _collection_objects(collection)
+    aux = [obj for obj in members if _is_static_mesh_aux(obj)]
+    aux_ids = {obj.as_pointer() for obj in aux}
+    geometry = [
+        obj for obj in members
+        if obj.type == "MESH" and obj.as_pointer() not in aux_ids
+    ]
+    return geometry, aux
+
+
+def _collection_mesh_objects(collection):
+    """Return recursive semantic geometry, excluding FBX aux nodes."""
+    geometry, _aux = _collection_resource_objects(collection)
+    return geometry
 
 
 def _dagor_lod_structure(collection):
@@ -153,19 +179,25 @@ def _dagor_lod_structure(collection):
 
     if 0 not in levels:
         raise ValueError(
-            "MH_E_INVALID_LOD_HIERARCHY: .lods group requires one direct "
+            "MH_E_LOD_LEVELS_SPARSE: .lods group requires one direct "
             f"'{base}.lod00' collection")
     missing_levels = sorted(set(range(max(levels) + 1)) - set(levels))
     if missing_levels:
         missing = ", ".join(f"lod{level:02d}" for level in missing_levels)
         raise ValueError(
-            "MH_E_INVALID_LOD_HIERARCHY: authored LOD levels must be "
+            "MH_E_LOD_LEVELS_SPARSE: authored LOD levels must be "
             f"contiguous from lod00; missing {missing}")
 
     level_objects = []
+    level0_aux = []
+    ignored_aux = []
     object_level = {}
     for level, child in sorted(levels.items()):
-        objects = _collection_mesh_objects(child)
+        objects, aux = _collection_resource_objects(child)
+        if level == 0:
+            level0_aux.extend(aux)
+        elif aux:
+            ignored_aux.extend((level, obj.name) for obj in aux)
         if not objects:
             raise ValueError(
                 "MH_E_INVALID_LOD_HIERARCHY: authored LOD collection "
@@ -199,6 +231,8 @@ def _dagor_lod_structure(collection):
     return {
         "resource_name": resource_name,
         "levels": level_objects,
+        "level0_aux": level0_aux,
+        "ignored_aux": ignored_aux,
     }
 
 
@@ -407,6 +441,21 @@ def _material_owners(snapshot, materials):
     return owners
 
 
+def _object_material_slot_pairs(objects):
+    """Return every authored FBX slot mapping, without UID de-duplication."""
+    pairs = set()
+    for obj in objects:
+        for slot in obj.material_slots:
+            material = slot.material
+            if material is None:
+                continue
+            pairs.add((
+                str(slot.name or material.name),
+                material[PROP_UID],
+            ))
+    return pairs
+
+
 def _prepare_materials_tolerant(
         materials, output_dir, *, source_root, texture_policy, owners):
     prepared = []
@@ -496,6 +545,61 @@ def _export_selected_fbx(filepath):
     bpy.ops.export_scene.fbx(filepath=filepath, **FBX_EXPORT_KWARGS)
 
 
+@contextlib.contextmanager
+def _temporary_lod_level_properties(levels):
+    """Expose combined-LOD membership to FBX and restore authoring data."""
+    saved = []
+    try:
+        for level, _collection, objects in levels:
+            for obj in objects:
+                existed = "mh_lod_level" in obj
+                previous = obj["mh_lod_level"] if existed else None
+                saved.append((obj, existed, previous))
+                obj["mh_lod_level"] = int(level)
+        yield
+    finally:
+        for obj, existed, previous in saved:
+            if obj is None or obj.name not in bpy.data.objects:
+                continue
+            if existed:
+                obj["mh_lod_level"] = previous
+            elif "mh_lod_level" in obj:
+                del obj["mh_lod_level"]
+
+
+def _static_mesh_descriptor(row):
+    """Return normalized metadata carried by an FBX rewrite decision.
+
+    Optional manifest fields are normalized to their frozen-v1 defaults so
+    omission and an explicit default compare equal. Combined LOD membership
+    and geometry live in the meshser:2 content hash; ``lod_policy`` remains
+    descriptor metadata.
+    """
+    lod_policy = row.get("lod_policy", "generated")
+    return {
+        "name": row["name"],
+        "material_slots": row.get("material_slots", []),
+        "properties": row.get("properties", {}),
+        "lod_policy": lod_policy,
+    }
+
+
+def _bind_existing_mesh_location(
+        owner, resource_entry, payload_exports):
+    """Keep an owned v1 mesh at the path already assigned to its UID."""
+    owner_dir = os.path.dirname(owner.owning_manifest_path)
+    existing_row = owner.manifest_row
+    existing_sources = {0: existing_row["source"]}
+    for payload in payload_exports:
+        source = existing_sources.get(payload["level"], payload["filename"])
+        payload["filename"] = source
+        payload["filepath"] = os.path.join(
+            owner_dir, *source.split("/"))
+
+    resource_entry["source"] = payload_exports[0]["filename"]
+    return owner_dir, owner.payload_path
+
+
 def export_fbx_collection(
         collection, output_dir, *, dry_run=False, registry_path="",
         export_materials=False, source_root="",
@@ -503,8 +607,8 @@ def export_fbx_collection(
     """Export one selected collection as one static-mesh resource.
 
     A regular collection writes one FBX. A recognized dag4blend ``.lods``
-    hierarchy writes LOD0 to the row's primary FBX and each higher authored
-    level to the frozen-v1 ``lods[]`` FBX payload.
+    hierarchy also writes one FBX containing every authored level; each model
+    node carries a temporary integer ``mh_lod_level`` custom property.
 
     Returns a structured report containing the domain objects and their
     manifest-ready entries. The exporter stages the incremental manifest
@@ -524,6 +628,11 @@ def export_fbx_collection(
          for obj in level_objects]
         if lod_structure is not None else
         collect_collection_mesh_objects(collection))
+    if lod_structure is not None:
+        aux_objects = lod_structure["level0_aux"]
+    else:
+        _geometry, aux_objects = _collection_resource_objects(collection)
+    export_objects = objects + aux_objects
     payload_levels = (
         lod_structure["levels"] if lod_structure is not None
         else [(0, collection, objects)])
@@ -561,7 +670,26 @@ def export_fbx_collection(
             "MH_E_DUPLICATE_RESOURCE_UID", [uid],
             "materials in the selected collection share one mh_uid")
 
-    materials, material_slots = extract_materials_from_objects(objects)
+    if lod_structure is None:
+        materials, material_slots = extract_materials_from_objects(objects)
+    else:
+        _level0, _collection0, level0_objects = payload_levels[0]
+        materials, material_slots = extract_materials_from_objects(
+            level0_objects)
+        base_slots = _object_material_slot_pairs(level0_objects)
+        for level, _child, level_objects in payload_levels[1:]:
+            _level_materials, _level_slots = \
+                extract_materials_from_objects(level_objects)
+            missing_slots = sorted(
+                _object_material_slot_pairs(level_objects) - base_slots
+            )
+            if missing_slots:
+                detail = ", ".join(
+                    f"{name} ({uid})" for name, uid in missing_slots)
+                raise MHValidationError(
+                    "MH_E_LOD_SLOT_NOT_IN_BASE",
+                    [uid for _name, uid in missing_slots],
+                    f"LOD{level} uses slots absent from LOD0: {detail}")
     scene = _find_export_scene(collection)
     window = bpy.context.window
     original_scene = window.scene if window is not None else None
@@ -569,13 +697,12 @@ def export_fbx_collection(
         if window is not None:
             window.scene = scene
         depsgraph = bpy.context.evaluated_depsgraph_get()
-        level_hashes = {}
+        records = []
         for level, _child, level_objects in payload_levels:
-            records = [
-                (obj[PROP_UID], _record_for_object(obj, depsgraph))
-                for obj in level_objects
-            ]
-            level_hashes[level] = mesh_content_hash(records)
+            records.extend(
+                (level, obj[PROP_UID], _record_for_object(obj, depsgraph))
+                for obj in level_objects)
+        combined_hash = mesh_content_hash(records)
     finally:
         if window is not None and original_scene is not None:
             window.scene = original_scene
@@ -583,7 +710,7 @@ def export_fbx_collection(
     resource = MeshResource(
         uid=resource_uid,
         name=resource_name,
-        content_hash=level_hashes[0],
+        content_hash=combined_hash,
         material_slots=material_slots,
         properties=_bag(collection),
     )
@@ -593,13 +720,11 @@ def export_fbx_collection(
         bpy.path.abspath(os.fspath(output_dir)))
     filepath = os.path.join(resolved_output_dir, filename)
     payload_exports = [{
-        "level": level,
-        "objects": level_objects,
-        "filename": (
-            filename if level == 0 else resource_filename(
-                resource_name, resource_uid, f".lod{level}.mesh.fbx")),
-        "content_hash": level_hashes[level],
-    } for level, _child, level_objects in payload_levels]
+        "level": 0,
+        "objects": export_objects,
+        "filename": filename,
+        "content_hash": combined_hash,
+    }]
     for payload in payload_exports:
         payload["filepath"] = os.path.join(
             resolved_output_dir, payload["filename"])
@@ -745,14 +870,6 @@ def export_fbx_collection(
         ]
     if lod_structure is not None:
         resource_entry["lod_policy"] = "authored"
-        resource_entry["lods"] = [
-            {
-                "level": payload["level"],
-                "source": payload["filename"],
-                "content_hash": payload["content_hash"],
-            }
-            for payload in payload_exports if payload["level"] > 0
-        ]
     if resource.properties:
         resource_entry["properties"] = resource.properties
     material_entries = recovery_material_entries + [
@@ -777,6 +894,15 @@ def export_fbx_collection(
         materials=materials,
     ), registry=registry)
     validation["warnings"] = adapter_warnings + validation.get("warnings", [])
+    if lod_structure is not None and lod_structure["ignored_aux"]:
+        ignored = ", ".join(
+            f"LOD{level} '{name}'"
+            for level, name in lod_structure["ignored_aux"])
+        validation["warnings"].append(ValidationWarning(
+            "MH_W_LOD_AUX_NODE_IGNORED",
+            [resource_uid],
+            f"higher-LOD auxiliary nodes were ignored: {ignored}",
+        ).disk_dict())
     validation["warnings"].extend(material_prepare_warnings)
     if source_snapshot is not None:
         validation["warnings"].extend({
@@ -825,40 +951,37 @@ def export_fbx_collection(
             resolved_source_root,
             resource_uid,
             expected_kind="static_mesh",
-            expected_source=filename,
+            expected_source=None,
             registry_path=resolved_registry_path,
             texture_policy=normalized_policy,
-            allow_missing_lod_payloads=lod_structure is not None,
         )
         mesh_owner = mesh_resolution.owner
         mesh_snapshot = mesh_resolution.snapshot
         mesh_recovery = mesh_resolution.recovery
 
         if mesh_owner is not None:
-            expected_manifest = os.path.normcase(os.path.normpath(
-                manifest_path))
-            actual_manifest = os.path.normcase(os.path.normpath(
-                mesh_owner.owning_manifest_path))
-            expected_payload = os.path.normcase(os.path.normpath(filepath))
-            actual_payload = os.path.normcase(os.path.normpath(
-                mesh_owner.payload_path))
-            if (actual_manifest != expected_manifest
-                    or actual_payload != expected_payload
-                    or mesh_owner.manifest_row["source"] != filename):
+            if "lods" in mesh_owner.manifest_row:
                 raise ValueError(
-                    "MH_E_INVALID_EXPORT_MANIFEST: existing static mesh "
-                    f"{resource_uid} must be updated at its exact owning "
-                    "manifest and payload path")
+                    "MH_E_DEPRECATED_LOD_ROWS: static_mesh rows with lods[] "
+                    "must be migrated before combined-LOD export")
+            resolved_output_dir, filepath = _bind_existing_mesh_location(
+                mesh_owner, resource_entry, payload_exports)
+            manifest_path = mesh_owner.owning_manifest_path
+            for payload, update in zip(payload_exports, payload_updates):
+                update["filepath"] = payload["filepath"]
 
         existing_payloads = {}
+        descriptor_changed = False
         if mesh_owner is not None:
             existing_row = mesh_owner.manifest_row
+            descriptor_changed = (
+                _static_mesh_descriptor(existing_row)
+                != _static_mesh_descriptor(resource_entry)
+            )
             existing_payloads[0] = {
                 "source": existing_row["source"],
                 "content_hash": existing_row["content_hash"],
             }
-            existing_payloads.update({
-                lod["level"]: lod for lod in existing_row.get("lods", [])})
         for payload, update in zip(payload_exports, payload_updates):
             existing = existing_payloads.get(payload["level"])
             hash_matches = (
@@ -867,7 +990,11 @@ def export_fbx_collection(
                 and existing["content_hash"] == payload["content_hash"]
                 and os.path.isfile(payload["filepath"])
             )
-            payload["write"] = mesh_recovery or not hash_matches
+            payload["write"] = (
+                mesh_recovery
+                or not hash_matches
+                or (payload["level"] == 0 and descriptor_changed)
+            )
         assert_source_snapshot_stable(mesh_snapshot)
         manifest = prepare_manifest_update(
             resolved_output_dir,
@@ -892,10 +1019,21 @@ def export_fbx_collection(
                 if not payload["write"]:
                     continue
                 tmp = payload["filepath"] + ".tmp"
-                with _temporary_selection_context(scene, payload["objects"]):
-                    with _temporary_ue_centimeter_export_state(
-                            payload["objects"]):
-                        _export_selected_fbx(tmp)
+                if lod_structure is not None:
+                    lod_levels = [
+                        (level, child, (
+                            level_objects + aux_objects
+                            if level == 0 else level_objects))
+                        for level, child, level_objects in payload_levels
+                    ]
+                else:
+                    lod_levels = []
+                with _temporary_lod_level_properties(lod_levels):
+                    with _temporary_selection_context(
+                            scene, payload["objects"]):
+                        with _temporary_ue_centimeter_export_state(
+                                payload["objects"]):
+                            _export_selected_fbx(tmp)
                 os.replace(tmp, payload["filepath"])
                 update["written"] = True
                 written = True
@@ -959,7 +1097,7 @@ def export_fbx_collection(
         "written": written,
         "manifest_path": manifest_path,
         "manifest_written": manifest_written,
-        "objects_exported": len(objects),
+        "objects_exported": len(export_objects),
         "payload_updates": payload_updates,
         "resource": resource,
         "resource_entry": resource_entry,

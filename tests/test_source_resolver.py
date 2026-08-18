@@ -276,114 +276,21 @@ def test_writer_normal_rejects_payload_real_target_outside_owner(
             str(tmp_path), MATERIAL_UID, expected_kind="material")
 
 
-def test_writer_normal_keeps_authored_lods_strict_when_primary_missing(
-        tmp_path):
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
+def test_combined_authored_lod_writer_uses_one_primary_payload(tmp_path):
+    row = dict(mesh_row(), lod_policy="authored")
     directory = tmp_path / "meshes"
     write_manifest(directory, [row])
-    with pytest.raises(ResolverError, match="LOD 1 payload is missing"):
-        resolve_resource_for_writer(
-            str(tmp_path), MESH_UID, expected_kind="static_mesh")
-
-    lod_path = directory / row["lods"][0]["source"]
-    lod_path.write_bytes(b"lod")
     result = resolve_resource_for_writer(
         str(tmp_path), MESH_UID, expected_kind="static_mesh")
-    assert result.owner.payload_path in result.snapshot.missing_payload_paths
-    assert os.path.normpath(str(lod_path)) in result.snapshot.payload_bytes
-
-
-def test_lod_aware_writer_returns_missing_lod_and_guards_appearance(tmp_path):
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
-    directory = tmp_path / "meshes"
-    write_manifest(directory, [row])
-    write_payload(directory, row)
-    lod_path = directory / row["lods"][0]["source"]
-
-    result = resolve_resource_for_writer(
-        str(tmp_path), MESH_UID, expected_kind="static_mesh",
-        allow_missing_lod_payloads=True)
-
+    payload_path = os.path.normpath(str(directory / row["source"]))
     assert result.owner.manifest_row == row
-    assert os.path.normpath(str(lod_path)) in \
-        result.snapshot.missing_payload_paths
-    lod_path.write_bytes(b"new LOD")
+    assert result.owner.payload_path == payload_path
+    assert result.snapshot.missing_payload_paths == {payload_path}
+    assert result.snapshot.payload_bytes == {}
+
+    write_payload(directory, row)
     with pytest.raises(ResolverError, match="missing payload appeared"):
         assert_source_snapshot_stable(result.snapshot)
-
-
-def test_lod_aware_writer_snapshots_existing_corrupt_lod_bytes(tmp_path):
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
-    directory = tmp_path / "meshes"
-    write_manifest(directory, [row])
-    write_payload(directory, row)
-    lod_path = directory / row["lods"][0]["source"]
-    lod_path.write_bytes(b"corrupt authored LOD to repair")
-
-    result = resolve_resource_for_writer(
-        str(tmp_path), MESH_UID, expected_kind="static_mesh",
-        allow_missing_lod_payloads=True)
-
-    normalized_lod = os.path.normpath(str(lod_path))
-    assert result.snapshot.payload_bytes[normalized_lod] == \
-        b"corrupt authored LOD to repair"
-    lod_path.write_bytes(b"changed after writer preflight")
-    with pytest.raises(ResolverError, match="payload changed after snapshot"):
-        assert_source_snapshot_stable(result.snapshot)
-
-
-def test_lod_aware_writer_keeps_non_file_lod_paths_hard(tmp_path):
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
-    directory = tmp_path / "meshes"
-    write_manifest(directory, [row])
-    write_payload(directory, row)
-    os.mkdir(directory / row["lods"][0]["source"])
-
-    with pytest.raises(ResolverError, match="payload path is not a file"):
-        resolve_resource_for_writer(
-            str(tmp_path), MESH_UID, expected_kind="static_mesh",
-            allow_missing_lod_payloads=True)
-
-
-def test_lod_aware_writer_keeps_broken_lod_symlink_hard(
-        tmp_path, monkeypatch):
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
-    directory = tmp_path / "meshes"
-    write_manifest(directory, [row])
-    write_payload(directory, row)
-    lod_path = os.path.normpath(str(directory / row["lods"][0]["source"]))
-    original_lexists = source_resolver_mod.os.path.lexists
-    original_isfile = source_resolver_mod.os.path.isfile
-
-    monkeypatch.setattr(source_resolver_mod.os.path, "lexists", lambda path: (
-        True if os.path.normpath(path) == lod_path else original_lexists(path)))
-    monkeypatch.setattr(source_resolver_mod.os.path, "isfile", lambda path: (
-        False if os.path.normpath(path) == lod_path else original_isfile(path)))
-
-    with pytest.raises(ResolverError, match="payload path is not a file"):
-        resolve_resource_for_writer(
-            str(tmp_path), MESH_UID, expected_kind="static_mesh",
-            allow_missing_lod_payloads=True)
 
 
 def test_writer_resolution_admits_first_create_crash_without_payload(tmp_path):
@@ -531,39 +438,16 @@ def test_pending_writer_uid_rejects_invalid_or_multiple_markers(tmp_path):
         pending_writer_uid(str(tmp_path))
 
 
-def test_writer_recovery_checks_lod_containment_and_path_aliases(
-        tmp_path, monkeypatch):
+def test_writer_recovery_combined_authored_lod_uses_primary_payload(tmp_path):
     directory = tmp_path / "meshes"
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
+    row = dict(mesh_row(), lod_policy="authored")
     write_pending_manifest(directory, [row])
-    lod_path = directory / row["lods"][0]["source"]
-    escaped = tmp_path / "elsewhere" / lod_path.name
-    original_realpath = source_resolver_mod.os.path.realpath
-
-    def escaped_lod_realpath(path):
-        if os.path.normpath(os.path.abspath(path)) == os.path.normpath(
-                str(lod_path)):
-            return str(escaped)
-        return original_realpath(path)
-
-    monkeypatch.setattr(
-        source_resolver_mod.os.path, "realpath", escaped_lod_realpath)
-    with pytest.raises(ResolverError, match="owning manifest directory"):
-        resolve_resource_for_writer(
-            str(tmp_path), MESH_UID, expected_kind="static_mesh")
-
-    monkeypatch.setattr(source_resolver_mod.os.path, "realpath", lambda path: (
-        str(directory / row["source"])
-        if os.path.normpath(os.path.abspath(path)) == os.path.normpath(
-            str(lod_path))
-        else original_realpath(path)))
-    with pytest.raises(ResolverError, match="paths alias each other"):
-        resolve_resource_for_writer(
-            str(tmp_path), MESH_UID, expected_kind="static_mesh")
+    result = resolve_resource_for_writer(
+        str(tmp_path), MESH_UID, expected_kind="static_mesh")
+    assert result.recovery
+    assert result.owner.manifest_row == row
+    assert result.owner.payload_path == os.path.normpath(
+        str(directory / row["source"]))
 
 
 def test_missing_payload_and_wrong_expected_kind_block_resolve(tmp_path):
@@ -632,26 +516,20 @@ def test_import_resolver_rejects_existing_non_file_primary_path(tmp_path):
         resolve_resource_for_import(snapshot, COMPOSITE_UID)
 
 
-def test_import_resolver_missing_primary_keeps_authored_lods_strict(tmp_path):
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
+def test_import_resolver_preserves_missing_combined_authored_owner(tmp_path):
+    row = dict(mesh_row(), lod_policy="authored")
     directory = tmp_path / "meshes"
-    write_manifest(directory, [row])
-    snapshot = scan_source_root(str(tmp_path))
-    with pytest.raises(ResolverError, match="LOD 1 payload is missing"):
-        resolve_resource_for_import(snapshot, MESH_UID)
-
-    lod_path = directory / row["lods"][0]["source"]
-    lod_path.write_bytes(b"lod")
+    manifest_path = write_manifest(directory, [row])
     snapshot = scan_source_root(str(tmp_path))
     resolved = resolve_resource_for_import(snapshot, MESH_UID)
+    assert resolved.manifest_row == row
+    assert resolved.owning_manifest_path == os.path.normpath(
+        str(manifest_path))
     assert resolved.payload_path in snapshot.missing_payload_paths
-    assert os.path.normpath(str(lod_path)) in snapshot.payload_bytes
-    lod_path.write_bytes(b"changed")
-    with pytest.raises(ResolverError, match="payload changed"):
+    assert snapshot.payload_bytes == {}
+
+    write_payload(directory, row)
+    with pytest.raises(ResolverError, match="missing payload appeared"):
         assert_source_snapshot_stable(snapshot)
 
 
@@ -710,47 +588,28 @@ def test_payload_real_target_cannot_escape_owning_manifest_directory(
         scan_source_root(str(tmp_path))
 
 
-def test_lod_real_target_cannot_escape_owning_manifest_directory(
-        tmp_path, monkeypatch):
-    owner = tmp_path / "owner"
-    target_dir = tmp_path / "other"
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
-    write_manifest(owner, [row])
-    write_payload(owner, row)
-    lod_path = owner / row["lods"][0]["source"]
-    lod_path.write_bytes(b"lod")
-    target_dir.mkdir()
-    target = target_dir / lod_path.name
-    target.write_bytes(b"lod")
-    original_realpath = source_resolver_mod.os.path.realpath
-
-    def symlink_realpath(path):
-        if os.path.normpath(os.path.abspath(path)) == os.path.normpath(
-                str(lod_path)):
-            return str(target)
-        return original_realpath(path)
-
-    monkeypatch.setattr(
-        source_resolver_mod.os.path, "realpath", symlink_realpath)
-    with pytest.raises(ResolverError, match="owning manifest directory"):
-        scan_source_root(str(tmp_path))
-
-
-def test_resolve_requires_every_authored_lod_payload(tmp_path):
-    row = dict(mesh_row(), lod_policy="authored", lods=[{
-        "level": 1,
-        "source": "mesh_a__10000000.lod1.mesh.fbx",
-        "content_hash": "xxh3:0000000000000009",
-    }])
+def test_resolve_combined_authored_lod_reads_only_primary_payload(tmp_path):
+    row = dict(mesh_row(), lod_policy="authored")
     write_manifest(tmp_path, [row])
-    write_payload(tmp_path, row)
+    payload = write_payload(tmp_path, row)
     snapshot = scan_source_root(str(tmp_path))
-    with pytest.raises(ResolverError, match="LOD 1 payload is missing"):
-        resolve_resource(snapshot, MESH_UID)
+    resolved = resolve_resource(snapshot, MESH_UID)
+    normalized = os.path.normpath(str(payload))
+    assert resolved.payload_path == normalized
+    assert snapshot.payload_bytes == {normalized: b"Kaydara FBX Binary"}
+
+
+@pytest.mark.parametrize("legacy_lods", [[], [{
+    "level": 1,
+    "source": "mesh_a__10000000.lod1.mesh.fbx",
+    "content_hash": "xxh3:0000000000000009",
+}]])
+def test_scan_rejects_deprecated_per_file_lod_rows(tmp_path, legacy_lods):
+    write_manifest(tmp_path, [dict(
+        mesh_row(), lod_policy="authored", lods=legacy_lods)])
+    with pytest.raises(ManifestError) as caught:
+        scan_source_root(str(tmp_path))
+    assert caught.value.code == "MH_E_DEPRECATED_LOD_ROWS"
 
 
 def test_manifest_real_target_cannot_make_external_file_authoritative(
@@ -785,6 +644,51 @@ def test_json_payload_identity_must_match_owning_row(tmp_path, uid, name):
     snapshot = scan_source_root(str(tmp_path))
     with pytest.raises(ResolverError, match="UID/name"):
         resolve_resource(snapshot, COMPOSITE_UID)
+
+
+def test_resolver_accepts_self_contained_composite_v2(tmp_path):
+    row = composite_row()
+    write_manifest(tmp_path, [row])
+    path = tmp_path / row["source"]
+    path.write_text(json.dumps({
+        "schema": "mh.composite",
+        "schema_version": 2,
+        "uid": row["uid"],
+        "name": row["name"],
+        "properties": {"category": "building"},
+        "nodes": [],
+    }), encoding="utf-8")
+    snapshot = scan_source_root(str(tmp_path))
+    assert resolve_resource(snapshot, COMPOSITE_UID) is not None
+
+
+@pytest.mark.parametrize("mutator,code", [
+    (lambda document: document.update(schema_version=3),
+     "MH_E_UNKNOWN_SCHEMA_VERSION"),
+    (lambda document: document.update(future=True),
+     "MH_E_INVALID_COMPOSITE"),
+    (lambda document: document.__setitem__("properties", []),
+     "MH_E_INVALID_COMPOSITE"),
+])
+def test_resolver_rejects_invalid_composite_v2_envelope(
+        tmp_path, mutator, code):
+    row = composite_row()
+    write_manifest(tmp_path, [row])
+    document = {
+        "schema": "mh.composite",
+        "schema_version": 2,
+        "uid": row["uid"],
+        "name": row["name"],
+        "properties": {},
+        "nodes": [],
+    }
+    mutator(document)
+    (tmp_path / row["source"]).write_text(
+        json.dumps(document), encoding="utf-8")
+    snapshot = scan_source_root(str(tmp_path))
+    with pytest.raises(ResolverError) as caught:
+        resolve_resource(snapshot, COMPOSITE_UID)
+    assert caught.value.code == code
 
 
 def test_material_payload_uses_strict_frozen_v1_codec(tmp_path):

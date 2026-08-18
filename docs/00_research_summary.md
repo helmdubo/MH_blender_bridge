@@ -61,8 +61,9 @@ props), обход Empty-графа из `cmp_export::write_node`, принци�
 `.composite` задаёт граф, resolver находит payload по UID, FBX только наполняет
 target Collection.** Никакой семантики, иерархии, placements или материальных
 определений внутри FBX. Один FBX детерминированно создаёт один UStaticMesh.
-Для authored LOD каждый per-level FBX D39 наполняет только свой уровень того же
-UStaticMesh; composite nodes из него так же не извлекаются.
+По D40 один authored-LOD FBX содержит mesh-узлы всех уровней; техническое
+свойство `mh_lod_level` выбирает `SourceModel`, но не является composite-
+семантикой. Composite nodes из FBX по-прежнему не извлекаются.
 Причина: legacy scene import и Interchange по-разному мангли имена/иерархию;
 вывод composite semantics из FBX-иерархии хрупок; Blender FBX exporter
 разворачивает collection instances.
@@ -151,8 +152,7 @@ Blender == UE.
 **D13. LOD:** Blender FBX exporter не пишет FbxLODGroup → LOD-ы либо отдельными файлами
 per-level с добавлением в существующий SM, либо Nanite/generated. Зафиксировать выбор в схеме
 до реализации. В MVP — один LOD.
-**Статус:** резерв отдельных payload-файлов принят в QUESTION-5 и заморожен в
-Source Schema v1; D39 активирует этот уже существующий контракт в FBX writer.
+**Статус:** историческое решение о резерве per-file payload superseded D40.
 
 **D14. Break / Build New Composite (post-MVP):** Break растворяет один уровень, дети получают
 производные сиды (визуально нейтрально), VariantSet выходит уже разрешённым вариантом
@@ -361,7 +361,7 @@ UID дают блокирующий `MH_E_AMBIGUOUS_RESOURCE_OWNER`, а не в�
 
 Honest-результат resolver'а:
 `uid -> {payload_path, owning_manifest_path, manifest_row}`. Резолв не завершён
-одним payload, потому что `material_slots`, `content_hash` и будущие `lods[]`
+одним payload, потому что `material_slots`, `content_hash` и `lod_policy`
 живут в manifest-строке. `source` всегда относителен к owning manifest, а payload
 обязан оставаться под `source_root`. Транзакционный import/export фиксирует набор
 прочитанных manifests и перед commit проверяет, что они не изменились.
@@ -444,9 +444,30 @@ Blender-export диагностики неверной `<base>.lods`/`<base>.lod
 когда импорт объявленного authored LOD payload не удался. Это расширение только
 машинного diagnostic API: JSON-поля, canonical form, hash inputs и любые
 байтово-значимые части Source Schema v1 не меняются. Реализация
-`MH_E_LOD_IMPORT_FAILED` относится к будущему UE-срезу и его draft `docs/07`;
-такого документа в текущем репозитории ещё нет, поэтому frozen `docs/05` не
-редактируется.
+Эта diagnostics-only запись историческая и superseded D40: отдельный
+`MH_E_LOD_IMPORT_FAILED` удалён, поскольку malformed combined level делает
+malformed весь mesh-ресурс.
+
+**Статус D39:** transport/payload-часть superseded D40. Сохраняется только
+Blender authoring convention `<base>.lods` → direct `<base>.lodNN` и узкое
+снятие suffix `.lods` с logical resource name.
+
+**D40. [combined-lod-fbx] Один mesh-ресурс имеет один FBX со всеми authored
+LOD.** Владелец принимает полный реэкспорт/реимпорт ресурса при правке любого
+уровня. Blender authoring остаётся dag4blend-совместимым: `<base>.lods` содержит
+direct `<base>.lod00`, `<base>.lod01`, … . Writer одним FBX-export вызовом пишет
+mesh-узлы всех уровней; integer custom property `mh_lod_level` на узле является
+единственной транспортной семантикой уровня. Имя узла не парсится. Несколько
+mesh-узлов на уровень разрешены.
+
+Одна `static_mesh` row содержит один `source`, один общий `content_hash` и
+`lod_policy`; `lods[]` больше не эмитится и после миграции блокируется
+`MH_E_DEPRECATED_LOD_ROWS`. Geometry stream меняет tag на `mh.meshser:2`,
+сортируется по `(lod_level, ObjectUID)` и включает `lod_level:uint32` перед
+каждым object stream. Номера плотные от 0; слоты LOD1+ — подмножество LOD0;
+aux nodes уровня 1+ игнорируются с warning. Passport заявляет
+`lod_levels:[0,1,...]`, но не file-level `lod_level`. Полный normative amendment
+и migration note — `AMENDMENT_combined_lod_fbx.md`.
 
 ## 4. Известные риски (проверяются первыми)
 

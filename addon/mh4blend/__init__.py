@@ -9,7 +9,7 @@ lives in `prefs`/`ui`/`ops` and is imported lazily from register(), so
 bl_info = {
     "name": "mh4blend (Mimir Composite Pipeline)",
     "author": "MH",
-    "version": (0, 4, 1),
+    "version": (0, 5, 0),
     "blender": (4, 5, 0),
     "location": "3D Viewport > Sidebar > MH",
     "description": "Standalone FBX, material, and composite source I/O for UE5",

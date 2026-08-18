@@ -172,17 +172,26 @@ def test_material_slot_shape_and_deduplication_are_strict(slots):
         validate_export_manifest(manifest([dict(MESH, material_slots=slots)]))
 
 
-def test_static_mesh_lods_are_validated_with_exact_uid8_suffix():
-    row = dict(MESH, lod_policy="authored", lods=[{
+@pytest.mark.parametrize("legacy_lods", [
+    [],
+    [{
         "level": 1,
         "source": "meshes/mesh_a__10000000.lod1.mesh.fbx",
         "content_hash": "xxh3:0000000000000009",
-    }])
-    assert validate_export_manifest(manifest([row]))["resources"][0] == row
-    row["lods"][0]["source"] = "meshes/mesh_a__10000000.lod2.mesh.fbx"
+    }],
+])
+def test_static_mesh_rejects_deprecated_per_file_lod_rows(legacy_lods):
+    row = dict(MESH, lod_policy="authored", lods=legacy_lods)
     with pytest.raises(ManifestError) as caught:
         validate_export_manifest(manifest([row]))
-    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+    assert caught.value.code == "MH_E_DEPRECATED_LOD_ROWS"
+
+
+def test_combined_authored_lod_mesh_is_one_manifest_payload():
+    row = dict(MESH, lod_policy="authored")
+    normalized = validate_export_manifest(manifest([row]))["resources"][0]
+    assert normalized == row
+    assert "lods" not in normalized
 
 
 def test_resources_are_required_to_be_uid_sorted_and_unique():

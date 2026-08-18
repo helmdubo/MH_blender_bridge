@@ -50,6 +50,9 @@ class MH_PT_source_tools(bpy.types.Panel):
         materials.prop(
             scene, "mh_material_directory", text="Folder (first export)")
         materials.operator("mh.export_material", icon="EXPORT")
+        materials.separator()
+        materials.operator("mh.actualize_texture_paths", icon="FILE_REFRESH")
+        materials.label(text="Matches full texture filename under Source Root")
         layout.label(text="Log: Text Editor > mh_export_log", icon="TEXT")
 
 

@@ -1,4 +1,4 @@
-"""Mesh serialization for content_hash — schema §9, stream tag mh.meshser:1.
+"""Mesh serialization for content_hash — combined-LOD stream mh.meshser:2.
 
 Pure byte encoding: the caller (B8 extraction layer) supplies plain arrays
 pulled from evaluated meshes IN BLENDER METERS (§9: the hash is computed
@@ -13,7 +13,8 @@ edges (count + sorted pairs) -> UV layers (count + name + per-loop 2 x q6)
 -> color attributes (count + name/domain/type + value count + q4 values)
 -> material slot names (count + strings).
 Encodings per §9.1: little-endian, uint32 counts/indices, int64 scaled
-integers, length-prefixed UTF-8 strings. Objects ordered by mh_uid (§9.2).
+integers, length-prefixed UTF-8 strings. Each object is prefixed by its uint32
+LOD level; objects are ordered by ``(lod_level, mh_uid)``.
 """
 
 import struct
@@ -24,7 +25,7 @@ from .canonical import hash_hex, nfc, quantize
 __all__ = ["MeshObjectRecord", "serialize_mesh_resource", "mesh_content_hash",
            "MESHSER_TAG"]
 
-MESHSER_TAG = "mh.meshser:1"
+MESHSER_TAG = "mh.meshser:2"
 
 P_POSITION = 4   # positions / normals / colors (§9.3)
 P_TRANSFORM = 6  # object transform matrix
@@ -129,17 +130,41 @@ def _serialize_object(out, record: MeshObjectRecord):
         _string(out, name)
 
 
+def _lod_item(item):
+    """Normalize legacy level-0 pairs and explicit combined-LOD triples."""
+    if len(item) == 2:
+        uid, record = item
+        return 0, uid, record
+    if len(item) == 3:
+        lod_level, uid, record = item
+        if not isinstance(lod_level, int) or isinstance(lod_level, bool) \
+                or lod_level < 0 or lod_level > 0xFFFFFFFF:
+            raise ValueError("lod_level must be a uint32 integer")
+        return lod_level, uid, record
+    raise ValueError(
+        "mesh object record must be (uid, record) or "
+        "(lod_level, uid, record)")
+
+
 def serialize_mesh_resource(objects):
-    """`objects`: iterable of (mh_uid, MeshObjectRecord). Returns the full
-    mh.meshser:1 byte stream (objects sorted by uid bytes, §9.2)."""
+    """Return the mh.meshser:2 stream for level-tagged mesh objects.
+
+    ``objects`` accepts explicit ``(lod_level, mh_uid, MeshObjectRecord)``
+    triples.  Two-tuples remain a convenience spelling for ordinary LOD0
+    resources; their bytes are still meshser:2 and include a zero level.
+    """
     out = []
     _string(out, MESHSER_TAG)
-    ordered = sorted(objects, key=lambda item: item[0].encode("utf-8"))
+    ordered = sorted(
+        (_lod_item(item) for item in objects),
+        key=lambda item: (item[0], item[1].encode("utf-8")),
+    )
     # SPEC NOTE: §9 does not name an explicit object-count field; the
     # reference layout writes uint32 count after the tag (self-delimiting
     # streams are cheaper to mirror in C++ than sentinel-terminated ones).
     _u32(out, len(ordered))
-    for _uid, record in ordered:
+    for lod_level, _uid, record in ordered:
+        _u32(out, lod_level)
         _serialize_object(out, record)
     return b"".join(out)
 

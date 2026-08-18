@@ -59,7 +59,8 @@ def test_writer_reproduces_cycle_fixture_bytes():
     for name, composite in composites.items():
         path = fixture_dir / composite.filename()
         assert path.exists(), path
-        assert render(composite_disk_dict(composite)) == path.read_text()
+        assert render(composite_disk_dict(
+            composite, schema_version=1)) == path.read_text()
 
 
 def test_composite_hash_idempotent_over_json_roundtrip():
@@ -103,7 +104,11 @@ def test_manifest_layout_and_ordering():
 
     assert doc["schema"] == "mh.bundle_manifest"
     assert doc["schema_version"] == 2
-    assert composite_disk_dict(composite)["schema_version"] == 1
+    composite_doc = composite_disk_dict(composite)
+    assert composite_doc["schema_version"] == 2
+    assert list(composite_doc) == [
+        "schema", "schema_version", "uid", "name", "properties", "nodes"]
+    assert composite_doc["properties"] == {}
     assert list(doc) == ["schema", "schema_version", "exporter_version",
                          "bundle_uid", "bundle_name", "source", "resources",
                          "materials", "external_dependencies"]
@@ -154,3 +159,27 @@ def test_writer_normalizes_display_names_to_nfc():
     doc = Node.disk_dict(node)
     assert doc["display_name"] == unicodedata.normalize("NFC", nfd_name)
     assert doc["properties"]["role"] == unicodedata.normalize("NFC", "декаль")
+
+
+def test_composite_v2_owns_resource_properties_and_hashes_them():
+    base = cycle_composite(
+        "cycle_a", "col/cycle_a", "node/cycle_a/ref_b", "ref_b", "col/cycle_b")
+    changed = cycle_composite(
+        "cycle_a", "col/cycle_a", "node/cycle_a/ref_b", "ref_b", "col/cycle_b")
+    changed.properties = {"category": "building", "weight": 0.25}
+
+    base_doc = composite_disk_dict(base)
+    changed_doc = composite_disk_dict(changed)
+    assert changed_doc["properties"] == {
+        "category": "building", "weight": 0.25}
+    assert composite_hash(base) != composite_hash(changed)
+    assert composite_content_hash(changed_doc) == composite_hash(changed)
+
+
+def test_frozen_v1_writer_seam_excludes_resource_properties():
+    composite = cycle_composite(
+        "cycle_a", "col/cycle_a", "node/cycle_a/ref_b", "ref_b", "col/cycle_b")
+    composite.properties = {"legacy": True}
+    document = composite_disk_dict(composite, schema_version=1)
+    assert document["schema_version"] == 1
+    assert "properties" not in document

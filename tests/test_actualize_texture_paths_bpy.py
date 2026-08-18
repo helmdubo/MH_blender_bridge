@@ -1,0 +1,140 @@
+"""Blender-hosted disk workflow coverage for manual texture actualization."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import sys
+
+import pytest
+
+bpy = pytest.importorskip("bpy")
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "addon"))
+
+from mh4blend.core.material_source import (  # noqa: E402
+    build_material_document,
+    material_resource_row,
+)
+from mh4blend.core.materials import material_content_hash  # noqa: E402
+from mh4blend.core.texture_actualize import TextureActualizeError  # noqa: E402
+from mh4blend.scene import actualize_texture_paths as module  # noqa: E402
+
+
+UID = "11111111-1111-4111-8111-111111111111"
+
+
+def _write_json(path: Path, document: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(document, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+
+
+def _fixture(root: Path, textures: dict[str, str]) -> tuple[Path, Path]:
+    owner = root / "materials"
+    payload = owner / f"wall__{UID[:8]}.material"
+    document, _diagnostics = build_material_document(
+        uid=UID,
+        name="wall",
+        shader_class="rendinst_simple",
+        params={},
+        textures=textures,
+        source_root=str(root),
+    )
+    _write_json(payload, document)
+    row = material_resource_row(document, payload.name)
+    _write_json(owner / "export_manifest.json", {
+        "schema": "mh.export_manifest",
+        "schema_version": 1,
+        "exporter_version": "0.4.1",
+        "resources": [row],
+    })
+    return payload, owner / "export_manifest.json"
+
+
+def test_manual_actualize_updates_material_and_owning_manifest(tmp_path):
+    root = tmp_path / "source"
+    root.mkdir()
+    payload, manifest_path = _fixture(root, {
+        "tex0": "old/wall_d.tif",
+        "tex1": "old/wall_n.tif",
+        "tex2": "old/missing_a.tif",
+    })
+    (root / "textures" / "walls").mkdir(parents=True)
+    (root / "textures" / "walls" / "wall_d.tif").write_bytes(b"d")
+    (root / "library_a").mkdir()
+    (root / "library_b").mkdir()
+    (root / "library_a" / "wall_n.tif").write_bytes(b"n1")
+    (root / "library_b" / "wall_n.tif").write_bytes(b"n2")
+
+    report = module.actualize_texture_paths(str(root))
+
+    document = json.loads(payload.read_text(encoding="utf-8"))
+    assert document["textures"] == {
+        "tex0": "textures/walls/wall_d.tif",
+        "tex1": "old/wall_n.tif",
+        "tex2": "old/missing_a.tif",
+    }
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    row = manifest["resources"][0]
+    assert row["content_hash"] == material_content_hash(
+        document["shader_class"], document["params"], document["textures"])
+    assert report["materials_scanned"] == 1
+    assert report["materials_updated"] == [UID]
+    assert [(item["slot"], item["resolved_path"])
+            for item in report["fixed"]] == [
+                ("tex0", "textures/walls/wall_d.tif")]
+    assert report["ambiguous"][0]["code"] == \
+        "MH_W_TEXTURE_BASENAME_AMBIGUOUS"
+    assert report["ambiguous"][0]["candidates"] == [
+        "library_a/wall_n.tif", "library_b/wall_n.tif"]
+    assert report["missing"][0]["code"] == "MH_W_TEXTURE_NOT_FOUND"
+    assert {item["code"] for item in report["warnings"]} == {
+        "MH_W_TEXTURE_BASENAME_AMBIGUOUS", "MH_W_TEXTURE_NOT_FOUND"}
+    assert not list(root.rglob("*.material.tmp"))
+    assert not (root / "old").exists()
+
+
+def test_texture_tree_race_blocks_before_marker_or_payload_mutation(
+        tmp_path, monkeypatch):
+    root = tmp_path / "source"
+    root.mkdir()
+    payload, _manifest_path = _fixture(root, {
+        "tex0": "old/wall_d.tif",
+    })
+    candidate = root / "textures" / "wall_d.tif"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"d")
+    stable_payload = payload.read_bytes()
+    real_stage = module.stage_manifest
+
+    def race_before_stage(directory, manifest, *, snapshot_guard=None):
+        extra = root / "appeared" / "wall_d.tif"
+        extra.parent.mkdir()
+        extra.write_bytes(b"new")
+        return real_stage(
+            directory, manifest, snapshot_guard=snapshot_guard)
+
+    monkeypatch.setattr(module, "stage_manifest", race_before_stage)
+    with pytest.raises(TextureActualizeError, match="file set changed"):
+        module.actualize_texture_paths(str(root))
+
+    assert payload.read_bytes() == stable_payload
+    assert not (payload.parent / "export_manifest.json.tmp").exists()
+
+
+def test_no_material_owners_is_successful_empty_report(tmp_path):
+    root = tmp_path / "source"
+    root.mkdir()
+
+    report = module.actualize_texture_paths(str(root))
+
+    assert report["ok"] is True
+    assert report["materials_scanned"] == 0
+    assert report["fixed"] == []
+    assert report["ambiguous"] == []
+    assert report["missing"] == []

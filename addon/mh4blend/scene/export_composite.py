@@ -202,7 +202,7 @@ def export_composite(
         bundle_uid=collection_uid,
         bundle_name=collection.name,
         blend_file=os.path.basename(bpy.data.filepath) or "untitled.blend",
-        exporter_version="0.4.1",
+        exporter_version="0.5.0",
         composites=[composite],
     ))
     if validation["errors"]:
@@ -259,6 +259,8 @@ def export_composite(
         snapshot=writer_resolution.snapshot,
     )
     validation["warnings"].extend(dependency_warnings)
+    # v2 payload is the authority for composite resource properties, so its
+    # receipt hashes the exact document which will be written.
     content_hash = composite_hash(composite)
     payload_needs_write = not _existing_payload_matches(
         writer_resolution, target, content_hash)
@@ -269,11 +271,9 @@ def export_composite(
         "source": os.path.basename(target),
         "content_hash": content_hash,
     }
-    if composite.properties:
-        resource_entry["properties"] = composite.properties
     manifest = prepare_manifest_update(
         os.path.dirname(target), resources=[resource_entry],
-        exporter_version="0.4.1",
+        exporter_version="0.5.0",
         blend_file=os.path.basename(bpy.data.filepath) or None,
         source_root=resolved_source_root)
     # Fail closed for readers before replacing the payload. A failed payload

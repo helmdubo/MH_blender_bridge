@@ -39,7 +39,7 @@ _COMMON_ROW_FIELDS = frozenset({
 })
 _ROW_FIELDS = {
     "static_mesh": _COMMON_ROW_FIELDS | {
-        "material_slots", "properties", "lod_policy", "lods",
+        "material_slots", "properties", "lod_policy",
     },
     "composite": _COMMON_ROW_FIELDS | {"properties"},
     "material": _COMMON_ROW_FIELDS,
@@ -376,35 +376,6 @@ def _validate_material_slots(value: object, uid: str) -> list[dict]:
     return result
 
 
-def _validate_lods(value: object, uid: str) -> list[dict]:
-    if not isinstance(value, list):
-        _fail(f"static_mesh {uid} lods must be an array")
-    result = []
-    levels = set()
-    for index, lod in enumerate(value):
-        owner = f"static_mesh {uid} lods[{index}]"
-        if not isinstance(lod, dict) or set(lod) != {"level", "source", "content_hash"}:
-            _fail(f"{owner} must contain exactly level, source and content_hash")
-        level = lod["level"]
-        if not isinstance(level, int) or isinstance(level, bool) or level < 1:
-            _fail(f"{owner}.level must be an integer >= 1")
-        if level in levels:
-            _fail(f"static_mesh {uid} contains duplicate LOD level {level}")
-        levels.add(level)
-        source = validate_relative_path(lod["source"], f"{owner}.source")
-        required = f"__{uid[:8]}.lod{level}.mesh.fbx"
-        if not posixpath.basename(source).endswith(required):
-            _fail(f"{owner}.source must end with {required!r}",
-                  "MH_E_INVALID_RESOURCE_SOURCE")
-        result.append({
-            "level": level,
-            "source": source,
-            "content_hash": _validate_hash(lod["content_hash"],
-                                             f"{owner}.content_hash"),
-        })
-    return result
-
-
 def _validate_resource_row(row: object, index: int) -> dict:
     owner = f"export manifest resources[{index}]"
     if not isinstance(row, dict):
@@ -413,6 +384,13 @@ def _validate_resource_row(row: object, index: int) -> dict:
     kind = _required_string(row, "kind", owner)
     if kind not in _ROW_FIELDS:
         _fail(f"resource {uid} has unsupported kind {kind!r}")
+    # Combined-LOD stores every authored level inside the single primary FBX.
+    # Presence is the migration signal, so even an empty legacy array must
+    # fail instead of being silently accepted as equivalent to its absence.
+    if kind == "static_mesh" and "lods" in row:
+        _fail(
+            f"static_mesh {uid} uses deprecated per-file lods rows",
+            "MH_E_DEPRECATED_LOD_ROWS")
     unknown = set(row) - _ROW_FIELDS[kind]
     missing = _COMMON_ROW_FIELDS - set(row)
     if missing or unknown:
@@ -448,8 +426,6 @@ def _validate_resource_row(row: object, index: int) -> dict:
             if row["lod_policy"] not in {"authored", "generated", "nanite"}:
                 _fail(f"static_mesh {uid} has invalid lod_policy")
             result["lod_policy"] = row["lod_policy"]
-        if "lods" in row:
-            result["lods"] = _validate_lods(row["lods"], uid)
     elif kind == "composite" and "properties" in row:
         if not isinstance(row["properties"], dict):
             _fail(f"composite {uid} properties must be an object")
@@ -505,15 +481,13 @@ def validate_export_manifest(document: dict) -> dict:
 
     source_owners = {}
     for row in normalized:
-        sources = [(row["source"], f"resource {row['uid']}")]
-        sources.extend((lod["source"], f"resource {row['uid']} LOD {lod['level']}")
-                       for lod in row.get("lods", []))
-        for source, owner in sources:
-            key = source.casefold()
-            previous = source_owners.get(key)
-            if previous is not None:
-                _fail(f"manifest source {source!r} is shared by {previous} and {owner}")
-            source_owners[key] = owner
+        source = row["source"]
+        owner = f"resource {row['uid']}"
+        key = source.casefold()
+        previous = source_owners.get(key)
+        if previous is not None:
+            _fail(f"manifest source {source!r} is shared by {previous} and {owner}")
+        source_owners[key] = owner
 
     return {
         "schema": MANIFEST_SCHEMA,

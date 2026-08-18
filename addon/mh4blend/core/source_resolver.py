@@ -313,23 +313,19 @@ def _scan_source_root(
                     "MH_E_UID8_COLLISION",
                     f"UIDs {previous_uid} and {uid} share uid8 {uid8}")
             uid8_owners[uid8] = uid
-            sources = [(row["source"], "source")]
-            sources.extend((lod["source"], f"LOD {lod['level']} source")
-                           for lod in row.get("lods", []))
-            for source, source_label in sources:
-                payload_path = _under_root(
-                    root, os.path.join(directory, *source.split("/")),
-                    f"resource {uid} {source_label}",
-                    owning_directory=directory)
-                payload_key = _path_key(os.path.realpath(payload_path))
-                previous_owner = payload_owners.get(payload_key)
-                current_owner = (uid, manifest_path, source_label)
-                if previous_owner is not None and previous_owner != current_owner:
-                    _error(
-                        "MH_E_INVALID_RESOURCE_SOURCE",
-                        f"payload {payload_path} is shared by "
-                        f"{previous_owner[0]} and {uid}")
-                payload_owners[payload_key] = current_owner
+            payload_path = _under_root(
+                root, os.path.join(directory, *row["source"].split("/")),
+                f"resource {uid} source",
+                owning_directory=directory)
+            payload_key = _path_key(os.path.realpath(payload_path))
+            previous_owner = payload_owners.get(payload_key)
+            current_owner = (uid, manifest_path, "source")
+            if previous_owner is not None and previous_owner != current_owner:
+                _error(
+                    "MH_E_INVALID_RESOURCE_SOURCE",
+                    f"payload {payload_path} is shared by "
+                    f"{previous_owner[0]} and {uid}")
+            payload_owners[payload_key] = current_owner
             owners_mutable.setdefault(uid, []).append((manifest_path, row))
 
     diagnostics: list[ResolverDiagnostic] = []
@@ -500,43 +496,28 @@ def _recovery_marker_row(
             _error(
                 "MH_E_UID8_COLLISION",
                 f"UIDs {existing_uid} and {uid} share uid8 {uid[:8]}")
-    recovery_sources = [(row["source"], "source")]
-    recovery_sources.extend((lod["source"], f"LOD {lod['level']} source")
-                            for lod in row.get("lods", []))
-    recovery_paths = []
-    for recovery_source, label in recovery_sources:
-        recovery_paths.append(_under_root(
-            snapshot.source_root,
-            os.path.join(marker_directory, *recovery_source.split("/")),
-            f"resource {uid} recovery {label}",
-            owning_directory=marker_directory))
-    payload_path = recovery_paths[0]
-    recovery_path_keys = {
-        _path_key(os.path.realpath(path)) for path in recovery_paths}
-    if len(recovery_path_keys) != len(recovery_paths):
-        _error(
-            "MH_E_INVALID_RESOURCE_SOURCE",
-            f"resource {uid} recovery payload/LOD paths alias each other")
+    payload_path = _under_root(
+        snapshot.source_root,
+        os.path.join(marker_directory, *row["source"].split("/")),
+        f"resource {uid} recovery source",
+        owning_directory=marker_directory)
+    recovery_path_key = _path_key(os.path.realpath(payload_path))
     for existing_uid, entries in snapshot.owners.items():
         if existing_uid == uid:
             continue
         for existing_manifest, existing_row in entries:
             existing_directory = os.path.dirname(existing_manifest)
-            existing_sources = [existing_row["source"]]
-            existing_sources.extend(
-                lod["source"] for lod in existing_row.get("lods", []))
-            for existing_source in existing_sources:
-                existing_path = _under_root(
-                    snapshot.source_root,
-                    os.path.join(
-                        existing_directory, *existing_source.split("/")),
-                    f"resource {existing_uid} source",
-                    owning_directory=existing_directory)
-                if _path_key(os.path.realpath(existing_path)) in recovery_path_keys:
-                    _error(
-                        "MH_E_INVALID_RESOURCE_SOURCE",
-                        f"recovery payload {payload_path} is already owned by "
-                        f"resource {existing_uid}")
+            existing_path = _under_root(
+                snapshot.source_root,
+                os.path.join(
+                    existing_directory, *existing_row["source"].split("/")),
+                f"resource {existing_uid} source",
+                owning_directory=existing_directory)
+            if _path_key(os.path.realpath(existing_path)) == recovery_path_key:
+                _error(
+                    "MH_E_INVALID_RESOURCE_SOURCE",
+                    f"recovery payload {payload_path} is already owned by "
+                    f"resource {existing_uid}")
     return ResolvedResource(
         payload_path=payload_path,
         owning_manifest_path=owning_manifest_path,
@@ -613,7 +594,6 @@ def resolve_resource_for_writer(
         expected_source: str | None = None,
         registry_path: str | None = None,
         texture_policy: str = "transitional",
-        allow_missing_lod_payloads: bool = False,
         ) -> WriterResolution:
     """Resolve one writer owner, allowing only its one explicit crash marker.
 
@@ -624,11 +604,8 @@ def resolve_resource_for_writer(
     crash may have happened before or after payload replacement, and the writer
     must replace it unconditionally before committing the marker.
 
-    An LOD-aware writer may set ``allow_missing_lod_payloads`` to repair an
-    owned mesh whose authored LOD payloads are absent. Existing LOD payloads
-    are still captured as opaque stable bytes, and absent paths are captured
-    as absence tokens. The default remains strict for writers which do not
-    prove that they will replace every missing authored LOD.
+    A Combined-LOD mesh is indistinguishable here from every other one-payload
+    resource: all authored levels are bytes inside its primary FBX.
     """
     expected_source = _validate_writer_request(
         uid, expected_kind, expected_source)
@@ -642,8 +619,7 @@ def resolve_resource_for_writer(
             texture_policy=texture_policy)
         owner = _resolve_resource_for_writer_normal(
             snapshot, uid, expected_kind=expected_kind,
-            expected_source=expected_source,
-            allow_missing_lod_payloads=allow_missing_lod_payloads)
+            expected_source=expected_source)
         return WriterResolution(owner, snapshot, False)
     marker_path, marker, snapshot = recovery_state
     owner = _recovery_marker_row(
@@ -655,16 +631,13 @@ def resolve_resource_for_writer(
 def _resolve_resource_for_writer_normal(
         snapshot: SourceSnapshot, uid: str, *, expected_kind: str,
         expected_source: str | None,
-        allow_missing_lod_payloads: bool = False,
         ) -> ResolvedResource | None:
     """Resolve an owned payload as rewrite input, without trusting its schema.
 
     The manifest owner remains strict and authoritative. A regular primary
     payload is captured as opaque stable bytes; an absent primary is captured
     as an absence token. The standalone writer will decide whether to rewrite
-    or hash-skip it. Non-file entries remain hard errors. Authored LOD absence
-    is a hard error unless the calling writer explicitly opts into repairing
-    missing LOD payloads.
+    or hash-skip it. Non-file entries remain hard errors.
     """
     entries = snapshot.owners.get(uid, ())
     hint = snapshot.registry_hints.get(uid)
@@ -708,9 +681,6 @@ def _resolve_resource_for_writer_normal(
         snapshot.payload_bytes[payload_path] = first
     else:
         snapshot.missing_payload_paths.add(payload_path)
-    _validate_lod_payloads(
-        snapshot, manifest_path, row,
-        allow_missing=allow_missing_lod_payloads)
     result = ResolvedResource(
         payload_path=payload_path,
         owning_manifest_path=manifest_path,
@@ -758,7 +728,29 @@ def _validate_payload_identity(snapshot: SourceSnapshot, payload: bytes,
     if not isinstance(document, dict) or document.get("schema") != expected_schema:
         _error("MH_E_UNRESOLVED_EXTERNAL", f"payload {path} has wrong schema")
     version = document.get("schema_version")
-    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
+    if not isinstance(version, int) or isinstance(version, bool):
+        _error("MH_E_UNKNOWN_SCHEMA_VERSION", f"payload {path} has unsupported version")
+    if row["kind"] == "composite":
+        if version not in {1, 2}:
+            _error("MH_E_UNKNOWN_SCHEMA_VERSION",
+                   f"payload {path} has unsupported version")
+        expected_fields = {"schema", "schema_version", "uid", "name", "nodes"}
+        if version == 2:
+            expected_fields.add("properties")
+        missing = expected_fields - set(document)
+        unknown = set(document) - expected_fields
+        if missing or unknown:
+            _error(
+                "MH_E_INVALID_COMPOSITE",
+                f"payload {path} has invalid fields; "
+                f"missing={sorted(missing)}, unknown={sorted(unknown)}")
+        if not isinstance(document.get("nodes"), list):
+            _error("MH_E_INVALID_COMPOSITE",
+                   f"payload {path} nodes must be an array")
+        if version == 2 and not isinstance(document.get("properties"), dict):
+            _error("MH_E_INVALID_COMPOSITE",
+                   f"payload {path} properties must be an object")
+    elif version != 1:
         _error("MH_E_UNKNOWN_SCHEMA_VERSION", f"payload {path} has unsupported version")
     if document.get("uid") != row["uid"] or document.get("name") != row["name"]:
         _error(
@@ -816,7 +808,6 @@ def resolve_resource(
         _error("MH_E_INVALID_EXPORT_MANIFEST", f"payload changed while reading: {payload_path}")
     _validate_payload_identity(snapshot, first, payload_path, row)
     snapshot.payload_bytes[payload_path] = first
-    _validate_lod_payloads(snapshot, manifest_path, row)
     result = ResolvedResource(
         payload_path=payload_path,
         owning_manifest_path=manifest_path,
@@ -828,42 +819,6 @@ def resolve_resource(
             "registry hint disagrees with full manifest scan; scan result used",
             uid))
     return result
-
-
-def _validate_lod_payloads(
-        snapshot: SourceSnapshot, manifest_path: str, row: dict, *,
-        allow_missing: bool = False,
-        ) -> None:
-    """Require and snapshot every authored LOD payload for a mesh row."""
-    uid = row["uid"]
-    for lod in row.get("lods", []):
-        lod_path = _under_root(
-            snapshot.source_root,
-            os.path.join(
-                os.path.dirname(manifest_path), *lod["source"].split("/")),
-            f"resource {uid} LOD {lod['level']} source",
-            owning_directory=os.path.dirname(manifest_path))
-        if os.path.lexists(lod_path):
-            if not os.path.isfile(lod_path):
-                _error(
-                    "MH_E_UNRESOLVED_EXTERNAL",
-                    f"resource {uid} LOD {lod['level']} payload path is not "
-                    f"a file: {lod_path}")
-        elif allow_missing:
-            snapshot.missing_payload_paths.add(lod_path)
-            continue
-        else:
-            _error(
-                "MH_E_UNRESOLVED_EXTERNAL",
-                f"resource {uid} LOD {lod['level']} payload is missing: "
-                f"{lod_path}")
-        lod_first = _read_bytes(lod_path)
-        lod_second = _read_bytes(lod_path)
-        if lod_first != lod_second:
-            _error(
-                "MH_E_INVALID_EXPORT_MANIFEST",
-                f"LOD payload changed while reading: {lod_path}")
-        snapshot.payload_bytes[lod_path] = lod_first
 
 
 def resolve_resource_for_import(
@@ -909,7 +864,6 @@ def resolve_resource_for_import(
         return resolve_resource(
             snapshot, uid, expected_kind=expected_kind)
 
-    _validate_lod_payloads(snapshot, manifest_path, row)
     result = ResolvedResource(
         payload_path=payload_path,
         owning_manifest_path=manifest_path,

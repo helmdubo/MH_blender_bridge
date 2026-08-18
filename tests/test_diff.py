@@ -33,8 +33,9 @@ W1 = UIDS["node/ca_windowset/window_1"]
 W2 = UIDS["node/ca_windowset/window_2"]
 
 
-def build(nodes, meshes=()):
-    composite = Composite(WS, "ca_windowset", nodes)
+def build(nodes, meshes=(), properties=None):
+    composite = Composite(
+        WS, "ca_windowset", nodes, properties=properties or {})
     manifest = Manifest(
         bundle_uid=UIDS["col/ca_building"], bundle_name="Golden",
         blend_file="golden.blend", exporter_version="0.2.0",
@@ -95,6 +96,26 @@ def test_node_create_and_remove():
     new = build([node(W2)])
     report = run(old, new)
     assert report["nodes"][WS] == {W1: ["REMOVE"], W2: ["CREATE"]}
+
+
+def test_composite_v2_resource_properties_emit_update_properties():
+    old = build([node(W1)], properties={"category": "building"})
+    new = build([node(W1)], properties={"category": "vehicle"})
+    report = run(old, new)
+    assert report["resources"] == {WS: ["UPDATE_PROPERTIES"]}
+    assert report["nodes"] == {}
+
+
+def test_v1_manifest_fallback_and_v2_payload_are_semantically_equal():
+    old = build([node(W1)])
+    old[1][WS] = composite_disk_dict(
+        Composite(WS, "ca_windowset", [node(W1)]), schema_version=1)
+    old_row = next(row for row in old[0]["resources"] if row["uid"] == WS)
+    old_row["properties"] = {"category": "building"}
+    new = build([node(W1)], properties={"category": "building"})
+    report = run(old, new)
+    assert report["resources"] == {}
+    assert report["nodes"] == {}
 
 
 def test_composite_create_does_not_enumerate_nodes():

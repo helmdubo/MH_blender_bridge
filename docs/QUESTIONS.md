@@ -94,25 +94,19 @@ uid объекта (после Ctrl+D) может изменить порядо�
 `lods: [{level, source, content_hash}]` (отдельные FBX per-level), не реализуя
 в MVP. Nanite-путь не требует полей схемы вовсе, значит резерв ничего не ломает.
 
-**Статус.** РЕШЕНО (владелец): резерв принят — `lods[]` (уровни 1+, base source =
-LOD0) + `lod_policy: authored|generated|nanite` (default `generated`), §2.
-Screen sizes / reduction settings — resolved-свойства UE, в bundle не входят.
-**Активация реализации (D39 [dagor-lod-source-files]):** выбор точной
-`<base>.lods` Collection создаёт одну `static_mesh` manifest-row с
-`lod_policy: authored`. Её direct child `<base>.lod00` является primary
-`source`, а `<base>.lod01+` экспортируются отдельными
-`.lod<level>.mesh.fbx` и заполняют `lods[]`; это не packed FBX и не иерархия
-Empty/Null nodes. Hash-skip и recovery работают per-level внутри одной
-resource-row. Суффикс `.lods` снимается только с логического resource name;
-прочие точки остаются невалидными.
+**Статус.** РЕШЕНО и затем superseded D40 `[combined-lod-fbx]`. Authoring
+convention `<base>.lods` → direct `<base>.lodNN` сохраняется, но все уровни
+пишутся в один FBX. На mesh-узлах хранится integer `mh_lod_level`; manifest
+имеет один `source`/`content_hash`, `lod_policy: authored` и не имеет `lods[]`.
+Любая правка любого уровня перезаписывает весь FBX. Screen sizes пока
+автоматические; authored distances — ROADMAP.
 
-**Post-freeze migration note — 2026-08-18 (diagnostics only):** аддитивно
-зарегистрированы `MH_E_INVALID_LOD_HIERARCHY` для Blender export authoring-shape
-ошибок и `MH_E_LOD_IMPORT_FAILED` для ошибки UE import объявленного authored
-LOD. Коды не меняют JSON, canonical form или hash bytes Source Schema v1.
-`MH_E_LOD_IMPORT_FAILED` пока только зарезервирован: его реализация и описание
-принадлежат будущему UE/doc07 срезу; `docs/07` в репозитории отсутствует, а
-замороженный `docs/05` не изменяется.
+**Migration note — 2026-08-18:** старый per-file резерв D13/D39 отменён до UE
+реализации. Geometry hash переходит на `mh.meshser:2`; старые `lods[]` rows
+требуют реэкспорта/одноразовой миграции и затем дают
+`MH_E_DEPRECATED_LOD_ROWS`. `MH_E_LOD_IMPORT_FAILED` не используется: malformed
+уровень делает malformed весь mesh-ресурс. Полная правка —
+`AMENDMENT_combined_lod_fbx.md`.
 
 ---
 

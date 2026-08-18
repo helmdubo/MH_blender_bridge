@@ -73,12 +73,12 @@ Sources:
   manifest по UID всегда обновляются in place.
 
 Dagor LOD authoring: выберите Collection с точным именем `<base>.lods`.
-Её непосредственный child `<base>.lod00` экспортируется как primary
-`.mesh.fbx`, а `<base>.lod01+` — отдельными `.lod<level>.mesh.fbx` в `lods[]`
-той же `static_mesh` manifest-row. Каждый уровень имеет собственный hash-skip и
-участвует в recovery; packed FBX/Empty nodes не создаются. Только структурный
-суффикс `.lods` снимается с логического имени ресурса — произвольные точки в
-resource name остаются невалидными.
+Все direct children `<base>.lod00`, `<base>.lod01`, … экспортируются в один FBX
+одного `static_mesh`-ресурса. Уровень каждого mesh-узла хранится в custom
+property `mh_lod_level`, а не выводится из имени. Любая правка любого уровня
+перезаписывает этот FBX целиком. Только структурный суффикс `.lods` снимается с
+логического имени ресурса — произвольные точки в resource name остаются
+невалидными.
 
 Материальные metadata читаются из `Material.dagormat`, поэтому для полного
 экспорта включите dag4blend. Обычный Blender-материал без dagormat остаётся

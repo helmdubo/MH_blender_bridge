@@ -33,6 +33,7 @@ def test_register_exposes_only_standalone_workflow_properties_and_panels():
 
         assert {cls.bl_idname for cls in ops.CLASSES} == {
             "mh.export_fbx", "mh.export_material",
+            "mh.actualize_texture_paths",
             "mh.export_composite", "mh.import_composite"}
         assert {cls.bl_category for cls in panels.CLASSES} == {"MH"}
         assert all("bundle" not in cls.bl_idname for cls in ops.CLASSES)

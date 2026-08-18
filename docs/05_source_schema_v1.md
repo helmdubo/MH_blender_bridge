@@ -18,6 +18,15 @@ amendment: одна вкладка `MH` и Boolean `Export Materials` лишь �
 описанные standalone writers. Ни одна JSON-форма, canonical byte, hash input или
 диагностическая семантика этого документа не изменена.
 
+**Approved schema-significant amendment — 2026-08-18.** D40
+`[combined-lod-fbx]` и `AMENDMENT_combined_lod_fbx.md` немедленно заменяют только
+per-file LOD-части этого frozen v1 документа. До формального объявления Source
+Protocol v2 это approved migration contract: новый writer пишет один FBX на
+mesh-ресурс, `lods[]` больше не эмитится, а geometry stream имеет tag
+`mh.meshser:2`. Остальные v1 JSON-формы сохраняют силу. Старые выгрузки с
+`lods[]` мигрируются реэкспортом и после миграции блокируются
+`MH_E_DEPRECATED_LOD_ROWS`; тихая интерпретация старой формы запрещена.
+
 ## 1. Инварианты
 
 1. Identity ресурса и узла задаётся полным lowercase UUID с дефисами. Имя,
@@ -78,14 +87,7 @@ texture paths: в transitional-режиме внешний texture file допу
       "properties": {
         "role": "wall"
       },
-      "lod_policy": "authored",
-      "lods": [
-        {
-          "level": 1,
-          "source": "meshes/wall_a__2db5574c.lod1.mesh.fbx",
-          "content_hash": "xxh3:0123456789abcdef"
-        }
-      ]
+      "lod_policy": "authored"
     },
     {
       "uid": "7d995e54-d084-4466-a613-a1cd8f3248b2",
@@ -145,13 +147,11 @@ Kind определяет точный lowercase suffix `source` и имя пр�
 | `composite` | `.composite` | `<sanitized_name>__<uid8>.composite` |
 | `material` | `.material` | `<sanitized_name>__<uid8>.material` |
 
-LOD row использует suffix `.lod<level>.mesh.fbx`; при первом создании —
-`<sanitized_name>__<uid8>.lod<level>.mesh.fbx`. Reader проверяет suffix по kind,
-и обязательный basename-фрагмент `__<uid8><suffix>` (для LOD —
-`__<uid8>.lod<level>.mesh.fbx`) по полному row UID, но не требует, чтобы
-устаревшая filename-часть `sanitized_name` совпадала с текущим row `name`.
-Полный UUID остаётся identity; совпадение первых восьми hex у двух ResourceUID
-под одним `source_root` блокируется `MH_E_UID8_COLLISION`.
+Reader проверяет suffix по kind и обязательный basename-фрагмент
+`__<uid8><suffix>` по полному row UID, но не требует, чтобы устаревшая
+filename-часть `sanitized_name` совпадала с текущим row `name`. Полный UUID
+остаётся identity; совпадение первых восьми hex у двух ResourceUID под одним
+`source_root` блокируется `MH_E_UID8_COLLISION`.
 
 Manifest row и payload согласованы: UID/name внутри `.composite` или
 `.material` равны row UID/name. Для FBX identity задаёт manifest row, потому
@@ -168,8 +168,9 @@ Manifest row и payload согласованы: UID/name внутри `.composit
   на разные UID;
 - optional `properties`, default `{}`: asset-level JSON bag;
 - optional `lod_policy`: `authored | generated | nanite`, default `generated`;
-- optional `lods`, default `[]`: уровни 1+, каждый row имеет required integer
-  `level >= 1`, relative `source` и `content_hash`. LOD0 — общий `source` row.
+- поле `lods` deprecated и новым writer не эмитится. После миграции любое его
+  присутствие — `MH_E_DEPRECATED_LOD_ROWS`. `lod_policy: authored` означает,
+  что все уровни находятся внутри единственного FBX из общего `source` row.
 
 `composite` допускает optional `properties`, default `{}`: asset-level bag.
 Node/placement properties живут только в `.composite`; они не наследуются из
@@ -186,7 +187,9 @@ extension mechanism.
 
 ### 3.4 Hash inputs
 
-- `static_mesh`: XXH3-64 потока `mh.meshser:1` evaluated geometry; не FBX bytes;
+- `static_mesh`: XXH3-64 потока `mh.meshser:2` evaluated geometry всех LOD;
+  не FBX bytes. Объекты идут по `(lod_level asc, ObjectUID asc)`, перед данными
+  каждого объекта в поток пишется `lod_level` как little-endian `uint32`;
 - `composite`: XXH3-64 канон-формы всего `mh.composite` document;
 - `material`: XXH3-64 канон-формы semantic payload
   `{shader_class, params, textures}`. UID/name/schema исключены, поэтому rename
@@ -195,6 +198,22 @@ extension mechanism.
 `content_hash` — semantic fast path, а не доказательство byte equality. В
 частности, при material rename writer обновляет `name` в существующем payload,
 хотя material `content_hash` не изменился.
+
+### 3.5 Combined-LOD FBX amendment
+
+Dagor-authoring остаётся `<base>.lods` с direct children `<base>.lod00`,
+`<base>.lod01`, …, но это только Blender-side convention. Writer экспортирует
+объекты всех уровней одним вызовом FBX exporter в один `source`. На каждом
+экспортируемом mesh-узле записывается integer custom property `mh_lod_level`;
+отсутствие свойства означает уровень 0 только для single-LOD ресурса. Имена
+узлов и suffix `.lodNN` внутри FBX не являются семантикой.
+
+Номера уровней обязаны быть плотными от 0 (`MH_E_LOD_LEVELS_SPARSE`). Material
+slots уровней 1+ — подмножество slots уровня 0
+(`MH_E_LOD_SLOT_NOT_IN_BASE`). `UCX_*` и `SOCKET_*` принадлежат уровню 0;
+обнаруженные на уровне 1+ игнорируются с `MH_W_LOD_AUX_NODE_IGNORED`. Несколько
+render mesh-узлов на одном уровне разрешены. Любая правка любого уровня меняет
+общий geometry hash и приводит к полной перезаписи единственного FBX.
 
 ## 4. `*.composite` — `mh.composite` v1
 
@@ -535,6 +554,12 @@ operations batch продолжаются. Тем самым `MH_E_*` по-пр�
 | `MH_E_TEXTURE_OUTSIDE_ROOT` | strict export/import | Texture path абсолютный, то есть external. |
 | `MH_E_INVALID_MATERIAL_VALUE` | material export/import | Payload/path нельзя представить по v1. |
 | `MH_E_UNKNOWN_SCHEMA_VERSION` | reader | Schema version не поддерживается. |
+| `MH_E_INVALID_LOD_HIERARCHY` | Blender export | Dagor authoring container/child shape не соответствует `<base>.lods` → direct `<base>.lodNN`. |
+| `MH_E_LOD_LEVELS_SPARSE` | Blender export; UE import | Фактические LOD levels не образуют плотный диапазон от 0. |
+| `MH_E_LOD_SLOT_NOT_IN_BASE` | Blender export; UE import | Material slot уровня 1+ отсутствует в LOD0. |
+| `MH_E_DEPRECATED_LOD_ROWS` | manifest reader/writer | Обнаружено отменённое per-file поле `lods`; требуется миграция/re-export. |
+| `MH_E_LOD_PASSPORT_MISMATCH` | UE FBX import | Passport `lod_levels` не совпадает с фактическими `mh_lod_level` mesh nodes. |
+| `MH_W_LOD_AUX_NODE_IGNORED` | Blender export; UE import | `UCX_*`/`SOCKET_*` обнаружен на уровне 1+ и игнорируется. |
 
 Коды целостности UUID, resource names, node table, transforms, material slots и
 source paths из frozen composite/validation contract сохраняются. Для нового
@@ -578,8 +603,8 @@ reserved base name получает prefix `_`. Filename не участвует
 
 ### 9.1 Standalone export
 
-Единица export-транзакции — один FBX, composite или material и upsert одной
-resource row в его owning manifest.
+Единица export-транзакции — один FBX mesh-ресурса (включая все его LOD),
+composite или material и upsert одной resource row в его owning manifest.
 
 1. До первой записи вычислить/валидировать payload, canonical hash, row,
    computed dependencies и полный новый manifest.

@@ -23,12 +23,19 @@ from ..core.canonical import ERROR_CODES, validate_resource_name
 from ..core.materials import material_content_hash, material_disk_payload
 from ..core.material_source import (
     MaterialSourceError,
+    prepare_material_export,
     validate_material_document,
+    write_material_payload_atomic,
 )
 from ..core.source_resolver import (
     assert_source_snapshot_stable,
     resolve_resource_for_import,
     scan_source_root,
+)
+from ..core.texture_actualize import (
+    actualize_material_document,
+    assert_texture_tree_stable,
+    capture_texture_tree,
 )
 from ..core.uid import PROP_UID
 from ..core.validate import MHValidationError
@@ -45,12 +52,17 @@ from .material_extract import (
     _dagormat_disk_payload,
 )
 from .source_manifest import (
+    abandon_staged_manifest,
+    commit_staged_manifest,
     ManifestError,
     assert_manifest_stable,
     load_export_manifest_snapshot,
     manifest_resource_index,
+    prepare_manifest_update,
+    stage_manifest,
     validate_export_manifest,
 )
+from .actualize_texture_paths import EXPORTER_VERSION
 
 __all__ = [
     "CompositeImportError",
@@ -356,11 +368,17 @@ def _validate_transform(value, node_uid):
 def _validate_document(document, path):
     if not isinstance(document, dict):
         _fail("MH_E_INVALID_COMPOSITE", f"'{path}' is not a JSON object")
-    if document.get("schema") != "mh.composite" \
-            or document.get("schema_version") != 1:
+    if document.get("schema") != "mh.composite":
         _fail("MH_E_UNKNOWN_SCHEMA_VERSION",
               f"unsupported composite schema in '{path}'")
+    version = document.get("schema_version")
+    if (not isinstance(version, int) or isinstance(version, bool)
+            or version not in {1, 2}):
+        _fail("MH_E_UNKNOWN_SCHEMA_VERSION",
+              f"unsupported composite schema_version {version!r} in '{path}'")
     expected_fields = {"schema", "schema_version", "uid", "name", "nodes"}
+    if version == 2:
+        expected_fields.add("properties")
     if set(document) != expected_fields:
         _fail(
             "MH_E_INVALID_COMPOSITE",
@@ -380,6 +398,10 @@ def _validate_document(document, path):
     rows = document.get("nodes")
     if not isinstance(rows, list):
         _fail("MH_E_INVALID_COMPOSITE", f"'{path}' nodes must be an array")
+    resource_properties = document.get("properties", {})
+    if not isinstance(resource_properties, dict):
+        _fail("MH_E_INVALID_COMPOSITE",
+              f"'{path}' properties must be an object")
 
     nodes = []
     by_uid = {}
@@ -457,7 +479,25 @@ def _validate_document(document, path):
                       f"parent cycle containing {sorted(visited)}")
             visited.add(cursor["node_uid"])
             cursor = by_uid[cursor["parent_uid"]]
-    return {"uid": uid, "name": name, "nodes": nodes, "path": path}
+    return {
+        "schema_version": version,
+        "uid": uid,
+        "name": name,
+        "properties": deepcopy(resource_properties),
+        "nodes": nodes,
+        "path": path,
+    }
+
+
+def _composite_resource_properties(document, manifest_row):
+    """Return properties from the authority selected by payload version.
+
+    v2 is self-contained. Frozen v1 has no payload field and therefore keeps
+    the owning-manifest fallback for the duration of dual-read migration.
+    """
+    if document["schema_version"] == 2:
+        return deepcopy(document["properties"])
+    return deepcopy((manifest_row or {}).get("properties", {}))
 
 
 def _safe_source(base_directory, source, uid):
@@ -638,6 +678,11 @@ def load_composite_plan(
                     _fail("MH_E_NAME_MISMATCH",
                           f"'{source}' name {loaded['name']!r} != manifest "
                           f"name {row['name']!r}")
+                # Do this before the duplicate-document branch as repeated
+                # references must still observe payload-authoritative v2
+                # properties rather than a legacy manifest decoration.
+                resources[uid]["properties"] = \
+                    _composite_resource_properties(loaded, row)
                 if uid in documents:
                     if os.path.normcase(document_paths[uid]) != \
                             os.path.normcase(source):
@@ -658,17 +703,18 @@ def load_composite_plan(
                         "MH_E_INVALID_RESOURCE_SOURCE",
                         f"cannot read static mesh {uid} at '{source}': {exc}")
 
-    # The selected root path is authoritative, while its optional manifest row
-    # still contributes resource-level properties shown on the collection.
+    # The selected root path is authoritative. v2 carries its resource-level
+    # properties itself; only a frozen-v1 payload falls back to the optional
+    # manifest row.
     if root["uid"] in resources \
             and resources[root["uid"]]["kind"] != "composite":
         _fail("MH_E_RESOURCE_KIND_MISMATCH",
               f"root composite {root['uid']} is also referenced as a mesh")
     root_row, root_row_source = resolve(root["uid"], "composite")
-    root_properties = {}
+    root_properties = _composite_resource_properties(root, root_row)
     if root_row is not None:
-        root_properties = root_row.get("properties", {})
-        if not isinstance(root_properties, dict):
+        row_properties = root_row.get("properties", {})
+        if not isinstance(row_properties, dict):
             _fail("MH_E_INVALID_EXPORT_MANIFEST",
                   f"resource {root['uid']} properties must be an object")
         root_name = root_row.get("name")
@@ -1383,14 +1429,174 @@ def import_composite(filepath, manifest=None, geometry_scene=None,
     return report
 
 
+def _texture_actualization_row(uid, name, slot, result):
+    row = {
+        "material_uid": uid,
+        "material_name": name,
+        "slot": slot,
+        "basename": result.basename,
+        "path": result.authored_path,
+    }
+    if result.code is not None:
+        row["code"] = result.code
+    if result.resolved_path is not None:
+        row["resolved_path"] = result.resolved_path
+    if result.candidates:
+        row["candidates"] = list(result.candidates)
+    return row
+
+
+def _actualize_reachable_materials(
+        source_root, material_uids, *, registry_path=None,
+        texture_policy="transitional"):
+    """Repair stale paths for the preflight-reachable material UID set.
+
+    This runs entirely before ``_BlenderImportTransaction`` exists. Each
+    changed material uses the frozen-v1 marker-first writer, while the texture
+    pathname index remains immutable for the complete wave.
+    """
+    root = os.path.normpath(os.path.abspath(source_root))
+    texture_snapshot = capture_texture_tree(root)
+    material_uids = tuple(sorted(set(material_uids)))
+    result_report = {
+        "materials_scanned": len(material_uids),
+        "materials_updated": [],
+        "fixed": [],
+        "ambiguous": [],
+        "missing": [],
+        "exact": 0,
+        "warnings": [],
+    }
+
+    for uid in material_uids:
+        # A prior UID may have changed its owning manifest. Start each v1
+        # standalone payload transaction from a newly committed root view.
+        snapshot = scan_source_root(
+            root, registry_path=registry_path,
+            texture_policy=texture_policy)
+        owner = resolve_resource_for_import(
+            snapshot, uid, expected_kind="material")
+        if owner is None or owner.payload_path not in snapshot.payload_bytes:
+            _fail(
+                "MH_E_UNRESOLVED_EXTERNAL",
+                f"reachable material {uid} disappeared during texture "
+                "actualization")
+        try:
+            document = json.loads(
+                snapshot.payload_bytes[owner.payload_path].decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            _fail(
+                "MH_E_INVALID_MATERIAL_VALUE",
+                f"cannot decode reachable material {uid}: {exc}")
+        updated, results = actualize_material_document(
+            document, texture_snapshot)
+        fixes = [(slot, result) for slot, result in results
+                 if result.status == "fixed"]
+
+        if fixes:
+            prepared = prepare_material_export(
+                uid=updated["uid"],
+                name=updated["name"],
+                shader_class=updated["shader_class"],
+                params=updated["params"],
+                textures=updated["textures"],
+                source_root=root,
+                texture_policy=texture_policy,
+                target_payload_path=owner.payload_path,
+                owning_manifest_path=owner.owning_manifest_path,
+                existing_source=owner.manifest_row["source"],
+            )
+            owner_directory = os.path.dirname(owner.owning_manifest_path)
+            manifest = prepare_manifest_update(
+                owner_directory,
+                resources=[prepared.resource_row],
+                exporter_version=EXPORTER_VERSION,
+                source_root=root,
+            )
+
+            def stable_guard(current=snapshot):
+                assert_source_snapshot_stable(current)
+                assert_texture_tree_stable(texture_snapshot)
+
+            stage_manifest(
+                owner_directory, manifest, snapshot_guard=stable_guard)
+            try:
+                write_material_payload_atomic(
+                    prepared,
+                    force=manifest.is_recovery,
+                    source_root=root,
+                    texture_policy=texture_policy,
+                )
+                commit_staged_manifest(owner_directory)
+            except BaseException:
+                abandon_staged_manifest(owner_directory)
+                raise
+            result_report["materials_updated"].append(uid)
+        else:
+            assert_source_snapshot_stable(snapshot)
+            assert_texture_tree_stable(texture_snapshot)
+
+        for slot, result in results:
+            if result.status == "exact":
+                result_report["exact"] += 1
+                continue
+            row = _texture_actualization_row(
+                uid, document["name"], slot, result)
+            result_report[result.status].append(row)
+            if result.code is not None:
+                result_report["warnings"].append(_warning(
+                    result.code, [uid],
+                    f"material {uid} slot {slot} texture "
+                    f"'{result.basename}': "
+                    + ("multiple basename candidates; path unchanged"
+                       if result.status == "ambiguous"
+                       else "not found under Project Source Root")))
+
+    assert_texture_tree_stable(texture_snapshot)
+    return result_report
+
+
 def import_composite_file(filepath, manifest_path=None, *, registry_path=None,
                           **kwargs):
     """Import with automatic global UID resolution when Source Root is set."""
     source_root = kwargs.get("source_root")
     if source_root and kwargs.get("resource_resolver") is None:
         texture_policy = kwargs.get("texture_policy", "transitional")
+        normalized_root = os.path.abspath(
+            bpy.path.abspath(os.fspath(source_root)))
+        preflight_snapshot = scan_source_root(
+            normalized_root,
+            registry_path=registry_path,
+            texture_policy=texture_policy,
+        )
+        preflight_resolver = lambda uid, expected_kind: (
+            resolve_resource_for_import(
+                preflight_snapshot, uid, expected_kind=expected_kind))
+        preflight_plan = load_composite_plan(
+            filepath,
+            manifest=manifest_path,
+            resource_resolver=preflight_resolver,
+            source_root=normalized_root,
+            texture_policy=texture_policy,
+        )
+        # Reject destination ownership conflicts before an automatic source
+        # edit. This remains Blender-read-only and creates no datablocks.
+        _preflight_destination(preflight_plan)
+        assert_source_snapshot_stable(preflight_snapshot)
+        _assert_payloads_stable(preflight_plan["payload_tokens"])
+
+        texture_actualization = _actualize_reachable_materials(
+            normalized_root,
+            preflight_plan["materials"],
+            registry_path=registry_path,
+            texture_policy=texture_policy,
+        )
+
+        # Any .material edit invalidates the old resolver snapshot and plan.
+        # Discard both unconditionally, then let the ordinary importer rebuild
+        # against the newly committed payload/manifest authority.
         snapshot = scan_source_root(
-            os.path.abspath(bpy.path.abspath(os.fspath(source_root))),
+            normalized_root,
             registry_path=registry_path,
             texture_policy=texture_policy,
         )
@@ -1399,7 +1605,23 @@ def import_composite_file(filepath, manifest_path=None, *, registry_path=None,
                 snapshot, uid, expected_kind=expected_kind))
         kwargs["snapshot_guard"] = lambda: assert_source_snapshot_stable(
             snapshot)
+    else:
+        texture_actualization = {
+            "materials_scanned": 0,
+            "materials_updated": [],
+            "fixed": [],
+            "ambiguous": [],
+            "missing": [],
+            "exact": 0,
+            "warnings": [],
+        }
     report = import_composite(filepath, manifest=manifest_path, **kwargs)
+    report["texture_actualization"] = texture_actualization
+    if texture_actualization["warnings"]:
+        report["warnings"] = sorted(
+            report["warnings"] + texture_actualization["warnings"],
+            key=lambda row: (
+                row["code"], row["subjects"], row["message"]))
     report["imported_meshes"] = report["mesh_uids"]
     report["imported_composites"] = report["composite_uids"]
     report["placeholders"] = report["unresolved"]
