@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "mh4blend"
-version = "0.5.0"
+version = "0.6.0"
 name = "MH Blender Bridge"
 tagline = "Export FBX, materials, and composite sources for UE5"
 maintainer = "MH Studio"
@@ -24,4 +24,6 @@ paths_exclude_pattern = [
   "__pycache__/",
   "*.pyc",
   ".*",
+  "scene/source_manifest.py",
+  "core/source_resolver.py",
 ]

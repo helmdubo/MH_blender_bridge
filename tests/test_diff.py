@@ -1,171 +1,231 @@
-"""Tests for mh4blend.core.diff — one scenario per §7.2 flag the reference
-differ may emit, plus the structural rules (flag order, silent nodes on
-composite CREATE/REMOVE, empty diff)."""
+"""Pure semantic tests for the v2 reader-side source differ."""
 
-import copy
+from copy import deepcopy
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "addon"))
-sys.path.insert(0, str(REPO_ROOT / "tools"))
 
-from golden_uids import UIDS  # noqa: E402
-from diff_bundles import load_bundle  # noqa: E402
-from mh4blend.core.diff import diff_bundles  # noqa: E402
-from mh4blend.core.model import (  # noqa: E402
-    IDENTITY_TRANSFORM,
-    Composite,
-    Manifest,
-    MaterialResource,
-    MeshResource,
-    Node,
-    QuantizedTransform,
-    composite_disk_dict,
-    composite_hash,
-    manifest_disk_dict,
+from mh4blend.core.diff import diff_source_snapshots  # noqa: E402
+from mh4blend.core.fbx_passport import (  # noqa: E402
+    descriptor_hash,
+    make_fbx_passport,
 )
 
-WS = UIDS["col/ca_windowset"]
-W1 = UIDS["node/ca_windowset/window_1"]
-W2 = UIDS["node/ca_windowset/window_2"]
+
+MESH_UID = "10000000-0000-0000-0000-000000000001"
+COMP_UID = "20000000-0000-0000-0000-000000000001"
+NODE_A = "30000000-0000-0000-0000-000000000001"
+NODE_B = "30000000-0000-0000-0000-000000000002"
+MAT_UID = "40000000-0000-0000-0000-000000000001"
 
 
-def build(nodes, meshes=(), properties=None):
-    composite = Composite(
-        WS, "ca_windowset", nodes, properties=properties or {})
-    manifest = Manifest(
-        bundle_uid=UIDS["col/ca_building"], bundle_name="Golden",
-        blend_file="golden.blend", exporter_version="0.2.0",
-        meshes=list(meshes), composites=[composite])
-    doc = manifest_disk_dict(manifest, {WS: composite_hash(composite)})
-    return doc, {WS: composite_disk_dict(composite)}
+IDENTITY = {
+    "translation_cm": [0.0, 0.0, 0.0],
+    "rotation_quat": [0.0, 0.0, 0.0, 1.0],
+    "scale": [1.0, 1.0, 1.0],
+}
 
 
-def node(uid, **overrides):
-    base = dict(node_uid=uid, parent_uid=None, kind="mesh", display_name="n",
-                resource_uid=UIDS["col/window_a"],
-                local_transform=IDENTITY_TRANSFORM, properties={})
-    base.update(overrides)
-    return Node(**base)
+def node(uid=NODE_A, **overrides):
+    value = {
+        "node_uid": uid,
+        "parent_uid": None,
+        "kind": "mesh",
+        "display_name": "node",
+        "resource_uid": MESH_UID,
+        "local_transform": deepcopy(IDENTITY),
+        "properties": {},
+    }
+    value.update(overrides)
+    return value
 
 
-def test_reference_loader_rejects_pending_manifest(tmp_path):
-    (tmp_path / "export_manifest.json").write_text(
-        '{"schema":"mh.bundle_manifest","resources":[]}',
-        encoding="utf-8")
-    (tmp_path / "export_manifest.json.tmp").write_text(
-        '{"schema":"mh.bundle_manifest","resources":[]}',
-        encoding="utf-8")
-
-    with pytest.raises(SystemExit, match="export in progress"):
-        load_bundle(str(tmp_path))
-
-
-def run(old, new):
-    return diff_bundles(old[0], new[0], old[1], new[1])
+def composite_doc(*, name="assembly", properties=None, nodes=None):
+    return {
+        "schema": "mh.composite",
+        "schema_version": 2,
+        "uid": COMP_UID,
+        "name": name,
+        "properties": deepcopy(properties or {}),
+        "nodes": deepcopy(nodes if nodes is not None else [node()]),
+    }
 
 
-def test_identical_bundles_produce_empty_diff():
-    old = build([node(W1)])
-    new = build([node(W1)])
-    report = run(old, new)
-    assert report["resources"] == {} and report["nodes"] == {}
+def material_doc(*, name="m_wall", shader="rendinst_simple", params=None,
+                 textures=None):
+    return {
+        "schema": "mh.material",
+        "schema_version": 1,
+        "uid": MAT_UID,
+        "name": name,
+        "shader_class": shader,
+        "params": deepcopy(params or {}),
+        "textures": deepcopy(textures or {}),
+    }
 
 
-def test_node_flags_each_and_ordering():
-    old = build([node(W1), node(W2)])
-    moved = QuantizedTransform((1000, 0, 0), (0, 0, 0, 1000000), (1000000,) * 3)
-    new = build([
-        node(W1, display_name="renamed", local_transform=moved,
-             parent_uid=W2, resource_uid=UIDS["col/window_a_unique"],
-             kind="composite_ref", properties={"role": "decal"}),
-        node(W2),
-    ])
-    report = run(old, new)
-    assert report["nodes"][WS][W1] == [
+def mesh_row(*, name="wall", path="meshes/wall.mesh.fbx",
+             geometry="xxh3:aaaaaaaaaaaaaaaa", properties=None,
+             slots=None, lod_levels=None, exporter="mh4blend test"):
+    passport = make_fbx_passport(
+        resource_uid=MESH_UID,
+        name=name,
+        lod_levels=lod_levels or [0],
+        lod_policy="authored" if len(lod_levels or [0]) > 1 else "generated",
+        geometry_hash=geometry,
+        material_slots=slots or [],
+        properties=properties or {},
+        exporter=exporter,
+    )
+    return {
+        "uid": MESH_UID,
+        "kind": "static_mesh",
+        "name": name,
+        "source_path": path,
+        "geometry_hash": geometry,
+        "descriptor_hash": descriptor_hash(passport),
+        "document": passport,
+    }
+
+
+def json_row(document, kind, path):
+    return {
+        "uid": document["uid"],
+        "kind": kind,
+        "name": document["name"],
+        "source_path": path,
+        "document": document,
+    }
+
+
+def snapshot(*rows):
+    return {"resources": {row["uid"]: row for row in rows}}
+
+
+def test_identical_source_snapshots_produce_empty_diff():
+    old = snapshot(
+        mesh_row(),
+        json_row(composite_doc(), "composite", "cmp/assembly.composite"),
+        json_row(material_doc(), "material", "mat/m_wall.material"),
+    )
+    report = diff_source_snapshots(old, deepcopy(old))
+    assert report["resources"] == {}
+    assert report["nodes"] == {}
+
+
+def test_move_is_per_resource_and_independent_of_semantic_update():
+    old = snapshot(mesh_row(path="old/wall.mesh.fbx"))
+    moved_only = snapshot(mesh_row(path="new/wall.mesh.fbx"))
+    report = diff_source_snapshots(old, moved_only)
+    assert report["resources"] == {MESH_UID: ["MOVE"]}
+
+    moved_and_changed = snapshot(mesh_row(
+        path="new/wall.mesh.fbx", geometry="xxh3:bbbbbbbbbbbbbbbb"))
+    report = diff_source_snapshots(old, moved_and_changed)
+    assert report["resources"][MESH_UID] == ["UPDATE_GEOMETRY", "MOVE"]
+
+
+def test_mesh_rename_geometry_and_descriptor_semantics_are_classified():
+    old = snapshot(mesh_row())
+    new = snapshot(mesh_row(
+        name="wall_main",
+        geometry="xxh3:bbbbbbbbbbbbbbbb",
+        properties={"role": "structure"},
+        slots=[{
+            "slot_name": "surface",
+            "material_uid": MAT_UID,
+            "material_name_hint": "m_wall",
+        }],
+    ))
+    report = diff_source_snapshots(old, new)
+    assert report["resources"][MESH_UID] == [
+        "RENAME", "UPDATE_GEOMETRY", "UPDATE_PROPERTIES"]
+
+
+def test_exporter_only_descriptor_churn_is_not_asset_update():
+    old = snapshot(mesh_row(exporter="mh4blend 1"))
+    new = snapshot(mesh_row(exporter="mh4blend 2"))
+    assert old["resources"][MESH_UID]["descriptor_hash"] != \
+        new["resources"][MESH_UID]["descriptor_hash"]
+    report = diff_source_snapshots(old, new)
+    assert report["resources"] == {}
+
+
+def test_material_uses_canonical_semantics_and_rename_is_separate():
+    old = snapshot(json_row(
+        material_doc(params={"roughness": 0.25}),
+        "material", "mat/m_wall.material"))
+    quantized_equal = snapshot(json_row(
+        material_doc(params={"roughness": 0.2500004}),
+        "material", "mat/m_wall.material"))
+    assert diff_source_snapshots(old, quantized_equal)["resources"] == {}
+
+    changed = snapshot(json_row(
+        material_doc(name="m_wall_new", params={"roughness": 0.5}),
+        "material", "mat/m_wall.material"))
+    assert diff_source_snapshots(old, changed)["resources"][MAT_UID] == [
+        "RENAME", "UPDATE_PROPERTIES"]
+
+
+def test_composite_resource_properties_and_node_flags():
+    old_doc = composite_doc(nodes=[node(), node(NODE_B)])
+    changed_transform = deepcopy(IDENTITY)
+    changed_transform["translation_cm"] = [100.0, 0.0, 0.0]
+    new_doc = composite_doc(
+        properties={"category": "vehicle"},
+        nodes=[
+            node(
+                display_name="renamed",
+                local_transform=changed_transform,
+                parent_uid=NODE_B,
+                resource_uid=COMP_UID,
+                kind="composite_ref",
+                properties={"role": "decal"},
+            ),
+            node(NODE_B),
+        ],
+    )
+    old = snapshot(json_row(old_doc, "composite", "cmp/assembly.composite"))
+    new = snapshot(json_row(new_doc, "composite", "cmp/assembly.composite"))
+    report = diff_source_snapshots(old, new)
+    assert report["resources"] == {COMP_UID: ["UPDATE_PROPERTIES"]}
+    assert report["nodes"][COMP_UID][NODE_A] == [
         "RENAME", "UPDATE_TRANSFORM", "UPDATE_PROPERTIES", "REPARENT",
         "UPDATE_RESOURCE", "UPDATE_KIND"]
-    assert report["resources"] == {}
 
 
-def test_node_create_and_remove():
-    old = build([node(W1)])
-    new = build([node(W2)])
-    report = run(old, new)
-    assert report["nodes"][WS] == {W1: ["REMOVE"], W2: ["CREATE"]}
+def test_composite_node_create_remove_and_decimal_spelling():
+    old = snapshot(json_row(
+        composite_doc(nodes=[node()]), "composite", "assembly.composite"))
+    new = snapshot(json_row(
+        composite_doc(nodes=[node(NODE_B)]),
+        "composite", "assembly.composite"))
+    report = diff_source_snapshots(old, new)
+    assert report["nodes"][COMP_UID] == {
+        NODE_A: ["REMOVE"], NODE_B: ["CREATE"]}
 
-
-def test_composite_v2_resource_properties_emit_update_properties():
-    old = build([node(W1)], properties={"category": "building"})
-    new = build([node(W1)], properties={"category": "vehicle"})
-    report = run(old, new)
-    assert report["resources"] == {WS: ["UPDATE_PROPERTIES"]}
-    assert report["nodes"] == {}
-
-
-def test_v1_manifest_fallback_and_v2_payload_are_semantically_equal():
-    old = build([node(W1)])
-    old[1][WS] = composite_disk_dict(
-        Composite(WS, "ca_windowset", [node(W1)]), schema_version=1)
-    old_row = next(row for row in old[0]["resources"] if row["uid"] == WS)
-    old_row["properties"] = {"category": "building"}
-    new = build([node(W1)], properties={"category": "building"})
-    report = run(old, new)
+    equivalent = composite_doc(nodes=[node()])
+    equivalent["nodes"][0]["local_transform"]["translation_cm"] = [0, 0, 0]
+    equivalent["nodes"][0]["local_transform"]["scale"] = [1, 1.0, 1.00]
+    report = diff_source_snapshots(old, snapshot(json_row(
+        equivalent, "composite", "assembly.composite")))
     assert report["resources"] == {}
     assert report["nodes"] == {}
 
 
-def test_composite_create_does_not_enumerate_nodes():
-    empty_manifest = Manifest(
-        bundle_uid=UIDS["col/ca_building"], bundle_name="Golden",
-        blend_file="golden.blend", exporter_version="0.2.0")
-    old = (manifest_disk_dict(empty_manifest, {}), {})
-    new = build([node(W1), node(W2)])
-    report = run(old, new)
-    assert report["resources"] == {WS: ["CREATE"]}
-    assert report["nodes"] == {}
+def test_create_remove_and_kind_change():
+    old = snapshot(mesh_row())
+    created = json_row(material_doc(), "material", "m_wall.material")
+    new = snapshot(created)
+    report = diff_source_snapshots(old, new)
+    assert report["resources"] == {
+        MAT_UID: ["CREATE"], MESH_UID: ["REMOVE"]}
 
-
-def test_mesh_geometry_rename_and_move():
-    mesh_old = MeshResource(UIDS["col/wall_a"], "wall_a", "xxh3:aaaaaaaaaaaaaaaa")
-    mesh_new = MeshResource(UIDS["col/wall_a"], "wall_a_main", "xxh3:bbbbbbbbbbbbbbbb")
-    old = build([node(W1)], meshes=[mesh_old])
-    new = build([node(W1)], meshes=[mesh_new])
-    report = diff_bundles(old[0], new[0], old[1], new[1],
-                          old_rel_path="props/walls", new_rel_path="env/walls")
-    assert report["resources"][UIDS["col/wall_a"]] == [
-        "RENAME", "UPDATE_GEOMETRY", "MOVE"]
-    # composite survived unchanged but also moved
-    assert report["resources"][WS] == ["MOVE"]
-
-
-def test_decimal_spelling_does_not_fabricate_transform_diffs():
-    old = build([node(W1)])
-    new = build([node(W1)])
-    new_doc = copy.deepcopy(new[1][WS])
-    transform = new_doc["nodes"][0]["local_transform"]
-    transform["translation_cm"] = [0, 0, 0]        # ints vs 0.0 floats
-    transform["scale"] = [1, 1.0, 1.00]
-    report = diff_bundles(old[0], new[0], old[1], {WS: new_doc})
-    assert report["nodes"] == {}
-
-
-def test_sub_p6_material_edit_does_not_fabricate_structural_diff():
-    def with_material(value):
-        manifest, composites = build([node(W1)])
-        material = MaterialResource(
-            UIDS["mesh/wall_b"], "m_stone", "rendinst_simple",
-            params={"roughness": value})
-        semantic = Manifest(
-            UIDS["col/ca_building"], "Golden", "golden.blend", "0.2.0",
-            composites=[Composite(WS, "ca_windowset", [node(W1)])],
-            materials=[material])
-        return manifest_disk_dict(
-            semantic, {WS: composite_hash(semantic.composites[0])}), composites
-
-    report = run(with_material(0.25), with_material(0.2500004))
-    assert report["resources"] == {}
-    assert report["nodes"] == {}
+    material_same_uid = material_doc(name="wall")
+    material_same_uid["uid"] = MESH_UID
+    changed_kind = snapshot(json_row(
+        material_same_uid, "material", "wall.material"))
+    report = diff_source_snapshots(old, changed_kind)
+    assert report["resources"][MESH_UID] == ["UPDATE_KIND", "MOVE"]

@@ -1,4 +1,4 @@
-"""Frozen Source Schema v1 tests for the Blender-free material codec."""
+"""Source Protocol v2 tests for the self-contained material codec."""
 
 import json
 import os
@@ -15,13 +15,11 @@ from mh4blend.core.material_source import (  # noqa: E402
     build_material_document,
     canonicalize_texture_path,
     material_payload_bytes,
-    material_resource_row,
     prepare_material_export,
-    stage_material_payload,
     validate_material_document,
-    validate_material_resource_row,
     write_material_payload_atomic,
 )
+from mh4blend.core import material_source as material_source_module  # noqa: E402
 
 
 UID = "7d995e54-d084-4466-a613-a1cd8f3248b2"
@@ -128,86 +126,101 @@ def test_material_hash_excludes_uid_and_name(tmp_path):
         uid="aaaaaaaa-0000-0000-0000-000000000001",
         name="renamed_material",
     )
-    row_a = material_resource_row(first, f"m__{UID[:8]}.material")
-    row_b = material_resource_row(
-        second, "m__aaaaaaaa.material")
-    assert row_a["content_hash"] == row_b["content_hash"]
+    prepared_a = prepare_material_export(
+        **{key: first[key] for key in (
+            "uid", "name", "shader_class", "params", "textures")},
+        source_root=tmp_path, output_dir=tmp_path / "a")
+    prepared_b = prepare_material_export(
+        **{key: second[key] for key in (
+            "uid", "name", "shader_class", "params", "textures")},
+        source_root=tmp_path, output_dir=tmp_path / "b")
+    assert prepared_a.content_hash == prepared_b.content_hash
 
 
-def test_material_row_is_strict_and_contains_no_payload_fields(tmp_path):
-    document, _ = build(tmp_path)
-    source = f"materials/old_display_name__{UID[:8]}.material"
-    row = material_resource_row(document, source)
-    assert row == {
-        "uid": UID,
-        "kind": "material",
-        "name": "m_stucco_concrete",
-        "source": source,
-        "content_hash": row["content_hash"],
-    }
-    assert validate_material_resource_row(row) == row
-    malformed = dict(row, params={})
-    with pytest.raises(MaterialSourceError, match="exactly"):
-        validate_material_resource_row(malformed)
-
-
-def test_first_create_uses_uid8_and_explicit_owner(tmp_path):
+def test_first_create_uses_clean_human_filename(tmp_path):
     prepared = prepare_material_export(
         uid=UID, name="My Material", shader_class="rendinst_simple",
         params={}, textures={}, source_root=tmp_path, output_dir=tmp_path)
     assert Path(prepared.payload_path).name == \
-        f"my_material__{UID[:8]}.material"
-    assert Path(prepared.owning_manifest_path).name == "export_manifest.json"
-    assert prepared.resource_row["source"] == Path(prepared.payload_path).name
+        "my_material.material"
 
 
-def test_existing_owner_location_and_stale_display_filename_win(tmp_path):
+def test_uid_resolved_existing_location_can_update_in_place(tmp_path):
     folder = tmp_path / "common" / "materials"
-    payload = folder / f"old_name__{UID[:8]}.material"
-    manifest = tmp_path / "common" / "export_manifest.json"
+    payload = folder / "old_name.material"
+    existing = prepare_material_export(
+        uid=UID, name="Old Name", shader_class="rendinst_simple",
+        params={}, textures={}, source_root=tmp_path,
+        target_payload_path=payload)
+    write_material_payload_atomic(existing, source_root=tmp_path)
     prepared = prepare_material_export(
         uid=UID, name="New Name", shader_class="rendinst_simple",
         params={}, textures={}, source_root=tmp_path,
         output_dir=tmp_path / "ignored",
-        target_payload_path=payload,
-        owning_manifest_path=manifest,
-        existing_source=f"materials/{payload.name}")
+        target_payload_path=payload)
     assert prepared.payload_path == str(payload)
-    assert prepared.resource_row["source"] == f"materials/{payload.name}"
     assert prepared.document["name"] == "New Name"
 
 
-def test_existing_target_requires_owning_manifest(tmp_path):
-    with pytest.raises(ValueError, match="owning_manifest_path"):
+def test_clean_name_collision_with_other_uid_blocks(tmp_path):
+    path = tmp_path / "material.material"
+    first = prepare_material_export(
+        uid="aaaaaaaa-0000-0000-0000-000000000001", name="Material",
+        shader_class="rendinst_simple", params={}, textures={},
+        source_root=tmp_path, target_payload_path=path)
+    write_material_payload_atomic(first, source_root=tmp_path)
+    with pytest.raises(
+            MaterialSourceError, match="MH_E_NAME_COLLISION_DIFFERENT_UID"):
         prepare_material_export(
             uid=UID, name="Material", shader_class="rendinst_simple",
             params={}, textures={}, source_root=tmp_path,
-            target_payload_path=tmp_path / f"m__{UID[:8]}.material")
+            target_payload_path=path)
 
 
-def test_payload_atomic_write_and_semantic_skip(tmp_path):
+def test_collision_appearing_after_prepare_is_rejected_under_writer_lock(
+        tmp_path):
+    path = tmp_path / "material.material"
+    ours = prepare_material_export(
+        uid=UID, name="Material", shader_class="rendinst_simple",
+        params={}, textures={}, source_root=tmp_path,
+        target_payload_path=path)
+    foreign = prepare_material_export(
+        uid="aaaaaaaa-0000-0000-0000-000000000001", name="Material",
+        shader_class="rendinst_simple", params={}, textures={},
+        source_root=tmp_path, target_payload_path=path)
+    write_material_payload_atomic(foreign, source_root=tmp_path)
+
+    with pytest.raises(
+            MaterialSourceError, match="MH_E_NAME_COLLISION_DIFFERENT_UID"):
+        write_material_payload_atomic(ours, source_root=tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["uid"] != UID
+
+
+def test_explicit_material_export_always_rewrites_atomically(
+        tmp_path, monkeypatch):
     prepared = prepare_material_export(
         uid=UID, name="Material", shader_class="rendinst_simple",
         params={}, textures={}, source_root=tmp_path, output_dir=tmp_path)
+    calls = []
+    original = material_source_module.atomic_publish_bytes
+
+    def tracked(*args, **kwargs):
+        calls.append(os.fspath(args[0]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(material_source_module, "atomic_publish_bytes", tracked)
     assert write_material_payload_atomic(
         prepared, source_root=tmp_path) is True
     first_stat = os.stat(prepared.payload_path).st_mtime_ns
     assert write_material_payload_atomic(
-        prepared, source_root=tmp_path) is False
-    assert os.stat(prepared.payload_path).st_mtime_ns == first_stat
+        prepared, source_root=tmp_path) is True
+    assert os.stat(prepared.payload_path).st_mtime_ns >= first_stat
+    assert calls == [prepared.payload_path, prepared.payload_path]
 
     loaded = json.loads(Path(prepared.payload_path).read_text(encoding="utf-8"))
     assert loaded == prepared.document
-
-
-def test_staging_does_not_replace_stable_payload(tmp_path):
-    prepared = prepare_material_export(
-        uid=UID, name="Material", shader_class="rendinst_simple",
-        params={}, textures={}, source_root=tmp_path, output_dir=tmp_path)
-    Path(prepared.payload_path).write_text("stable", encoding="utf-8")
-    staged = stage_material_payload(prepared)
-    assert Path(prepared.payload_path).read_text(encoding="utf-8") == "stable"
-    assert Path(staged).exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "material.material"]
 
 
 def test_windows_lexical_paths_are_machine_independent():

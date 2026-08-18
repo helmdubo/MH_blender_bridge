@@ -1,230 +1,206 @@
-# 05 — Source Schema v1 (NORMATIVE FINAL v1)
+# 05 — MH Source Protocol v2: Clean Sources (NORMATIVE ACTIVE)
 
-Статус: **единственный нормативный замороженный on-disk контракт Source Schema
-v1**. Документ учитывает решения `[composite-graph-source]`,
-`[texture-path-canonicalization]`, `[uid-source-resolution]` и
-`[material-source-files]`. Противоречащие ему pre-freeze описания bundle,
-inline `materials[]`, `external_dependencies[]` и directory-local-only resolve
-являются историческими.
+Статус: единственный активный on-disk и runtime-контракт Blender → UE.
+Имя файла документа сохранено только ради стабильных ссылок. Замороженная
+Source Schema v1 по SHA `d52520c47544a6e36b3bac32b16237ad670abb20`
+является исторической и читается исключительно одноразовой миграцией (§12).
+Production reader не имеет manifest/uid8/dual-read fallback.
 
-Source Schema v1 заморожена. Любое изменение формы JSON,
-required/optional-полей, канонизации, path semantics, hash input или
-машинного кода, меняющее совместимость, требует `schema_version: 2` и явной
-migration note. Директивы аудитора ссылаются на решения по slug; числовые D-ID
-назначает репозиторий.
+Порядок authority при расхождении документов:
 
-Post-freeze D38 `[fbx-export-materials-toggle]` — совместимое operational/UX
-amendment: одна вкладка `MH` и Boolean `Export Materials` лишь оркестрируют уже
-описанные standalone writers. Ни одна JSON-форма, canonical byte, hash input или
-диагностическая семантика этого документа не изменена.
+1. этот документ;
+2. `ADR_V2_passport_first.md` — hashes, explicit writer и reader conflicts;
+3. `AMENDMENT_combined_lod_fbx.md` — Combined-LOD;
+4. `04_source_workflows.md` и `06_final_v1_plan.md` — UX и execution gates.
 
-**Approved schema-significant amendment — 2026-08-18.** D40
-`[combined-lod-fbx]` и `AMENDMENT_combined_lod_fbx.md` немедленно заменяют только
-per-file LOD-части этого frozen v1 документа. До формального объявления Source
-Protocol v2 это approved migration contract: новый writer пишет один FBX на
-mesh-ресурс, `lods[]` больше не эмитится, а geometry stream имеет tag
-`mh.meshser:2`. Остальные v1 JSON-формы сохраняют силу. Старые выгрузки с
-`lods[]` мигрируются реэкспортом и после миграции блокируются
-`MH_E_DEPRECATED_LOD_ROWS`; тихая интерпретация старой формы запрещена.
+## 1. Проверяемые инварианты
 
-## 1. Инварианты
+1. В source tree лежат только primary payload: `*.mesh.fbx`, `*.composite`,
+   `*.material`. `export_manifest.json`, registry, sidecar, marker и cache в
+   source tree запрещены.
+2. Идентичность ресурса — полный UUID из самого payload. Имя файла и display
+   name не участвуют в resolve.
+3. Каждый static mesh UID представлен ровно одним Combined-LOD FBX.
+4. `.composite` и только он задаёт node graph. FBX содержит geometry payload и
+   passport, но из него никогда не извлекаются composite nodes.
+5. `.material` — самостоятельный ресурс. Mesh passport ссылается на него по
+   MaterialUID; материал не принадлежит первому использовавшему его mesh.
+6. Любой explicit Export всегда публикует запрошенный payload атомарно. Writer
+   не делает hash-skip, diff, global scan или cache update.
+7. Runtime reader принимает только v2-source модель. Legacy manifests и
+   uid8-filenames разрешены только migration utility.
+8. `MH_E_*` блокирует текущую операцию; `MH_W_*` никогда её не блокирует.
 
-1. Identity ресурса и узла задаётся полным lowercase UUID с дефисами. Имя,
-   filename, каталог и порядок в JSON не являются identity.
-2. `.composite` задаёт граф. Resolver находит payload по ResourceUID. FBX только
-   наполняет geometry definition и никогда не является источником composite
-   nodes, `parent_uid`, placement transforms или node properties.
-3. `export_manifest.json` — инкрементальная опись ресурсов, принадлежащих одному
-   каталогу, а не bundle, snapshot сцены или список dependency closure.
-4. Зависимости не хранятся денормализованным массивом: composite dependencies
-   вычисляются из `nodes[].resource_uid`, material dependencies — из
-   `material_slots[].material_uid`.
-5. Один ResourceUID имеет ровно один owning manifest под `source_root`. Resolve
-   считается завершённым только результатом
-   `(payload_path, owning_manifest_path, manifest_row)`.
-6. Материал — самостоятельный `.material` payload и обычная строка
-   `kind: "material"` в `resources[]`.
-7. Текстуры только упоминаются путём. Экспорт не копирует, не перемещает и не
-   модифицирует texture files.
+## 2. Source root и стерильное дерево
 
-## 2. Project Source Root
+`source_root` — граница reader scan и UID resolution. Он является настройкой
+проекта и не записывается в payload. Recursive scan рассматривает только три
+разрешённых расширения. Blender writer не сканирует root и не ведёт index.
 
-`source_root` — один абсолютный каталог на проект, заданный в настройках, но
-**не записываемый** в manifest, composite или material. Он служит:
+UE хранит импортный **Ledger** вне source tree и сравнивает новый scan с ним.
+Blender Import Composite может построить lazy disposable cache при первом
+импорте; это только accelerator resolver'а, не writer state и не authority.
+Отдельного artist-facing **Rebuild** действия нет: stale/missing cache
+перестраивается автоматически.
 
-- границей поиска manifests и resource payloads;
-- базой registry paths;
-- базой канонизации internal texture paths;
-- базой зеркалирования структуры в Content Browser.
+`texture_root` — граница basename-поиска текстур (§8). По умолчанию он равен
+`source_root`; явная project setting может сузить или перенести поиск. Ни один
+из этих абсолютных root-путей не входит в canonical payload или semantic hash.
 
-Resource payload и owning manifest обязаны находиться под `source_root`.
-Resolver не ищет resource payloads вне корня. Исключение относится только к
-texture paths: в transitional-режиме внешний texture file допустим как
-абсолютная ссылка (§5.3).
+## 3. Чистые имена файлов
 
-## 3. `export_manifest.json`
+Первичное имя всегда:
 
-### 3.1 Полная форма
+```text
+<sanitized_name>.mesh.fbx
+<sanitized_name>.composite
+<sanitized_name>.material
+```
+
+`sanitized_name` — lowercase ASCII, полученный детерминированной заменой
+неразрешённых символов на `_`, схлопыванием повторных `_` и удалением `_` по
+краям. Пустой результат невалиден. Resource authoring name обязан пройти
+проектную ASCII-валидацию; транслитерации нет.
+
+Filename — только удобная подпись. Rename display name может переместить файл,
+но не меняет UID и классифицируется как `MOVE`. Resolver никогда не связывает
+ресурсы по basename.
+
+Если requested target уже существует с другим embedded UID, writer блокируется
+с `MH_E_NAME_COLLISION_DIFFERENT_UID`. UI предлагает только:
+
+- **Rename mine**;
+- **Fork existing as new resource**;
+- **Cancel**.
+
+Silent overwrite и выбор «последнего по дате» запрещены. Одинаковые clean names
+в разных каталогах легальны. Экспорт того же UID в другой каталог также
+разрешён; duplicates/conflicts классифицирует reader scan, не writer.
+
+## 4. FBX passport `mh.fbx_passport` v1
+
+### 4.1 Каноническая форма
+
+Каждый static-mesh FBX содержит одну каноническую JSON-строку:
 
 ```json
 {
-  "schema": "mh.export_manifest",
+  "schema": "mh.fbx_passport",
   "schema_version": 1,
-  "exporter_version": "0.4.0",
-  "resources": [
+  "resource_uid": "2db5574c-3aca-43cc-9ab5-8242403e18cd",
+  "kind": "static_mesh",
+  "name": "wall_a",
+  "lod_policy": "authored",
+  "lod_levels": [0, 1],
+  "geometry_hash": "xxh3:9f2c01ab34cd56ef",
+  "material_slots": [
     {
-      "uid": "2db5574c-3aca-43cc-9ab5-8242403e18cd",
-      "kind": "static_mesh",
-      "name": "wall_a",
-      "source": "meshes/wall_a__2db5574c.mesh.fbx",
-      "content_hash": "xxh3:9f2c01ab34cd56ef",
-      "material_slots": [
-        {
-          "slot_name": "m_stucco_concrete",
-          "material_uid": "7d995e54-d084-4466-a613-a1cd8f3248b2"
-        }
-      ],
-      "properties": {
-        "role": "wall"
-      },
-      "lod_policy": "authored"
-    },
-    {
-      "uid": "7d995e54-d084-4466-a613-a1cd8f3248b2",
-      "kind": "material",
-      "name": "m_stucco_concrete",
-      "source": "materials/m_stucco_concrete__7d995e54.material",
-      "content_hash": "xxh3:67c9db59a8b33f0d"
-    },
-    {
-      "uid": "f53d93af-94c3-472f-98d0-ff36eb93c417",
-      "kind": "composite",
-      "name": "window_set_a",
-      "source": "composites/window_set_a__f53d93af.composite",
-      "content_hash": "xxh3:aa010fa05a09dabc",
-      "properties": {
-        "role": "facade_module"
-      }
+      "slot_name": "wall_surface",
+      "material_uid": "7d995e54-d084-4466-a613-a1cd8f3248b2",
+      "material_name_hint": "m_stucco"
     }
-  ]
+  ],
+  "properties": {
+    "role": "wall"
+  },
+  "exporter": "mh4blend 0.x"
 }
 ```
 
-Top-level required fields:
+Все top-level fields required. Unknown top-level fields запрещены; открытая
+resource extension bag — только `properties`.
 
-| Поле | Тип | Правило |
+- `schema` ровно `mh.fbx_passport`, `schema_version` ровно `1`;
+- `resource_uid` — полный canonical UUID;
+- `kind` ровно `static_mesh`;
+- `lod_policy` — `authored`, `generated` или `nanite`;
+- `lod_levels` — отсортированный уникальный dense-массив integer, начинающийся
+  с `0`; single-LOD имеет `[0]`;
+- `geometry_hash` — `mh.meshser:2` semantic hash всех уровней;
+- `material_slots` отсортирован по `slot_name`; `material_name_hint` участвует
+  в descriptor hash, но служит только диагностике и не заменяет UID resolution;
+- `properties` — asset-level JSON bag;
+- `exporter` — диагностическая версия writer.
+
+### 4.2 Carrier B
+
+Passport записывается custom property `mh.fbx_passport` на **каждую**
+экспортируемую FBX Model node. Все копии должны существовать и совпадать
+побайтово. Отсутствие, malformed JSON, unknown version или consensus mismatch
+карантинирует весь payload с `MH_E_PASSPORT_INVALID`.
+
+Carrier B является финальным transport-решением v2, но до включения production
+writer обязан пройти блокирующий transport gate из §13: оба Blender FBX пути,
+shared datablock, custom normals, длинный JSON, Combined-LOD, import/re-export,
+pivots и hierarchy. Нельзя подменять доказательство предположением о FBX SDK.
+
+### 4.3 Три hash-величины и reader-side diff
+
+| Величина | Назначение | Где живёт |
 |---|---|---|
-| `schema` | string | Ровно `mh.export_manifest`. |
-| `schema_version` | integer | Ровно `1`. |
-| `exporter_version` | string | Версия writer; не участвует в identity. |
-| `resources` | array | Строки отсортированы по `uid` побайтово. |
+| `geometry_hash` | `mh.meshser:2` semantic hash evaluated Blender geometry всех LOD | passport + reader Ledger/cache |
+| `descriptor_hash` | hash канонического passport без hash fields | только reader Ledger/cache |
+| `payload_fingerprint` | byte fingerprint FBX; size+mtime допустимы как fast-path | только reader Ledger/cache |
 
-Других top-level полей v1 нет. В частности, запрещены `bundle_uid`,
-`bundle_name`, `source`, `materials` и `external_dependencies`.
+Reader никогда не пересчитывает `geometry_hash` из FBX: он читает паспорт.
+Изменившийся fingerprint при неизменных semantic hashes даёт
+`MH_W_PAYLOAD_EXTERNAL_MODIFIED` и требует подтверждения.
 
-### 3.2 Общая resource row
+Blender writer вычисляет hashes для паспорта, но **не использует их, чтобы
+пропустить explicit export**. Каждый вызов Export выполняет:
 
-Required для каждого kind:
+```text
+collision guard -> write sibling temporary -> atomic replace -> exit
+```
 
-| Поле | Тип | Правило |
-|---|---|---|
-| `uid` | UUID string | Уникален во всём `source_root`, не только в файле. |
-| `kind` | enum | `static_mesh`, `composite` или `material`. |
-| `name` | string | Display/resource name; не identity. |
-| `source` | string | Относительно каталога owning manifest, forward slashes. |
-| `content_hash` | string | `xxh3:` + 16 lowercase hex. |
+Writer не читает Ledger, не обновляет Blender import cache и не строит diff.
+Даже semantic no-op перезаписывает requested FBX. После startup/watcher scan UE
+сравнивает `geometry_hash` и `descriptor_hash` с Ledger: no-op даёт
+`NO_CHANGE`, geometry change — `UPDATE_GEOMETRY`, metadata-only change —
+соответствующий descriptor/property update.
 
-`source` обязан быть непустым нормализованным относительным путём без drive,
-leading slash, `.` или `..`; после разрешения он остаётся внутри каталога
-owning manifest и внутри `source_root`. Один source path не может принадлежать
-двум UID. Kind существующего UID не меняется.
+## 5. Combined-LOD FBX
 
-Kind определяет точный lowercase suffix `source` и имя при первом создании:
+Blender authoring сохраняет dag4blend-конвенцию: container `<base>.lods` имеет
+direct child Collections `<base>.lod00`, `<base>.lod01`, … . Суффиксы нужны
+только extractor'у Blender-сцены и не переносятся как transport semantics.
 
-| Kind | Suffix | First-create basename |
-|---|---|---|
-| `static_mesh` | `.mesh.fbx` | `<sanitized_name>__<uid8>.mesh.fbx` |
-| `composite` | `.composite` | `<sanitized_name>__<uid8>.composite` |
-| `material` | `.material` | `<sanitized_name>__<uid8>.material` |
+Все уровни экспортируются одним вызовом в один `<base>.mesh.fbx`. Каждый mesh
+Model node несёт integer custom property `mh_lod_level`. Отсутствующее свойство
+означает `0`, чтобы single-LOD payload оставался простым. Имена Model nodes не
+определяют уровень.
 
-Reader проверяет suffix по kind и обязательный basename-фрагмент
-`__<uid8><suffix>` по полному row UID, но не требует, чтобы устаревшая
-filename-часть `sanitized_name` совпадала с текущим row `name`. Полный UUID
-остаётся identity; совпадение первых восьми hex у двух ResourceUID под одним
-`source_root` блокируется `MH_E_UID8_COLLISION`.
+- несколько mesh nodes на один уровень легальны;
+- уровни обязаны быть dense `0..N`, иначе `MH_E_LOD_LEVELS_SPARSE`;
+- фактический набор узлов обязан совпасть с passport `lod_levels`, иначе
+  `MH_E_LOD_PASSPORT_MISMATCH`;
+- material slots LOD `1+` обязаны быть подмножеством LOD0, иначе
+  `MH_E_LOD_SLOT_NOT_IN_BASE`;
+- `UCX_*` и `SOCKET_*` всегда относятся к LOD0; auxiliary node, помещённый в
+  LOD `1+`, игнорируется с `MH_W_LOD_AUX_NODE_IGNORED`.
 
-Manifest row и payload согласованы: UID/name внутри `.composite` или
-`.material` равны row UID/name. Для FBX identity задаёт manifest row, потому
-что FBX не является семантическим UID-контейнером.
+`mh.meshser:2` сериализует все export-affecting mesh и auxiliary данные в
+порядке `(lod_level asc, mh_uid asc)` и пишет `lod_level` как `uint32` для
+каждого объекта. UCX/SOCKET участвуют в durable hash и reader classification.
+Изменение любого уровня или auxiliary payload меняет общий `geometry_hash`;
+следующий explicit Export всё равно пишет единый FBX, а UE reader классифицирует
+полный re-import одного ресурса.
 
-### 3.3 Kind-specific поля
+Legacy `lods[]` rows и `.lod<N>.mesh.fbx` не являются частью v2. Runtime не
+игнорирует их и не пытается объединить эвристически; они доступны только
+миграции §12.
 
-`static_mesh` допускает:
-
-- optional `material_slots`, default `[]`: массив
-  `{ "slot_name": string, "material_uid": UUID }`; порядок — первое
-  вхождение после детерминированной сортировки ObjectUID, затем slot index;
-  один MaterialUID повторно не добавляется; один `slot_name` не может указывать
-  на разные UID;
-- optional `properties`, default `{}`: asset-level JSON bag;
-- optional `lod_policy`: `authored | generated | nanite`, default `generated`;
-- поле `lods` deprecated и новым writer не эмитится. После миграции любое его
-  присутствие — `MH_E_DEPRECATED_LOD_ROWS`. `lod_policy: authored` означает,
-  что все уровни находятся внутри единственного FBX из общего `source` row.
-
-`composite` допускает optional `properties`, default `{}`: asset-level bag.
-Node/placement properties живут только в `.composite`; они не наследуются из
-resource bag и не дублируют его.
-
-`material` не имеет kind-specific полей в manifest; в частности, manifest-row
-kind `material` **не допускает `properties`**. Asset-level semantic properties
-материала живут в `.material.params`; `shader_class`, `params` и `textures`
-принадлежат только `.material` payload. Это уточнение не добавляет поле в v1.
-
-Для допускающих её rows (`static_mesh`, `composite`) `properties` — единственная
-открытая resource extension bag. Прочие неизвестные поля row не являются v1
-extension mechanism.
-
-### 3.4 Hash inputs
-
-- `static_mesh`: XXH3-64 потока `mh.meshser:2` evaluated geometry всех LOD;
-  не FBX bytes. Объекты идут по `(lod_level asc, ObjectUID asc)`, перед данными
-  каждого объекта в поток пишется `lod_level` как little-endian `uint32`;
-- `composite`: XXH3-64 канон-формы всего `mh.composite` document;
-- `material`: XXH3-64 канон-формы semantic payload
-  `{shader_class, params, textures}`. UID/name/schema исключены, поэтому rename
-  остаётся `RENAME`, а не `UPDATE_PROPERTIES`.
-
-`content_hash` — semantic fast path, а не доказательство byte equality. В
-частности, при material rename writer обновляет `name` в существующем payload,
-хотя material `content_hash` не изменился.
-
-### 3.5 Combined-LOD FBX amendment
-
-Dagor-authoring остаётся `<base>.lods` с direct children `<base>.lod00`,
-`<base>.lod01`, …, но это только Blender-side convention. Writer экспортирует
-объекты всех уровней одним вызовом FBX exporter в один `source`. На каждом
-экспортируемом mesh-узле записывается integer custom property `mh_lod_level`;
-отсутствие свойства означает уровень 0 только для single-LOD ресурса. Имена
-узлов и suffix `.lodNN` внутри FBX не являются семантикой.
-
-Номера уровней обязаны быть плотными от 0 (`MH_E_LOD_LEVELS_SPARSE`). Material
-slots уровней 1+ — подмножество slots уровня 0
-(`MH_E_LOD_SLOT_NOT_IN_BASE`). `UCX_*` и `SOCKET_*` принадлежат уровню 0;
-обнаруженные на уровне 1+ игнорируются с `MH_W_LOD_AUX_NODE_IGNORED`. Несколько
-render mesh-узлов на одном уровне разрешены. Любая правка любого уровня меняет
-общий geometry hash и приводит к полной перезаписи единственного FBX.
-
-## 4. `*.composite` — `mh.composite` v1
-
-Форма сохранена без изменений:
+## 6. Composite `mh.composite` v2
 
 ```json
 {
   "schema": "mh.composite",
-  "schema_version": 1,
+  "schema_version": 2,
   "uid": "f53d93af-94c3-472f-98d0-ff36eb93c417",
   "name": "window_set_a",
+  "properties": {
+    "role": "architecture"
+  },
   "nodes": [
     {
       "node_uid": "6866f569-4d42-472f-a676-a836a3df18ec",
@@ -238,97 +214,42 @@ render mesh-узлов на одном уровне разрешены. Люба
         "scale": [1.0, 1.0, 1.0]
       },
       "properties": {}
-    },
-    {
-      "node_uid": "a0ccf18c-2e7a-4270-8cf2-36505a060e3d",
-      "parent_uid": null,
-      "kind": "composite_ref",
-      "display_name": "lamp",
-      "resource_uid": "e3ba6783-bc26-4787-a608-3133cad0d0eb",
-      "local_transform": {
-        "translation_cm": [20.0, 0.0, 0.0],
-        "rotation_quat": [0.0, 0.0, 0.0, 1.0],
-        "scale": [1.0, 1.0, 1.0]
-      },
-      "properties": {
-        "role": "lighting"
-      }
     }
   ]
 }
 ```
 
-Top-level required: `schema`, `schema_version`, `uid`, `name`, `nodes`.
-`schema` равна `mh.composite`, version равна `1`. Nodes — flat table;
-иерархия задаётся `parent_uid`. Порядок массива семантики не несёт; writer
-сортирует по `node_uid`.
-Других top-level полей `.composite` v1 нет; unknown key даёт
-`MH_E_INVALID_COMPOSITE`.
+Top-level required: `schema`, `schema_version`, `uid`, `name`, `properties`,
+`nodes`. Unknown fields запрещены вне bags. Top-level `properties` — asset-level
+bag; node `properties` — placement-level bag. Они не наследуются друг в друга.
 
-Required для каждого node: `node_uid`, `parent_uid`, `kind`, `display_name`,
-`local_transform`, `properties`. `node_uid` уникален внутри composite.
-`parent_uid` — `null` или UID узла того же файла; dangling parent и parent cycle
-запрещены.
-Unknown node fields также запрещены. Единственная открытая extension bag узла —
-`properties`; дополнительно разрешены только перечисленные ниже kind-specific
-fields. Reader не сохраняет неизвестный top-level key «на будущее».
+Nodes — flat table, канонически отсортированная по `node_uid`; hierarchy задаёт
+`parent_uid`. Required node fields: `node_uid`, `parent_uid`, `kind`,
+`display_name`, `local_transform`, `properties`. `parent_uid` равен `null` или
+UID узла того же файла. Duplicate UID, dangling parent и parent cycle запрещены.
 
-Kind rules:
+Kind rules активного slice:
 
 - `group`: `resource_uid` отсутствует;
-- `mesh`: required `resource_uid` static-mesh definition;
-- `composite_ref`: required `resource_uid` composite definition;
-- `variant_set`, `variant`, `actor` и их ранее зарезервированные поля остаются
-  зарезервированными v1 spellings, но не входят в поддерживаемый authoring/import
-  slice и не должны интерпретироваться эвристически.
+- `mesh`: required `resource_uid` static mesh;
+- `composite_ref`: required `resource_uid` composite.
 
-Зарезервированная форма variant selection (optional только для соответствующего
-reserved kind) остаётся:
+Остальные kinds не угадываются по имени и блокируются
+`MH_E_UNSUPPORTED_NODE_KIND`, пока не получат отдельный runtime contract.
 
-```json
-{
-  "kind": "variant_set",
-  "variants": [
-    {
-      "resource_uid": "5839a2e1-7118-41a7-a226-0edbcc6941da",
-      "weight": 1.0
-    }
-  ],
-  "seed_policy": "inherit",
-  "seed_salt": 0
-}
-```
+`local_transform` содержит ровно `translation_cm[3]`,
+`rotation_quat[x,y,z,w]`, `scale[3]`. Quaternion normalized и
+sign-canonicalized; scale по каждой оси строго больше нуля. Координаты: UE
+centimeters, Z-up, left-handed.
 
-Зарезервированная actor-форма:
+Dependency graph вычисляется только из `nodes[].resource_uid`. Он не хранится
+ни в sidecar, ни в reader cache/Ledger как authority. Blender import cycle back-edge
+становится placeholder с `MH_W_COMPOSITE_CYCLE`; Blender export и UE import
+блокируются `MH_E_COMPOSITE_CYCLE`.
 
-```json
-{
-  "kind": "actor",
-  "actor_resource_uid": "c38bf56d-39a8-42c0-a4e1-565fb1fd2c83",
-  "cached_soft_class_path": "/Game/Gameplay/BP_PhysicsDoor"
-}
-```
+## 7. Material `mh.material` v1
 
-Эти fragments дополняют, а не заменяют общие required node fields. Их runtime
-семантика остаётся post-v1-slice. Пока отдельный contract не реализован,
-Blender export/import и UE import блокируют `variant_set`, `variant` и `actor`
-кодом `MH_E_UNSUPPORTED_NODE_KIND`; reader не превращает их в mesh по имени.
-
-`local_transform` содержит ровно три required поля: `translation_cm` (3 числа,
-UE centimeters), `rotation_quat` (4 числа x,y,z,w, normalized и
-sign-canonicalized), `scale` (3 числа, каждый строго больше нуля). Конвенция:
-Z-up, left-handed. `properties` — открытый placement-level JSON bag;
-unknown keys и `null` транспортируются как данные.
-
-Composite references вычисляют dependency edges только по
-`nodes[].resource_uid`. Никаких имён/узлов из FBX для этого не читается.
-
-## 5. `*.material` — `mh.material` v1
-
-### 5.1 Полная форма
-
-Filename при первом создании:
-`<sanitized_name>__<uid8>.material`.
+Material payload остаётся самодостаточным и не получает отдельного passport:
 
 ```json
 {
@@ -338,7 +259,6 @@ Filename при первом создании:
   "name": "m_stucco_concrete",
   "shader_class": "rendinst_perlin_layered",
   "params": {
-    "mask_gamma": [0.1, 1.0, 1.0, 1.0],
     "micro_detail_layer": 0,
     "sides": 0
   },
@@ -349,356 +269,178 @@ Filename при первом создании:
 }
 ```
 
-Все семь полей required:
+Все семь полей required. Unknown top-level fields запрещены; extensible
+material semantics живут только в `params`. `textures` содержит только непустые
+`tex0`…`tex15` string slots. Материал без dagormat либо с пустым shader
+экспортируется как `rendinst_simple` с пустыми `params` и `textures`.
 
-| Поле | Тип | Правило |
-|---|---|---|
-| `schema` | string | Ровно `mh.material`. |
-| `schema_version` | integer | Ровно `1`. |
-| `uid` | UUID string | Совпадает с owning manifest row. |
-| `name` | string | Текущее display name; совпадает с manifest row. |
-| `shader_class` | non-empty string | Dagormat shader либо fallback `rendinst_simple`. |
-| `params` | object | JSON-compatible semantic parameters; может быть `{}`. |
-| `textures` | object | Непустые slots `tex0`…`tex15` → string; может быть `{}`. |
+Material identity — `uid`; filename/name hints не участвуют в resolve. Rename
+обновляет payload и clean filename как MOVE, сохраняя UID. Если target clean
+name занят другим UID, действует §3, а не silent overwrite.
 
-Других top-level полей `.material` v1 нет. Неизвестный top-level key —
-`MH_E_INVALID_MATERIAL_VALUE`; расширяемый passthrough живёт только внутри
-`params`. Поэтому hash exclusion для UID/name/schema не превращает неизвестные
-данные в unhashed semantics.
+## 8. Текстуры и Actualize Texture Paths
 
-Пустой texture slot отсутствует. `params` сохраняет незнакомые dagormat values
-как passthrough. Node tree не является альтернативным metadata source. Материал
-без dagormat либо с пустым shader сериализуется как `rendinst_simple` с пустыми
-`params` и `textures`.
+`textures: {texN: string}` остаётся единственной on-disk формой; флагов
+`external_path` нет. Blender `//...` сначала разворачивается относительно
+сохранённого `.blend`; `//` из несохранённого файла — ошибка. Путь
+нормализуется лексически, использует `/`, не разворачивает environment variables
+или `~`.
 
-### 5.2 Filename и rename
+Relative path разрешается от `texture_root`; absolute path проверяется точно.
+Resolver texture slot выполняет каскад:
 
-Правила первого имени resource payload:
-`<sanitized_name>__<uid8><extension>`, где `uid8` — первые восемь hex полного
-UID. Уникальность обеспечивает UID, а не display name. Соответствие
-`sanitized_name` текущему `name` **не требуется и не проверяется**.
+1. exact normalized path;
+2. поиск `basename` под `texture_root`;
+3. unresolved.
 
-После первого material export cascade находит существующий UID, и existing
-location всегда выигрывает: повторный export обновляет тот же payload и тот же
-owning manifest. Автоматически переименовывать файл запрещено. Rename меняет
-`name` внутри `.material` и manifest row, но старое display name в filename
-легально. Ручная транзакционная утилита `Rename file to match` — только ROADMAP.
+Одно basename-совпадение означает stale path: Blender material import может
+автоматически актуализировать `.material` с записью в лог. Несколько совпадений
+дают `MH_W_TEXTURE_BASENAME_AMBIGUOUS` и требуют выбора пользователя; ноль —
+unresolved diagnostic с basename.
 
-### 5.3 Texture path canonicalization
+Оператор **Actualize Texture Paths** и UE commandlet проходят все materials и
+выдают `fixed/ambiguous/missing`. Actualization является обычной правкой
+`.material`, меняет его semantic hash и вызывает `UPDATE_PROPERTIES`.
 
-Перед записью Blender path `//...` разворачивается относительно сохранённого
-`.blend`. `//` при несохранённом `.blend` — `MH_E_INVALID_MATERIAL_VALUE`.
-Затем каждый непустой texture path нормализуется:
+Путь под `texture_root` записывается относительно него с `/`; внешний путь —
+нормализованным absolute. `texture_policy=transitional` (default) даёт
+`MH_W_TEXTURE_OUTSIDE_ROOT`; `strict` повышает тот же факт до
+`MH_E_TEXTURE_OUTSIDE_ROOT`. Policy — project setting, не payload data.
+Текстуры никогда не копируются и не перемещаются этим протоколом.
 
-1. Обычный relative authored path сначала разрешается относительно
-   `source_root`; абсолютный path используется как есть.
-2. Если нормализованный абсолютный файл находится под `source_root`, на диск
-   пишется путь относительно `source_root` с forward slashes.
-3. Если файл вне `source_root`, на диск пишется нормализованный абсолютный путь
-   с forward slashes (`C:/...` или `/...`). Это относится и к authored relative
-   path, который после схлопывания `..` вышел за root.
-4. Поле `external_path` не существует. Internal/external — вычисляемое свойство:
-   path является internal **тогда и только тогда**, когда строка относительная.
-   Абсолютная authored-строка, указывающая внутрь root, всегда переводится в
-   единственную относительную форму.
+## 9. Reader state и resolver
 
-Нормализация лексическая и не требует существования файла: переменные среды и
-`~` не разворачиваются, разделители становятся `/`, сегменты `.`/`..`
-схлопываются без обхода symlink. Для Windows drive letter приводится к upper
-case, регистр остальных компонентов сохраняется; UNC сохраняет форму
-`//server/share/...`. Проверка containment под `source_root` case-insensitive
-для Windows drive/UNC и case-sensitive для POSIX. Trailing slash удаляется,
-кроме самого filesystem root. Эти правила одинаковы в Python и UE readers.
-Валидная on-disk relative строка уже нормализована, не содержит `.`/`..` и при
-разрешении относительно `source_root` остаётся внутри root. Reader не исправляет
-нарушение молча: malformed relative path даёт `MH_E_INVALID_MATERIAL_VALUE`.
+Writer не имеет resolver index. Reader state разделён по host:
 
-Для одной internal texture канон-строка не зависит от абсолютного расположения
-`source_root` на машине. Текстуры не копируются.
+- Blender **Import Composite** при первом вызове молча сканирует `source_root`;
+  optional lazy cache может ускорить последующие imports, но автоматически
+  инвалидируется/перестраивается и не имеет artist-facing Rebuild UI;
+- UE startup сканирует source root и сравнивает embedded metadata с **Ledger**;
+  default — silent auto-import, optional project preference включает prompt;
+- UE watcher повторяет per-file scan и то же сравнение с Ledger.
 
-Настройка `texture_policy` не входит в on-disk JSON:
+Resolve всегда подтверждает candidates текущими payload bytes/passports. Cache
+miss/stale в Blender означает silent scan, а не ошибку и не ручной repair.
+Ledger — состояние reader/import результата, не source authority и не input
+Blender writer.
 
-- `transitional` (default): absolute external path допустим и даёт
-  `MH_W_TEXTURE_OUTSIDE_ROOT`;
-- `strict`: тот же факт даёт `MH_E_TEXTURE_OUTSIDE_ROOT` и блокирует операцию.
+| Состояние | Нормативная реакция |
+|---|---|
+| UID отсутствует в Ledger, один валидный payload | Auto-import/adopt (silent default; prompt optional) |
+| Старый path исчез, новый unique path с тем же UID | MOVE автоматически + log |
+| Два path одного UID, fingerprints равны | один semantic resource; duplicate paths перечисляются в warning/log |
+| Два path одного UID, fingerprints различны | `MH_E_DIVERGENT_REVISIONS`, только ручной выбор |
+| Loose file выбран вручную | Update existing / Fork as New Resource / Cancel |
+| Passport/embedded identity отсутствует | runtime quarantine; warning допустим только migration utility |
+| Passport malformed/unknown version/consensus mismatch | `MH_E_PASSPORT_INVALID`, quarantine |
 
-Warning/error — диагностика операции, не часть `.material` и не hash input.
-Импорт повторно вычисляет internal/external из строки и выдаёт ту же диагностику
-по текущей policy, не переписывая файл.
+**Fork as New Resource** назначает новый UID и переписывает embedded identity.
+Для composite UI отдельно предлагает, какие внутренние ссылки форкнуть; original
+UID не изменяется.
 
-## 6. Resolver и `mh.registry` v1
+## 10. Explicit writer, startup scan и watcher
 
-### 6.1 Registry hint
+Каждый вызов Blender Export всегда обрабатывает requested target(s): проверяет
+target collision, пишет temporary sibling, flush/close, делает atomic replace и
+завершается. Ни geometry/descriptor comparison, ни source-root scan, ни Ledger,
+ни lazy import cache не входят в writer flow. Короткий per-file lock защищает
+только target от двух одновременных writers; timeout даёт
+`MH_E_PAYLOAD_LOCK_TIMEOUT` и zero writes.
 
-Registry ускоряет первичный candidate lookup, но не является authority:
+Crash до replace оставляет старый target; crash после replace оставляет новый.
+Глобальных markers/locks нет.
 
-```json
-{
-  "schema": "mh.registry",
-  "schema_version": 1,
-  "resources": [
-    {
-      "uid": "7d995e54-d084-4466-a613-a1cd8f3248b2",
-      "kind": "material",
-      "name": "m_stucco_concrete",
-      "source_path": "common/materials/m_stucco_concrete__7d995e54.material",
-      "manifest_path": "common/export_manifest.json"
-    }
-  ],
-  "shader_classes": [
-    "rendinst_simple",
-    "rendinst_perlin_layered"
-  ]
-}
-```
-
-Resource hint required fields: `uid`, `kind`, `name`, `source_path`.
-`source_path` — payload path относительно `source_root`. Optional
-`manifest_path` — путь owning-manifest candidate относительно `source_root`.
-Оба path — normalized relative forward-slash paths без `.`/`..`.
-Дополнительные registry sections D28 допустимы.
-
-Registry row, включая optional `manifest_path`, лишь hint: она подтверждается
-полным scan всех `export_manifest.json` под `source_root`. Stale/invalid row
-даёт warning и fallback к scan. Registry никогда не отменяет проверку unique
-owner и не может самостоятельно завершить resolve.
-
-### 6.2 Полный scan и результат
-
-Scan читает только файлы с basename `export_manifest.json`; payload files по
-расширению не угадываются. Дисковый cache v1 отсутствует. Для каждого UID:
-
-1. найти все manifest rows;
-2. потребовать ровно один owning manifest;
-3. проверить row schema/kind/source и разрешить source относительно владельца;
-4. проверить существование и тип payload; для `.composite`/`.material` также
-   проверить внутренние UID/name;
-5. вернуть honest result:
+UE startup (silent auto-import default, prompt optional) и watcher используют
+size+mtime как fast-path, затем fingerprint/passport validation и сравнение с
+Ledger. Стабилизируется конкретный файл, не весь root. Batch order:
 
 ```text
-uid -> {
-  payload_path,
-  owning_manifest_path,
-  manifest_row
-}
+textures -> materials -> geometry -> composites -> finalize -> ledger
 ```
 
-Ноль owners = unresolved. Два owners одного UID =
-`MH_E_AMBIGUOUS_RESOURCE_OWNER`; выбор первого по порядку файлов запрещён.
-Несовпадение expected kind также блокирует resolve. Один ресурс, встреченный N
-раз в dependency graph, резолвится один раз и материализуется в одну definition
-Collection.
+Semantic diff полностью reader-side. Writer не печатает diff как условие
+записи. `tools/diff_bundles.py` работает как отдельный reader: сравнивает
+passports/payloads/ledger-like snapshots; manifest fallback запрещён.
 
-### 6.3 Recursive import
+## 11. Диагностики
 
-В v1 Composite Import всегда recursive и всегда импортирует доступные FBX;
-checkboxes `Recursive`/`With FBX` отсутствуют. Resolver обходит волну
-`composite_ref → composite payload → nodes`, затем material UID из
-`static_mesh.material_slots`. Shared resources дедуплицируются по UID.
+Обязательные v2 codes:
 
-Точное Blender host-mapping: definition Collection хранит `mh_uid=ResourceUID`
-и `mh_kind=static_mesh|composite`; node Empty хранит `mh_uid=NodeUID` и
-`mh_kind=group|mesh|composite_ref`. У `group` отсутствуют `mh_resource_uid` и
-`instance_collection`. У `mesh`/`composite_ref` required
-`mh_resource_uid=ResourceUID`, а target Collection имеет соответственно
-`mh_kind=static_mesh`/`mh_kind=composite`.
+| Code | Условие |
+|---|---|
+| `MH_E_NAME_COLLISION_DIFFERENT_UID` | clean target filename занят другим UID |
+| `MH_E_PASSPORT_INVALID` | passport отсутствует/повреждён/не согласован в runtime |
+| `MH_E_DIVERGENT_REVISIONS` | два payload одного UID имеют разные fingerprints |
+| `MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED` | reader/writeback видит внешнюю правку и требует явного подтверждения перед применением/overwrite |
+| `MH_E_PAYLOAD_LOCK_TIMEOUT` | writer не получил per-target lock в срок; payload не меняется |
+| `MH_E_RESOURCE_NOT_FOUND` | required ResourceUID отсутствует; блокируется затронутый resource/edge, batch может продолжиться |
+| `MH_E_SOURCE_INDEX_INVALID` | reader построил/получил невалидный ephemeral source snapshot и не может безопасно продолжить |
+| `MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT` | candidate reader snapshot вышел за `source_root` |
+| `MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED` | payload set изменился между reader preflight и apply |
+| `MH_E_PENDING_EXPORT_MARKER` | migration scan нашёл незавершённую v1 writer-транзакцию; zero writes |
+| `MH_E_V1_MIGRATION_INVALID` | legacy manifest/payload не соответствует frozen v1 |
+| `MH_E_V1_MIGRATION_FAILED` | migration не смогла выпустить и проверить v2 payload |
+| `MH_E_V1_MIGRATION_CLEANUP_FAILED` | v2 payload готов, но безопасная очистка legacy-файла не завершилась |
+| `MH_E_V1_MIGRATION_IDENTITY_MISMATCH` | legacy UID не совпал с Blender/payload identity |
+| `MH_E_MIGRATION_MESH_COLLECTION_NOT_FOUND` | для re-export static mesh не найдена уникальная Blender Collection с нужным UID |
+| `MH_W_PAYLOAD_EXTERNAL_MODIFIED` | fingerprint изменён при прежних semantic hashes; observation до решения policy |
+| `MH_W_DEPRECATED_PER_LOD_PASSPORT_MIGRATION_REQUIRED` | только migration scan: найден legacy per-file LOD passport |
+| `MH_W_DUPLICATE_IDENTICAL_PAYLOAD` | несколько byte-identical candidates одного UID |
+| `MH_W_FBX_CARRIER_READER_UNAVAILABLE` | FBX carrier capability недоступна для отдельного probe/migration path; production FBX resource затем fail-closed |
+| `MH_W_LEGACY_COMPOSITE_V1_MIGRATION_REQUIRED` | только migration scan: composite v1 требует conversion; production resolver не считает его candidate |
+| `MH_W_LEGACY_PAYLOAD_NO_PASSPORT` | только migration scan; production runtime quarantines payload |
+| `MH_W_MATERIAL_NOT_FOUND` | referenced MaterialUID отсутствует; spelling `MH_W_MISSING_MATERIAL` не используется |
+| `MH_W_TEXTURE_BASENAME_AMBIGUOUS` | basename имеет несколько кандидатов |
+| `MH_E_LOD_LEVELS_SPARSE` | набор LOD не равен `0..N` |
+| `MH_E_LOD_SLOT_NOT_IN_BASE` | LOD1+ использует slot вне LOD0 |
+| `MH_E_LOD_PASSPORT_MISMATCH` | заявленные и фактические уровни различаются |
+| `MH_W_LOD_AUX_NODE_IGNORED` | UCX/SOCKET авторился на LOD1+ |
 
-Ненайденная ссылка при Blender import не уничтожает структуру: placement Empty
-хранит `mh_uid=NodeUID`, `mh_resource_uid=ResourceUID`, `mh_kind` и
-`mh_unresolved=true`; target definition/placeholder Collection хранит
-`mh_uid=ResourceUID`, ожидаемый `mh_kind` и `mh_unresolved=true`. Лог получает
-`MH_W_UNRESOLVED_RESOURCE`. `Resolve Missing` повторяет cascade, наполняет те же
-Empty/Collection, выставляет `mh_unresolved=false` и не пересобирает composite
-или identity.
+Существующие semantic codes composite/material остаются в силе, если не
+ссылаются на manifest authority. Deprecated-manifest codes разрешены только
+миграционной утилите; production runtime не имеет legacy reader.
 
-При composite cycle Blender import обрывает только back-edge, создаёт
-placeholder, выдаёт `MH_W_COMPOSITE_CYCLE` и продолжает остальной граф. Blender
-export и UE import блокируют соответствующую операцию кодом
-`MH_E_COMPOSITE_CYCLE`. Node-parent cycle внутри одного файла всегда
-`MH_E_PARENT_CYCLE`.
+## 12. Одноразовая миграция v1 → v2
 
-Missing material при Blender import даёт `MH_W_MATERIAL_NOT_FOUND`, mesh
-geometry продолжает импортироваться. Missing material при FBX Export с
-`Export Materials=OFF` либо после неуспешной material-операции даёт warning со
-списком UID и быстрым действием `Export materials…`, но не блокирует geometry
-payload. При ON новая material resource создаётся по D38; существующая
-обновляется in place. Composite Export material payload не размещает. Missing
-static-mesh/composite dependency при export — `MH_E_UNRESOLVED_EXTERNAL`.
-При UE import unresolved material блокирует применение только затронутого
-material resource с `MH_E_UNRESOLVED_EXTERNAL`; остальные независимые resource
-operations batch продолжаются. Тем самым `MH_E_*` по-прежнему блокирует свою
-операцию, но не обязан отменять весь batch.
+Migration operator — единственное место, где разрешено читать frozen v1:
 
-Зависимости для export validation и Analyzer каждый раз вычисляются из payload
-и manifest rows; отдельного persisted dependency list нет.
+1. сканирует legacy manifests и uid8 filenames;
+2. строит полный preflight и ничего не пишет при любой неоднозначности;
+3. переносит identity/metadata static mesh в FBX passport; предпочтителен
+   re-export из Blender, SDK patch допустим только при отсутствии сцены;
+4. переносит composite resource `properties` внутрь `mh.composite` v2;
+5. переименовывает payload в clean names; collisions выдаёт в ручной отчёт;
+6. удаляет manifests только после успешной проверки всех затронутых payload;
+7. выдаёт `migrated/renamed/conflicted/failed` receipt и инструкции rollback.
 
-## 7. Диагностики v1
+Legacy composite v1 обнаруживается только здесь с
+`MH_W_LEGACY_COMPOSITE_V1_MIGRATION_REQUIRED`; production resolver не добавляет
+его в candidate set.
 
-Нормативный инвариант: `MH_E_*` блокирует ту операцию, к которой относится;
-`MH_W_*` сообщает проблему, но её не блокирует. Коды называют обнаруженный
-факт, а реакцию (`placeholder`, fallback, skip) описывает message/report.
+Per-file LOD требует one-shot подготовки/реэкспорта в Combined-LOD; подробности
+— в `AMENDMENT_combined_lod_fbx.md`. Production resolver не импортирует и не
+repair'ит legacy rows. Постоянный dual-read запрещён.
 
-| Код | Контекст | Условие |
-|---|---|---|
-| `MH_E_AMBIGUOUS_RESOURCE_OWNER` | resolve/import/export | UID объявлен двумя owning manifests под root. |
-| `MH_E_UNRESOLVED_EXTERNAL` | Blender export; UE import | Export: required mesh/composite не резолвится; UE: affected resource dependency, включая material, не применяется. |
-| `MH_E_COMPOSITE_CYCLE` | Blender export; UE import | Composite dependency cycle. |
-| `MH_E_UNSUPPORTED_NODE_KIND` | Blender/UE import/export | Reserved node kind ещё не имеет runtime contract. |
-| `MH_W_COMPOSITE_CYCLE` | Blender import | Back-edge заменён placeholder; остальной граф импортируется. |
-| `MH_W_UNRESOLVED_RESOURCE` | Blender import | UID не найден; identity сохранена placeholder. |
-| `MH_W_REGISTRY_STALE` | resolve | Registry hint не подтверждён scan; используется scan result. |
-| `MH_W_REGISTRY_INVALID` | resolve/export | Registry не читается/не соответствует schema; используется scan. |
-| `MH_W_MATERIAL_NOT_FOUND` | Blender import/export | Material UID пока не резолвится; geometry не блокируется. |
-| `MH_W_MATERIAL_PAYLOAD_FALLBACK` | Blender import | Dagormat RNA не представляет payload lossless; JSON Custom Property остаётся authority. |
-| `MH_W_TEXTURE_OUTSIDE_ROOT` | transitional export/import | Texture path абсолютный, то есть external. |
-| `MH_E_TEXTURE_OUTSIDE_ROOT` | strict export/import | Texture path абсолютный, то есть external. |
-| `MH_E_INVALID_MATERIAL_VALUE` | material export/import | Payload/path нельзя представить по v1. |
-| `MH_E_UNKNOWN_SCHEMA_VERSION` | reader | Schema version не поддерживается. |
-| `MH_E_INVALID_LOD_HIERARCHY` | Blender export | Dagor authoring container/child shape не соответствует `<base>.lods` → direct `<base>.lodNN`. |
-| `MH_E_LOD_LEVELS_SPARSE` | Blender export; UE import | Фактические LOD levels не образуют плотный диапазон от 0. |
-| `MH_E_LOD_SLOT_NOT_IN_BASE` | Blender export; UE import | Material slot уровня 1+ отсутствует в LOD0. |
-| `MH_E_DEPRECATED_LOD_ROWS` | manifest reader/writer | Обнаружено отменённое per-file поле `lods`; требуется миграция/re-export. |
-| `MH_E_LOD_PASSPORT_MISMATCH` | UE FBX import | Passport `lod_levels` не совпадает с фактическими `mh_lod_level` mesh nodes. |
-| `MH_W_LOD_AUX_NODE_IGNORED` | Blender export; UE import | `UCX_*`/`SOCKET_*` обнаружен на уровне 1+ и игнорируется. |
+## 13. Implementation gates
 
-Коды целостности UUID, resource names, node table, transforms, material slots и
-source paths из frozen composite/validation contract сохраняются. Для нового
-source workflow malformed/escaping `source` даёт
-`MH_E_INVALID_RESOURCE_SOURCE`; pending, malformed или изменившийся manifest
-snapshot — `MH_E_INVALID_EXPORT_MANIFEST`. Расширение машинного реестра после
-freeze требует versioned migration note.
+1. **Carrier B proof — blocking.** Реальные FBX, один/несколько объектов,
+   shared datablock, custom normals, длинный JSON, Combined-LOD, оба Blender
+   пути, UE reader, re-export, pivots/hierarchy и byte consensus.
+2. **Clean explicit writers.** Clean names, mandatory passports, composite v2,
+   material self-identity, `mh.meshser:2`; каждый Export всегда пишет requested
+   target, manifest/index/diff code отсутствует. No-op export переписывает файл,
+   а reader классифицирует `NO_CHANGE`.
+3. **Readers/resolver/conflicts.** Blender lazy Import Composite scan/cache и UE
+   startup/watcher Ledger diff; полная conflict matrix, Fork, M8/M9/M10 v2,
+   texture basename actualization. Artist-facing Rebuild отсутствует.
+4. **Migration/import.** One-shot v1 reader только в migrator; v2 recursive
+   import, unresolved placeholders и Resolve Missing.
+5. **Crash/concurrency.** Crash до/после atomic replace, два writers,
+   Blender+UE reader, stale/deleted lazy cache/Ledger, per-file stability.
+6. **UE parity.** UE подключается после Blender gate 2; C1 доказывает равную
+   passport/hash/change классификацию, последующие C/D gates используют только
+   этот контракт.
 
-## 8. Канонизация и имена
-
-JSON payloads пишутся UTF-8 без BOM, LF, завершающий LF, indent 2. Known keys
-имеют порядок примеров; `nodes` и `resources` сортируются по UID.
-
-Hash canonical form: compact JSON без whitespace; object keys сортируются по
-UTF-8 bytes после Unicode NFC; строки — NFC UTF-8; `null` и bool сохраняются;
-массивы сохраняют порядок, кроме явно UID-сортируемых таблиц. NFC-collision
-object keys — ошибка.
-
-Continuous numbers квантуются round-half-even до on-disk записи:
-
-| Поля | p |
-|---|---:|
-| `translation_cm` | 3 |
-| `rotation_quat`, `scale` | 6 |
-| variant `weight` | 4 |
-| `properties`, material `params` | 6 |
-
-В canonical form decimal `q / 10^p` заменяется integer `q`.
-`schema_version` и `seed_salt` остаются точными integers. NaN/Inf запрещены.
-XXH3-64 записывается как `xxh3:` и 16 lowercase hex.
-
-Каждый текущий resource/composite/material `name` при каждом export/import
-непуст и соответствует `[A-Za-z0-9_ -]`; нарушение даёт
-`MH_E_NON_ASCII_RESOURCE_NAME`. Node `display_name` и JSON properties могут быть
-Unicode NFC. Sanitized filename вычисляется только при первом создании:
-lowercase, всё вне `[a-z0-9_]` → `_`, runs underscore схлопываются, Windows
-reserved base name получает prefix `_`. Filename не участвует в identity и не
-обязан меняться вслед за последующим валидным rename.
-
-## 9. Транзакции и стабильность
-
-### 9.1 Standalone export
-
-Единица export-транзакции — один FBX mesh-ресурса (включая все его LOD),
-composite или material и upsert одной resource row в его owning manifest.
-
-1. До первой записи вычислить/валидировать payload, canonical hash, row,
-   computed dependencies и полный новый manifest.
-2. Создать атомарно `export_manifest.json.tmp` с полным prepared manifest.
-   Пока marker существует, stable manifest каталога не читается.
-3. Изменённый payload записать рядом как `.tmp`, затем atomic replace. При
-   неизменённой semantic и on-disk metadata payload не трогать.
-4. Только после успеха payload atomic replace marker в
-   `export_manifest.json`. Это commit event.
-
-Upsert сохраняет unrelated rows и пользовательские файлы. Standalone export
-не удаляет orphan rows/payloads автоматически. Failure оставляет marker
-fail-closed. Обычный resolver/import и writers других UID не читают его как
-owner и завершаются `MH_E_INVALID_EXPORT_MANIFEST`.
-
-Единственное исключение — явный recovery тем же standalone writer для UID из
-marker. До записи он обязан:
-
-1. прочитать stable manifest, если он есть, и marker;
-2. доказать, что кроме допустимого обновления `exporter_version` marker
-   отличается от stable ровно одним upsert этого UID, сохраняя все unrelated
-   rows в точной канонической форме; при отсутствии stable marker может
-   содержать только этот первый UID;
-3. подтвердить тот же kind, нормализованный source/owner и отсутствие второго
-   owning manifest полным scan: собственный marker проверяется этим recovery,
-   но не считается owner; любой другой pending marker под root блокирует scan;
-   для существующего stable row source менять нельзя;
-4. заново вычислить payload и row из текущего Blender source, построить новый
-   prepared manifest поверх **stable** unrelated rows и atomic-replace marker;
-5. безусловно заново atomic-replace payload (старое/new crash-состояние не
-   считается hash-skip proof), затем commit'ить новый marker в stable manifest.
-
-Если любое доказательство не проходит, marker сохраняется, операция блокируется
-`MH_E_INVALID_EXPORT_MANIFEST`; автоматического выбора или удаления нет.
-Повторный crash оставляет тот же fail-closed recovery protocol.
-
-UI FBX Export с `Export Materials=ON` собирает уникальные MaterialUID выбранной
-Collection hierarchy и запускает для каждого тот же standalone material writer:
-unique owner обновляется in place, UID без owner использует каталог выбранного
-FBX output. В обычной операции FBX/mesh-row commit'ится первым, после чего идут
-material upserts: material failure становится warning и не откатывает geometry.
-Если до запуска уже существует доказанный pending material marker выбранной
-Collection, сначала выполняется обязательный recovery этого MaterialUID, потому
-что §9.1 запрещает любой другой write под root до снятия marker.
-Это последовательность независимых resource-транзакций, а не новый bundle или
-cross-manifest atomic commit; успешно завершённые upserts не откатываются из-за
-последующего независимого upsert.
-
-При `Export Materials=OFF` FBX writer не вызывает material writer и не меняет
-material payload/rows. Отдельный Material Export принимает Material + Directory;
-если UID уже имеет единственного owner, выбранный каталог не перемещает его:
-update идёт in place. Composite Export не создаёт `.material`. Во всех режимах
-texture files не входят в export-транзакции и не копируются.
-
-### 9.2 Resolver/import snapshot
-
-Операция получает стабильный snapshot полного manifest set под `source_root`:
-фиксируются перечень paths и bytes каждого manifest. Наличие pending marker,
-изменение/появление/исчезновение manifest либо изменение registry/payload до
-apply делает snapshot нестабильным и отменяет операцию.
-
-После чтения dependency payloads и непосредственно перед commit/apply перечень
-и bytes проверяются повторно. Blender mutation выполняется транзакционно:
-preflight предшествует изменению сцены; при runtime failure или нестабильном
-snapshot внесённые этой операцией изменения откатываются. Source files import
-не изменяет.
-
-## 10. Legacy, migration и golden gates
-
-Production reader для pre-freeze `materials[]`, `mh.bundle_manifest` или
-других промежуточных форм **не создаётся**. Эти формы не являются v1 legacy
-API: внешних consumers до freeze не было. Golden artifacts регенерируются.
-Локальные тестовые выгрузки при необходимости преобразуются одноразовым
-внешним migration script, который не входит в runtime codec.
-
-Обязательные final-v1 golden gates:
-
-- **M8 external_resource:** `libB/export_manifest.json` владеет composite
-  `lamp_set` и static mesh `lamp_mesh`; `lamp_set.composite` ссылается на
-  `lamp_mesh`. Root composite из `libA` ссылается на UID `lamp_set`. При полном
-  root resolver возвращает owner/payload из `libB`, recursive import создаёт по
-  одной definition Collection и импортирует FBX. В negative-варианте без
-  `libB` Blender import оставляет composite UID-placeholder с
-  `MH_W_UNRESOLVED_RESOURCE`, а export validation даёт
-  `MH_E_UNRESOLVED_EXTERNAL`.
-- **M9 shared_material:** `common/export_manifest.json` владеет одним
-  `.material`; два static meshes из разных manifests ссылаются на его UID.
-  Resolve/import материализует материал один раз. Изменение только `.material`
-  даёт `UPDATE_PROPERTIES` одного material resource и ноль mesh operations.
-  FBX Export/ON обновляет unique owner in place, новый material создаёт рядом с
-  FBX, а OFF оставляет все material bytes/rows неизменными.
-
-В этом schema-doc commit фиксируются формы и ожидаемые исходы M8/M9. Golden
-файлы, canonical bytes и expected hashes регенерируются в G1/G4 и должны быть
-воспроизводимы независимыми Python и UE readers до приёмки соответствующих
-implementation gates; production legacy-reader ради старых fixtures не
-добавляется.
+Внешний аудитор принимает крупные gates. Owner выполняет финальную полевую
+приёмку на реальном Blender/UE проекте. До receipts соответствующая часть
+контракта считается запланированной, а не доказанно реализованной.

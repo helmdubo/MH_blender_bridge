@@ -59,8 +59,7 @@ def test_writer_reproduces_cycle_fixture_bytes():
     for name, composite in composites.items():
         path = fixture_dir / composite.filename()
         assert path.exists(), path
-        assert render(composite_disk_dict(
-            composite, schema_version=1)) == path.read_text()
+        assert render(composite_disk_dict(composite)) == path.read_text()
 
 
 def test_composite_hash_idempotent_over_json_roundtrip():
@@ -115,7 +114,7 @@ def test_manifest_layout_and_ordering():
     uids = [r["uid"] for r in doc["resources"]]
     assert uids == sorted(uids), "resources must be uid-sorted"
     mesh_entry = next(r for r in doc["resources"] if r["kind"] == "static_mesh")
-    assert mesh_entry["source"] == f"meshes/wall_a__{UIDS['col/wall_a'][:8]}.mesh.fbx"
+    assert mesh_entry["source"] == "meshes/wall_a.mesh.fbx"
     assert mesh_entry["material_slots"] == [
         {"slot_name": "stone", "material_uid": UIDS["mesh/wall_a"]}]
     mat_entry = doc["materials"][0]

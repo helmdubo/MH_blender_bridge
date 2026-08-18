@@ -73,7 +73,7 @@ def test_export_in_any_order_then_dependency_import_and_roundtrip(tmp_path):
     parent_source = parent_report["path"]
     parent_uid = parent_report["uid"]
     child_uid = child_report["uid"]
-    mesh_uid = mesh_report["resource_entry"]["uid"]
+    mesh_uid = mesh_report["passport"]["resource_uid"]
     original_parent = json.loads(Path(parent_source).read_text(encoding="utf-8"))
 
     bpy.ops.wm.read_factory_settings(use_empty=True)

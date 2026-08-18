@@ -72,7 +72,7 @@ def test_cycle_fixture_is_schema_valid_and_cyclic():
         with open(os.path.join(CYCLE_FIXTURE_DIR, fname)) as f:
             doc = json.load(f)
         assert doc["schema"] == "mh.composite"
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert fname == resource_filename(doc["name"], doc["uid"], ".composite")
         # Must be canonicalizable/hashable without errors.
         assert composite_content_hash(doc).startswith("xxh3:")

@@ -21,6 +21,7 @@ class MH_PT_source_tools(bpy.types.Panel):
         project.label(text="Project", icon="FILE_FOLDER")
         project.prop(preferences, "source_root", text="Source Root")
         project.prop(preferences, "texture_policy", text="External Textures")
+        project.operator("mh.migrate_sources_v2", icon="FILE_REFRESH")
 
         fbx = layout.box()
         fbx.label(text="FBX Export", icon="MESH_CUBE")

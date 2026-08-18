@@ -17,9 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh4blend.core.material_source import (  # noqa: E402
     build_material_document,
-    material_resource_row,
 )
-from mh4blend.core.materials import material_content_hash  # noqa: E402
 from mh4blend.core.texture_actualize import TextureActualizeError  # noqa: E402
 from mh4blend.scene import actualize_texture_paths as module  # noqa: E402
 
@@ -34,9 +32,9 @@ def _write_json(path: Path, document: dict) -> None:
         encoding="utf-8")
 
 
-def _fixture(root: Path, textures: dict[str, str]) -> tuple[Path, Path]:
+def _fixture(root: Path, textures: dict[str, str]) -> Path:
     owner = root / "materials"
-    payload = owner / f"wall__{UID[:8]}.material"
+    payload = owner / "wall.material"
     document, _diagnostics = build_material_document(
         uid=UID,
         name="wall",
@@ -46,20 +44,13 @@ def _fixture(root: Path, textures: dict[str, str]) -> tuple[Path, Path]:
         source_root=str(root),
     )
     _write_json(payload, document)
-    row = material_resource_row(document, payload.name)
-    _write_json(owner / "export_manifest.json", {
-        "schema": "mh.export_manifest",
-        "schema_version": 1,
-        "exporter_version": "0.4.1",
-        "resources": [row],
-    })
-    return payload, owner / "export_manifest.json"
+    return payload
 
 
-def test_manual_actualize_updates_material_and_owning_manifest(tmp_path):
+def test_manual_actualize_updates_self_contained_material(tmp_path):
     root = tmp_path / "source"
     root.mkdir()
-    payload, manifest_path = _fixture(root, {
+    payload = _fixture(root, {
         "tex0": "old/wall_d.tif",
         "tex1": "old/wall_n.tif",
         "tex2": "old/missing_a.tif",
@@ -79,10 +70,6 @@ def test_manual_actualize_updates_material_and_owning_manifest(tmp_path):
         "tex1": "old/wall_n.tif",
         "tex2": "old/missing_a.tif",
     }
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    row = manifest["resources"][0]
-    assert row["content_hash"] == material_content_hash(
-        document["shader_class"], document["params"], document["textures"])
     assert report["materials_scanned"] == 1
     assert report["materials_updated"] == [UID]
     assert [(item["slot"], item["resolved_path"])
@@ -99,32 +86,59 @@ def test_manual_actualize_updates_material_and_owning_manifest(tmp_path):
     assert not (root / "old").exists()
 
 
-def test_texture_tree_race_blocks_before_marker_or_payload_mutation(
+def test_texture_tree_race_blocks_before_payload_mutation(
         tmp_path, monkeypatch):
     root = tmp_path / "source"
     root.mkdir()
-    payload, _manifest_path = _fixture(root, {
+    payload = _fixture(root, {
         "tex0": "old/wall_d.tif",
     })
     candidate = root / "textures" / "wall_d.tif"
     candidate.parent.mkdir()
     candidate.write_bytes(b"d")
     stable_payload = payload.read_bytes()
-    real_stage = module.stage_manifest
+    real_assert = module.assert_texture_tree_stable
+    calls = 0
 
-    def race_before_stage(directory, manifest, *, snapshot_guard=None):
-        extra = root / "appeared" / "wall_d.tif"
-        extra.parent.mkdir()
-        extra.write_bytes(b"new")
-        return real_stage(
-            directory, manifest, snapshot_guard=snapshot_guard)
+    def race_before_write(snapshot):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            extra = root / "appeared" / "wall_d.tif"
+            extra.parent.mkdir()
+            extra.write_bytes(b"new")
+        return real_assert(snapshot)
 
-    monkeypatch.setattr(module, "stage_manifest", race_before_stage)
+    monkeypatch.setattr(module, "assert_texture_tree_stable", race_before_write)
     with pytest.raises(TextureActualizeError, match="file set changed"):
         module.actualize_texture_paths(str(root))
 
     assert payload.read_bytes() == stable_payload
-    assert not (payload.parent / "export_manifest.json.tmp").exists()
+    assert not list(root.rglob("*.material.tmp"))
+
+
+def test_texture_tree_race_inside_material_lock_preserves_payload(
+        tmp_path, monkeypatch):
+    root = tmp_path / "source"
+    root.mkdir()
+    payload = _fixture(root, {"tex0": "old/wall_d.tif"})
+    candidate = root / "textures" / "wall_d.tif"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"d")
+    stable_payload = payload.read_bytes()
+    real_write = module.write_material_payload_atomic
+
+    def raced_write(prepared, **kwargs):
+        extra = root / "appeared" / "wall_d.tif"
+        extra.parent.mkdir()
+        extra.write_bytes(b"new")
+        return real_write(prepared, **kwargs)
+
+    monkeypatch.setattr(module, "write_material_payload_atomic", raced_write)
+    with pytest.raises(TextureActualizeError, match="file set changed"):
+        module.actualize_texture_paths(str(root))
+
+    assert payload.read_bytes() == stable_payload
 
 
 def test_no_material_owners_is_successful_empty_report(tmp_path):

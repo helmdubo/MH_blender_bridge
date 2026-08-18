@@ -69,8 +69,7 @@ def test_prepares_dagormat_material_for_first_export(tmp_path):
     assert prepared.document["params"] == {"roughness": 0.25, "sides": 2}
     assert prepared.document["textures"] == {
         "tex0": "textures/metal_d.tif"}
-    assert prepared.resource_row["kind"] == "material"
-    assert Path(prepared.payload_path).name == f"metal__{UID[:8]}.material"
+    assert Path(prepared.payload_path).name == "metal.material"
 
 
 def test_empty_dagormat_is_minimal_placeholder(tmp_path):
@@ -96,14 +95,11 @@ def test_fbx_seam_accepts_extracted_resource_and_resolved_owner(tmp_path):
     from mh4blend.scene.material_extract import _material_resource
 
     resource = _material_resource(material)
-    payload = tmp_path / "common" / f"old_name__{UID[:8]}.material"
-    manifest = tmp_path / "export_manifest.json"
+    payload = tmp_path / "common" / "old_name.material"
     prepared = prepare_material_resource_export(
         resource, tmp_path / "ignored", source_root=tmp_path,
-        target_payload_path=payload, owning_manifest_path=manifest,
-        existing_source=f"common/{payload.name}")
+        target_payload_path=payload)
     assert prepared.payload_path == str(payload)
-    assert prepared.resource_row["source"] == f"common/{payload.name}"
 
 
 def test_external_texture_reports_warning_or_blocks_by_policy(tmp_path):
@@ -125,7 +121,7 @@ def test_external_texture_reports_warning_or_blocks_by_policy(tmp_path):
             texture_policy="strict")
 
 
-def test_fbx_batch_deduplicates_and_routes_existing_owner(tmp_path):
+def test_fbx_batch_deduplicates_into_requested_folder(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     existing = bpy.data.materials.new("Existing")
     existing["mh_uid"] = UID
@@ -135,20 +131,14 @@ def test_fbx_batch_deduplicates_and_routes_existing_owner(tmp_path):
     fresh.dagormat.shader_class = "rendinst_simple"
     from mh4blend.scene.material_extract import _material_resource
 
-    old_payload = tmp_path / "common" / f"old_name__{UID[:8]}.material"
-    owner_manifest = tmp_path / "export_manifest.json"
     existing_resource = _material_resource(existing)
     fresh_resource = _material_resource(fresh)
     prepared = prepare_material_resource_exports(
         [existing_resource, fresh_resource, existing_resource],
-        tmp_path / "fbx", source_root=tmp_path,
-        owners_by_uid={UID: {
-            "payload_path": old_payload,
-            "owning_manifest_path": owner_manifest,
-            "manifest_row": {"source": f"common/{old_payload.name}"},
-        }})
+        tmp_path / "fbx", source_root=tmp_path)
 
     assert [item.document["uid"] for item in prepared] == [
         UID, fresh_resource.uid]
-    assert prepared[0].payload_path == str(old_payload)
+    assert Path(prepared[0].payload_path) == \
+        tmp_path / "fbx" / "existing.material"
     assert Path(prepared[1].payload_path).parent == tmp_path / "fbx"

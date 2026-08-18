@@ -1,125 +1,169 @@
 # MH_blender_bridge
 
-DCC-driven composite asset pipeline: Blender → versioned source files → UE5.
-Философия — DagorEngine composites; спеки и Decision Log — в `docs/`.
-Финальная standalone Source Schema v1:
-`docs/05_source_schema_v1.md`,
-авторские workflows: `docs/04_source_workflows.md`, план реализации:
-`docs/06_final_v1_plan.md`. Post-freeze `Export Materials`/single-tab amendment
-меняет только UX и orchestration standalone writers; JSON schema и canonical
-bytes v1 не изменены. Старые bundle-разделы документов 01–02 сохранены только
-как история и помечены superseded.
+DCC-driven composite asset pipeline: Blender → clean versioned source files →
+UE5. Authoring model inspired by Dagor composites; identity and transport are
+defined by **MH Source Protocol v2: Clean Sources**.
 
-## Структура
+Active documents:
 
-```
-docs/            # спеки, Decision Log, QUESTIONS.md
-reference/       # dag4blend 2.12.0, read-only (лицензия Gaijin — только паттерны)
-tools/           # golden scene, мутации, каноническая библиотека
-golden/          # expected_diffs (спека тестов B/C), canonical_vectors.json
-                 # *.blend генерируются, в git не хранятся
-addon/mh4blend/  # этап B
-ue/MimirComposite/  # этапы C–D
-```
+- [`docs/05_source_schema_v1.md`](docs/05_source_schema_v1.md) — normative v2
+  contract (filename retained for stable links);
+- [`docs/ADR_V2_passport_first.md`](docs/ADR_V2_passport_first.md) — passport,
+  hashes, stateless writer and reader conflicts;
+- [`docs/AMENDMENT_combined_lod_fbx.md`](docs/AMENDMENT_combined_lod_fbx.md) —
+  normative Combined-LOD profile;
+- [`docs/04_source_workflows.md`](docs/04_source_workflows.md) — Blender/UE UX;
+- [`docs/06_final_v1_plan.md`](docs/06_final_v1_plan.md) — v2 implementation
+  gates (historical filename).
 
-## Этап A: запуск
+Frozen Source Schema v1 SHA
+`d52520c47544a6e36b3bac32b16237ad670abb20` — только migration baseline.
+Production runtime не имеет manifest/uid8/dual-read fallback.
 
-Требования: Python 3.11 + `pip install -r requirements-dev.txt`, Blender 4.5+
-(бинарник — или pip-модуль `bpy`, тогда Blender не нужен вовсе).
+## Clean Sources v2 at a glance
 
-```bash
-# всё разом: golden.blend, 7 мутаций, md-рендер диффов, pytest
-python3 tools/run_all.py                      # через pip bpy
-MH_BLENDER=/path/to/blender python3 tools/run_all.py   # через blender -b -P
+Source tree содержит только primary payload:
 
-# по отдельности
-python3 tools/make_golden_scene.py
-python3 tools/mutations/rename_object.py
-python3 -m pytest tests -q
+```text
+wall_a.mesh.fbx
+wall_a.material
+garage_set.composite
 ```
 
-Текущие `golden/expected_diffs/*.json` и их `mh.diff_report` описаны в
-историческом docs/01 §7.3. До регенерации в gates G1/G4 это pre-freeze
-артефакты, а не нормативная Source Schema v1; `.md` рядом — сгенерированное
-представление (`tools/render_expected_diffs.py`), руками не редактировать.
+UID suffix отсутствует. Static mesh identity/metadata находятся в embedded FBX
+passport, material/composite self-identify in-file. UE Ledger and optional
+Blender Import Composite cache живут вне дерева. `export_manifest.json`,
+registry, sidecars, transaction markers и cache внутри source tree запрещены.
 
-То же относится к `golden/expected_errors/*.json` (`mh.validation_report`,
-исторический docs/01 §6.2) для сцен-«вредителей» (`duplicate_uid`,
-`parent_uid_dangling`) и bundle-фикстуры цикла
-(`golden/fixtures/composite_cycle/`, генерируется `tools/make_cycle_fixture.py`).
+Clean filename — человеческая подпись, resolve всегда идёт по полному UID.
+Same name в разных folders легален. Collision одного clean filename с другим
+UID в одном folder блокируется и требует Rename/Fork/Cancel; mtime winner и
+silent overwrite отсутствуют.
 
-## Blender-аддон
+## Repository layout
+
+```text
+docs/               # contract, ADR, workflows, plans, Decision Log
+reference/          # dag4blend 2.12.0, read-only patterns only
+tools/              # golden/migration/build tooling
+golden/             # fixtures and expected semantic reports
+addon/mh4blend/     # Blender Extension
+ue/MimirComposite/  # UE plugin stages
+```
+
+## Blender Extension
+
+Build:
 
 ```bash
 python tools/build_addon_zip.py
 ```
 
-Установите `dist/mh4blend-<version>-windows-x64.zip` через Blender
-**Get Extensions → Install from Disk**. Это self-contained Extension: закреплённый
-wheel `xxhash` уже входит в ZIP, вручную запускать `pip install` не нужно.
-Перед переходом с прежнего script-addon отключите и удалите его в Preferences,
-перезапустите Blender и только затем установите Extension ZIP: одновременно
-включённые legacy-addon и Extension регистрируют одинаковые `mh.*` операторы.
-Целевой UX v1 — одна N-panel вкладка **MH** без общей кнопки Bundle/Export
-Sources:
+Install `dist/mh4blend-<version>-windows-x64.zip` through Blender
+**Get Extensions → Install from Disk**. The Extension package includes pinned
+`xxhash`; manual `pip install xxhash` in Blender is not required. Disable/remove
+the old script-addon before enabling the Extension, because both register the
+same `mh.*` operators.
 
-- **FBX Export**: Collection + Directory + `Export Materials` (default ON) +
-  Export. ON обновляет каждый уникальный используемый материал: существующий
-  UID — in place у найденного owner, новый UID — рядом с выбранным FBX;
-  OFF не трогает material payload/rows;
-- **Composites / Import**: `.composite` File Path + Import;
-- **Composites / Export**: Collection + Directory + Export;
-- **Materials**: Material + Folder + Export; существующие payload и owning
-  manifest по UID всегда обновляются in place.
+Target UX is one N-panel tab **MH** with sections:
 
-Dagor LOD authoring: выберите Collection с точным именем `<base>.lods`.
-Все direct children `<base>.lod00`, `<base>.lod01`, … экспортируются в один FBX
-одного `static_mesh`-ресурса. Уровень каждого mesh-узла хранится в custom
-property `mh_lod_level`, а не выводится из имени. Любая правка любого уровня
-перезаписывает этот FBX целиком. Только структурный суффикс `.lods` снимается с
-логического имени ресурса — произвольные точки в resource name остаются
-невалидными.
+- **FBX Export** — Collection, Directory, `Export Materials` default ON,
+  Export FBX;
+- **Composites / Import** — `.composite` path, recursive import always ON;
+- **Composites / Export** — Collection, Directory, Export;
+- **Materials** — Material, first-export Directory, Export;
+- **Source Tools** — Actualize Texture Paths and migration.
 
-Legacy-выгрузки с per-file `lods[]` не читаются production-кодом. Перед
-немедленным повторным экспортом нужной `<name>.lods`-коллекции используйте
-внешнюю one-shot утилиту `python tools/migrate_per_file_lods.py
-<export_manifest.json> <ResourceUID> --source-root <root>`. Она сохраняет
-точный backup, удаляет только выбранную owner-row и не трогает FBX; подробный
-safe/restore workflow описан в `docs/AMENDMENT_combined_lod_fbx.md` §7.
+There is no Bundle Export.
 
-Материальные metadata читаются из `Material.dagormat`, поэтому для полного
-экспорта включите dag4blend. Обычный Blender-материал без dagormat остаётся
-валидным: он экспортируется как пустая заглушка `rendinst_simple`. Пути
-`tex0…tex15` берутся непосредственно из материала; Blender-пути `//`
-разворачиваются относительно `.blend`. Файл внутри project `source_root`
-пишется относительным forward-slash путём, снаружи — нормализованным абсолютным
-путём и диагностикой согласно `texture_policy`. Отдельного Texture Root нет;
-текстуры не копируются и не изменяются.
+Every explicit Blender Export always writes the requested target(s): collision
+guard, temporary sibling, atomic replace, exit. It never hash-skips, scans the
+source root, computes a diff, or updates reader state. Blender builds an
+optional resolver cache silently on first Import Composite only. UE performs
+the diff at startup (silent auto-import by default, optional prompt) and in its
+watcher by comparing payloads with the Ledger. Therefore a no-op Export rewrites
+the source file but is classified by UE as `NO_CHANGE`.
 
-Каждый standalone writer обновляет только свой ресурс и owning
-`export_manifest.json`. FBX с `Export Materials=ON` оркестрирует несколько таких
-material upserts вместе с mesh upsert, но не создаёт bundle-транзакцию и не
-экспортирует иной dependency closure. Манифест — квитанция собственных ресурсов,
-а не bundle, не граф зависимостей и не список владения каталогом; несвязанные
-записи и файлы сохраняются. Resolver ищет payload по UID во всём `source_root` и
-всегда подтверждает единственного владельца-манифест. Текстуры не копируются.
-Полный контракт и обратный импорт: `docs/04_source_workflows.md`.
+## Combined-LOD
 
-Текущая реализация в рабочей ветке приводится к замороженным документам 04–06;
-полевой приёмкой считается только ZIP после прохождения соответствующих gates.
+Author in Blender using the dag-compatible hierarchy:
 
-Совместимость с реальным RNA из vendored dag4blend проверяется отдельно:
+```text
+asset.lods
+  asset.lod00
+  asset.lod01
+```
+
+All levels are exported into one `asset.mesh.fbx`. Each mesh FBX node carries
+integer `mh_lod_level`; node names do not determine semantics. Passport
+`lod_levels` declares the full set. `mh.meshser:2` covers every level plus
+UCX/SOCKET auxiliary payload, so editing any level/collision rewrites the one
+FBX and produces one resource `UPDATE_GEOMETRY`.
+
+## Materials and textures
+
+With dag4blend enabled, exporter reads `Material.dagormat` shader, params and
+`tex0…tex15`. A normal Blender material remains valid and exports as
+`rendinst_simple` with empty params/textures.
+
+Texture resolution uses:
+
+```text
+exact path -> unique basename under texture_root -> unresolved
+```
+
+Unique basename can actualize the path in `.material`; ambiguous basename is
+reported for user choice. Textures are never copied by FBX/Material export.
+`Export Materials=OFF` writes no material payload.
+
+## Composite import
+
+`.composite` v2 is the only source of graph nodes. Recursive child composites,
+found FBX and materials are resolved by UID. Blender creates one definition
+Collection per ResourceUID and Collection Instance Empties for placements.
+Missing resources remain visible placeholders with stable NodeUID/ResourceUID;
+**Resolve Missing** fills the same data-blocks later.
+
+FBX never reconstructs composite hierarchy.
+
+## Legacy migration
+
+Legacy manifests, uid8 filenames and per-file `lods[]` are read only by
+one-shot migration tooling. Migration performs full no-write preflight, embeds
+identity/passports, converts composites to v2, re-exports Combined-LOD, renames
+payloads to clean names, validates, then removes manifests. Production resolver
+does not call legacy codecs.
+
+The transitional external helper `tools/migrate_per_file_lods.py` remains for
+old local per-file LOD exports; its backup/restore receipt is a migration aid,
+not a runtime reader. Prefer full migration/re-export from the Blender scene.
+
+## Development checks
+
+Python 3.11 and Blender 4.5+ are the target development baseline.
+
+```bash
+python tools/run_all.py
+python -m pytest tests -q
+```
+
+Dag4blend RNA compatibility:
 
 ```bash
 blender -b --factory-startup --python-exit-code 1 \
   -P tools/check_dag4blend_compat.py
 ```
 
+The repository is currently being moved through the v2 gates in
+`docs/06_final_v1_plan.md`. Contract acceptance does not by itself prove the
+installed ZIP or UE plugin complete; large slices require external audit and
+the final field acceptance belongs to the owner.
+
 ## UE-плагин (этап C): тесты и диагностика
 
 Плагин `ue/MimirComposite` собирается stock UE 5.7.4; test-host `.uproject` не
 модифицируется, поэтому редактор запускается с `-EnablePlugins=MimirComposite`.
-Automation-тесты `Mimir.C0.*` ищут каталог `golden/` репозитория в порядке:
+Automation-тесты `Mimir.*` ищут каталог `golden/` репозитория в порядке:
 `-MHGoldenRoot=<repo>/golden` → переменная окружения `MH_GOLDEN_ROOT` →
 `<plugin>/../../golden` (плагин запущен прямо из чекаута).
 
@@ -134,7 +178,7 @@ Headless (PowerShell):
   "<path>\MimirHead_portfolio.uproject" `
   -EnablePlugins=MimirComposite `
   -MHGoldenRoot="<repo>\golden" `
-  -ExecCmds="Automation RunTests Mimir.C0; Quit" `
+  -ExecCmds="Automation RunTests Mimir; Quit" `
   -unattended -nop4 -nosplash -nullrhi -stdout -log
 ```
 
@@ -147,6 +191,17 @@ Headless (PowerShell):
   -abslog="<path>\fbxdump.log"
 ```
 
-Канонический JSON печатается категорией `LogMHFbxDump`; без `--full` — summary.
-Импорта `.composite`/FBX в Content Browser на этапе C0 нет: фабрики и Ledger —
-gate C2 (`docs/07_ue_import_contract_r3.md` §13).
+Слепок иерархии `.composite` v2 (кодек + resolver Clean Sources v2):
+
+```powershell
+& "...\UnrealEditor-Cmd.exe" "<path>\MimirHead_portfolio.uproject" `
+  -run=MHCompositeDump "<path>\scene.composite" -root="<source_root>" `
+  -EnablePlugins=MimirComposite -unattended -nop4 -stdout `
+  -abslog="<path>\compositedump.log"
+```
+
+Без `-root` печатается иерархия одного файла; с `-root` commandlet сканирует
+payload'ы под `source_root`, рекурсивно раскрывает `composite_ref` и печатает
+resolve-статус каждого ресурса (unresolved / duplicate / divergent / cycle).
+В редакторе `.composite` v2 импортируется фабрикой в read-only
+`UMHCompositeAsset` (Content Browser → Import).

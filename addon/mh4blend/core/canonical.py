@@ -88,6 +88,22 @@ ERROR_CODES = frozenset(
         "MH_E_LOD_LEVELS_SPARSE",
         "MH_E_LOD_SLOT_NOT_IN_BASE",
         "MH_E_DEPRECATED_LOD_ROWS",
+        "MH_E_NAME_COLLISION_DIFFERENT_UID",
+        "MH_E_PASSPORT_INVALID",
+        "MH_E_DIVERGENT_REVISIONS",
+        "MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED",
+        "MH_E_PAYLOAD_LOCK_TIMEOUT",
+        "MH_E_RESOURCE_NOT_FOUND",
+        "MH_E_SOURCE_INDEX_INVALID",
+        "MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT",
+        "MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED",
+        # Explicit one-shot v1 -> v2 migration only
+        "MH_E_PENDING_EXPORT_MARKER",
+        "MH_E_V1_MIGRATION_INVALID",
+        "MH_E_V1_MIGRATION_FAILED",
+        "MH_E_V1_MIGRATION_CLEANUP_FAILED",
+        "MH_E_V1_MIGRATION_IDENTITY_MISMATCH",
+        "MH_E_MIGRATION_MESH_COLLECTION_NOT_FOUND",
         # Standalone composite import preflight
         "MH_E_INVALID_COMPOSITE",
         "MH_E_UNSUPPORTED_NODE_KIND",
@@ -125,6 +141,13 @@ ERROR_CODES = frozenset(
         "MH_W_MATERIAL_SLOT_UNMAPPED",
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
         "MH_W_UNKNOWN_SHADER_CLASS",
+        "MH_W_PAYLOAD_EXTERNAL_MODIFIED",
+        "MH_W_NO_EMBEDDED_IDENTITY",
+        "MH_W_DEPRECATED_PER_LOD_PASSPORT_MIGRATION_REQUIRED",
+        "MH_W_DUPLICATE_IDENTICAL_PAYLOAD",
+        "MH_W_FBX_CARRIER_READER_UNAVAILABLE",
+        "MH_W_LEGACY_PAYLOAD_NO_PASSPORT",
+        "MH_W_LEGACY_COMPOSITE_V1_MIGRATION_REQUIRED",
     }
 )
 
@@ -591,9 +614,6 @@ _WINDOWS_RESERVED = frozenset(
     + [f"lpt{i}" for i in range(1, 10)]
 )
 
-_HEX_LOWER = frozenset("0123456789abcdef")
-
-
 def validate_resource_name(name: str) -> None:
     """Validate a resource / composite / bundle name before sanitization (§10).
 
@@ -647,18 +667,14 @@ def sanitize_name(name: str) -> str:
 
 
 def resource_filename(name: str, uid: str, ext: str) -> str:
-    """Build ``<sanitized_name>__<uid8><ext>`` for a bundle resource (§10).
+    """Build the clean v2 artist-facing ``<sanitized_name><ext>`` filename.
 
-    The name is validated first (`validate_resource_name`), then sanitized.
-    `uid8` is the first 8 characters of the UUID string (the first block before
-    the dash), which must already be lowercase hex.
+    ``uid`` remains in the signature so migration helpers and existing host
+    adapters can call one API while transitioning their storage.  It is
+    deliberately not encoded in the filename: identity is embedded in the
+    payload passport and resolved through the external local index.
     """
     validate_resource_name(name)
     if not isinstance(uid, str):
         raise TypeError("uid must be a string")
-    if len(uid) < 8:
-        raise ValueError(f"uid is too short to take uid8 from: {uid!r}")
-    uid8 = uid[:8]
-    if not all(c in _HEX_LOWER for c in uid8):
-        raise ValueError(f"uid8 must be 8 lowercase hex characters, got {uid8!r}")
-    return f"{sanitize_name(name)}__{uid8}{ext}"
+    return f"{sanitize_name(name)}{ext}"

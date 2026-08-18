@@ -1,11 +1,13 @@
 # План разработки: Blender → UE5 Composite Pipeline (MVP)
 
-> **HISTORICAL / SUPERSEDED.** Этот документ сохранён только как история
-> планирования и не задаёт текущий контракт или порядок реализации. Актуальные
-> документы: `04_source_workflows.md` (нормативный freeze candidate v1) и
-> `06_final_v1_plan.md` (исполняемый план). В частности, все упоминания bundle,
-> `materials[]`, `external_dependencies`, Texture Root, старых import toggles и
-> старой последовательности B-блоков ниже являются неактуальными.
+> **HISTORICAL EVIDENCE ONLY / SUPERSEDED BY CLEAN SOURCES v2.** Весь план ниже,
+> включая MVP criteria, B/C sequencing, manifest watcher, uid8 filenames и
+> hash-skip, не является implementation input. Активные документы:
+> `05_source_schema_v1.md` (v2 contract; filename historical),
+> `04_source_workflows.md`, `06_final_v1_plan.md`,
+> `07_ue_import_contract_r3.md`. Blender Export v2 всегда пишет requested
+> payload и не строит diff/index; UE startup/watcher сравнивает payloads с
+> Ledger. Старый body сохранён только для истории оценок.
 
 Актуальная Blender-модель совпадает с dag4blend по разделению definition и
 placement. В сцене **GEOMETRY** definitions представлены sibling Collections:

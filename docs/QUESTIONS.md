@@ -1,292 +1,101 @@
-# QUESTIONS — открытые вопросы к владельцу проекта
+# QUESTIONS — implementation questions after Clean Sources v2 freeze
 
-Формат: контекст → вопрос → предложение исполнителя → статус.
-Правило: пока вопрос открыт, в коде действует наименее связывающее временное решение,
-помеченное `TODO(QUESTION-N)`.
+Статус: открытые вопросы здесь не могут ослабить normative invariants 05/ADR/
+Combined-LOD. До решения используется fail-closed вариант, указанный в каждом
+пункте. Вопросы frozen v1 ниже закрыты или superseded и не создают dual-read.
 
----
+## OPEN-V2-1 — Provisioning `project_uid`
 
-## QUESTION-1: Unicode-нормализация display-имён
+**Контекст.** UE хранит Ledger вне source tree и ему нужен стабильный ключ
+проекта. Blender writer state не имеет; optional lazy Import Composite cache
+может использовать тот же project key только как implementation detail.
 
-**Контекст.** Канон-форма (§8.4) сравнивает и хеширует строки побайтово (UTF-8).
-Имя «окно́» в NFC и NFD — разные байты: сцена, пересохранённая через macOS-пайплайн
-(NFD в файловых диалогах), может дать другой hash без видимых изменений.
+**Вопрос.** Где студия хранит/раздаёт project UID: в существующем project
+configuration, environment variable или явной UE project setting?
 
-**Вопрос.** Нормализовать ли строки (имена, ключи properties) в NFC на экспорте?
+**Предложение.** Один UUID в UE project configuration вне source payload tree.
+Не выводить его из абсолютного path: перенос проекта не должен создавать новый
+Ledger namespace. Blender importer может читать его для cache namespace, но
+writer не зависит от него.
 
-**Предложение.** Да, NFC-нормализация всех строк на входе канон-формы и при записи
-on-disk файла. Дёшево, снимает класс фантомных диффов. Кириллица в NFC совпадает
-с тем, что печатает клавиатура, — для студии изменений ноль.
+**Временное правило.** Только explicit valid UUID; автоматическая генерация или
+path hash запрещены до решения. Это implementation setting, не on-disk schema.
 
-**Статус.** РЕШЕНО (владелец): NFC принят — все строки нормализуются на входе
-канон-формы и при записи файлов (§8.4, D20). Реализовано в mh_canonical.py.
+## OPEN-V2-2 — Срок migration warning
 
----
+**Контекст.** `MH_W_LEGACY_PAYLOAD_NO_PASSPORT` разрешён только migration scan,
+после переходного окна факт должен стать ошибкой даже в studio tooling.
 
-## QUESTION-2: Покрытие mesh-хеша атрибутами
+**Вопрос.** Какая дата/релиз закрывает окно предупреждения?
 
-**Контекст.** §9 хеширует фиксированный перечень: позиции, полигоны, split normals,
-smooth/sharp, UV, color attributes, material slots. Прочие generic-атрибуты,
-vertex groups, shape keys НЕ хешируются — их изменение не даст UPDATE_GEOMETRY,
-хотя может влиять на экспортируемый FBX (например, кастомный атрибут, который
-студийные материалы читают из вершинных данных).
+**Предложение.** Первый общий Blender Extension + UE plugin release, прошедший
+owner field acceptance и миграцию активных source roots. Receipt релиза хранит
+список failed roots; только после нуля failed code повышается до E.
 
-**Вопрос.** Достаточен ли перечень v1 для текущего студийного контента?
-Есть ли атрибуты, которые реально доезжают до UE через FBX сегодня?
+**Временное правило.** Production runtime уже quarantines missing identity.
+Warning существует только в migrator; срок не разрешает dual-read.
 
-**Предложение.** Оставить v1 как есть (перечень = то, что гарантированно влияет на
-UStaticMesh при legacy FBX-импорте), расширять по факту через bump тега `mh.meshser`.
+## OPEN-V2-3 — Rename-to-match UX
 
-**Статус.** РЕШЕНО (владелец): перечень v1 принят с инвариантом «хеш покрывает то,
-что Blender FBX exporter реально пишет для статик-меша». Обязательная проверка
-выполнена: per-polygon material_index добавлен в §9.3 (перекраска граней обязана
-давать UPDATE_GEOMETRY).
+**Контекст.** Filename display-only. Explicit Export пишет clean target в
+выбранный Directory и не удаляет старый path того же UID. После rename старый
+file может остаться duplicate/divergent candidate. MOVE возникает только когда
+старого path больше нет.
 
----
+**Вопрос.** Нужен ли отдельный operator **Rename file to match** в ближайшем
+Blender slice или достаточно ручного move + watcher?
 
-## QUESTION-3: Нулевой scale
+**Предложение.** ROADMAP operator с collision preflight и atomic move/delete-old
+transaction. Обычный Export остаётся stateless и не переносит старый resource.
 
-**Контекст.** Решение владельца по negative scale — запрет в v1. Нулевой scale
-(вырожденная матрица) владельцем явно не оговаривался; я добавил его в тот же
-запрет (§11), потому что вырожденный placement ломает декомпозицию TRS и
-инстансинг так же тихо, как зеркальный.
+**Временное правило.** Export пишет requested target; reader честно показывает
+duplicate/divergent state, пока художник не удалит/переместит старый path.
 
-**Вопрос.** Подтвердить запрет `scale <= 0` по любой оси (а не только `< 0`).
+## CLOSED — frozen v1 questions
 
-**Предложение.** Запретить. Легитимный кейс «спрятать узел» решается не нулевым
-scale, а видимостью (properties `render.*`, резерв v1).
+| Старый вопрос | Итог |
+|---|---|
+| Unicode canonical strings | NFC принято и остаётся в v2 |
+| Mesh hash coverage | v2 использует `mh.meshser:2`; export-affecting data и UCX/SOCKET обязательны |
+| Zero/negative scale | `scale <= 0` запрещён |
+| Multi-object hash order | deterministic `(lod_level, mh_uid)`; UID repair может дать честный rewrite |
+| LOD strategy | superseded Combined-LOD D40; per-file rows migration-only |
+| Blender properties | `mh_p_<key>`; resource и placement bags раздельны |
+| Negative golden scenes | duplicate UID, cycle, dangling parent и v2 passport/conflict fixtures обязательны |
+| Cyrillic resource filename | authoring name ASCII; filename clean lowercase; Unicode разрешён в display/properties |
+| Resource properties transport | FBX passport / composite v2 top-level properties; material semantics в params |
+| Manifest owner/registry/source | superseded embedded identity + UE Ledger/scan; Blender cache import-only |
+| uid8 disambiguation | superseded clean filename + collision/Fork UX |
 
-**Статус.** РЕШЕНО (владелец): запрет `scale <= 0` подтверждён (`MH_E_INVALID_SCALE`).
-«Спрятать узел» — через видимость, не через геометрию.
+## Non-negotiable while questions are open
 
----
+- source tree содержит только three primary payload types;
+- runtime не читает manifest и не выбирает revision по mtime;
+- FBX без valid consensus passport quarantined;
+- один mesh UID имеет один Combined-LOD FBX;
+- Blender writer не имеет cache/diff; Import Composite cache строится молча;
+- UE startup/watcher сравнивает scan с Ledger;
+- legacy reader существует только в migration utility.
 
-## QUESTION-4: Порядок объектов в mesh-хеше зависит от mh_uid
+## UE plugin questions (этап C)
 
-**Контекст.** §9.2: объекты multi-object коллекции сериализуются в порядке их
-`mh_uid` — единственного rename-устойчивого ключа. Следствие: Fix-переназначение
-uid объекта (после Ctrl+D) может изменить порядок сериализации → hash меняется →
-ложный UPDATE_GEOMETRY при неизменной геометрии.
+### UE-QUESTION-13 — passport carrier property key
 
-**Вопрос.** Принять ли этот редкий ложноположительный сценарий?
+**Статус.** РЕШЕНО фактом v2 writer: production код
+`addon/mh4blend/core/fbx_passport.py` пишет carrier custom property
+`mh_fbx_passport` (underscore) со schema `mh.fbx_passport`. UE reader обязан
+читать это имя. Внимание ревьювера: §4.2 `05_source_schema_v1.md` словами
+называет property `mh.fbx_passport` — это расхождение формулировки с writer;
+требуется одно-строчная правка документа, байты payload'ов не меняются.
 
-**Предложение.** Принять: цена — один лишний реэкспорт FBX после починки дубликатов;
-альтернативы (порядок по содержимому) дороже и имеют свои вырожденные случаи
-(два идентичных объекта).
+### UE-QUESTION-14 — объём `mh.fbxdump --full`
 
-**Статус.** РЕШЕНО (владелец): принято. Пометка для этапа B: текст Fix-диалога
-обязан предупреждать «затронутые меши будут переэкспортированы», чтобы
-детерминированный реэкспорт после Fix не выглядел багом.
+**Контекст.** v2 §7.2 контракта 07: dump печатает passport, Model graph,
+`mh_lod_level`, slots, axis/units, counts. Не ратифицировано, обязан ли
+`--full` уже в теге 1 содержать mapper-facing layer arrays
+(normals/smoothing/UV/colors) или topology-only формы C0 достаточно до C2.
 
----
+**Временное правило.** Тег `mh.fbxdump:1` сохраняет topology-only `--full`;
+расширение формата выполняется bump'ом тега вместе с fixtures C2.
 
-## QUESTION-5: Стратегия LOD (D13)
-
-**Контекст.** D13: Blender FBX exporter не пишет FbxLODGroup; выбор — «LOD-ы
-отдельными файлами per-level с добавлением в существующий SM» либо
-«Nanite/generated». D13 требует зафиксировать выбор в схеме до реализации;
-в MVP один LOD, но поле в манифесте (например, `lods[]` у mesh-ресурса)
-затронет schema_version, если добавлять его после заморозки.
-
-**Вопрос.** Какой вариант фиксируем в v1-схеме (пусть и как резерв)?
-
-**Предложение.** Зарезервировать в манифесте у mesh-ресурса optional-поле
-`lods: [{level, source, content_hash}]` (отдельные FBX per-level), не реализуя
-в MVP. Nanite-путь не требует полей схемы вовсе, значит резерв ничего не ломает.
-
-**Статус.** РЕШЕНО и затем superseded D40 `[combined-lod-fbx]`. Authoring
-convention `<base>.lods` → direct `<base>.lodNN` сохраняется, но все уровни
-пишутся в один FBX. На mesh-узлах хранится integer `mh_lod_level`; manifest
-имеет один `source`/`content_hash`, `lod_policy: authored` и не имеет `lods[]`.
-Любая правка любого уровня перезаписывает весь FBX. Screen sizes пока
-автоматические; authored distances — ROADMAP.
-
-**Migration note — 2026-08-18:** старый per-file резерв D13/D39 отменён до UE
-реализации. Geometry hash переходит на `mh.meshser:2`; старые `lods[]` rows
-требуют реэкспорта/одноразовой миграции и затем дают
-`MH_E_DEPRECATED_LOD_ROWS`. `MH_E_LOD_IMPORT_FAILED` не используется: malformed
-уровень делает malformed весь mesh-ресурс. Полная правка —
-`AMENDMENT_combined_lod_fbx.md`.
-
----
-
-## QUESTION-6: Хранение `properties` в Blender
-
-**Контекст.** Схема несёт открытый bag `properties` на узле (known-ключ v1: `role`).
-Где он живёт в Blender-данных — не специфицировано (это этап B), но golden-сцена
-уже должна как-то пометить `decal_leak` ролью `decal`.
-
-**Вопрос.** Формат хранения: отдельные custom props с префиксом (`mh_role`) или
-один JSON-string prop (`mh_props`)?
-
-**Предложение.** Отдельные props `mh_p_<key>` (типизированы Blender'ом, видны в UI,
-диффабельны в N-панели); golden-сцена этапа A временно использует `mh_role` на
-коллекции decal_leak — мигрировать при решении дешево (один скрипт).
-
-**Статус.** РЕШЕНО (владелец): отдельные props `mh_p_<key>`, где `<key>` — полный
-ключ схемы с точками как есть (`mh_p_role`, `mh_p_render.cast_shadow`). Экспортное
-правило: всё с префиксом `mh_p_` уходит в bag verbatim (broken_properties).
-Это продолжение паттерна dagorprops из dag4blend. Golden-сцена мигрирована
-(`mh_role` → `mh_p_role`).
-
----
-
-## QUESTION-7: Негативные сцены для этапа B
-
-**Контекст.** Мутации этапа A моделируют **корректный конечный результат**
-(например, `linked_duplicate` сам назначает новый node_uid — так, как это сделает
-аддон). Сценарии «как оно ломается» (Ctrl+D с настоящим дубликатом uid,
-цикл composite-ссылок) в перечне A2 отсутствуют, но валидатор этапа B их требует
-для негативных тестов.
-
-**Вопрос.** Добавить ли в этап A ещё 2 мутации-«вредителя» (duplicate_uid,
-composite_cycle), у которых expected-результат — не дифф, а конкретная ошибка
-валидации?
-
-**Предложение.** Да, дешево сейчас и точно понадобится в первую неделю этапа B.
-Без аппрува не делаю — это расширение зафиксированного перечня A2.
-
-**Статус.** РЕШЕНО (владелец): одобрено формально, три мутации — `duplicate_uid`,
-`composite_cycle`, `parent_uid_dangling`; артефакт — `golden/expected_errors/*.json`
-с машинными кодами; реестр кодов — §6.1 схемы.
-
----
-
-## QUESTION-8: Кириллические display-имена в именах файлов
-
-**Контекст.** Санитизация §10 без транслитерации: имя целиком из кириллицы
-(«стена_а») схлопывается в один `_`, файл получается `___2db5574c.mesh.fbx` —
-детерминированно и уникально (uid8), но нечитаемо. Если в студии ресурсы
-называют кириллицей, ВСЕ файлы bundle будут выглядеть так.
-
-**Вопрос.** Достаточно ли uid8-читаемости, или добавить транслитерацию
-(фиксированная таблица ru→lat в спеке) / правило «результат из одних `_` →
-`unnamed`»?
-
-**Предложение.** Если кириллица в именах ресурсов — реальная практика студии,
-зафиксировать в §10 транслитерационную таблицу (она должна быть идентична в
-Python и C++, это +30 строк спеки). Если ресурсы именуются латиницей —
-оставить как есть.
-
-**Статус.** РЕШЕНО (владелец): третий вариант — запрет валидацией. Имена ресурсов/
-композитов/bundle — ASCII `[A-Za-z0-9_ -]`, иначе `MH_E_NON_ASCII_RESOURCE_NAME`
-(«переименуйте ресурс»). Без транслитерации (неоднозначность + вечный двойной
-контракт); кириллица легальна в display_name и properties. §10, D20.
-
----
-
-## QUESTION-9: Транспорт properties коллекции-ресурса
-
-**Контекст.** `mh_p_role="decal"` живёт на GEOMETRY-коллекции decal_leak
-(ресурс), но bag `properties` в схеме v1 есть только у УЗЛОВ (§3); у
-mesh-ресурса в манифесте properties-поля нет. Роль обязана доехать до UE
-(Finalize-правила decal, этап C).
-
-**Вопрос.** Как транспортировать resource-level свойства: наследованием в узлы,
-или добавить `properties` mesh-ресурсу в манифест (изменение схемы)?
-
-**Предложение (временно принято).** Наследование: коллекционные `mh_p_*`
-становятся дефолтами bag'а каждого узла, инстансирующего эту коллекцию;
-объектные `mh_p_*` — поверх. Схему не меняет, UE-Finalize читает role с узла.
-Минус: свойство дублируется в каждом placement'е. Если ресурсных свойств
-станет много — правильнее поле в манифесте через schema_version=2.
-
-**Статус.** РЕШЕНО (ADDENDUM-2, подтверждено freeze candidate standalone-схемы v1):
-для `static_mesh`/`composite` ресурсные properties — optional bag `properties`
-в resource-row owning `mh.export_manifest` v1. Ресурсные = asset-level
-(применяются при импорте независимо от placements), узловые = placement-level;
-при компиляции они дополняют ресурсные. Наследование resource properties в узлы
-запрещено.
-Упоминания старого manifest v2 и inline `materials[]` считать историческими:
-материал теперь отдельный ресурс `.material`, а актуальная форма manifest-row
-зафиксирована в `05_source_schema_v1.md`.
-
-**Next-cycle clarification (reviewer):** material manifest-row намеренно не
-имеет bag `properties`; asset-level semantic material properties живут в
-`.material.params`. Это уточнение wording, а не новое поле frozen v1.
-
----
-
-## UE-QUESTION-10: Передача ADR v2 и Combined-LOD amendment
-
-**Контекст.** При первичном чтении C0 в ветке отсутствовали
-`ADR_V2_passport_first.md` и `AMENDMENT_combined_lod_fbx.md`, поэтому нельзя
-было проверить seam'ы v2 и окончательную LOD-модель.
-
-**Вопрос.** Какие документы являются обязательными для UE C0?
-
-**Статус.** РЕШЕНО (владелец/ревьювер): оба документа переданы в `docs/` до
-первого UE-коммита. Для C0 `mh.fbxdump:1` сразу показывает `mh_lod_level` каждого
-узла и сводку уровней; группировка в `SourceModel[N]` и LOD-валидации относятся
-к C2. Resolver и change detector остаются строго за seam'ами из ADR.
-
----
-
-## UE-QUESTION-11: Общие golden-векторы канонизации путей
-
-**Контекст.** Frozen §5.3 задаёт path-канонизацию, но текущий
-`golden/canonical_vectors.json` ещё не содержит общих path-векторов.
-
-**Вопрос.** Как зафиксировать C++-поведение до появления межфронтового golden?
-
-**Статус.** РЕШЕНО (ревьювер): C0 содержит отдельную C++ contract-таблицу по
-frozen §5.3. Blender-исполнитель, как владелец Python-эталона всех vectors,
-добавляет общие path-векторы в `golden/canonical_vectors.json` следующим своим
-коммитом. После их появления C++-таблица не удаляется: оба набора обязаны
-сверяться и давать двойное покрытие.
-
-**Задача Blender-исполнителю.** Добавить path-векторы §5.3 в общий golden и
-перекрёстную ссылку на `UE-QUESTION-11`; frozen-байты существующих vectors не
-менять.
-
----
-
-## UE-QUESTION-12: Минимальное покрытие `mh.fbxdump` в C0
-
-**Контекст.** В C0 доступна одна осевая FBX-фикстура; Combined-LOD,
-multi-object, UCX и socket fixtures будут созданы Blender-стороной позднее.
-
-**Вопрос.** Достаточна ли одна fixture для тега `mh.fbxdump:1`?
-
-**Статус.** РЕШЕНО (ревьювер): для C0 достаточно `axis_probe.fbx`, но по ней
-обязательны два закоммиченных expected-дампа — summary и `--full`. Расширение
-покрытия переносится в C2 вместе с fixtures из AMENDMENT §6; форматный тег в C1
-из-за Combined-LOD меняться не должен.
-
----
-
-## UE-QUESTION-13: Точное имя FBX property для паспорта
-
-**Контекст.** ADR задаёт схему `mh.fbx_passport` и carrier, а Combined-LOD
-отдельно фиксирует `mh_lod_level`. Однако обязательные документы не ратифицируют
-точное имя custom property паспорта. Нормативно необязательный spike G1
-использует имя `mh_fbx_passport`.
-
-**Вопрос.** Подтвердить ли `mh_fbx_passport` как окончательное имя carrier'а?
-
-**Предложение UE-исполнителя.** В C0 `mh.fbxdump` перечисляет все user-defined
-`mh_*` свойства, диагностически распознаёт provisional `mh_fbx_passport` и
-паспортную JSON-схему, но не делает это имя authority для маппера.
-
-**Статус.** ОТКРЫТ. До решения действует указанное наименее связывающее
-поведение; в коде — `TODO(QUESTION-13)`.
-
----
-
-## UE-QUESTION-14: Объём массивов `mh.fbxdump:1 --full`
-
-**Контекст.** §7.1 говорит «полные массивы — `--full`», а §7 перечисляет для
-будущего mapper'а позиции, полигоны, material index, split normals, smoothing,
-UV и color attrs. Принятая минимальная форма C0 и доступная `axis_probe.fbx`
-фиксируют в `--full` raw control points, polygon indices и per-polygon material
-index; mapper-facing layer arrays относятся к C2 и пока не имеют общих fixtures.
-
-**Вопрос.** Должен ли тег `mh.fbxdump:1` уже в C0 включать normals/smoothing/
-UV/colors, или принят topology-only `--full` с расширением expected-спеки в C2?
-
-**Предложение UE-исполнителя.** До решения считать C0-дамп диагностикой raw
-topology, не authority полного C2 mapper'а; не проектировать layer layout без
-fixtures из AMENDMENT §6. Решение о совместимом расширении или новом теге
-принять до начала C2.
-
-**Статус.** ОТКРЫТ. C1 не меняет `mh.fbxdump:1`; C2 не начинается до ответа.
+**Статус.** ОТКРЫТ.

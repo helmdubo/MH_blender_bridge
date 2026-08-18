@@ -1,14 +1,14 @@
 # 01 — Source Files Schema: Composite v1 + Manifest v2 (SPEC)
 
-> **HISTORICAL / SUPERSEDED.** Этот документ фиксирует bundle-прототип до
-> финальной заморозки standalone source schema v1. Он сохранён только как
-> история решений и старых фикстур и **не является входом для реализации или
-> legacy-reader**. Нормативная on-disk схема: `05_source_schema_v1.md`;
-> авторские workflows: `04_source_workflows.md`; план после freeze:
-> `06_final_v1_plan.md`. Не переносить отсюда Bundle Export, `mh.bundle_manifest`,
-> inline `materials[]`, `external_dependencies`, Texture Root, владение всем
-> каталогом или full-set delete. `source_root` из финального контракта — только
-> граница проекта для резолва и нормализации путей, а не bundle-корень.
+> **HISTORICAL EVIDENCE ONLY / SUPERSEDED BY CLEAN SOURCES v2.** Весь body ниже,
+> включая собственные `Статус`, schemas, filenames и transaction rules,
+> не является active contract или implementation input. Нормативно:
+> `05_source_schema_v1.md` (несмотря на historical filename),
+> `ADR_V2_passport_first.md`, `04_source_workflows.md`.
+> `export_manifest.json`, Bundle Export, uid8, inline `materials[]`,
+> `external_dependencies`, ownership rows и manifest markers запрещены в v2
+> production. Этот файл разрешён только как исследовательская история; даже
+> migration reader реализуется по активному §12, а не копированием body ниже.
 
 Статус: формат `*.composite` **зафиксирован как schema_version = 1**.
 `export_manifest.json` повышен до **schema_version = 2** по D31: материальные

@@ -1,8 +1,9 @@
 {
   "schema": "mh.composite",
-  "schema_version": 1,
+  "schema_version": 2,
   "uid": "b0ca6032-8884-534d-8ceb-20f4a4edb766",
   "name": "cycle_a",
+  "properties": {},
   "nodes": [
     {
       "node_uid": "f6d91b61-1922-5e94-aed2-42198862ee65",
