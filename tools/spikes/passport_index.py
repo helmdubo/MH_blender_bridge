@@ -174,7 +174,7 @@ def _parse_passport(copies: tuple[str, ...]) -> tuple[str, dict | None, str | No
         return "malformed", None, f"MH_E_PASSPORT_INVALID: resource_uid: {exc}"
     if document.get("kind") != "static_mesh":
         return "malformed", None, "MH_E_PASSPORT_INVALID: kind must be static_mesh"
-    if "lod_level" in document and "lod_levels" not in document:
+    if "lod_level" in document:
         return (
             "deprecated_per_lod_passport",
             None,

@@ -77,7 +77,7 @@ class MH_OT_export_fbx(bpy.types.Operator):
     bl_label = "Export FBX"
     bl_description = (
         "Export the selected static-mesh resource; a Dagor .lods collection "
-        "writes one FBX payload per authored LOD")
+        "writes one combined FBX with mh_lod_level-tagged render nodes")
 
     def execute(self, context):
         collection = context.scene.mh_fbx_collection
@@ -110,10 +110,8 @@ class MH_OT_export_fbx(bpy.types.Operator):
                 f"FBX exported with {warning_count} warning(s): "
                 f"{report['filepath']} — see {LOG_TEXT_NAME}")
             return {"FINISHED"}
-        lod_count = max(0, len(report.get("payload_updates", ())) - 1)
-        suffix = f" + {lod_count} LOD payload(s)" if lod_count else ""
         self.report(
-            {"INFO"}, f"FBX resource exported: {report['filepath']}{suffix}")
+            {"INFO"}, f"Combined FBX resource exported: {report['filepath']}")
         return {"FINISHED"}
 
 
@@ -336,7 +334,7 @@ def register():
         name="Collection",
         description=(
             "Static-mesh resource collection; a Dagor .lods hierarchy "
-            "exports separate FBX payloads for its .lodNN children"),
+            "exports one combined FBX for all .lodNN children"),
         type=bpy.types.Collection,
     )
     bpy.types.Scene.mh_fbx_directory = bpy.props.StringProperty(

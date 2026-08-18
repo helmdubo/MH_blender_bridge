@@ -14,7 +14,7 @@ import bpy
 from mathutils import Matrix
 
 from ..core.canonical import nfc, resource_filename, validate_resource_name
-from ..core.meshser import mesh_content_hash
+from ..core.meshser import MeshAuxRecord, mesh_content_hash
 from ..core.model import Manifest, MeshResource
 from ..core.source_resolver import (
     assert_source_snapshot_stable,
@@ -702,7 +702,23 @@ def export_fbx_collection(
             records.extend(
                 (level, obj[PROP_UID], _record_for_object(obj, depsgraph))
                 for obj in level_objects)
-        combined_hash = mesh_content_hash(records)
+        aux_records = []
+        for obj in aux_objects:
+            if obj.type == "MESH":
+                aux_records.append(MeshAuxRecord(
+                    kind="collision",
+                    name=obj.name,
+                    mesh=_record_for_object(obj, depsgraph),
+                ))
+            else:
+                transform = tuple(
+                    component for row in obj.matrix_world for component in row)
+                aux_records.append(MeshAuxRecord(
+                    kind="socket",
+                    name=obj.name,
+                    transform=transform,
+                ))
+        combined_hash = mesh_content_hash(records, aux_records)
     finally:
         if window is not None and original_scene is not None:
             window.scene = original_scene
@@ -1021,9 +1037,7 @@ def export_fbx_collection(
                 tmp = payload["filepath"] + ".tmp"
                 if lod_structure is not None:
                     lod_levels = [
-                        (level, child, (
-                            level_objects + aux_objects
-                            if level == 0 else level_objects))
+                        (level, child, level_objects)
                         for level, child, level_objects in payload_levels
                     ]
                 else:

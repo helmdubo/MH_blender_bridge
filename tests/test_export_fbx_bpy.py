@@ -93,6 +93,7 @@ def _build_lod_collection(
     root.children.link(lod1)
     object0 = _mesh_object("GarageLOD0Mesh", lod0)
     object1 = _mesh_object("GarageLOD1Mesh", lod1)
+    _mesh_object("GarageLOD1DetailMesh", lod1)
     return root, lod0, lod1, object0, object1
 
 
@@ -162,7 +163,7 @@ def test_dag4blend_lods_exports_one_combined_authored_payload_roundtrip(
     report = export_fbx_collection(root, tmp_path, source_root=tmp_path)
 
     assert report["ok"]
-    assert report["objects_exported"] == 2
+    assert report["objects_exported"] == 3
     primary = Path(report["filepath"])
     assert primary.name.startswith("sovmod_garage_shell_a_type_a__")
     assert primary.name.endswith(".mesh.fbx")
@@ -191,8 +192,11 @@ def test_dag4blend_lods_exports_one_combined_authored_payload_roundtrip(
     bpy.ops.import_scene.fbx(filepath=str(primary))
     imported0 = bpy.data.objects.get("GarageLOD0Mesh")
     imported1 = bpy.data.objects.get("GarageLOD1Mesh")
+    imported1_detail = bpy.data.objects.get("GarageLOD1DetailMesh")
     assert imported0 is not None and imported0["mh_lod_level"] == 0
     assert imported1 is not None and imported1["mh_lod_level"] == 1
+    assert imported1_detail is not None \
+        and imported1_detail["mh_lod_level"] == 1
 
 
 def test_dag4blend_duplicate_suffix_and_path_metadata_use_plain_base(tmp_path):
@@ -279,6 +283,35 @@ def test_dag4blend_lods_hash_skip_and_any_level_change_rewrites_combined_fbx(
         {"level": 0, "filepath": str(primary), "written": True},
     ]
     assert len(list(tmp_path.glob("*.mesh.fbx"))) == 1
+
+
+def test_remove_lod_level_mutation_produces_one_combined_rewrite(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, _lod0, lod1, _object0, _object1 = _build_lod_collection()
+    assert {obj.name for obj in lod1.objects if obj.type == "MESH"} == {
+        "GarageLOD1Mesh", "GarageLOD1DetailMesh"}
+    initial = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+    primary = Path(initial["filepath"])
+    root.children.unlink(lod1)
+    calls = []
+
+    def write_changed(path):
+        calls.append(path)
+        Path(path).write_bytes(b"removed authored LOD1")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", write_changed)
+    updated = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+
+    assert updated["written"] is True
+    assert updated["objects_exported"] == 1
+    assert updated["resource_entry"]["content_hash"] != \
+        initial["resource_entry"]["content_hash"]
+    assert calls == [str(primary) + ".tmp"]
+    assert updated["payload_updates"] == [
+        {"level": 0, "filepath": str(primary), "written": True},
+    ]
 
 
 def test_dag4blend_lods_repairs_missing_combined_payload(tmp_path, monkeypatch):
@@ -424,14 +457,14 @@ def test_dag4blend_higher_lod_aux_mesh_is_ignored_with_warning(tmp_path):
         root, tmp_path, dry_run=True, source_root=tmp_path)
 
     assert report["ok"]
-    assert report["objects_exported"] == 2
+    assert report["objects_exported"] == 3
     warning = next(
         row for row in report["validation"]["warnings"]
         if row["code"] == "MH_W_LOD_AUX_NODE_IGNORED")
     assert "UCX_GarageCollision" in warning["message"]
 
 
-def test_dag4blend_lod0_aux_nodes_export_but_do_not_change_geometry_hash(
+def test_dag4blend_lod0_aux_nodes_export_and_change_durable_hash(
         tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     root, lod0, _lod1, _object0, _object1 = _build_lod_collection()
@@ -443,8 +476,8 @@ def test_dag4blend_lod0_aux_nodes_export_but_do_not_change_geometry_hash(
     def inspect_and_write(path):
         seen.append((
             {obj.name for obj in bpy.context.selected_objects},
-            collision["mh_lod_level"],
-            socket["mh_lod_level"],
+            "mh_lod_level" in collision,
+            "mh_lod_level" in socket,
         ))
         Path(path).write_bytes(b"combined geometry and aux")
 
@@ -459,33 +492,98 @@ def test_dag4blend_lod0_aux_nodes_export_but_do_not_change_geometry_hash(
         root, tmp_path, dry_run=True, source_root=tmp_path)
 
     assert seen == [({
-        "GarageLOD0Mesh", "GarageLOD1Mesh",
+        "GarageLOD0Mesh", "GarageLOD1Mesh", "GarageLOD1DetailMesh",
         "UCX_GarageCollision", "SOCKET_Roof",
-    }, 0, 0)]
-    assert with_aux["objects_exported"] == 4
-    assert hash_with_aux == without_aux["resource_entry"]["content_hash"]
+    }, False, False)]
+    assert with_aux["objects_exported"] == 5
+    assert hash_with_aux != without_aux["resource_entry"]["content_hash"]
     assert "mh_lod_level" not in collision
     assert "mh_lod_level" not in socket
+
+
+@pytest.mark.parametrize("mutation", [
+    "collision_geometry", "collision_name", "collision_transform",
+    "socket_name", "socket_transform", "remove_collision", "remove_socket",
+    "add_collision", "add_socket",
+])
+def test_lod0_aux_mutation_rewrites_one_combined_fbx(
+        tmp_path, monkeypatch, mutation):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root, lod0, _lod1, _object0, _object1 = _build_lod_collection()
+    collision = _mesh_object("UCX_GarageCollision", lod0)
+    socket = bpy.data.objects.new("SOCKET_Roof", None)
+    lod0.objects.link(socket)
+    initial = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+    primary = Path(initial["filepath"])
+    aux_objects = [collision, socket]
+
+    if mutation == "collision_geometry":
+        collision.data.vertices[0].co.x += 0.25
+        collision.data.update()
+    elif mutation == "collision_name":
+        collision.name = "UCX_GarageCollisionRenamed"
+    elif mutation == "collision_transform":
+        collision.location.x += 1.25
+    elif mutation == "socket_name":
+        socket.name = "SOCKET_RoofRenamed"
+    elif mutation == "socket_transform":
+        socket.location.y -= 2.5
+    elif mutation == "remove_collision":
+        lod0.objects.unlink(collision)
+    elif mutation == "remove_socket":
+        lod0.objects.unlink(socket)
+    elif mutation == "add_collision":
+        aux_objects.append(_mesh_object("UCX_Extra", lod0))
+    elif mutation == "add_socket":
+        extra = bpy.data.objects.new("SOCKET_Extra", None)
+        lod0.objects.link(extra)
+        aux_objects.append(extra)
+
+    calls = []
+
+    def write_changed(path):
+        calls.append(path)
+        Path(path).write_bytes(b"rewritten combined aux payload")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", write_changed)
+    updated = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+
+    assert updated["written"] is True
+    assert updated["resource_entry"]["content_hash"] != \
+        initial["resource_entry"]["content_hash"]
+    assert calls == [str(primary) + ".tmp"]
+    assert updated["payload_updates"] == [
+        {"level": 0, "filepath": str(primary), "written": True},
+    ]
+    for aux in aux_objects:
+        assert "mh_uid" not in aux
+        assert "mh_lod_level" not in aux
 
 
 def test_dag4blend_temporary_lod_properties_restore_exactly(
         tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     root, _lod0, _lod1, object0, object1 = _build_lod_collection()
+    object1_detail = bpy.data.objects["GarageLOD1DetailMesh"]
     object0["mh_lod_level"] = "artist-authored-value"
     seen = []
 
     def inspect_and_write(path):
-        seen.append((object0["mh_lod_level"], object1["mh_lod_level"]))
+        seen.append((
+            object0["mh_lod_level"], object1["mh_lod_level"],
+            object1_detail["mh_lod_level"],
+        ))
         Path(path).write_bytes(b"combined LOD payload")
 
     monkeypatch.setattr(
         export_fbx_module, "_export_selected_fbx", inspect_and_write)
     export_fbx_collection(root, tmp_path, source_root=tmp_path)
 
-    assert seen == [(0, 1)]
+    assert seen == [(0, 1, 1)]
     assert object0["mh_lod_level"] == "artist-authored-value"
     assert "mh_lod_level" not in object1
+    assert "mh_lod_level" not in object1_detail
 
 
 def test_reports_direct_texture_paths_and_never_copies_textures(tmp_path):

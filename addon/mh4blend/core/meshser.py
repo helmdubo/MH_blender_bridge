@@ -12,6 +12,14 @@ per-loop 3 x q4, loop count implied) -> per-poly use_smooth bytes + sharp
 edges (count + sorted pairs) -> UV layers (count + name + per-loop 2 x q6)
 -> color attributes (count + name/domain/type + value count + q4 values)
 -> material slot names (count + strings).
+
+After the render-object array, one auxiliary section is appended:
+``uint32 aux_count`` followed by records sorted by ``(kind, NFC name)``.
+Each record starts with ``uint8 kind`` (1 = UCX collision mesh, 2 = socket)
+and a length-prefixed NFC name. Collision records then contain the ordinary
+mesh-object layout (including transform); socket records contain only their
+16 x q6 row-major transform. This makes LOD0 collision geometry and socket
+name/transform durable content without assigning persistent IDs to aux nodes.
 Encodings per §9.1: little-endian, uint32 counts/indices, int64 scaled
 integers, length-prefixed UTF-8 strings. Each object is prefixed by its uint32
 LOD level; objects are ordered by ``(lod_level, mh_uid)``.
@@ -22,14 +30,18 @@ from dataclasses import dataclass, field
 
 from .canonical import hash_hex, nfc, quantize
 
-__all__ = ["MeshObjectRecord", "serialize_mesh_resource", "mesh_content_hash",
-           "MESHSER_TAG"]
+__all__ = ["MeshAuxRecord", "MeshObjectRecord", "serialize_mesh_resource",
+           "mesh_content_hash", "MESHSER_TAG"]
 
 MESHSER_TAG = "mh.meshser:2"
 
 P_POSITION = 4   # positions / normals / colors (§9.3)
 P_TRANSFORM = 6  # object transform matrix
 P_UV = 6         # UV coordinates
+
+AUX_COLLISION = 1
+AUX_SOCKET = 2
+_AUX_KIND_CODES = {"collision": AUX_COLLISION, "socket": AUX_SOCKET}
 
 
 @dataclass
@@ -46,6 +58,20 @@ class MeshObjectRecord:
     color_attributes: list = field(default_factory=list)
     # [(name, domain, data_type, [flat float components]), ...]
     material_slot_names: list = field(default_factory=list)
+
+
+@dataclass
+class MeshAuxRecord:
+    """Durable LOD0 FBX auxiliary content.
+
+    Collision records carry an ordinary mesh record; socket records carry a
+    transform. The unused payload must stay ``None`` so there is only one
+    canonical spelling for either kind.
+    """
+    kind: str
+    name: str
+    mesh: MeshObjectRecord | None = None
+    transform: tuple | None = None
 
 
 def _u32(out, value):
@@ -130,6 +156,39 @@ def _serialize_object(out, record: MeshObjectRecord):
         _string(out, name)
 
 
+def _validated_aux(record: MeshAuxRecord):
+    if not isinstance(record, MeshAuxRecord):
+        raise TypeError("auxiliary must be a MeshAuxRecord")
+    code = _AUX_KIND_CODES.get(record.kind)
+    if code is None:
+        raise ValueError("auxiliary kind must be collision or socket")
+    if not isinstance(record.name, str) or not record.name:
+        raise ValueError("auxiliary name must be a non-empty string")
+    if code == AUX_COLLISION:
+        if not isinstance(record.mesh, MeshObjectRecord) \
+                or record.transform is not None:
+            raise ValueError(
+                "collision auxiliary requires mesh and forbids transform")
+    else:
+        if record.mesh is not None \
+                or not isinstance(record.transform, (list, tuple)) \
+                or len(record.transform) != 16:
+            raise ValueError(
+                "socket auxiliary requires 16-component transform and "
+                "forbids mesh")
+    return code, nfc(record.name).encode("utf-8"), record
+
+
+def _serialize_auxiliary(out, code, record):
+    out.append(struct.pack("<B", code))
+    _string(out, record.name)
+    if code == AUX_COLLISION:
+        _serialize_object(out, record.mesh)
+    else:
+        for component in record.transform:
+            _i64q(out, component, P_TRANSFORM)
+
+
 def _lod_item(item):
     """Normalize legacy level-0 pairs and explicit combined-LOD triples."""
     if len(item) == 2:
@@ -146,12 +205,14 @@ def _lod_item(item):
         "(lod_level, uid, record)")
 
 
-def serialize_mesh_resource(objects):
+def serialize_mesh_resource(objects, auxiliaries=()):
     """Return the mh.meshser:2 stream for level-tagged mesh objects.
 
     ``objects`` accepts explicit ``(lod_level, mh_uid, MeshObjectRecord)``
     triples.  Two-tuples remain a convenience spelling for ordinary LOD0
     resources; their bytes are still meshser:2 and include a zero level.
+    ``auxiliaries`` contains LOD0-only collision/socket records and never
+    relies on Blender Custom Properties for identity or ordering.
     """
     out = []
     _string(out, MESHSER_TAG)
@@ -166,8 +227,18 @@ def serialize_mesh_resource(objects):
     for lod_level, _uid, record in ordered:
         _u32(out, lod_level)
         _serialize_object(out, record)
+    ordered_aux = sorted(
+        (_validated_aux(record) for record in auxiliaries),
+        key=lambda item: (item[0], item[1]),
+    )
+    aux_keys = [(code, name) for code, name, _record in ordered_aux]
+    if len(aux_keys) != len(set(aux_keys)):
+        raise ValueError("auxiliary kind/name must be unique after NFC")
+    _u32(out, len(ordered_aux))
+    for code, _name, record in ordered_aux:
+        _serialize_auxiliary(out, code, record)
     return b"".join(out)
 
 
-def mesh_content_hash(objects) -> str:
-    return hash_hex(serialize_mesh_resource(objects))
+def mesh_content_hash(objects, auxiliaries=()) -> str:
+    return hash_hex(serialize_mesh_resource(objects, auxiliaries))

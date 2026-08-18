@@ -151,6 +151,27 @@ def test_partial_lod_declaration_is_quarantined_and_per_file_lod_is_deprecated(t
     assert index["uids"] == {}
 
 
+def test_deprecated_lod_level_is_rejected_even_beside_combined_lod_levels(
+        tmp_path):
+    uid = uuid.uuid4()
+    document = json.loads(_passport(uid, lod_levels=(0, 1)))
+    document["lod_level"] = 0
+    observation = _payload(
+        tmp_path / "mixed-passport.fbx",
+        b"mixed legacy and combined fields",
+        json.dumps(document, sort_keys=True, separators=(",", ":")),
+    )
+
+    index = rebuild_index([observation])
+    row = index["paths"][canonical_path(observation.path)]
+
+    assert row["parse_status"] == "deprecated_per_lod_passport"
+    assert row["parsed_passport"] is None
+    assert "DEPRECATED_PER_LOD" in row["diagnostics"][0]
+    assert canonical_path(observation.path) in index["legacy_paths"]
+    assert index["uids"] == {}
+
+
 def test_missing_malformed_unknown_version_and_carrier_disagreement_statuses(tmp_path):
     missing = _payload(tmp_path / "legacy.fbx", b"legacy", None)
     malformed = PayloadObservation(
