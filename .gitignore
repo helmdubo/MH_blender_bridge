@@ -11,3 +11,10 @@ __pycache__/
 .venv/
 golden/build/
 dist/
+
+# Local UE build/test outputs (source lives under ue/MimirComposite)
+.tmp/
+ue/MimirComposite/Binaries/
+ue/MimirComposite/Intermediate/
+ue/MimirComposite/Saved/
+ue/MimirComposite/DerivedDataCache/
