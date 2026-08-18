@@ -3,10 +3,9 @@
 #include "Diagnostics/MHFbxDump.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "MHGoldenRoot.h"
 #include "Misc/AutomationTest.h"
-#include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
-#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 
 namespace UE::MimirComposite::Tests
@@ -82,9 +81,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHFbxDumpAxisProbeTest::RunTest(const FString& Parameters)
 {
 	FString GoldenRoot;
-	if (!FParse::Value(FCommandLine::Get(), TEXT("MHGoldenRoot="), GoldenRoot))
+	if (!ResolveGoldenRoot(*this, GoldenRoot))
 	{
-		AddError(TEXT("-MHGoldenRoot=<repository golden directory> is required"));
 		return false;
 	}
 

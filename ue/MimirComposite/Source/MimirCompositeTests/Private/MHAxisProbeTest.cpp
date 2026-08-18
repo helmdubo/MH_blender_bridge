@@ -1,10 +1,7 @@
 #include "Geometry/MHGeometryBackends.h"
 
-#include "HAL/PlatformMisc.h"
-#include "Interfaces/IPluginManager.h"
+#include "MHGoldenRoot.h"
 #include "Misc/AutomationTest.h"
-#include "Misc/CommandLine.h"
-#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 
 namespace
@@ -20,32 +17,6 @@ const FVector ExpectedLocalCm(37.0, -11.0, 193.0);
 const FVector ExpectedWorldCm(223.3146, 219.4280, 242.7456);
 const FVector ActorLocationCm(125.0, 250.0, 75.0);
 const FQuat ActorRotation(-0.038135, 0.189308, -0.239298, 0.951549);
-
-bool ResolveGoldenRoot(FString& OutGoldenRoot)
-{
-    if (FParse::Value(FCommandLine::Get(), TEXT("MHGoldenRoot="), OutGoldenRoot))
-    {
-        OutGoldenRoot = FPaths::ConvertRelativePathToFull(OutGoldenRoot);
-        return true;
-    }
-
-    OutGoldenRoot = FPlatformMisc::GetEnvironmentVariable(TEXT("MH_GOLDEN_ROOT"));
-    if (!OutGoldenRoot.IsEmpty())
-    {
-        OutGoldenRoot = FPaths::ConvertRelativePathToFull(OutGoldenRoot);
-        return true;
-    }
-
-    const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("MimirComposite"));
-    if (Plugin.IsValid())
-    {
-        OutGoldenRoot = FPaths::ConvertRelativePathToFull(
-            FPaths::Combine(Plugin->GetBaseDir(), TEXT(".."), TEXT(".."), TEXT("golden")));
-        return true;
-    }
-
-    return false;
-}
 
 double FindNearestDistance(const TArray<FVector3f>& Positions, const FVector& Expected, FVector& OutNearest)
 {
@@ -129,9 +100,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHR1AxisProbeBackendsTest::RunTest(const FString& Parameters)
 {
     FString GoldenRoot;
-    if (!ResolveGoldenRoot(GoldenRoot))
+    if (!UE::MimirComposite::Tests::ResolveGoldenRoot(*this, GoldenRoot))
     {
-        AddError(TEXT("Unable to resolve golden root; pass -MHGoldenRoot=<repo>/golden"));
         return false;
     }
 

@@ -2,10 +2,9 @@
 
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "MHGoldenRoot.h"
 #include "Misc/AutomationTest.h"
-#include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
-#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 
 namespace UE::MimirComposite::Tests
@@ -242,9 +241,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHCanonicalVectorsTest::RunTest(const FString& Parameters)
 {
 	FString GoldenRoot;
-	if (!FParse::Value(FCommandLine::Get(), TEXT("MHGoldenRoot="), GoldenRoot))
+	if (!ResolveGoldenRoot(*this, GoldenRoot))
 	{
-		AddError(TEXT("-MHGoldenRoot=<repository golden directory> is required"));
 		return false;
 	}
 	const FString VectorPath = FPaths::Combine(GoldenRoot, TEXT("canonical_vectors.json"));

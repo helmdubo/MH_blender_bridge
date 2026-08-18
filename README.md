@@ -114,3 +114,39 @@ material upserts вместе с mesh upsert, но не создаёт bundle-т
 blender -b --factory-startup --python-exit-code 1 \
   -P tools/check_dag4blend_compat.py
 ```
+
+## UE-плагин (этап C): тесты и диагностика
+
+Плагин `ue/MimirComposite` собирается stock UE 5.7.4; test-host `.uproject` не
+модифицируется, поэтому редактор запускается с `-EnablePlugins=MimirComposite`.
+Automation-тесты `Mimir.C0.*` ищут каталог `golden/` репозитория в порядке:
+`-MHGoldenRoot=<repo>/golden` → переменная окружения `MH_GOLDEN_ROOT` →
+`<plugin>/../../golden` (плагин запущен прямо из чекаута).
+
+Из UI: запустите редактор (при необходимости один раз выполните
+`setx MH_GOLDEN_ROOT "<repo>\golden"`), затем **Tools → Session Frontend →
+Automation**, фильтр `Mimir`, Start Tests.
+
+Headless (PowerShell):
+
+```powershell
+& "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "<path>\MimirHead_portfolio.uproject" `
+  -EnablePlugins=MimirComposite `
+  -MHGoldenRoot="<repo>\golden" `
+  -ExecCmds="Automation RunTests Mimir.C0; Quit" `
+  -unattended -nop4 -nosplash -nullrhi -stdout -log
+```
+
+Диагностический слепок FBX (`mh.fbxdump:1`, вне frozen-контракта):
+
+```powershell
+& "...\UnrealEditor-Cmd.exe" "<path>\MimirHead_portfolio.uproject" `
+  -run=MHFbxDump "<path>\model.fbx" --full `
+  -EnablePlugins=MimirComposite -unattended -nop4 -stdout `
+  -abslog="<path>\fbxdump.log"
+```
+
+Канонический JSON печатается категорией `LogMHFbxDump`; без `--full` — summary.
+Импорта `.composite`/FBX в Content Browser на этапе C0 нет: фабрики и Ledger —
+gate C2 (`docs/07_ue_import_contract_r3.md` §13).
