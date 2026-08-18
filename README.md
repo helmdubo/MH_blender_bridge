@@ -80,6 +80,13 @@ property `mh_lod_level`, а не выводится из имени. Любая 
 логического имени ресурса — произвольные точки в resource name остаются
 невалидными.
 
+Legacy-выгрузки с per-file `lods[]` не читаются production-кодом. Перед
+немедленным повторным экспортом нужной `<name>.lods`-коллекции используйте
+внешнюю one-shot утилиту `python tools/migrate_per_file_lods.py
+<export_manifest.json> <ResourceUID> --source-root <root>`. Она сохраняет
+точный backup, удаляет только выбранную owner-row и не трогает FBX; подробный
+safe/restore workflow описан в `docs/AMENDMENT_combined_lod_fbx.md` §7.
+
 Материальные metadata читаются из `Material.dagormat`, поэтому для полного
 экспорта включите dag4blend. Обычный Blender-материал без dagormat остаётся
 валидным: он экспортируется как пустая заглушка `rendinst_simple`. Пути

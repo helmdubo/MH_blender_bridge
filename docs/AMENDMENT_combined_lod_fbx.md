@@ -91,8 +91,38 @@ mesh-узел несёт custom property `mh_lod_level : int` (0, 1, 2, …).
 
 ## 7. Миграция
 
-Существующие per-file LOD-выгрузки (если успели появиться): одноразовая
-утилита — прочитать основной + lodN-файлы, переэкспортировать объединённым
-(или просто реэкспорт из Blender-сцены, что предпочтительно); manifest-строки
-с `lods[]` конвертируются; после миграции читатели переходят в строгий режим
-(`MH_E_DEPRECATED_LOD_ROWS`).
+Production readers остаются строгими: любое поле `lods`, включая пустой массив,
+даёт `MH_E_DEPRECATED_LOD_ROWS`. Legacy-исключение в addon-кодек не добавляется.
+
+Одноразовая внешняя утилита сначала проверяет основной и все объявленные LOD
+payload, сохраняет **точные исходные байты** в non-scanned backup, затем атомарно
+удаляет из активного манифеста только выбранную legacy-строку. Payload-файлы она
+не удаляет и не объединяет. UID намеренно остаётся без владельца до следующего
+действия художника:
+
+```powershell
+python tools/migrate_per_file_lods.py `
+  D:\project\asset\export_manifest.json `
+  10000000-0000-0000-0000-000000000001 `
+  --source-root D:\project
+```
+
+После receipt с `next_action = "re-export selected .lods collection with same
+UID"` нужно немедленно экспортировать соответствующую Blender-коллекцию
+`<name>.lods` с тем же ResourceUID. Это создаёт один Combined-LOD FBX и новую
+строгую manifest-row. Старые payload остаются на диске как неавторитетные файлы;
+их очистка — отдельная ручная/VCS-операция после проверки результата.
+
+До реэкспорта точный legacy-манифест можно вернуть только если активные prepared
+bytes не изменились и UID всё ещё отсутствует:
+
+```powershell
+python tools/migrate_per_file_lods.py `
+  D:\project\asset\export_manifest.json `
+  10000000-0000-0000-0000-000000000001 `
+  --restore
+```
+
+Существующий backup, pending-marker, неоднозначный UID, выход source за каталог
+владельца/`source_root`, отсутствующий или не-regular payload блокируют миграцию
+до любых изменений активного манифеста.
