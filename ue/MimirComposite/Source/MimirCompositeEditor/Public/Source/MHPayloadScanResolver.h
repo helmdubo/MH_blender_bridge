@@ -28,6 +28,9 @@ public:
     /** Legacy v1 composites that only the migration utility may read. */
     const TArray<FString>& GetLegacySkipped() const { return LegacySkipped; }
 
+    /** Every ResourceUID the scan found a valid candidate for, sorted. */
+    TArray<FString> GetAllUids() const;
+
     int32 GetCandidateFileCount() const { return CandidateFileCount; }
 
 private:

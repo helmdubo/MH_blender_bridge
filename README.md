@@ -206,6 +206,28 @@ resolve-статус каждого ресурса (unresolved / duplicate / div
 В редакторе `.composite` v2 импортируется фабрикой в read-only
 `UMHCompositeAsset` (Content Browser → Import).
 
+Reader-анализ source root против Ledger (классификация `07` §4):
+
+```powershell
+& "...\UnrealEditor-Cmd.exe" "<path>\MimirHead_portfolio.uproject" `
+  -run=MHAnalyzeSources -root="<source_root>" `
+  -ledger="<path>\ledger.json" -writeledger="<path>\ledger.json" `
+  -report="<path>\analyze.json" `
+  -EnablePlugins=MimirComposite -unattended -nop4 -stdout `
+  -abslog="<path>\analyze.log"
+```
+
+Печатает строку на каждый ResourceUID (`CREATE`, `UPDATE_GEOMETRY`,
+`UPDATE_DESCRIPTOR`, `UPDATE_PROPERTIES`, `MOVE`, `NO_CHANGE`,
+`NO_CHANGE_EXTERNAL`, `REMOVE`, `BLOCKED`), затем предупреждения и ошибки.
+Без `-root` берётся `SourceRoot` из **Project Settings → Plugins → Mimir
+Composite**; если не задан ни там, ни в аргументах — usage и exit code 2.
+`-ledger` читает снимок Ledger, `-writeledger` пишет продвинутый (строки
+`NO_CHANGE_EXTERNAL`, `REMOVE` и `BLOCKED` не продвигаются никогда),
+`-report` — JSON-отчёт `mh.analyze_sources:1`. Exit code 1 при любом `MH_E_*`.
+Снимок Ledger — reader state: держите его под `Saved/`, а не в `source_root`,
+и не путайте с editor-ассетом `<content_root>/_MH/Ledger`.
+
 ### Полевые тесты в UI редактора
 
 - **Импорт `.composite`:** обычный **Import** в Content Browser (или

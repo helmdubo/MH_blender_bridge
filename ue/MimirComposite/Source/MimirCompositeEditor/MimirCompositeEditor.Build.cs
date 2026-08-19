@@ -22,6 +22,7 @@ public class MimirCompositeEditor : ModuleRules
             new[]
             {
                 "DesktopPlatform",
+                "DeveloperSettings",
                 "Json",
                 "MessageLog",
                 "Projects",

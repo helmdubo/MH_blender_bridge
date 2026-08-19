@@ -29,6 +29,9 @@ struct MIMIRCOMPOSITEEDITOR_API FMHResolveOutcome
     /** Embedded resource name of the chosen payload. */
     FString Name;
 
+    /** Payload fingerprint of the chosen candidate when Status == Resolved. */
+    FString Fingerprint;
+
     /** Every candidate path carrying this UID, chosen one included. */
     TArray<FString> CandidatePaths;
 

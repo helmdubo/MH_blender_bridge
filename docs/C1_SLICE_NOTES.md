@@ -72,3 +72,74 @@ writer (`addon/mh4blend/core/fbx_passport.py`, `PASSPORT_PROPERTY`) пишет
 полностью. Следующий шаг: пересборка, `Automation RunTests Mimir`
 (`Mimir.C0.*` + `Mimir.C1.*`), затем полевой прогон — Import `.composite` в
 Content Browser и Tools → Mimir → дампы.
+
+## Второй C1-срез: settings + hashes + Ledger + analyzer
+
+Добавлено поверх первого среза (всё ещё **не полный gate C1**):
+
+- `UMHCompositeSettings` (`UDeveloperSettings`, `config=Editor`,
+  `defaultconfig`) по `07` §11: `SourceRoot`, `ContentRoot` (`/Game/MH`),
+  `MasterRoot`, `TextureRoot` (пусто = `SourceRoot`), `TexturePolicy`
+  (`Transitional` по умолчанию), `ConflictPolicy` (`Prompt`),
+  `StartupScanMode` (`Silent`), префиксы `SM_/MI_/T_/CA_`,
+  `LumenCardsMax=32`, `GeometryBackend=MhFbx`.
+- `MHPayloadHashes` (Editor): три величины `05` §4.3 —
+  `MHCompositeSemanticHash` и `MHMaterialSemanticHash` (canonical form
+  frozen-библиотеки + xxh3; material хеширует только
+  `{shader_class, params, textures}`, поэтому rename материала — `MOVE`,
+  а не `UPDATE_PROPERTIES`), `MHPassportDescriptorHash` (документ паспорта,
+  пересобранный из провалидированных полей без `geometry_hash`) и
+  `MHPayloadFingerprint` (xxh3 по сырым байтам).
+- `FMHLedgerRow` + `UMHImportLedger` (`<content_root>/_MH/Ledger`) по `07` §2
+  и независимый JSON-снимок (`mh.import_ledger:1`) для headless/commandlet/
+  тестов. Снимок — reader state: он живёт под `Saved/`, в `source_root` его
+  писать нельзя.
+- `MHAnalyzeSources` (Editor): пер-ресурсная классификация `07` §4 / `05` §9 —
+  `CREATE`, `UPDATE_GEOMETRY`, `UPDATE_DESCRIPTOR`, `UPDATE_PROPERTIES`,
+  `MOVE`, `NO_CHANGE`, `NO_CHANGE_EXTERNAL`, `REMOVE`, `BLOCKED`. Волны и
+  зависимости в анализатор не входят (batch semantics `07` §1).
+  Изменившийся fingerprint при равных semantic hashes даёт
+  `MH_W_PAYLOAD_EXTERNAL_MODIFIED` **и**
+  `MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED`; такая строка Ledger
+  молча не продвигается. `MH_E_*` блокирует только свой ресурс.
+- `-run=MHAnalyzeSources -root=<source_root> [-ledger=…] [-writeledger=…]
+  [-report=…]`: скан + анализ, строка на ресурс, опциональный JSON-отчёт
+  (`mh.analyze_sources:1`) и продвинутый снимок Ledger. Без `-root` берётся
+  `SourceRoot` из project settings; нет ни того, ни другого — usage и exit 2.
+  Exit 1 при любом `MH_E_*`.
+- Automation: `Mimir.C1.Analyzer` (CREATE → NO_CHANGE → MOVE →
+  UPDATE_PROPERTIES → REMOVE → NO_CHANGE_EXTERNAL → divergent BLOCKED) и
+  `Mimir.C1.LedgerSnapshot` (round-trip строк снимка).
+
+### Решения, где контракт оставлял свободу
+
+- `IMHSourceResolver::Resolve` требует ожидаемый kind, а анализатору kind
+  заранее неизвестен: он пробует три kind'а и берёт первый ответ, отличный
+  от `KindMismatch`. Поведение и диагностики resolver'а не изменились;
+  в `FMHResolveOutcome` добавлен только `Fingerprint`, в скан-resolver —
+  `GetAllUids()`.
+- Порядок сравнения: geometry → descriptor → path → fingerprint. Значит
+  переезд файла с одновременной правкой геометрии классифицируется как
+  `UPDATE_GEOMETRY` (перемещение отработает тот же re-import).
+- Строка Ledger с пустым `payload_fingerprint` не поднимает
+  confirmation gate: отсутствие записанного fingerprint ничего не доказывает.
+- `ImportStatus` в C1 хранит саму классификацию; на C2 её заменит результат
+  реального импорта.
+- Карантин (`MH_E_PASSPORT_INVALID` и подобные пер-файловые отказы) остаётся
+  warning'ом анализа: он и так исключён из candidate set и не должен ронять
+  exit code всего скана.
+
+### Что всё ещё блокирует полный C1
+
+- Parity M8/M9/M10 против Blender-эталонов: golden-фикстур со стороны
+  Blender ещё нет.
+- Byte-parity `descriptor_hash` с Python (`sha256` от `json.dumps`) не
+  заявляется: UE-хеш самосогласован внутри Ledger, TODO(C1-parity) в
+  `MHPayloadHashes.h`.
+- FBX/passport строки анализатора не покрыты автотестом: в репозитории нет
+  ни одной FBX-фикстуры с паспортом Carrier B, а подделывать её нельзя.
+  Появится фикстура — сценарии `UPDATE_GEOMETRY`/`UPDATE_DESCRIPTOR`
+  добавляются в `Mimir.C1.Analyzer` без изменения кода анализатора.
+- Startup scan/watcher, `-run=MHImportSources` и фактический импорт (C2/C3):
+  `UMHImportLedger::Save()` уже пишет пакет, но продвигает Ledger пока только
+  commandlet-снимок.

@@ -122,6 +122,14 @@ bool FMHPayloadScanResolver::Initialize(FString& OutError)
     return true;
 }
 
+TArray<FString> FMHPayloadScanResolver::GetAllUids() const
+{
+    TArray<FString> Uids;
+    CandidatesByUid.GenerateKeyArray(Uids);
+    Uids.Sort();
+    return Uids;
+}
+
 FMHResolveOutcome FMHPayloadScanResolver::Resolve(
     const FString& ResourceUid,
     const EMHResourceKind ExpectedKind)
@@ -171,6 +179,7 @@ FMHResolveOutcome FMHPayloadScanResolver::Resolve(
     Outcome.Status = EMHResolveStatus::Resolved;
     Outcome.PayloadPath = Matching[0]->Path;
     Outcome.Name = Matching[0]->Name;
+    Outcome.Fingerprint = Matching[0]->Fingerprint;
     if (Matching.Num() > 1)
     {
         Outcome.Diagnostic = FString::Printf(
