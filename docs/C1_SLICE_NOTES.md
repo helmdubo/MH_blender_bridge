@@ -143,3 +143,25 @@ Content Browser и Tools → Mimir → дампы.
 - Startup scan/watcher, `-run=MHImportSources` и фактический импорт (C2/C3):
   `UMHImportLedger::Save()` уже пишет пакет, но продвигает Ledger пока только
   commandlet-снимок.
+
+## Полевые наблюдения по реальному payload (2026-08-19)
+
+Владелец предоставил дамп реального `sovmod_garage_shell_a_type_a.mesh.fbx`
+из production writer `mh4blend 0.6.0`:
+
+- Carrier B паспорт валиден по всем правилам UE-ридера: 11 полей, dense
+  `lod_levels`, слоты отсортированы по `slot_name`, byte-consensus на двух
+  MESH-узлах. Дополнительные свойства (`mh_uid`,
+  `mh_imported_resource_uid`) корректно игнорируются.
+- **Интел для C2:** Blender FBX IO запекает unit/axis-конверсию в
+  node-транзформы реальных payload'ов (`local_scaling` 0.01,
+  `local_rotation` −90° по Z; сцена заявляет cm, right-handed Z-up,
+  `front_sign=-1`). Маппер `FMHFbxBackend` обязан явно определить
+  потребление этих транзформов до gate C2; сейчас R1-probe осознанно не
+  делает `ConvertScene`.
+- Два render mesh-узла на одном LOD0 и имена с суффиксом `_lod00`
+  подтверждают контракт: имена не семантика, уровень задаёт только
+  `mh_lod_level`.
+- Passport-carrying FBX fixture в `golden/fixtures/` по-прежнему нет;
+  как только Blender-сторона закоммитит одну, FBX-сценарии добавляются в
+  `Mimir.C1.Analyzer` и фиксируются expected-дампы.
