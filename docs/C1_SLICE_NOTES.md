@@ -153,12 +153,32 @@ Content Browser и Tools → Mimir → дампы.
   `lod_levels`, слоты отсортированы по `slot_name`, byte-consensus на двух
   MESH-узлах. Дополнительные свойства (`mh_uid`,
   `mh_imported_resource_uid`) корректно игнорируются.
-- **Интел для C2:** Blender FBX IO запекает unit/axis-конверсию в
-  node-транзформы реальных payload'ов (`local_scaling` 0.01,
-  `local_rotation` −90° по Z; сцена заявляет cm, right-handed Z-up,
-  `front_sign=-1`). Маппер `FMHFbxBackend` обязан явно определить
-  потребление этих транзформов до gate C2; сейчас R1-probe осознанно не
-  делает `ConvertScene`.
+- **Интел для C2 (уточнён по полному дампу).** В node-транзформах реальных
+  payload'ов лежат две независимые величины:
+  - `local_rotation` −90.000009° по Z — это axis-конверсия транспорта. Файл
+    объявляет «вперёд = −X», UE требует «вперёд = −Y», поэтому
+    `FbxAxisSystem::ConvertScene` добавляет ровно +90° по Z и гасит её.
+    Подтверждено R1: `axis_probe` несёт ту же подпись (−90.000003°), и оба
+    бэкенда сошлись на `(37, −11, 193)`, хотя прямой трансформ узла не читает;
+  - `local_scaling` 0.01 — **не** конверсия единиц, а собственный масштаб
+    объекта, и он семантически обязателен. Bbox по 911 control points даёт
+    `2.81 × 5.31 × 2.15` м с этим масштабом и абсурдные `281 × 531 × 215` м
+    без него. `ConvertScene` масштаб не трогает, поэтому штатный импортёр UE
+    (`bTransformVertexToAbsolute`) даёт верный размер, а текущий
+    `FMHFbxBackend`, читающий control points сырыми, выдал бы меш в 100 раз
+    больше.
+  Отсюда правило маппера C2: `UE_local_cm = ConvertPos(Rz(+90°) ·
+  NodeGlobalTransform · raw_cp)`; практически — вызвать `ConvertScene` и
+  запечь `EvaluateGlobalTransform`, как делает утверждённый parity-эталон.
+- Трансформ объекта **входит** в `geometry_hash`: `meshser.py`
+  сериализует `MeshObjectRecord.transform` (16 float, row-major, collection
+  space, `P_TRANSFORM = 6`) первым в потоке `mh.meshser:2`. Дыры в
+  reader-side diff нет — изменение масштаба меняет хеш.
+- **Слоты ремапятся только по `slot_name`.** В этом payload порядок слотов
+  FBX (`0=sovmod_garage_shell_a`, `1=Material001`) обратен паспортному
+  (`0=Material001`, `1=sovmod_garage_shell_a`), а у второго узла таблица
+  вообще из одного слота. Наивное использование `material_index` как индекса
+  слота UE поменяло бы материалы местами на всех 762 полигонах.
 - Два render mesh-узла на одном LOD0 и имена с суффиксом `_lod00`
   подтверждают контракт: имена не семантика, уровень задаёт только
   `mh_lod_level`.
