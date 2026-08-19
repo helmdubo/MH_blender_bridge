@@ -1,0 +1,29 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0-c0",
+  "FriendlyName": "Mimir Composite",
+  "Description": "Imports Mimir source assets into Unreal Engine editor assets.",
+  "Category": "MimirHead",
+  "CreatedBy": "MimirHead",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "EnabledByDefault": false,
+  "Modules": [
+    {
+      "Name": "MimirCompositeRuntime",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "MimirCompositeEditor",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "MimirCompositeTests",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit"
+    }
+  ]
+}

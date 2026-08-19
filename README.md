@@ -158,3 +158,88 @@ The repository is currently being moved through the v2 gates in
 `docs/06_final_v1_plan.md`. Contract acceptance does not by itself prove the
 installed ZIP or UE plugin complete; large slices require external audit and
 the final field acceptance belongs to the owner.
+
+## UE-плагин (этап C): тесты и диагностика
+
+Плагин `ue/MimirComposite` собирается stock UE 5.7.4; test-host `.uproject` не
+модифицируется, поэтому редактор запускается с `-EnablePlugins=MimirComposite`.
+Automation-тесты `Mimir.*` ищут каталог `golden/` репозитория в порядке:
+`-MHGoldenRoot=<repo>/golden` → переменная окружения `MH_GOLDEN_ROOT` →
+`<plugin>/../../golden` (плагин запущен прямо из чекаута).
+
+Из UI: запустите редактор (при необходимости один раз выполните
+`setx MH_GOLDEN_ROOT "<repo>\golden"`), затем **Tools → Session Frontend →
+Automation**, фильтр `Mimir`, Start Tests.
+
+Headless (PowerShell):
+
+```powershell
+& "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "<path>\MimirHead_portfolio.uproject" `
+  -EnablePlugins=MimirComposite `
+  -MHGoldenRoot="<repo>\golden" `
+  -ExecCmds="Automation RunTests Mimir; Quit" `
+  -unattended -nop4 -nosplash -nullrhi -stdout -log
+```
+
+Диагностический слепок FBX (`mh.fbxdump:1`, вне frozen-контракта):
+
+```powershell
+& "...\UnrealEditor-Cmd.exe" "<path>\MimirHead_portfolio.uproject" `
+  -run=MHFbxDump "<path>\model.fbx" --full `
+  -EnablePlugins=MimirComposite -unattended -nop4 -stdout `
+  -abslog="<path>\fbxdump.log"
+```
+
+Слепок иерархии `.composite` v2 (кодек + resolver Clean Sources v2):
+
+```powershell
+& "...\UnrealEditor-Cmd.exe" "<path>\MimirHead_portfolio.uproject" `
+  -run=MHCompositeDump "<path>\scene.composite" -root="<source_root>" `
+  -EnablePlugins=MimirComposite -unattended -nop4 -stdout `
+  -abslog="<path>\compositedump.log"
+```
+
+Без `-root` печатается иерархия одного файла; с `-root` commandlet сканирует
+payload'ы под `source_root`, рекурсивно раскрывает `composite_ref` и печатает
+resolve-статус каждого ресурса (unresolved / duplicate / divergent / cycle).
+В редакторе `.composite` v2 импортируется фабрикой в read-only
+`UMHCompositeAsset` (Content Browser → Import).
+
+Reader-анализ source root против Ledger (классификация `07` §4):
+
+```powershell
+& "...\UnrealEditor-Cmd.exe" "<path>\MimirHead_portfolio.uproject" `
+  -run=MHAnalyzeSources -root="<source_root>" `
+  -ledger="<path>\ledger.json" -writeledger="<path>\ledger.json" `
+  -report="<path>\analyze.json" `
+  -EnablePlugins=MimirComposite -unattended -nop4 -stdout `
+  -abslog="<path>\analyze.log"
+```
+
+Печатает строку на каждый ResourceUID (`CREATE`, `UPDATE_GEOMETRY`,
+`UPDATE_DESCRIPTOR`, `UPDATE_PROPERTIES`, `MOVE`, `NO_CHANGE`,
+`NO_CHANGE_EXTERNAL`, `REMOVE`, `BLOCKED`), затем предупреждения и ошибки.
+Без `-root` берётся `SourceRoot` из **Project Settings → Plugins → Mimir
+Composite**; если не задан ни там, ни в аргументах — usage и exit code 2.
+`-ledger` читает снимок Ledger, `-writeledger` пишет продвинутый (строки
+`NO_CHANGE_EXTERNAL`, `REMOVE` и `BLOCKED` не продвигаются никогда),
+`-report` — JSON-отчёт `mh.analyze_sources:1`. Exit code 1 при любом `MH_E_*`.
+Снимок Ledger — reader state: держите его под `Saved/`, а не в `source_root`,
+и не путайте с editor-ассетом `<content_root>/_MH/Ledger`.
+
+### Полевые тесты в UI редактора
+
+- **Импорт `.composite`:** обычный **Import** в Content Browser (или
+  drag&drop файла). Фабрика зарегистрирована на расширение `composite`,
+  редактор сам выбирает наш импортёр и создаёт read-only `UMHCompositeAsset`;
+  правый клик по ассету → **Reimport** обновляет его in place.
+- **Tools → Mimir → Mimir FBX Dump…** — выбрать FBX: паспорт Carrier B
+  (identity либо причина карантина) уходит в Message Log «Mimir», а
+  канонические `*.summary.json` / `*.full.json` — в `Saved/MimirDumps/`.
+- **Tools → Mimir → Mimir Composite Dump…** — выбрать `.composite`, затем
+  каталог `source_root` (Cancel = слепок одного файла): иерархия, resolve-
+  статусы, дубликаты/divergent/циклы — в Message Log «Mimir».
+- Кастомный импорт геометрии `.mesh.fbx` в UStaticMesh (наш `FMHFbxBackend`,
+  Combined-LOD, слоты из паспорта) — gate C2; до него FBX в Content Browser
+  импортируется штатным UE-импортёром.

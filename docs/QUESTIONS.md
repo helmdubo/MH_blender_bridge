@@ -76,3 +76,26 @@ duplicate/divergent state, пока художник не удалит/пере�
 - Blender writer не имеет cache/diff; Import Composite cache строится молча;
 - UE startup/watcher сравнивает scan с Ledger;
 - legacy reader существует только в migration utility.
+
+## UE plugin questions (этап C)
+
+### UE-QUESTION-13 — passport carrier property key
+
+**Статус.** РЕШЕНО фактом v2 writer: production код
+`addon/mh4blend/core/fbx_passport.py` пишет carrier custom property
+`mh_fbx_passport` (underscore) со schema `mh.fbx_passport`. UE reader обязан
+читать это имя. Внимание ревьювера: §4.2 `05_source_schema_v1.md` словами
+называет property `mh.fbx_passport` — это расхождение формулировки с writer;
+требуется одно-строчная правка документа, байты payload'ов не меняются.
+
+### UE-QUESTION-14 — объём `mh.fbxdump --full`
+
+**Контекст.** v2 §7.2 контракта 07: dump печатает passport, Model graph,
+`mh_lod_level`, slots, axis/units, counts. Не ратифицировано, обязан ли
+`--full` уже в теге 1 содержать mapper-facing layer arrays
+(normals/smoothing/UV/colors) или topology-only формы C0 достаточно до C2.
+
+**Временное правило.** Тег `mh.fbxdump:1` сохраняет topology-only `--full`;
+расширение формата выполняется bump'ом тега вместе с fixtures C2.
+
+**Статус.** ОТКРЫТ.
