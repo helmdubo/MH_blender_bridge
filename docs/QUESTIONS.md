@@ -99,3 +99,90 @@ duplicate/divergent state, пока художник не удалит/пере�
 расширение формата выполняется bump'ом тега вместе с fixtures C2.
 
 **Статус.** ОТКРЫТ.
+
+### UE-QUESTION-15 — authority applied-state: Ledger или import data ассета
+
+**Контекст.** Owner уточнил, что итоговая выжимка архитектурного агента является
+ключевым pivot развития UE-инструмента и имеет приоритет над его первым
+сообщением. Целевое решение: authoritative last-applied graph внутри каждого
+`UStaticMesh` через штатный `UInterchangeAssetImportData`, а
+`UMHImportLedger` — disposable dashboard/index. Вариант первого сообщения с
+самостоятельным `UMHStaticMeshImportData : UAssetImportData` не считается
+равноправной альтернативой. Это всё ещё формально противоречит действующему
+`07` §§2,4,12 и D44, которые пока не обновлены нормативным docs-коммитом.
+
+**Вопрос.** Каким docs-коммитом и с какого gate формально supersede-ятся
+`07`/D44: `UInterchangeAssetImportData` становится applied authority, а Ledger
+остаётся derived index? Нужен ли тонкий MH summary только как custom attributes
+в `CachedNodeContainer` или позднее допустим subclass import data?
+
+**Временное правило.** Текущий C1 завершается по действующему контракту, потому
+что в нём ещё нет derived assets/Interchange lifecycle. Детектор изолирован за
+`IMHChangeDetector`, resolver — за `IMHSourceResolver`; первый post-C1 slice
+заменяет state implementation без изменения coordinator выше этих seam'ов.
+Новые поля on-disk протокола без отдельного amendment не вводятся.
+
+**Статус.** ЦЕЛЕВОЕ НАПРАВЛЕНИЕ ПОДТВЕРЖДЕНО OWNER; ОЖИДАЕТ НОРМАТИВНОГО
+DOCS-КОММИТА И GATE-МАРШРУТА.
+
+### UE-QUESTION-16 — Interchange spike до C2
+
+**Контекст.** Архитектурный агент предложил до C2 проверить
+`UInterchangeFbxTranslator -> UInterchangeBaseNodeContainer -> UStaticMesh` и
+сохранение `CachedNodeContainer`. Однако `07` §12 явно выносит Interchange из
+C-scope, а текущий `FMHFbxBackend` и direct FBX SDK являются утверждённым путём
+C2. Предложение дополнительно затрагивает lifecycle, module dependencies,
+provenance и будущий UE->source export.
+
+**Вопрос.** Owner подтвердил Interchange pivot. Нужно ратифицировать только его
+gate-положение: является ли доказательный spike отдельным блокирующим gate
+между C1 и C2 или первым под-gate нового C2?
+
+**Временное правило.** Interchange dependencies и factories в C1 не
+добавляются. После внешней приёмки C1 первым выполняется transport/applied-state
+spike из итоговой архитектурной выжимки: stock translator проверяется на
+production FBX, при потере обязательной семантики заменяется `UMHFbxTranslator`
+над direct SDK. Над transport вводится собственный нейтральный
+`FMHSceneIR`/material/composite IR; importer и будущий exporter не получают
+две независимые модели данных. Direct FBX SDK/R1 остаются transport/parity
+foundation и будущим deterministic writer, но не владеют UE import lifecycle.
+
+**Статус.** PIVOT ПОДТВЕРЖДЁН OWNER; ОТКРЫТА ТОЛЬКО НУМЕРАЦИЯ GATE.
+
+### UE-QUESTION-17 — граница startup между C1 и C3
+
+**Контекст.** Checklist `07` §13 требует в C1 `startup silent/prompt`, но `07`
+§10 и тот же checklist относят startup/watcher/`MHImportSources` к C3. В C1
+ещё нет builders и безопасного Execute, поэтому настоящий silent auto-import
+невозможен без преждевременного начала C2/C3.
+
+**Вопрос.** Считать ли достаточным для C1 автоматический startup
+`Scan -> Resolve -> Analyze -> Plan` с silent/prompt presentation, оставив
+asset mutation, watcher и `LedgerCommit` успешного импорта на C2/C3?
+
+**Временное правило.** C1 может автоматически построить и показать/залогировать
+план, но не продвигает Ledger и не мутирует assets. Оба режима используют те же
+`IMHSourceResolver` и `IMHChangeDetector`; Execute появляется только вместе с
+контрактными builders.
+
+**Статус.** ОТКРЫТ.
+
+### UE-QUESTION-18 — filesystem aliases на reader output/source paths
+
+**Контекст.** Лексическая path-канонизация не доказывает, что junction/symlink
+под разрешённым каталогом физически не ведёт обратно в `source_root`. Это
+создаёт обход строгого запрета записи source-файлов через `-report` и риск
+сканирования payload за физической границей root. Активные `05`/`07` не задают
+отдельную policy для filesystem aliases.
+
+**Вопрос.** Разрешать ли в будущем явно настроенный alias самого `source_root`
+после physical-root canonicalization, либо aliases должны оставаться полностью
+запрещены для reader scan/output?
+
+**Временное правило.** Writable reader output разрешён только под
+`Saved/Mimir`; любой symlink/junction-компонент output или source path
+отклоняется fail-closed. Scan отклоняет alias ниже границы настроенного
+`source_root`; сам root пока определяет границу и может быть заменён physical
+canonicalization после решения вопроса.
+
+**Статус.** ОТКРЫТ; ВРЕМЕННОЕ FAIL-CLOSED ПРАВИЛО РЕАЛИЗОВАНО В C1.

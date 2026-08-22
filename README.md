@@ -211,8 +211,7 @@ Reader-анализ source root против Ledger (классификация 
 ```powershell
 & "...\UnrealEditor-Cmd.exe" "<path>\MimirHead_portfolio.uproject" `
   -run=MHAnalyzeSources -root="<source_root>" `
-  -ledger="<path>\ledger.json" -writeledger="<path>\ledger.json" `
-  -report="<path>\analyze.json" `
+  -ledger="<path>\ledger.json" -report="C1\analyze.json" `
   -EnablePlugins=MimirComposite -unattended -nop4 -stdout `
   -abslog="<path>\analyze.log"
 ```
@@ -222,11 +221,13 @@ Reader-анализ source root против Ledger (классификация 
 `NO_CHANGE_EXTERNAL`, `REMOVE`, `BLOCKED`), затем предупреждения и ошибки.
 Без `-root` берётся `SourceRoot` из **Project Settings → Plugins → Mimir
 Composite**; если не задан ни там, ни в аргументах — usage и exit code 2.
-`-ledger` читает снимок Ledger, `-writeledger` пишет продвинутый (строки
-`NO_CHANGE_EXTERNAL`, `REMOVE` и `BLOCKED` не продвигаются никогда),
-`-report` — JSON-отчёт `mh.analyze_sources:1`. Exit code 1 при любом `MH_E_*`.
-Снимок Ledger — reader state: держите его под `Saved/`, а не в `source_root`,
-и не путайте с editor-ассетом `<content_root>/_MH/Ledger`.
+`-ledger` читает снимок Ledger, `-report` пишет JSON-отчёт
+`mh.analyze_sources:1`. Relative report path резолвится под `Saved/Mimir`;
+absolute path также обязан находиться под `Saved/Mimir`. Exit code 1 при любом
+`MH_E_*`. В C1 `-writeledger` намеренно отклоняется с exit code 2: Analyze/Plan
+не продвигает last-applied state до успешной Execute-операции. Снимок Ledger —
+reader state; его нельзя размещать в `source_root` и не следует путать с
+editor-ассетом `<content_root>/_MH/Ledger`.
 
 ### Полевые тесты в UI редактора
 
