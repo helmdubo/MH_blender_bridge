@@ -1,16 +1,19 @@
 #include "Diagnostics/MHAnalyzeSourcesCommandlet.h"
 
+#include "Diagnostics/MHReaderOutputPath.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "HAL/FileManager.h"
 #include "Ledger/MHImportLedger.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
+#include "Misc/Paths.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Settings/MHCompositeSettings.h"
-#include "Source/MHPayloadScanResolver.h"
 #include "Source/MHSourceAnalyzer.h"
+#include "Source/MHSourceComposition.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHAnalyzeSourcesCommandlet)
 
@@ -64,6 +67,41 @@ FString AnalyzeSourcesReportJson(const FString& SourceRoot, const FMHSourceAnaly
     return Json;
 }
 
+bool ResolveOutputArgument(
+    const TCHAR* ArgumentName,
+    const FString& SourceRoot,
+    FString& InOutPath)
+{
+    if (InOutPath.IsEmpty())
+    {
+        return true;
+    }
+
+    FString ResolvedPath;
+    FString Error;
+    if (!MHResolveReaderOutputPath(SourceRoot, InOutPath, ResolvedPath, Error))
+    {
+        UE_LOG(
+            LogMHAnalyzeSources,
+            Error,
+            TEXT("-%s rejected: %s"),
+            ArgumentName,
+            *Error);
+        return false;
+    }
+
+    InOutPath = MoveTemp(ResolvedPath);
+    return true;
+}
+
+bool EnsureOutputDirectory(const FString& OutputPath)
+{
+    const FString Directory = FPaths::GetPath(OutputPath);
+    return !Directory.IsEmpty() &&
+        (IFileManager::Get().DirectoryExists(*Directory) ||
+         IFileManager::Get().MakeDirectory(*Directory, true));
+}
+
 } // namespace
 
 UMHAnalyzeSourcesCommandlet::UMHAnalyzeSourcesCommandlet(const FObjectInitializer& ObjectInitializer)
@@ -91,16 +129,33 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
             LogMHAnalyzeSources,
             Error,
             TEXT("Usage: -run=MHAnalyzeSources -root=<source_root> [-ledger=<snapshot.json>] ")
-            TEXT("[-writeledger=<out.json>] [-report=<out.json>]"));
+            TEXT("[-report=<out.json>]"));
         return 2;
     }
 
     FString LedgerPath;
     FParse::Value(*Params, TEXT("ledger="), LedgerPath);
     FString WriteLedgerPath;
-    FParse::Value(*Params, TEXT("writeledger="), WriteLedgerPath);
+    const bool bWriteLedgerRequested =
+        FParse::Value(*Params, TEXT("writeledger="), WriteLedgerPath) ||
+        FParse::Param(*Params, TEXT("writeledger"));
     FString ReportPath;
     FParse::Value(*Params, TEXT("report="), ReportPath);
+
+    if (bWriteLedgerRequested)
+    {
+        UE_LOG(
+            LogMHAnalyzeSources,
+            Error,
+            TEXT("MH_E_SOURCE_INDEX_INVALID: -writeledger is disabled in C1 Analyze/Plan-only; ")
+            TEXT("Ledger advances only after a successful Execute operation"));
+        return 2;
+    }
+
+    if (!ResolveOutputArgument(TEXT("report"), SourceRoot, ReportPath))
+    {
+        return 2;
+    }
 
     TMap<FString, FMHLedgerRow> Ledger;
     if (!LedgerPath.IsEmpty())
@@ -119,23 +174,27 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
         }
     }
 
-    FMHPayloadScanResolver Resolver(SourceRoot);
+    TUniquePtr<IMHSourceResolver> Resolver;
     FString ScanError;
-    if (!Resolver.Initialize(ScanError))
+    if (!MHCreateDefaultSourceResolver(SourceRoot, Resolver, ScanError))
     {
         UE_LOG(LogMHAnalyzeSources, Error, TEXT("%s"), *ScanError);
         return 1;
     }
 
     FMHSourceAnalysis Analysis;
-    MHAnalyzeSources(Resolver, SourceRoot, Ledger, Analysis);
+    TUniquePtr<IMHChangeDetector> ChangeDetector =
+        MHCreateSnapshotChangeDetector(Ledger);
+    MHAnalyzeSources(*ChangeDetector, *Resolver, SourceRoot, Analysis);
+
+    const FMHSourceSnapshot Snapshot = Resolver->GetSnapshot();
 
     UE_LOG(
         LogMHAnalyzeSources,
         Display,
-        TEXT("scanned %s: %d payload candidates, %d ledger rows, %d classified resources"),
+        TEXT("scanned %s: %d valid UIDs, %d reader-state rows, %d classified resources"),
         *SourceRoot,
-        Resolver.GetCandidateFileCount(),
+        Snapshot.ResourceUids.Num(),
         Ledger.Num(),
         Analysis.Entries.Num());
 
@@ -170,7 +229,8 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
     if (!ReportPath.IsEmpty())
     {
         const FString ReportJson = AnalyzeSourcesReportJson(SourceRoot, Analysis);
-        if (!FFileHelper::SaveStringToFile(
+        if (!EnsureOutputDirectory(ReportPath) ||
+            !FFileHelper::SaveStringToFile(
                 ReportJson,
                 *ReportPath,
                 FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
@@ -179,41 +239,6 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
             return 1;
         }
         UE_LOG(LogMHAnalyzeSources, Display, TEXT("report written: %s"), *ReportPath);
-    }
-
-    if (!WriteLedgerPath.IsEmpty())
-    {
-        // Rows of the confirmation gate, orphans and blocked resources keep their
-        // previous state: only classifications that a real import would commit
-        // advance the snapshot.
-        TMap<FString, FMHLedgerRow> Advanced = Ledger;
-        int32 AdvancedCount = 0;
-        for (const FMHSourceAnalysisEntry& Entry : Analysis.Entries)
-        {
-            FMHLedgerRow Row;
-            if (MHLedgerRowFromAnalysis(Entry, Row))
-            {
-                Advanced.Add(Entry.ResourceUid, MoveTemp(Row));
-                ++AdvancedCount;
-            }
-        }
-        FString LedgerJson;
-        if (!MHLedgerSnapshotToJson(Advanced, LedgerJson) ||
-            !FFileHelper::SaveStringToFile(
-                LedgerJson,
-                *WriteLedgerPath,
-                FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-        {
-            UE_LOG(LogMHAnalyzeSources, Error, TEXT("cannot write ledger snapshot %s"), *WriteLedgerPath);
-            return 1;
-        }
-        UE_LOG(
-            LogMHAnalyzeSources,
-            Display,
-            TEXT("ledger snapshot written: %s (%d rows, %d advanced)"),
-            *WriteLedgerPath,
-            Advanced.Num(),
-            AdvancedCount);
     }
 
     return Analysis.HasErrors() ? 1 : 0;

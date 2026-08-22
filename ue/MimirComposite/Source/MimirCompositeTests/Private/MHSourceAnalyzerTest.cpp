@@ -64,6 +64,146 @@ int32 AnalyzerAdvanceLedger(const FMHSourceAnalysis& Analysis, TMap<FString, FMH
 	return Advanced;
 }
 
+class FAnalyzerFakeResolver final : public IMHSourceResolver
+{
+public:
+	explicit FAnalyzerFakeResolver(FString InMaterialPath)
+		: MaterialPath(MoveTemp(InMaterialPath))
+	{
+	}
+
+	virtual FMHSourceSnapshot GetSnapshot() const override
+	{
+		++SnapshotCalls;
+		FMHSourceSnapshot Snapshot;
+		Snapshot.ResourceUids.Add(AnalyzerMaterialUid);
+		Snapshot.Warnings.Add(TEXT("MH_W_FAKE_RESOLVER_SNAPSHOT"));
+		return Snapshot;
+	}
+
+	virtual FMHResolveOutcome Resolve(
+		const FString& ResourceUid,
+		const EMHResourceKind ExpectedKind) override
+	{
+		++ResolveCalls;
+		FMHResolveOutcome Outcome;
+		if (ResourceUid != AnalyzerMaterialUid)
+		{
+			return Outcome;
+		}
+		if (ExpectedKind != EMHResourceKind::Material)
+		{
+			Outcome.Status = EMHResolveStatus::KindMismatch;
+			return Outcome;
+		}
+
+		Outcome.Status = EMHResolveStatus::Resolved;
+		Outcome.PayloadPath = MaterialPath;
+		Outcome.Name = TEXT("m_analyzer");
+		Outcome.Fingerprint = TEXT("xxh3:fake-resolver-fingerprint");
+		Outcome.DescriptorHash = TEXT("xxh3:fake-resolver-semantic");
+		Outcome.CandidatePaths.Add(MaterialPath);
+		return Outcome;
+	}
+
+	mutable int32 SnapshotCalls = 0;
+	int32 ResolveCalls = 0;
+
+private:
+	FString MaterialPath;
+};
+
+class FAnalyzerFakeChangeDetector final : public IMHChangeDetector
+{
+public:
+	virtual void DetectChanges(
+		IMHSourceResolver& Resolver,
+		const FString& SourceRoot,
+		FMHSourceAnalysis& OutAnalysis) override
+	{
+		bCalled = true;
+		SeenResolver = &Resolver;
+		SeenSourceRoot = SourceRoot;
+
+		OutAnalysis = FMHSourceAnalysis();
+		FMHSourceAnalysisEntry Entry;
+		Entry.ResourceUid = TEXT("fake-detector-result");
+		Entry.Change = EMHSourceChange::Move;
+		OutAnalysis.Entries.Add(MoveTemp(Entry));
+
+		OutAnalysis.bHasDiffReport = true;
+		FMHDiffResourceOp RichOp;
+		RichOp.ResourceUid = AnalyzerMaterialUid;
+		RichOp.Flags.Add(EMHDiffFlag::Rename);
+		RichOp.Flags.Add(EMHDiffFlag::Move);
+		OutAnalysis.DiffReport.Resources.Add(MoveTemp(RichOp));
+	}
+
+	bool bCalled = false;
+	IMHSourceResolver* SeenResolver = nullptr;
+	FString SeenSourceRoot;
+};
+
+class FAnalyzerQuarantineResolver final : public IMHSourceResolver
+{
+public:
+    explicit FAnalyzerQuarantineResolver(
+        FString InPayloadPath,
+        FString InValidCandidatePath = FString())
+        : PayloadPath(MoveTemp(InPayloadPath))
+        , ValidCandidatePath(MoveTemp(InValidCandidatePath))
+    {
+        FPaths::NormalizeFilename(PayloadPath);
+        FPaths::NormalizeFilename(ValidCandidatePath);
+    }
+
+	virtual FMHSourceSnapshot GetSnapshot() const override
+	{
+		FMHSourceSnapshot Snapshot;
+		FMHSourceQuarantine& Quarantine = Snapshot.Quarantined.AddDefaulted_GetRef();
+		Quarantine.PayloadPath = PayloadPath;
+        Quarantine.Diagnostic = FString::Printf(
+            TEXT("%s: MH_E_PASSPORT_INVALID: test corruption"),
+            *PayloadPath);
+        Snapshot.Errors.Add(Quarantine.Diagnostic);
+        if (!ValidCandidatePath.IsEmpty())
+        {
+            Snapshot.ResourceUids.Add(AnalyzerMaterialUid);
+        }
+        return Snapshot;
+    }
+
+    virtual FMHResolveOutcome Resolve(
+        const FString& ResourceUid,
+        const EMHResourceKind ExpectedKind) override
+    {
+        ++ResolveCalls;
+        FMHResolveOutcome Outcome;
+        if (ValidCandidatePath.IsEmpty() || ResourceUid != AnalyzerMaterialUid)
+        {
+            return Outcome;
+        }
+        if (ExpectedKind != EMHResourceKind::Material)
+        {
+            Outcome.Status = EMHResolveStatus::KindMismatch;
+            return Outcome;
+        }
+        Outcome.Status = EMHResolveStatus::Resolved;
+        Outcome.PayloadPath = ValidCandidatePath;
+        Outcome.Name = TEXT("m_analyzer_moved");
+        Outcome.Fingerprint = TEXT("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Outcome.DescriptorHash = TEXT("xxh3:0011223344556677");
+        Outcome.CandidatePaths.Add(ValidCandidatePath);
+        return Outcome;
+    }
+
+    int32 ResolveCalls = 0;
+
+private:
+    FString PayloadPath;
+    FString ValidCandidatePath;
+};
+
 } // namespace Private
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -108,7 +248,8 @@ bool FMHSourceAnalyzerTest::RunTest(const FString& Parameters)
 			AddError(ScanError);
 			return false;
 		}
-		MHAnalyzeSources(Resolver, TempRoot, InLedger, OutAnalysis);
+		FMHLedgerChangeDetector ChangeDetector(InLedger);
+		MHAnalyzeSources(ChangeDetector, Resolver, TempRoot, OutAnalysis);
 		return true;
 	};
 
@@ -317,6 +458,139 @@ bool FMHSourceAnalyzerTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FMHSourceAnalyzerSeamsTest,
+	"Mimir.C1.AnalyzerSeams",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHSourceAnalyzerSeamsTest::RunTest(const FString& Parameters)
+{
+	const FString TempRoot = Private::AnalyzerTempRoot();
+	const FString MaterialPath = FPaths::Combine(TempRoot, TEXT("m_analyzer.material"));
+	if (!TestTrue(
+			TEXT("fake-resolver payload written"),
+			Private::AnalyzerWriteText(MaterialPath, Private::AnalyzerMaterialJson(3))))
+	{
+		return false;
+	}
+
+	Private::FAnalyzerFakeResolver Resolver(MaterialPath);
+	TMap<FString, FMHLedgerRow> EmptyLedger;
+	FMHLedgerChangeDetector LedgerDetector(EmptyLedger);
+	FMHSourceAnalysis LedgerAnalysis;
+	MHAnalyzeSources(LedgerDetector, Resolver, TempRoot, LedgerAnalysis);
+
+	bool bPassed = TestEqual(TEXT("resolver snapshot used once"), Resolver.SnapshotCalls, 1);
+	bPassed &= TestTrue(TEXT("resolver Resolve used"), Resolver.ResolveCalls > 0);
+	bPassed &= TestEqual(TEXT("fake resolver produces one entry"), LedgerAnalysis.Entries.Num(), 1);
+	bPassed &= TestEqual(TEXT("fake resolver warning forwarded"), LedgerAnalysis.Warnings.Num(), 1);
+	bPassed &= TestFalse(
+		TEXT("Ledger detector does not fabricate a rich diff report"),
+		LedgerAnalysis.bHasDiffReport);
+	const FMHSourceAnalysisEntry* Material = LedgerAnalysis.Find(Private::AnalyzerMaterialUid);
+	bPassed &= TestTrue(TEXT("fake-resolved material exists"), Material != nullptr);
+	if (Material != nullptr)
+	{
+		bPassed &= TestEqual(
+			TEXT("real detector classifies fake-resolved material"),
+			static_cast<int32>(Material->Change),
+			static_cast<int32>(EMHSourceChange::Create));
+		bPassed &= TestTrue(
+			TEXT("real detector hashes fake-resolved material"),
+			Material->DescriptorHash.StartsWith(TEXT("xxh3:")));
+	}
+
+	Private::FAnalyzerFakeChangeDetector FakeDetector;
+	FMHSourceAnalysis FakeAnalysis;
+	MHAnalyzeSources(FakeDetector, Resolver, TempRoot, FakeAnalysis);
+	bPassed &= TestTrue(TEXT("injected change detector called"), FakeDetector.bCalled);
+	bPassed &= TestTrue(TEXT("detector receives resolver interface"), FakeDetector.SeenResolver == &Resolver);
+	bPassed &= TestEqual(TEXT("detector receives source root"), FakeDetector.SeenSourceRoot, TempRoot);
+	bPassed &= TestTrue(
+		TEXT("fake detector controls analysis result"),
+		FakeAnalysis.Find(TEXT("fake-detector-result")) != nullptr);
+	bPassed &= TestTrue(
+		TEXT("injected detector supplies rich report through the same analysis seam"),
+		FakeAnalysis.bHasDiffReport);
+	const FMHDiffResourceOp* RichOp = FakeAnalysis.DiffReport.FindResource(Private::AnalyzerMaterialUid);
+	bPassed &= TestTrue(TEXT("rich detector report reaches coordinator output"), RichOp != nullptr);
+	if (RichOp != nullptr)
+	{
+		bPassed &= TestEqual(TEXT("rich detector emits two independent flags"), RichOp->Flags.Num(), 2);
+		if (RichOp->Flags.Num() == 2)
+		{
+			bPassed &= TestEqual(
+				TEXT("rich detector first flag"),
+				static_cast<int32>(RichOp->Flags[0]),
+				static_cast<int32>(EMHDiffFlag::Rename));
+			bPassed &= TestEqual(
+				TEXT("rich detector second flag"),
+				static_cast<int32>(RichOp->Flags[1]),
+				static_cast<int32>(EMHDiffFlag::Move));
+		}
+	}
+
+	const FString QuarantinedRelativePath = TEXT("broken/known.material");
+	const FString QuarantinedAbsolutePath = FPaths::ConvertRelativePathToFull(
+		FPaths::Combine(TempRoot, QuarantinedRelativePath));
+	Private::FAnalyzerQuarantineResolver QuarantineResolver(QuarantinedAbsolutePath);
+	FMHLedgerRow KnownRow;
+	KnownRow.Kind = EMHResourceKind::Material;
+	KnownRow.SourcePath = QuarantinedRelativePath;
+	TMap<FString, FMHLedgerRow> KnownLedger;
+	KnownLedger.Add(Private::AnalyzerMaterialUid, MoveTemp(KnownRow));
+	FMHLedgerChangeDetector QuarantineDetector(KnownLedger);
+	FMHSourceAnalysis QuarantineAnalysis;
+	MHAnalyzeSources(QuarantineDetector, QuarantineResolver, TempRoot, QuarantineAnalysis);
+	const FMHSourceAnalysisEntry* QuarantinedEntry =
+		QuarantineAnalysis.Find(Private::AnalyzerMaterialUid);
+	bPassed &= TestTrue(TEXT("known quarantined payload remains represented"), QuarantinedEntry != nullptr);
+	if (QuarantinedEntry != nullptr)
+	{
+		bPassed &= TestEqual(
+			TEXT("known quarantined payload blocks instead of REMOVE"),
+			static_cast<int32>(QuarantinedEntry->Change),
+			static_cast<int32>(EMHSourceChange::Blocked));
+		bPassed &= TestTrue(
+			TEXT("quarantine diagnostic is resource-local"),
+			QuarantinedEntry->Errors.ContainsByPredicate([](const FString& Error)
+			{
+				return Error.Contains(TEXT("MH_E_PASSPORT_INVALID"));
+			}));
+	}
+
+	const FString ValidCandidatePath = FPaths::Combine(TempRoot, TEXT("valid/known.material"));
+	Private::FAnalyzerQuarantineResolver QuarantineAndValidResolver(
+		QuarantinedAbsolutePath,
+		ValidCandidatePath);
+	FMHLedgerChangeDetector QuarantineAndValidDetector(KnownLedger);
+	FMHSourceAnalysis QuarantineAndValidAnalysis;
+	MHAnalyzeSources(
+		QuarantineAndValidDetector,
+		QuarantineAndValidResolver,
+		TempRoot,
+		QuarantineAndValidAnalysis);
+	const FMHSourceAnalysisEntry* QuarantinedWithCandidateEntry =
+		QuarantineAndValidAnalysis.Find(Private::AnalyzerMaterialUid);
+	bPassed &= TestTrue(
+		TEXT("quarantined applied path remains represented when UID moved elsewhere"),
+		QuarantinedWithCandidateEntry != nullptr);
+	if (QuarantinedWithCandidateEntry != nullptr)
+	{
+		bPassed &= TestEqual(
+			TEXT("quarantined applied path blocks instead of MOVE/update"),
+			static_cast<int32>(QuarantinedWithCandidateEntry->Change),
+			static_cast<int32>(EMHSourceChange::Blocked));
+	}
+	bPassed &= TestEqual(
+		TEXT("quarantine precedence avoids resolving replacement candidate"),
+		QuarantineAndValidResolver.ResolveCalls,
+		0);
+
+	IFileManager::Get().DeleteDirectory(*TempRoot, false, true);
+	return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FMHLedgerSnapshotTest,
 	"Mimir.C1.LedgerSnapshot",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -330,8 +604,8 @@ bool FMHLedgerSnapshotTest::RunTest(const FString& Parameters)
 	Mesh.Asset = FSoftObjectPath(TEXT("/Game/MH/Meshes/SM_wall_a.SM_wall_a"));
 	Mesh.SourcePath = TEXT("meshes/wall_a.mesh.fbx");
 	Mesh.AppliedGeometryHash = TEXT("xxh3:9f2c01ab34cd56ef");
-	Mesh.AppliedDescriptorHash = TEXT("xxh3:0123456789abcdef");
-	Mesh.PayloadFingerprint = TEXT("xxh3:fedcba9876543210");
+	Mesh.AppliedDescriptorHash = TEXT("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+	Mesh.PayloadFingerprint = TEXT("sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210");
 	Mesh.ImportedAt = FDateTime(2026, 8, 19, 12, 30, 15);
 	Mesh.ImportStatus = TEXT("CREATE");
 	Rows.Add(TEXT("2db5574c-3aca-43cc-9ab5-8242403e18cd"), Mesh);
@@ -340,7 +614,7 @@ bool FMHLedgerSnapshotTest::RunTest(const FString& Parameters)
 	Composite.Kind = EMHResourceKind::Composite;
 	Composite.SourcePath = TEXT("a/cycle_a.composite");
 	Composite.AppliedDescriptorHash = TEXT("xxh3:00112233445566aa");
-	Composite.PayloadFingerprint = TEXT("xxh3:aa112233445566ff");
+	Composite.PayloadFingerprint = TEXT("sha256:aa112233445566ffaa112233445566ffaa112233445566ffaa112233445566ff");
 	Composite.ImportedAt = FDateTime(2026, 8, 19, 12, 31, 0);
 	Composite.ImportStatus = TEXT("NO_CHANGE");
 	Rows.Add(TEXT("b0ca6032-8884-534d-8ceb-20f4a4edb766"), Composite);
