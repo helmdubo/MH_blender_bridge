@@ -1,5 +1,10 @@
 # ADR v3 — Interchange hybrid: applied state, semantic IR, export
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4 IN FULL.** Этот ADR не является
+> нормативным или implementation input. Действующий контракт —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); body ниже
+> сохранён как история Interchange-гипотезы.
+
 Статус: **ACTIVE**. Это нормативный docs-коммит, которого ожидали
 `UE-QUESTION-15/16`. Он ратифицирует итоговую выжимку архитектурного агента
 («расширенная версия импорта/экспорта», owner-confirmed) и supersede-ит:

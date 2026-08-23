@@ -1,5 +1,11 @@
 # dag4blend 2.12.0 → модель для Blender→UE5 composite pipeline
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4 AS NORMATIVE INPUT.** Исследовательские
+> наблюдения ниже сохранены как historical evidence, но ни одна рекомендация,
+> схема или transport/identity policy этого файла не является действующим
+> требованием. Единственный норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md).
+
 > Исторический research-документ. При расхождении приоритет у Decision Log
 > в `00_research_summary.md`, workflows `04_source_workflows.md` и замороженной
 > Source Schema v1 `05_source_schema_v1.md`.

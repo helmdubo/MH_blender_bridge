@@ -1,5 +1,10 @@
 # ADR-V2 — Passport-first authority for Clean Sources v2
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4 IN FULL.** Этот ADR не является
+> нормативным или implementation input. Действующий контракт —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); body ниже
+> сохранён как история решения passport-first.
+
 Статус: **ACCEPTED, ACTIVE NOW**. Этот ADR уточняет
 `05_source_schema_v1.md`; название того файла историческое. Старые положения
 этого ADR о «v1 остаётся активным», dual-read, uid8 filenames и ожидании

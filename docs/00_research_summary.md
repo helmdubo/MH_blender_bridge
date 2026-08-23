@@ -1,5 +1,10 @@
 # 00 — Research summary and Decision Log
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Документ целиком снят с роли
+> нормативного input. Действующий контракт и решения находятся только в
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); body ниже
+> сохранён как история исследования и решений прежних протоколов.
+
 Статус: Decision Log проекта. Активный source contract — MH Source Protocol v2
 Clean Sources (`05_source_schema_v1.md`; filename historical). Freeze Source
 Schema v1 по SHA `d52520c47544a6e36b3bac32b16237ad670abb20`

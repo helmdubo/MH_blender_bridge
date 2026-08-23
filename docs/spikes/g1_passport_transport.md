@@ -1,5 +1,11 @@
 # G1 — FBX passport transport (Blender receipt)
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4 AS POLICY; SPIKE EVIDENCE ONLY.** Все
+> passport/UID/custom-property решения ниже ненормативны и не являются
+> implementation input. Измерения сохранены только как историческая квитанция;
+> единственный действующий контракт —
+> [`../08_source_protocol_v4_plan.md`](../08_source_protocol_v4_plan.md).
+
 > **SPIKE EVIDENCE ONLY.** Active contract is Clean Sources v2 in
 > `docs/05_source_schema_v1.md`; Carrier B key is normative
 > `mh.fbx_passport`. This receipt's provisional `mh_fbx_passport`, MESH-only

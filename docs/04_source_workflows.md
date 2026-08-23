@@ -1,5 +1,11 @@
 # 04 — Clean Sources v2 workflows (NORMATIVE ACTIVE)
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Документ целиком снят с нормативной
+> роли; описанные ниже v2 workflows не являются implementation input.
+> Действующий контракт —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md), порядок
+> реализации — [`09_v4_agent_slices.md`](09_v4_agent_slices.md).
+
 Статус: пользовательские и host workflows для активного контракта
 `05_source_schema_v1.md` (историческое имя файла). Старый v1 workflow с
 owning manifests, uid8 filenames, registry hints и fail-closed manifest marker

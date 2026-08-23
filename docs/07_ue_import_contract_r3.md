@@ -1,5 +1,12 @@
 # 07 — UE Import Contract for Clean Sources v2 (ACTIVE)
 
+> **PARTIALLY SUPERSEDED BY SOURCE PROTOCOL V4.** Из этого документа выживают
+> только texture rules §5, идея master registry §6, reimport-in-place и
+> Message Log/commandlets. Все положения об identity, resolver, passport и
+> Ledger superseded. Единственный норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); выжившие
+> части читаются только в заданных им v4-срезах.
+
 Статус: контракт этапа C для `MimirComposite`, UE 5.7.4 (целевой compatibility
 5.8). Имя `r3` историческое. Старый manifest resolver/watcher, optional passport,
 Source Schema v1 runtime и общий local index полностью superseded.
