@@ -122,8 +122,12 @@ duplicate/divergent state, пока художник не удалит/пере�
 заменяет state implementation без изменения coordinator выше этих seam'ов.
 Новые поля on-disk протокола без отдельного amendment не вводятся.
 
-**Статус.** ЦЕЛЕВОЕ НАПРАВЛЕНИЕ ПОДТВЕРЖДЕНО OWNER; ОЖИДАЕТ НОРМАТИВНОГО
-DOCS-КОММИТА И GATE-МАРШРУТА.
+**Статус.** РЕШЕНО — нормативный docs-коммит выполнен:
+`ADR_V3_interchange_hybrid.md` supersede-ит `07` §§2,4,12 и applied-authority
+часть D44. Applied authority — `UInterchangeAssetImportData` (stock, MH-state
+как custom attributes в `CachedNodeContainer`); Ledger — derived index. Subclass
+import data — только по триггерам ADR v3 §3, новым вопросом. Gate-маршрут —
+C2.0 (ADR v3 §9).
 
 ### UE-QUESTION-16 — Interchange spike до C2
 
@@ -147,7 +151,9 @@ production FBX, при потере обязательной семантики 
 две независимые модели данных. Direct FBX SDK/R1 остаются transport/parity
 foundation и будущим deterministic writer, но не владеют UE import lifecycle.
 
-**Статус.** PIVOT ПОДТВЕРЖДЁН OWNER; ОТКРЫТА ТОЛЬКО НУМЕРАЦИЯ GATE.
+**Статус.** РЕШЕНО — ADR v3 §9: spike является первым блокирующим под-gate
+нового C2 с обозначением **C2.0** и собственной квитанцией; внешний аудит
+остаётся на границе C2 в целом.
 
 ### UE-QUESTION-17 — граница startup между C1 и C3
 
@@ -186,3 +192,13 @@ asset mutation, watcher и `LedgerCommit` успешного импорта на
 canonicalization после решения вопроса.
 
 **Статус.** ОТКРЫТ; ВРЕМЕННОЕ FAIL-CLOSED ПРАВИЛО РЕАЛИЗОВАНО В C1.
+
+### UE-QUESTION-19 — организационные/групповые Empty в mesh-ресурсе
+
+Полная формулировка, field-факт (пустышка `random`, перекорневление детей с
+запечёнными transforms, честность `MHFbxDump`) и временное fail-closed правило
+(`MH_E_UNTRANSPORTED_GROUP_NODE`) — в `AMENDMENT_node_hierarchy.md` §3.
+Варианты: (A) транспорт `mh_role=group` null nodes; (B) группы запрещены в
+mesh-ресурсе, вариантные семантики принадлежат `.composite`. Рекомендация — B.
+
+**Статус.** ОТКРЫТ; временное правило ACTIVE.
