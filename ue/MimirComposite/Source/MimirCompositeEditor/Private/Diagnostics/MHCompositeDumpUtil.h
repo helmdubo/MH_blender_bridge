@@ -10,10 +10,10 @@ struct FDumpOutput
     /** Human-readable hierarchy and scan summary lines. */
     TArray<FString> Lines;
 
-    /** MH_W_* diagnostics: quarantined payloads, duplicates, legacy skips. */
+    /** MH_W_* diagnostics: duplicate resolutions and legacy skips. */
     TArray<FString> Warnings;
 
-    /** MH_E_* diagnostics; non-empty means the dump found blocking facts. */
+    /** MH_E_* diagnostics, including quarantine; non-empty blocks the dump. */
     TArray<FString> Errors;
 };
 

@@ -30,6 +30,22 @@ struct MIMIRCOMPOSITEEDITOR_API FMHFbxPassport
 };
 
 /**
+ * Validates one Carrier B value without opening an FBX file. The text must be
+ * byte-for-byte equal to Python canonical_passport(document), including NFC,
+ * key order, compact separators, JSON escaping, and number spelling.
+ */
+MIMIRCOMPOSITEEDITOR_API bool MHParseFbxPassportText(
+    const FString& CarrierText,
+    FMHFbxPassport& OutPassport,
+    FString& OutError);
+
+/** Builds the exact Python descriptor_hash byte input (geometry_hash omitted). */
+MIMIRCOMPOSITEEDITOR_API bool MHBuildFbxPassportDescriptorBytes(
+    const FMHFbxPassport& Passport,
+    TArray<uint8>& OutBytes,
+    FString& OutError);
+
+/**
  * Reads the mandatory Carrier B passport: every MESH Model node must carry the
  * mh_fbx_passport custom property and all copies must match byte-for-byte.
  * Any violation fails with an MH_E_PASSPORT_INVALID-prefixed error.

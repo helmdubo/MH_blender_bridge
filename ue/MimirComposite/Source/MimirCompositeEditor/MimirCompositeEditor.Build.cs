@@ -12,6 +12,8 @@ public class MimirCompositeEditor : ModuleRules
             {
                 "Core",
                 "CoreUObject",
+                "DeveloperSettings",
+                "EditorSubsystem",
                 "Engine",
                 "MeshDescription",
                 "MimirCompositeRuntime",
@@ -22,7 +24,7 @@ public class MimirCompositeEditor : ModuleRules
             new[]
             {
                 "DesktopPlatform",
-                "DeveloperSettings",
+                "AssetRegistry",
                 "Json",
                 "MessageLog",
                 "Projects",

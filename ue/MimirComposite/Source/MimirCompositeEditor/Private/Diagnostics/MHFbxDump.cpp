@@ -290,8 +290,8 @@ void CollectProperties(
             }
         }
 
-        // TODO(QUESTION-13): the passport property key is provisional. It is
-        // exposed by fbxdump for diagnostics only and has no mapper authority.
+        // Production Clean Sources v2 writes the exact mh_fbx_passport key.
+        // fbxdump reports it diagnostically; the importer validates authority.
         if (Entry.Name == TEXT("mh_fbx_passport") || HasPassportSchema(Entry.Property))
         {
             bOutPassportPresent = true;

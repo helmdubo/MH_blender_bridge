@@ -69,6 +69,7 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_E_EMPTY_RESOURCE_COLLECTION",
             "MH_E_NESTED_COMPOSITE_COLLECTION",
             "MH_E_INVALID_LOD_HIERARCHY",
+            "MH_E_PARENT_OUTSIDE_RESOURCE",
             "MH_E_LOD_LEVELS_SPARSE",
             "MH_E_LOD_SLOT_NOT_IN_BASE",
             "MH_E_DEPRECATED_LOD_ROWS",
@@ -115,6 +116,7 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_W_TEXTURE_BASENAME_AMBIGUOUS",
             "MH_W_TEXTURE_NOT_FOUND",
             "MH_W_LOD_AUX_NODE_IGNORED",
+            "MH_W_NODE_UID_REASSIGNED",
             "MH_W_MATERIAL_NOT_FOUND",
             "MH_W_MATERIAL_PAYLOAD_FALLBACK",
             "MH_W_MATERIAL_SLOT_NOT_FOUND",
@@ -130,8 +132,8 @@ def test_error_codes_registry_matches_the_spec_table() -> None:
             "MH_W_LEGACY_COMPOSITE_V1_MIGRATION_REQUIRED",
         }
     )
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 49
-    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 21
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_E_")) == 50
+    assert sum(1 for code in ERROR_CODES if code.startswith("MH_W_")) == 22
 
 
 def test_error_codes_shape() -> None:

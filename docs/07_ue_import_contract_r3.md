@@ -4,6 +4,12 @@
 5.8). Имя `r3` историческое. Старый manifest resolver/watcher, optional passport,
 Source Schema v1 runtime и общий local index полностью superseded.
 
+> **ADR v3 supersede notice.** `ADR_V3_interchange_hybrid.md` supersede-ит:
+> §2 в части «Ledger = applied authority», §4 в части «diff против Ledger»,
+> §12 в части «Interchange вне C-scope». C1 (PR #7) завершается по тексту
+> ниже; первый post-C1 slice — C2.0 по ADR v3 §9. Остальные разделы 07
+> действуют без изменений.
+
 UE является **reader**: startup/watcher сканирует primary payloads и сравнивает
 их с Ledger. Blender explicit writer всегда пишет и не сообщает diff.
 
@@ -48,6 +54,9 @@ ResourceUID -> {
 Для materials/composites semantic hashes вычисляются из canonical payload.
 Ledger — производный reader state вне source tree. Потеря запускает full startup
 scan/import; source data не теряются.
+
+> ADR v3: начиная с C2.0 Ledger — только derived index/dashboard; applied
+> authority — `UInterchangeAssetImportData` внутри каждого ассета (ADR v3 §§2–4).
 
 **`UMHSourceImporter`** (EditorSubsystem) — публичный вход
 `ImportSources(Scope)`. Стадии приватные; частичный import выражается Plan,
@@ -264,6 +273,9 @@ Ledger location is editor-owned and not configurable into source tree.
 Composite actor/compiler/ActorFactory/Rebuild (stage D), reserved node kinds,
 ISM/LI, Interchange/USD, skeletal, authored LOD screen distances, Export
 Selection closure. Source write is read-only except explicit Material writeback.
+
+> ADR v3: исключение Interchange из C-scope superseded — Interchange входит в
+> C2 начиная с под-gate C2.0 (ADR v3 §§5,9). USD/skeletal остаются вне scope.
 
 Manifest resolver, optional passport, per-file LOD, shared local index and
 registry generation are not roadmap: they are superseded architecture.

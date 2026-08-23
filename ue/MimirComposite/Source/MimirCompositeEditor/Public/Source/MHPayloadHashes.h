@@ -29,18 +29,13 @@ MIMIRCOMPOSITEEDITOR_API bool MHMaterialSemanticHash(
 
 /**
  * descriptor_hash of docs/05 section 4.3: the passport document rebuilt from
- * the validated fields with geometry_hash removed, canonicalized by the frozen
- * library (keys sorted, NFC strings, quantized numbers) and XXH3 hashed.
- * Returns an empty string when the passport bag cannot be canonicalized.
- *
- * TODO(C1-parity): byte parity with the Python descriptor_hash (sha256 over
- * json.dumps) is NOT claimed. This value only has to stay self-consistent
- * inside the UE Ledger; parity lands together with the golden passport
- * fixtures, and until then the Ledger is the only consumer.
+ * the validated fields with geometry_hash removed, serialized exactly like
+ * Python canonical_passport (sorted keys, NFC, compact JSON), then SHA-256
+ * hashed. Returns an empty string when the passport bag is invalid.
  */
 MIMIRCOMPOSITEEDITOR_API FString MHPassportDescriptorHash(const FMHFbxPassport& Passport);
 
-/** payload_fingerprint of docs/05 section 4.3: XXH3 over the raw payload bytes. */
+/** payload_fingerprint of Source Protocol v2: SHA-256 over the raw payload bytes. */
 MIMIRCOMPOSITEEDITOR_API FString MHPayloadFingerprint(TConstArrayView<uint8> Bytes);
 
 } // namespace UE::MimirComposite

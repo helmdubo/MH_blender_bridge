@@ -17,8 +17,24 @@ class MIMIRCOMPOSITEEDITOR_API FMHPayloadScanResolver final : public IMHSourceRe
 public:
     explicit FMHPayloadScanResolver(FString InSourceRoot);
 
-    /** Runs the scan snapshot; fails only when source_root itself is unusable. */
+    /** Runs one fail-closed scan snapshot, including traversal/set stability checks. */
     bool Initialize(FString& OutError);
+
+    virtual FMHSourceSnapshot GetSnapshot() const override
+    {
+        FMHSourceSnapshot Snapshot;
+        Snapshot.ResourceUids = GetAllUids();
+        Snapshot.Quarantined = QuarantineEntries;
+        for (const FMHSourceQuarantine& Entry : QuarantineEntries)
+        {
+            Snapshot.Errors.Add(Entry.Diagnostic);
+        }
+        for (const FString& Entry : LegacySkipped)
+        {
+            Snapshot.Warnings.Add(FString::Printf(TEXT("legacy v1 (migration only): %s"), *Entry));
+        }
+        return Snapshot;
+    }
 
     virtual FMHResolveOutcome Resolve(const FString& ResourceUid, EMHResourceKind ExpectedKind) override;
 
@@ -41,13 +57,18 @@ private:
         FString Name;
         FString Path;
         FString Fingerprint;
+        FString GeometryHash;
+        FString DescriptorHash;
     };
 
     void AddPayloadFile(const FString& Path);
+    bool DiscoverPayloadPaths(TArray<FString>& OutPaths, FString& OutError) const;
+    void QuarantinePayload(const FString& Path, const FString& Diagnostic);
 
     FString SourceRoot;
     TMap<FString, TArray<FCandidate>> CandidatesByUid;
     TArray<FString> Quarantined;
+    TArray<FMHSourceQuarantine> QuarantineEntries;
     TArray<FString> LegacySkipped;
     int32 CandidateFileCount = 0;
 };

@@ -64,6 +64,9 @@ public:
     /** Loads `<ContentRoot>/_MH/Ledger`, creating an empty one when missing. */
     static UMHImportLedger* LoadOrCreate(const FString& ContentRoot);
 
+    /** Loads an existing Ledger without creating a package or UObject. */
+    static UMHImportLedger* LoadExisting(const FString& ContentRoot);
+
     /** Writes the owning package to disk; false when the save was rejected. */
     bool Save();
 };

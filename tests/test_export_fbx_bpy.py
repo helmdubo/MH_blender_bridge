@@ -363,3 +363,133 @@ def test_fbx_reports_touched_materials_without_exporting_them(tmp_path):
         material[PROP_UID]]
     assert list(tmp_path.glob("*.material")) == []
     assert not (tmp_path / "export_manifest.json").exists()
+
+
+def _fbx_model_parents(path):
+    """Map model name -> parent model name (None = FBX root) via OO links."""
+    from io_scene_fbx import parse_fbx
+
+    root, _version = parse_fbx.parse(str(path))
+    objects = next(item for item in root.elems if item.id == b"Objects")
+    names = {}
+    for model in objects.elems:
+        if model.id != b"Model":
+            continue
+        model_id = model.props[0]
+        names[model_id] = model.props[1].split(b"\x00", 1)[0].decode("utf-8")
+    connections = next(
+        item for item in root.elems if item.id == b"Connections")
+    parents = {name: None for name in names.values()}
+    for link in connections.elems:
+        if link.id != b"C" or len(link.props) < 3:
+            continue
+        if link.props[0] != b"OO":
+            continue
+        child_id, parent_id = link.props[1], link.props[2]
+        if child_id in names and parent_id in names:
+            parents[names[child_id]] = names[parent_id]
+    return parents
+
+
+def test_group_empty_hierarchy_is_transported(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, direct, nested = _build_joined("Grouped Resource")
+    group = _empty("GroupNode", collection)
+    group.location = (1.0, 2.0, 3.0)
+    group["mh_lod_level"] = 7  # stale authored value must be stripped
+    direct.parent = group
+    nested.parent = group
+
+    result = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+
+    assert result["ok"] is True
+    assert result["objects_exported"] == 3
+    parsed = read_fbx_passport(result["filepath"])
+    assert parsed.copy_count == 2  # Carrier B stays on MESH models only
+    models = _fbx_model_custom_properties(result["filepath"])
+    assert models["GroupNode"]["kind"] == b"Null"
+    assert "mh_uid" in models["GroupNode"]["properties"]
+    assert "mh_lod_level" not in models["GroupNode"]["properties"]
+    assert PASSPORT_PROPERTY not in models["GroupNode"]["properties"]
+    parents = _fbx_model_parents(result["filepath"])
+    assert parents["Direct"] == "GroupNode"
+    assert parents["Nested"] == "GroupNode"
+    assert parents["GroupNode"] is None
+    assert group["mh_lod_level"] == 7  # authoring data restored
+
+
+def test_parent_outside_resource_fails_closed(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, direct, _nested = _build_joined("Escaping Resource")
+    outsider = bpy.data.objects.new("Outsider", None)
+    bpy.context.scene.collection.objects.link(outsider)
+    direct.parent = outsider
+
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_PARENT_OUTSIDE_RESOURCE"
+
+
+def test_duplicated_mesh_exports_with_repaired_uid(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, direct, nested = _build_joined("Duplicated Resource")
+    first = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    original_uid = direct[PROP_UID]
+    original_data_uid = direct.data[PROP_UID]
+
+    duplicate = direct.copy()
+    duplicate.data = direct.data.copy()
+    collection.objects.link(duplicate)
+    assert duplicate[PROP_UID] == original_uid  # Blender copied the props
+
+    second = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+
+    assert second["ok"] is True
+    assert direct[PROP_UID] == original_uid  # keeper by name order
+    assert duplicate[PROP_UID] != original_uid
+    assert duplicate.data[PROP_UID] != original_data_uid
+    reassignments = [
+        row for row in second["validation"]["warnings"]
+        if row["code"] == "MH_W_NODE_UID_REASSIGNED"]
+    assert len(reassignments) == 2  # object uid + copied datablock uid
+    assert read_fbx_passport(second["filepath"]).copy_count == 3
+    assert second["passport"]["geometry_hash"] != first["passport"][
+        "geometry_hash"]
+
+
+def test_linked_duplicate_repairs_object_uid_only(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, direct, _nested = _build_joined("Linked Resource")
+    export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    original_uid = direct[PROP_UID]
+
+    linked = direct.copy()  # Alt+D analogue: shared mesh datablock
+    collection.objects.link(linked)
+
+    result = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+
+    assert result["ok"] is True
+    assert direct[PROP_UID] == original_uid
+    assert linked[PROP_UID] != original_uid
+    reassignments = [
+        row for row in result["validation"]["warnings"]
+        if row["code"] == "MH_W_NODE_UID_REASSIGNED"]
+    assert len(reassignments) == 1  # shared datablock is not a collision
+
+
+def test_lods_container_group_empty_is_transported(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = _build_lods("depot")
+    group = _empty("Rig", scene["lod0"])
+    render0 = scene["render"][0]
+    render0.parent = group
+
+    result = export_fbx_collection(
+        scene["root"], tmp_path, source_root=tmp_path)
+
+    assert result["ok"] is True
+    models = _fbx_model_custom_properties(result["filepath"])
+    assert models["Rig"]["kind"] == b"Null"
+    assert "mh_lod_level" not in models["Rig"]["properties"]
+    parents = _fbx_model_parents(result["filepath"])
+    assert parents["Body_LOD0"] == "Rig"

@@ -1,9 +1,11 @@
 # C1 slice — composite import path под Clean Sources v2 (handoff)
 
-Статус: **первый C1-срез, не полный gate C1**. Ветка `codex/ue-c0` слита с
-`main` (`d277231`, Source Protocol v2); весь новый код написан против
+Статус: **C1 implementation candidate, ожидает внешней приёмки gate**. Ветка
+`codex/ue-c1` продолжает принятую C0-базу; весь новый код написан против
 активных контрактов `05` (v2) и `07` (v2). Manifest-resolver v1 не
-реализовывался и не будет: он superseded.
+реализовывался и не будет: он superseded. История трёх C1-срезов ниже сохранена
+как handoff; актуальная проверочная квитанция вынесена в
+`docs/C1_AUDIT_REPORT.md`.
 
 ## Что входит в срез
 
@@ -24,7 +26,8 @@
   трёх primary payload types под `source_root`, embedded identity, conflict
   matrix 05 §9: duplicate identical → `MH_W_DUPLICATE_IDENTICAL_PAYLOAD`,
   divergent → `MH_E_DIVERGENT_REVISIONS`, отсутствие →
-  `MH_E_RESOURCE_NOT_FOUND`; per-file quarantine не валит скан.
+  `MH_E_RESOURCE_NOT_FOUND`; quarantine исключает payload из candidate set и
+  возвращается как структурированный `MH_E_*`, блокируя затронутую операцию.
 - `MHWalkCompositeWave` (Editor): рекурсивная волна `composite_ref` с
   дедупликацией по UID и `MH_E_COMPOSITE_CYCLE`.
 - `UMHCompositeAssetFactory` (Editor): `.composite` v2 → `UMHCompositeAsset`
@@ -40,8 +43,8 @@
 
 - Ledger + analyzer/классификация изменений (`NO_CHANGE`/`UPDATE_*`/`MOVE`)
   и parity M8/M9/M10 — следующий шаг C1.
-- Byte-parity канонической one-line формы паспорта с Python-эталоном
-  (сейчас: структурная валидация + консенсус; TODO(C1-parity) в коде).
+- На первом срезе byte-parity канонической one-line формы паспорта с
+  Python-эталоном была отложена; этот пункт закрыт третьим срезом ниже.
 - Проверка канонической сортировки `nodes` по `node_uid` reader'ом —
   сейчас reader лениво допускает несортированный массив; вопрос к ревьюверу.
 - Startup scan/watcher, `-run=MHImportSources`, geometry import через
@@ -89,7 +92,7 @@ Content Browser и Tools → Mimir → дампы.
   `{shader_class, params, textures}`, поэтому rename материала — `MOVE`,
   а не `UPDATE_PROPERTIES`), `MHPassportDescriptorHash` (документ паспорта,
   пересобранный из провалидированных полей без `geometry_hash`) и
-  `MHPayloadFingerprint` (xxh3 по сырым байтам).
+  `MHPayloadFingerprint` (SHA-256 по сырым байтам).
 - `FMHLedgerRow` + `UMHImportLedger` (`<content_root>/_MH/Ledger`) по `07` §2
   и независимый JSON-снимок (`mh.import_ledger:1`) для headless/commandlet/
   тестов. Снимок — reader state: он живёт под `Saved/`, в `source_root` его
@@ -102,11 +105,12 @@ Content Browser и Tools → Mimir → дампы.
   `MH_W_PAYLOAD_EXTERNAL_MODIFIED` **и**
   `MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED`; такая строка Ledger
   молча не продвигается. `MH_E_*` блокирует только свой ресурс.
-- `-run=MHAnalyzeSources -root=<source_root> [-ledger=…] [-writeledger=…]
-  [-report=…]`: скан + анализ, строка на ресурс, опциональный JSON-отчёт
-  (`mh.analyze_sources:1`) и продвинутый снимок Ledger. Без `-root` берётся
-  `SourceRoot` из project settings; нет ни того, ни другого — usage и exit 2.
-  Exit 1 при любом `MH_E_*`.
+- `-run=MHAnalyzeSources -root=<source_root> [-ledger=…] [-report=…]`: скан +
+  анализ, строка на ресурс и опциональный JSON-отчёт
+  (`mh.analyze_sources:1`). Без `-root` берётся `SourceRoot` из project
+  settings; нет ни того, ни другого — usage и exit 2. Exit 1 при любом
+  `MH_E_*`. `-writeledger` в C1 намеренно отклоняется с exit 2: Analyze/Plan
+  не имеет права продвигать last-applied state.
 - Automation: `Mimir.C1.Analyzer` (CREATE → NO_CHANGE → MOVE →
   UPDATE_PROPERTIES → REMOVE → NO_CHANGE_EXTERNAL → divergent BLOCKED) и
   `Mimir.C1.LedgerSnapshot` (round-trip строк снимка).
@@ -125,24 +129,61 @@ Content Browser и Tools → Mimir → дампы.
   confirmation gate: отсутствие записанного fingerprint ничего не доказывает.
 - `ImportStatus` в C1 хранит саму классификацию; на C2 её заменит результат
   реального импорта.
-- Карантин (`MH_E_PASSPORT_INVALID` и подобные пер-файловые отказы) остаётся
-  warning'ом анализа: он и так исключён из candidate set и не должен ронять
-  exit code всего скана.
+- Карантин (`MH_E_PASSPORT_INVALID` и подобные пер-файловые отказы) —
+  структурированная ошибка snapshot. Если прежний Ledger row указывает на
+  quarantined path, ресурс получает `BLOCKED`, а не ложный `REMOVE`.
 
 ### Что всё ещё блокирует полный C1
 
 - Parity M8/M9/M10 против Blender-эталонов: golden-фикстур со стороны
   Blender ещё нет.
-- Byte-parity `descriptor_hash` с Python (`sha256` от `json.dumps`) не
-  заявляется: UE-хеш самосогласован внутри Ledger, TODO(C1-parity) в
-  `MHPayloadHashes.h`.
 - FBX/passport строки анализатора не покрыты автотестом: в репозитории нет
   ни одной FBX-фикстуры с паспортом Carrier B, а подделывать её нельзя.
   Появится фикстура — сценарии `UPDATE_GEOMETRY`/`UPDATE_DESCRIPTOR`
   добавляются в `Mimir.C1.Analyzer` без изменения кода анализатора.
-- Startup scan/watcher, `-run=MHImportSources` и фактический импорт (C2/C3):
-  `UMHImportLedger::Save()` уже пишет пакет, но продвигает Ledger пока только
-  commandlet-снимок.
+- Вопрос `UE-QUESTION-17`: C1 реализует только startup
+  `Scan -> Resolve -> Analyze -> Plan` и никогда не мутирует assets/Ledger;
+  watcher и фактический Execute остаются C2/C3. Внешний аудитор должен принять
+  эту границу либо потребовать иной gate-route.
+
+## Третий C1-срез: точная parity и startup Analyze/Plan
+
+Добавлено поверх двух предыдущих срезов:
+
+- `descriptor_hash` паспорта и `payload_fingerprint` теперь побайтно совпадают
+  с Python-эталоном: SHA-256, Python `json.dumps(sort_keys=True,
+  separators=(",", ":"), ensure_ascii=False)`, NFC и Python float spelling.
+  Паспорт использует локальный lossless JSON DOM: UE `FJsonObject` нельзя
+  применять здесь, потому что он схлопывает case-distinct ключи `A`/`a`.
+- `IMHChangeDetector` стал обязательным seam, а resolver возвращает нейтральный
+  immutable snapshot. Semantic hashes и fingerprint фиксируются одним scan;
+  analyzer не переоткрывает payload и не может смешать две ревизии.
+- Конкретные `FMHPayloadScanResolver`/`FMHLedgerChangeDetector` создаются только
+  composition root. `UMHSourceImporter` и commandlet работают через интерфейсы.
+- Startup EditorSubsystem после Asset Registry строит и показывает/логирует
+  Plan. C1 всегда возвращает `bOutExecuted=false`; существующий Ledger читается
+  через `LoadExisting`, отсутствующий пакет не создаётся.
+- `-report` разрешает relative и absolute paths только под `Saved/Mimir`;
+  exact/descendant `source_root`, symlink и junction блокируются до создания
+  каталогов. Source tree остаётся read-only. `-writeledger` отклоняется целиком
+  до появления успешной Execute-операции.
+- Automation добавляет passport parity, seam substitution, path safety и
+  no-execute/no-Ledger-create проверки.
+
+Подтверждённый owner архитектурный pivot записан как `UE-QUESTION-15/16`:
+после внешней приёмки C1 первым отдельным slice проверяется
+`UInterchangeFbxTranslator -> NodeContainer -> UStaticMesh` и durable
+`UInterchangeAssetImportData`; Ledger становится derived dashboard. В C1
+Interchange-зависимости не вводятся, direct FBX SDK остаётся transport/parity
+foundation.
+
+Актуальная квитанция на UE 5.7.4 (CL 51494982): guarded project build с
+`-NoEngineChanges` зелёный; `Automation RunTests Mimir` — 18/18; commandlet
+`MHAnalyzeSources` записал relative report в `Saved/Mimir` и не изменил source
+fixtures; `-writeledger` отклонён с exit 2 без создания файла;
+`MHFbxDump --full` завершился с exit 0. Полные команды и пути к артефактам — в
+`docs/C1_AUDIT_REPORT.md`. Это ещё не внешняя приёмка gate C1: M8/M9/M10 и
+passport-bearing FBX golden остаются внешними зависимостями.
 
 ## Полевые наблюдения по реальному payload (2026-08-19)
 

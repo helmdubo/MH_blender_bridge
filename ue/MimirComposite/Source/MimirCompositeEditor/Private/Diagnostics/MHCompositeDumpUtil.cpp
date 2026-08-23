@@ -3,8 +3,12 @@
 #include "Codec/MHCompositeCodec.h"
 #include "Misc/FileHelper.h"
 #include "Source/MHCompositeWave.h"
-#include "Source/MHPayloadScanResolver.h"
+#include "Source/MHSourceComposition.h"
 #include "Source/MHSourceResolver.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
 
 using namespace UE::MimirComposite;
 
@@ -45,9 +49,34 @@ FString DescribeOutcome(const FMHResolveOutcome& Outcome)
     }
 }
 
+void AppendSnapshotDiagnostics(
+    const FMHSourceSnapshot& Snapshot,
+    FDumpOutput& Output)
+{
+    for (const FString& Warning : Snapshot.Warnings)
+    {
+        Output.Warnings.AddUnique(Warning);
+    }
+    for (const FString& SnapshotError : Snapshot.Errors)
+    {
+        Output.Errors.AddUnique(SnapshotError);
+    }
+    // Quarantine is structured blocking state. Repeat it into Errors even
+    // when a custom resolver omitted the redundant scan-level error list.
+    for (const FMHSourceQuarantine& Quarantine : Snapshot.Quarantined)
+    {
+        Output.Errors.AddUnique(
+            Quarantine.Diagnostic.IsEmpty()
+                ? FString::Printf(
+                    TEXT("MH_E_SOURCE_INDEX_INVALID: quarantined payload has no diagnostic: %s"),
+                    *Quarantine.PayloadPath)
+                : Quarantine.Diagnostic);
+    }
+}
+
 struct FDumpState
 {
-    FMHPayloadScanResolver* Resolver = nullptr;
+    IMHSourceResolver* Resolver = nullptr;
     TMap<FString, FMHResolveOutcome> OutcomeCache;
     FDumpOutput* Output = nullptr;
 
@@ -159,32 +188,25 @@ bool BuildDump(const FString& FilePath, const FString& SourceRoot, FDumpOutput& 
 
     FDumpState State;
     State.Output = &Out;
-    TUniquePtr<FMHPayloadScanResolver> Resolver;
+    TUniquePtr<IMHSourceResolver> Resolver;
 
     if (!SourceRoot.IsEmpty())
     {
-        Resolver = MakeUnique<FMHPayloadScanResolver>(SourceRoot);
         FString Error;
-        if (!Resolver->Initialize(Error))
+        if (!MHCreateDefaultSourceResolver(SourceRoot, Resolver, Error))
         {
             Out.Errors.Add(Error);
             return false;
         }
         State.Resolver = Resolver.Get();
+
+        const FMHSourceSnapshot Snapshot = Resolver->GetSnapshot();
         Out.Lines.Add(FString::Printf(
-            TEXT("scanned %s: %d payload candidates, %d quarantined, %d legacy v1 skipped"),
+            TEXT("scanned %s: %d resource UIDs, %d quarantined"),
             *SourceRoot,
-            Resolver->GetCandidateFileCount(),
-            Resolver->GetQuarantined().Num(),
-            Resolver->GetLegacySkipped().Num()));
-        for (const FString& Entry : Resolver->GetQuarantined())
-        {
-            Out.Warnings.Add(FString::Printf(TEXT("quarantined: %s"), *Entry));
-        }
-        for (const FString& Entry : Resolver->GetLegacySkipped())
-        {
-            Out.Warnings.Add(FString::Printf(TEXT("legacy v1 (migration only): %s"), *Entry));
-        }
+            Snapshot.ResourceUids.Num(),
+            Snapshot.Quarantined.Num()));
+        AppendSnapshotDiagnostics(Snapshot, Out);
 
         FMHCompositeWaveResult Wave;
         MHWalkCompositeWave(*Resolver, Root, FilePath, Wave);
@@ -212,5 +234,49 @@ bool BuildDump(const FString& FilePath, const FString& SourceRoot, FDumpOutput& 
 
     return Out.Errors.Num() == 0;
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHCompositeDumpSnapshotDiagnosticsTest,
+    "Mimir.C1.Diagnostics.CompositeDumpSnapshot",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositeDumpSnapshotDiagnosticsTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+
+    FMHSourceSnapshot Snapshot;
+    Snapshot.Warnings.Add(TEXT("MH_W_LEGACY_SOURCE_SKIPPED: legacy.composite"));
+    Snapshot.Errors.Add(TEXT("MH_E_SOURCE_INDEX_INVALID: scan failure"));
+
+    FMHSourceQuarantine& Diagnosed = Snapshot.Quarantined.AddDefaulted_GetRef();
+    Diagnosed.PayloadPath = TEXT("C:/source/broken.material");
+    Diagnosed.Diagnostic =
+        TEXT("C:/source/broken.material: MH_E_INVALID_MATERIAL_VALUE: invalid material");
+    FMHSourceQuarantine& MissingDiagnostic = Snapshot.Quarantined.AddDefaulted_GetRef();
+    MissingDiagnostic.PayloadPath = TEXT("C:/source/unknown.mesh.fbx");
+
+    FDumpOutput Output;
+    AppendSnapshotDiagnostics(Snapshot, Output);
+
+    bool bPassed = TestEqual(TEXT("only snapshot warnings remain warnings"), Output.Warnings.Num(), 1);
+    bPassed &= TestEqual(TEXT("scan and both quarantine facts block"), Output.Errors.Num(), 3);
+    bPassed &= TestTrue(
+        TEXT("diagnosed quarantine remains an error"),
+        Output.Errors.Contains(Diagnosed.Diagnostic));
+    bPassed &= TestTrue(
+        TEXT("missing quarantine diagnostic fails closed"),
+        Output.Errors.ContainsByPredicate([](const FString& Error)
+        {
+            return Error.StartsWith(TEXT("MH_E_SOURCE_INDEX_INVALID: quarantined payload has no diagnostic:"));
+        }));
+    bPassed &= TestFalse(
+        TEXT("quarantine is never downgraded to warning"),
+        Output.Warnings.Contains(Diagnosed.Diagnostic));
+    return bPassed;
+}
+
+#endif // WITH_DEV_AUTOMATION_TESTS
 
 } // namespace MH::CompositeDump

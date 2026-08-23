@@ -90,6 +90,15 @@ bool FMHPayloadResolverTest::RunTest(const FString& Parameters)
 			static_cast<int32>(Outcome.Status),
 			static_cast<int32>(EMHResolveStatus::Resolved));
 		bPassed &= TestEqual(TEXT("resolved name"), Outcome.Name, TEXT("cycle_a"));
+		bPassed &= TestTrue(
+			TEXT("snapshot carries semantic hash"),
+			Outcome.DescriptorHash.StartsWith(TEXT("xxh3:")));
+		bPassed &= TestTrue(
+			TEXT("snapshot carries exact byte fingerprint"),
+			Outcome.Fingerprint.StartsWith(TEXT("sha256:")));
+		bPassed &= TestTrue(
+			TEXT("composite snapshot has no geometry hash"),
+			Outcome.GeometryHash.IsEmpty());
 
 		Outcome = Resolver.Resolve(Private::CycleAUid, EMHResourceKind::StaticMesh);
 		bPassed &= TestEqual(
@@ -144,6 +153,27 @@ bool FMHPayloadResolverTest::RunTest(const FString& Parameters)
 		FileManager.Delete(*FPaths::Combine(TempRoot, TEXT("c/cycle_a.composite")));
 	}
 
+	// Identity is global: one UID declared by different resource kinds blocks
+	// even when the caller asks for the otherwise valid composite candidate.
+	{
+		FString CrossKindMaterial = Private::MaterialJson(TEXT("cross_kind"));
+		CrossKindMaterial.ReplaceInline(Private::MaterialUid, Private::CycleAUid);
+		const FString CrossKindPath =
+			FPaths::Combine(TempRoot, TEXT("materials/cross_kind.material"));
+		Private::WriteText(CrossKindPath, CrossKindMaterial);
+		FMHPayloadScanResolver Resolver(TempRoot);
+		FString Error;
+		Resolver.Initialize(Error);
+		const FMHResolveOutcome Outcome =
+			Resolver.Resolve(Private::CycleAUid, EMHResourceKind::Composite);
+		bPassed &= TestEqual(
+			TEXT("same UID across kinds blocks globally"),
+			static_cast<int32>(Outcome.Status),
+			static_cast<int32>(EMHResolveStatus::DivergentRevisions));
+		bPassed &= TestEqual(TEXT("cross-kind candidates are both reported"), Outcome.CandidatePaths.Num(), 2);
+		FileManager.Delete(*CrossKindPath);
+	}
+
 	// Material self-identity resolves; malformed payloads quarantine per file.
 	{
 		Private::WriteText(
@@ -165,6 +195,25 @@ bool FMHPayloadResolverTest::RunTest(const FString& Parameters)
 			TEXT("quarantine names the material error"),
 			Resolver.GetQuarantined().Num() == 1 &&
 				Resolver.GetQuarantined()[0].Contains(TEXT("MH_E_INVALID_MATERIAL_VALUE")));
+		const FMHSourceSnapshot Snapshot = Resolver.GetSnapshot();
+		bPassed &= TestEqual(TEXT("quarantine is a scan error"), Snapshot.Errors.Num(), 1);
+		bPassed &= TestEqual(TEXT("quarantine is structured"), Snapshot.Quarantined.Num(), 1);
+		bPassed &= TestFalse(
+			TEXT("quarantine is never downgraded to warning"),
+			Snapshot.Warnings.ContainsByPredicate([](const FString& Warning)
+			{
+				return Warning.Contains(TEXT("quarantined"));
+			}));
+		if (Snapshot.Quarantined.Num() == 1)
+		{
+			bPassed &= TestTrue(
+				TEXT("structured quarantine has absolute normalized path"),
+				FPaths::IsRelative(Snapshot.Quarantined[0].PayloadPath) == false &&
+				Snapshot.Quarantined[0].PayloadPath.EndsWith(TEXT("broken.material")));
+			bPassed &= TestTrue(
+				TEXT("structured quarantine preserves blocking diagnostic"),
+				Snapshot.Quarantined[0].Diagnostic.Contains(TEXT("MH_E_INVALID_MATERIAL_VALUE")));
+		}
 	}
 
 	// FBX without the mandatory Carrier B passport is quarantined.
