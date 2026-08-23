@@ -1,5 +1,11 @@
 # G3/G4 — local passport index and payload publication spikes
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4 AS POLICY; SPIKE EVIDENCE ONLY.** Все
+> passport/UID/index-architecture решения ниже ненормативны и не являются
+> implementation input. Atomic-publication measurements сохранены только как
+> историческая квитанция; единственный действующий контракт —
+> [`../08_source_protocol_v4_plan.md`](../08_source_protocol_v4_plan.md).
+
 > **SPIKE EVIDENCE ONLY / INDEX ARCHITECTURE SUPERSEDED.** Active Clean Sources
 > v2 uses a stateless Blender writer: every explicit Export performs target
 > collision guard, tmp→atomic rename and exits, with no hash-skip, diff, source

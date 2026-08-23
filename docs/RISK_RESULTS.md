@@ -1,5 +1,11 @@
 # RISK_RESULTS — результаты go/no-go проверок
 
+> **PARTIALLY SUPERSEDED BY SOURCE PROTOCOL V4.** Воспроизводимые измерения
+> axis/FBX transport сохранены как historical evidence. Все policy verdicts и
+> implementation requirements этого файла superseded; их нельзя применять к
+> v4. Единственный норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md).
+
 > **MEASUREMENT EVIDENCE / POLICY PARTLY SUPERSEDED.** Числа axis/FBX transport
 > остаются воспроизводимыми evidence. Все выводы ниже, предлагающие production
 > `hash-skip`, local/shared index или «ничего не писать при no-op», superseded

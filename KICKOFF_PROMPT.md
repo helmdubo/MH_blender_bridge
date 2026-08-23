@@ -1,3 +1,88 @@
+# KICKOFF — MH Blender Bridge: Source Protocol v4
+
+> **ACTIVE EXECUTOR PROMPT.** Единственный норматив —
+> [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md).
+> Инварианты, срезы S0–S6 и acceptance —
+> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). Любой конфликт со
+> старыми документами решается в пользу 08.
+
+Ты — исполнитель в роли Principal Technical Artist. Репозиторий переводит
+Blender Extension `addon/mh4blend` и editor-only UE plugin
+`ue/MimirComposite` со старого Source Protocol v2 на v4. Текущее наличие в коде
+UID, passport, meshser и Ledger ожидаемо до соответствующих срезов и не делает
+v2 активным контрактом.
+
+## Обязательное чтение до любых правок
+
+1. `docs/08_source_protocol_v4_plan.md` — целиком.
+2. `docs/09_v4_agent_slices.md` — целиком.
+
+Документы `00–07`, `ADR_*`, `AMENDMENT_*`, `RISK_RESULTS` и `ROADMAP` —
+история либо частично superseded. Их body читается только там, где текущий срез
+прямо требует исторический контекст; активную семантику из них выводить нельзя.
+
+## Формула v4
+
+```text
+Имя файла определяет identity. Расширение определяет тип.
+Папка — только организация и текущее расположение.
+StaticMesh — односторонне генерируемый asset (Blender -> UE).
+Material и Composite — двусторонние JSON через explicit overwrite Publish.
+Project Resource Index — rebuildable кэш, не authority.
+Applied state живёт внутри соответствующего UE asset.
+Дубликат имени одного kind не выбирается автоматически.
+Rename — сознательный breaking change.
+UUID не существуют нигде.
+```
+
+## Процесс исполнения
+
+- Начинать от свежего `origin/main` (`bb684f1` или новее) и записывать
+  фактический base SHA в квитанции.
+- Срезы идут строго S0 → S1 → S2 → S3 → S4 → S5 → S6. Один срез — одна ветка
+  `v4/s<N>-<short>`, один PR и одна квитанция
+  `docs/receipts/v4_s<N>.md`.
+- PR самостоятельно не мержить: merge выполняет owner после внешнего ревью.
+- Документация — по-русски; код, identifiers и commit messages — по-английски.
+- Не изобретать новые нормативные решения. Реальную дыру записывать в
+  `docs/QUESTIONS.md` по форме `Контекст → Вопрос → Временное fail-closed
+  правило → Статус` и отмечать blocker в квитанции.
+- Не изменять UE Engine. Не трогать `reference/` и `golden/` вне явного scope
+  текущего среза. UUID/dual-read/migration в v4 запрещены.
+
+## Первый срез: S0 Documentation overhaul
+
+Код не менять. Поставить v4 superseded/partially-superseded баннеры на документы
+из 09 S0, актуализировать `docs/QUESTIONS.md`, `README.md` и этот prompt,
+сохранить исторический body, создать `docs/receipts/v4_s0.md`. Acceptance:
+UID/passport/UE→FBX утверждения старых нормативов находятся только под явным
+v4-superseded баннером, а README отражает формулу v4.
+
+После owner merge S0 следующий исполнитель начинает S1 от нового `main`, а не
+продолжает в ветке S0.
+
+## Проверка
+
+Зафиксировать фактические команды и результаты, не копировать устаревшие
+счётчики:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q
+```
+
+`*_bpy.py` проверяются в Blender 4.5 LTS. UE-срезы проверяются stock UE 5.7.4:
+guarded host build с `-EnablePlugin=MimirComposite -NoEngineChanges -NoUBA`,
+`BuildPlugin -StrictIncludes` без unity/PCH и `Automation RunTests Mimir`.
+
+---
+
+## Архивный kickoff этапа A
+
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Весь текст ниже сохранён без удаления
+> как исторический prompt. Он не является active instruction или normative
+> input; любые UID/manifest/passport/UE→FBX требования ниже ненормативны.
+
 > Архивный kickoff этапа A. Он не описывает текущий статус этапа B;
 > актуальны план и Decision Log в `docs/02_mvp_plan.md` и `docs/00_research_summary.md`.
 

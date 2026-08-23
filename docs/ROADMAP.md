@@ -1,5 +1,11 @@
 # ROADMAP — post-MVP направления с критериями пересмотра
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4 AS AN ACTIVE ROADMAP.** Перечень ниже
+> сохранён как исторический backlog и не задаёт scope, приоритет или
+> implementation requirements. Действующий норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md), действующие
+> срезы — [`09_v4_agent_slices.md`](09_v4_agent_slices.md).
+
 Правило: направление не берётся в работу «по ощущению» — у каждого записаны
 критерии, при выполнении которых решение пересматривается. Порядок внутри
 списка — не приоритет.

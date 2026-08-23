@@ -1,5 +1,11 @@
 # Combined-LOD FBX — normative v2 profile
 
+> **PARTIALLY SUPERSEDED BY SOURCE PROTOCOL V4.** Выживает только решение
+> Combined-LOD: один FBX содержит все dense LOD-уровни ресурса. Части о
+> passport, `mh_lod_level`, meshser/hash и migration superseded. Единственный
+> норматив — [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md),
+> особенно §4 и §12.
+
 Статус: **ACTIVE NOW** как часть MH Source Protocol v2. Этот документ больше
 не является временной поправкой к v1. Его прежние uid8/manifest/per-file LOD
 формулировки superseded Clean Sources CONTRACT и сохранены только как

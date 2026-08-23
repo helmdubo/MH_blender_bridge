@@ -1,5 +1,11 @@
 # План разработки: Blender → UE5 Composite Pipeline (MVP)
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Этот план больше не задаёт порядок или
+> acceptance-критерии работ. Действующий норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md), действующие
+> срезы S0–S6 — [`09_v4_agent_slices.md`](09_v4_agent_slices.md). Body сохранён
+> как история прежнего плана.
+
 > **HISTORICAL EVIDENCE ONLY / SUPERSEDED BY CLEAN SOURCES v2.** Весь план ниже,
 > включая MVP criteria, B/C sequencing, manifest watcher, uid8 filenames и
 > hash-skip, не является implementation input. Активные документы:

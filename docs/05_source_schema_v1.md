@@ -1,5 +1,10 @@
 # 05 — MH Source Protocol v2: Clean Sources (NORMATIVE ACTIVE)
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Документ целиком не является активным
+> on-disk/runtime-контрактом. Действующий норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); body ниже
+> сохранён как история Source Protocol v2.
+
 Статус: единственный активный on-disk и runtime-контракт Blender → UE.
 Имя файла документа сохранено только ради стабильных ссылок. Замороженная
 Source Schema v1 по SHA `d52520c47544a6e36b3bac32b16237ad670abb20`

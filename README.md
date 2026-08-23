@@ -1,5 +1,120 @@
 # MH_blender_bridge
 
+> **ACTIVE TARGET: MH SOURCE PROTOCOL V4.** Единственный норматив —
+> [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md).
+> Порядок реализации и definition of done —
+> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). Реализация в
+> `addon/mh4blend` и `ue/MimirComposite` в начале перехода всё ещё соответствует
+> старому v2; это ожидаемое состояние до завершения S1–S6, а не альтернативный
+> контракт.
+
+## Source Protocol v4 в одном экране
+
+```text
+Имя файла определяет identity. Расширение определяет тип.
+Папка — только организация и текущее расположение.
+StaticMesh — односторонне генерируемый asset (Blender -> UE).
+Material и Composite — двусторонние JSON через explicit overwrite Publish.
+Project Resource Index — rebuildable кэш, не authority.
+Applied state живёт внутри соответствующего UE asset.
+Дубликат имени одного kind не выбирается автоматически.
+Rename — сознательный breaking change.
+UUID не существуют нигде.
+```
+
+`ResourceKey = Kind + LogicalName`, где logical name соответствует
+`[a-z0-9_]+` и получается снятием полного составного расширения:
+
+```text
+garage_a.mesh.fbx       -> static_mesh:garage_a
+m_stucco.material       -> material:m_stucco
+garage_type_a.composite -> composite:garage_type_a
+brick_a_tex_d.png       -> texture:brick_a_tex_d
+```
+
+Source-дерево может иметь любую структуру папок. Перемещение файла сохраняет
+identity; rename означает `DELETE + CREATE`. Одинаковый logical name разных
+kinds допустим. Дубликаты одного kind блокируют resource и dependents — scanner
+не выбирает победителя по mtime, размеру или порядку папок.
+
+## Активные документы
+
+- [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md) —
+  единственный активный норматив;
+- [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md) — инварианты,
+  срезы S0–S6 и сводные acceptance-тесты;
+- [`docs/QUESTIONS.md`](docs/QUESTIONS.md) — открытые неоднозначности с
+  временными fail-closed правилами;
+- `docs/receipts/` — квитанции выполненных v4-срезов.
+
+Документы `00–07`, `ADR_*`, `AMENDMENT_*`, прежние `ROADMAP` и policy-выводы
+`RISK_RESULTS` исторические или частично superseded. Выжившие части `07` и двух
+amendment перечислены в их верхних баннерах и в 08 §12.
+
+## Контракты payload
+
+- `*.mesh.fbx` — обычный FBX без MH passport/custom properties. Один файл
+  содержит все dense LOD; mesh nodes классифицируются по `_lodNN`, collision —
+  по `UCX_`/`_cls_phys|trace|both`, sockets — по `SOCKET_`, остальные null nodes
+  передают группы. Parent closure проверяется fail-closed. Изменение raw hash
+  вызывает полный in-place rebuild `UStaticMesh`.
+- `*.material` — лаконичный JSON: форма `class` несёт `textures` и `params`, а
+  форма `library` задаёт ссылку на library material; обе формы без
+  schema/version/mode/UID. Publish полностью перезаписывает source через sibling
+  tmp, read-back и atomic replace; writer не делает diff.
+- `*.composite` — JSON-дерево `mesh|actor|composite|group` с transform и без
+  material information/UID. Publish имеет ту же full-overwrite семантику;
+  циклы и unresolved references блокируют resource.
+- Текстуры резолвятся по выжившему каскаду `exact path -> unique basename ->
+  unresolved`. Неопределённая форма canonical texture reference зафиксирована
+  как [`OPEN-V4-2`](docs/QUESTIONS.md#open-v4-2--canonical-texture-reference-и-image-extensions)
+  и до owner-решения fail-closed блокирует material с непустым `textures` вместе
+  с его dependents.
+
+UE — единственный писатель rebuildable индекса
+`<UnrealProject>/Saved/MimirBridge/ProjectIndex.sqlite`. Blender индекс не
+читает и не пишет. Генерируемые UE paths детерминированы kind и logical name и
+не зависят от source-папки.
+
+## Реализация и проверка
+
+Работа идёт последовательно отдельными PR: S0 documentation → S1 purge legacy
+UID/passport → S2 materials → S3 composites → S4 index → S5 StaticMesh importer
+→ S6 watcher/commandlets/UX. Каждый срез имеет ветку `v4/s<N>-*` и квитанцию
+`docs/receipts/v4_s<N>.md`; исполнитель не мержит PR самостоятельно.
+
+Python-проверка без Blender:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q
+```
+
+`*_bpy.py` запускаются внутри Blender 4.5 LTS. UE-плагин проверяется на stock UE
+5.7.4 guarded build с `-EnablePlugin=MimirComposite -NoEngineChanges -NoUBA`,
+`BuildPlugin -StrictIncludes` без unity/PCH и `Automation RunTests Mimir`.
+Engine не модифицируется и не форкается.
+
+## Структура репозитория
+
+```text
+docs/               # v4 contract, slices, questions, receipts, history
+reference/          # read-only reference material
+tools/              # build and verification tooling
+golden/             # fixtures and expected reports
+addon/mh4blend/     # Blender Extension
+ue/MimirComposite/  # UE editor-only plugin
+```
+
+---
+
+## Архивное README Source Protocol v2
+
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Весь оставшийся body сохранён без
+> удаления как историческое описание v2 и текущего pre-S1 tooling. Он не
+> является active contract или implementation input; любые UID/passport/
+> Ledger/UE→FBX утверждения ниже ненормативны.
+
 DCC-driven composite asset pipeline: Blender → clean versioned source files →
 UE5. Authoring model inspired by Dagor composites; identity and transport are
 defined by **MH Source Protocol v2: Clean Sources**.

@@ -1,5 +1,11 @@
 # AMENDMENT — node hierarchy and organizational empties in `*.mesh.fbx`
 
+> **PARTIALLY SUPERSEDED BY SOURCE PROTOCOL V4.** Выживают только полная
+> иерархия, fail-closed parent closure и резервирование костей. Части о
+> `mh_uid` и duplicate-node-UID repair superseded. Единственный норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md), особенно §4
+> и §12.
+
 Статус: **ACTIVE (r2)**. Дополняет Combined-LOD v2 profile и `05`. r1 этого
 документа предлагал fail-closed запрет групп (`MH_E_UNTRANSPORTED_GROUP_NODE`);
 owner решил `UE-QUESTION-19` иначе — **полная иерархия транспортируется**.

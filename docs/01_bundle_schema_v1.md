@@ -1,5 +1,10 @@
 # 01 — Source Files Schema: Composite v1 + Manifest v2 (SPEC)
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Документ целиком не является активным
+> контрактом или implementation input. Действующий норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); body ниже
+> сохранён только как история прежних bundle/source-схем.
+
 > **HISTORICAL EVIDENCE ONLY / SUPERSEDED BY CLEAN SOURCES v2.** Весь body ниже,
 > включая собственные `Статус`, schemas, filenames и transaction rules,
 > не является active contract или implementation input. Нормативно:

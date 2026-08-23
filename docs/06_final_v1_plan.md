@@ -1,5 +1,11 @@
 # 06 — MH Source Protocol v2 implementation plan
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Этот execution plan больше не активен.
+> Действующий норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md), действующий
+> порядок срезов — [`09_v4_agent_slices.md`](09_v4_agent_slices.md). Body ниже
+> сохранён как история исполнения v2.
+
 Статус: active execution plan Clean Sources v2. Имя файла historical. Прежний
 Final v1 plan и ранний v2 план с hash-skip/shared index superseded. Writer и
 reader разводятся жёстко:

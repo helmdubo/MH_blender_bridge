@@ -1,5 +1,11 @@
 # C1 slice — composite import path под Clean Sources v2 (handoff)
 
+> **SUPERSEDED BY SOURCE PROTOCOL V4 AS IMPLEMENTATION AUTHORITY; HISTORICAL
+> HANDOFF ONLY.** Утверждения ниже о v2 identity/passport/resolver/Ledger не
+> являются active contract или implementation input. Документ сохранён как
+> история C1; единственный действующий норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md).
+
 Статус: **C1 implementation candidate, ожидает внешней приёмки gate**. Ветка
 `codex/ue-c1` продолжает принятую C0-базу; весь новый код написан против
 активных контрактов `05` (v2) и `07` (v2). Manifest-resolver v1 не
