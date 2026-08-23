@@ -1,8 +1,9 @@
 # 07 — UE Import Contract for Clean Sources v2 (ACTIVE)
 
 > **PARTIALLY SUPERSEDED BY SOURCE PROTOCOL V4.** Из этого документа выживают
-> только texture rules §5, идея master registry §6, reimport-in-place и
-> Message Log/commandlets. Все положения об identity, resolver, passport и
+> только идея master registry §6, reimport-in-place и Message Log/commandlets.
+> Texture rules §5 больше НЕ выживают: canonical texture reference задан
+> 08 §5 (решение OPEN-V4-2). Все положения об identity, resolver, passport и
 > Ledger superseded. Единственный норматив —
 > [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); выжившие
 > части читаются только в заданных им v4-срезах.

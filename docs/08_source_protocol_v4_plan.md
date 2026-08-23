@@ -33,7 +33,8 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   пробелы, точки внутри stem, не-ASCII) — fail-closed reject на скане, без
   тихого lowercase.
 - Stem получается срезанием ПОЛНОГО составного расширения (`.mesh.fbx`,
-  `.material`, `.composite`); `foo.bar.mesh.fbx` невалиден.
+  `.material`, `.composite`; для текстур — одиночного `<img-ext>` из
+  allowlist §5); `foo.bar.mesh.fbx` невалиден.
 - Одинаковый stem у разных kind — три разных ресурса; одинаковый stem одного
   kind в разных папках: `MH_W_DUPLICATE_RESOURCE_NAME` на скане,
   `MH_E_AMBIGUOUS_RESOURCE_NAME` на resolve/import; блокируется ресурс и его
@@ -117,9 +118,24 @@ FBX — односторонний транспорт Blender → UE и **обы
 - `class` → master: `<master_root>/<class>` (например
   `/Game/Mimir/MasterMaterials/rendinst_perlin_layered`) — **без префикса
   `M_`** (№5). `library` → `<library_root>/<name>` — **без `MI_`** (№6).
-- Текстуры — по правилам 07 §5 (exact path под texture_root → unique
-  basename → unresolved); в JSON канонично basename/relative, абсолютные
-  пути legacy-источников нормализуются на импорте.
+- Texture reference в `textures` — ТОЛЬКО logical name текстуры
+  (`[a-z0-9_]+`, без расширения и path-разделителей); решение `OPEN-V4-2`.
+  Текстура — полноправный kind (§2): резолв идёт по ResourceKey
+  `texture:<name>` в границах source-дерева, Project Resource Index (§3) —
+  кэш этого резолва, до S4 та же семантика выполняется прямым сканом.
+  Каскад 07 §5 (`exact path → unique basename` под `texture_root`) в v4 НЕ
+  выживает; путей в JSON нет — перемещение файла текстуры не меняет ссылок;
+  понятие `texture_root` растворяется в `source_root`. Scanner
+  классифицирует kind `texture` по allowlist расширений: `png, tga, tif,
+  tiff, exr, jpg, jpeg, dds, hdr` (расширяется только поправкой owner).
+  Same-stem файлы разных расширений — дубликаты одного kind: стандартная
+  политика §2, приоритетов форматов нет. Неканоничный token (расширение,
+  путь, недопустимые символы) — `MH_E_NONCANONICAL_TEXTURE_REFERENCE`;
+  не резолвящийся — `MH_E_UNRESOLVED_TEXTURE_REFERENCE`; оба блокируют
+  материал и dependents (коды регистрируются в S2). Writer'ы (Blender
+  export, UE Publish) выводят token из stem имени файла/ассета сами и
+  fail-closed падают на неканоничном stem; reader ничего не нормализует —
+  legacy-нормализация абсолютных путей удалена из scope (миграции нет, §11).
 - Статические bool-переключатели в JSON НЕ сериализуются; в мастерах они
   включены по умолчанию (№7). Params: скаляры и векторы (массивы) как выше.
 - **Publish Material = полная перезапись source-файла без сравнения** (№11):
@@ -220,7 +236,7 @@ migration release. Единственный тестовый ассет пере
 | Документ | Судьба |
 |---|---|
 | 01/05 (bundle/source schema, embedded identity) | superseded (identity, passport, UID) |
-| 07 (UE import contract) | superseded в §§ identity/resolver/passport/Ledger; выживают: texture rules §5, master registry идея §6, reimport-in-place, Message Log/commandlets |
+| 07 (UE import contract) | superseded в §§ identity/resolver/passport/Ledger/textures; выживают: master registry идея §6, reimport-in-place, Message Log/commandlets; texture rules §5 НЕ выживают — заменены §5 этого документа (решение OPEN-V4-2) |
 | ADR_V2 passport-first | superseded целиком |
 | ADR_V3 interchange hybrid | superseded целиком (слои состояния и демоция Ledger→Index пересказаны здесь) |
 | AMENDMENT_combined_lod | Combined-LOD (один FBX = все LOD, dense levels) выживает; passport/`mh_lod_level`/meshser части superseded |

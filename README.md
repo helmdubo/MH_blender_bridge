@@ -65,11 +65,11 @@ amendment перечислены в их верхних баннерах и в 0
 - `*.composite` — JSON-дерево `mesh|actor|composite|group` с transform и без
   material information/UID. Publish имеет ту же full-overwrite семантику;
   циклы и unresolved references блокируют resource.
-- Текстуры резолвятся по выжившему каскаду `exact path -> unique basename ->
-  unresolved`. Неопределённая форма canonical texture reference зафиксирована
-  как [`OPEN-V4-2`](docs/QUESTIONS.md#open-v4-2--canonical-texture-reference-и-image-extensions)
-  и до owner-решения fail-closed блокирует material с непустым `textures` вместе
-  с его dependents.
+- Текстуры — полноправный kind: reference в `.material.textures` — только
+  logical name без расширения; резолв — по ResourceKey `texture:<name>` в
+  границах source-дерева со стандартной duplicate-policy, приоритетов
+  форматов нет. Allowlist image extensions и коды ошибок заданы 08 §5
+  (решение [`OPEN-V4-2`](docs/QUESTIONS.md#open-v4-2--canonical-texture-reference-и-image-extensions)).
 
 UE — единственный писатель rebuildable индекса
 `<UnrealProject>/Saved/MimirBridge/ProjectIndex.sqlite`. Blender индекс не

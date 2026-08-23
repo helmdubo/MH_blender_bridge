@@ -100,8 +100,12 @@ replace (`ничего не сравнивая`), Adopt-диалог (папка
 `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` на publish.
 
 Acceptance: `.material → MI → правка → Publish → повторный импорт` даёт
-NO_CHANGE; golden-векторы канонического JSON; текстуры резолвятся по
-правилам 07 §5 (выживший раздел).
+NO_CHANGE; golden-векторы канонического JSON; текстуры резолвятся как
+extensionless logical names по ResourceKey `texture:<name>` сканом
+source-дерева (08 §5, решение OPEN-V4-2; Project Index как кэш появляется
+в S4); коды `MH_E_NONCANONICAL_TEXTURE_REFERENCE` и
+`MH_E_UNRESOLVED_TEXTURE_REFERENCE` зарегистрированы в реестре и
+golden-списке.
 
 ## S3 — Composite format v4
 

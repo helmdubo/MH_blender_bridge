@@ -6,11 +6,24 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-На момент S0 открыты два вопроса v4: filesystem aliases (`OPEN-V4-1`) и форма
-texture reference (`OPEN-V4-2`). Второй вопрос выявлен аудитом S0 как реальная
-неоднозначность между 08 §2/§5 и выжившим texture rule 07 §5.
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопрос
+`OPEN-V4-2` (texture reference), выявленный аудитом S0 как реальная
+неоднозначность между 08 §2/§5 и выжившим texture rule 07 §5, решён owner —
+нормативный текст перенесён в 08 §5.
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §5 (этот docs-коммит).**
+`.material.textures[texN]` хранит только logical name без расширения и без
+path-разделителей; текстура — полноправный kind §2 с резолвом по ResourceKey
+в границах source-дерева (Project Index — кэш резолва); каскад 07 §5 и
+`texture_root` не выживают. Scanner allowlist: `png, tga, tif, tiff, exr,
+jpg, jpeg, dds, hdr` (расширяется только поправкой owner). Same-stem файлы
+разных расширений — стандартный duplicate fail-closed, без приоритета
+форматов. Коды `MH_E_NONCANONICAL_TEXTURE_REFERENCE` и
+`MH_E_UNRESOLVED_TEXTURE_REFERENCE` регистрируются в S2 вместе с
+implementation. Временное правило ниже — история S0: отдельного окна
+блокировки не требуется, S2 сразу реализует решение.
 
 **Контекст.** 08 §2 задаёт texture identity как extensionless
 `Texture + LogicalName` и показывает `<img-ext>` только у файла; примеры 08 §5
@@ -31,7 +44,8 @@ writer не интерпретируют, не угадывают и не пуб
 Конкретный `MH_E_*` код должен быть ратифицирован owner и зарегистрирован в
 implementation-срезе; S0 новый код не изобретает.
 
-**Статус.** ОТКРЫТ; блокирует соответствующую часть S2 до решения owner.
+**Прежний статус.** ОТКРЫТ; блокировал соответствующую часть S2 до решения
+owner.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
