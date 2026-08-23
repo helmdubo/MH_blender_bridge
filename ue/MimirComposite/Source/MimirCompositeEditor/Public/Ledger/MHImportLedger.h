@@ -8,9 +8,8 @@
 #include "MHImportLedger.generated.h"
 
 /**
- * One Ledger row of docs/07 section 2. The Ledger is derived reader state: it
- * records what UE last applied, never source authority. Losing it only forces a
- * full startup scan.
+ * Deprecated pre-S4 reader state. It is not source authority and is replaced
+ * by ProjectIndex.sqlite in Source Protocol v4 slice S4.
  */
 USTRUCT()
 struct MIMIRCOMPOSITEEDITOR_API FMHLedgerRow
@@ -18,27 +17,19 @@ struct MIMIRCOMPOSITEEDITOR_API FMHLedgerRow
     GENERATED_BODY()
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
-    EMHResourceKind Kind = EMHResourceKind::Composite;
+    EMHResourceKind Kind = EMHResourceKind::StaticMesh;
 
-    /** Imported asset; still empty at gate C1, where nothing is imported yet. */
+    UPROPERTY(VisibleAnywhere, Category = "Mimir")
+    FString LogicalName;
+
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FSoftObjectPath Asset;
 
-    /** Payload path relative to source_root, forward slashes. */
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FString SourcePath;
 
-    /** mh.meshser:2 passport hash; static meshes only. */
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
-    FString AppliedGeometryHash;
-
-    /** Passport descriptor hash, or the single semantic hash of a material/composite. */
-    UPROPERTY(VisibleAnywhere, Category = "Mimir")
-    FString AppliedDescriptorHash;
-
-    /** Byte fingerprint of the payload the row was written from. */
-    UPROPERTY(VisibleAnywhere, Category = "Mimir")
-    FString PayloadFingerprint;
+    FString AppliedRawHash;
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FDateTime ImportedAt;
@@ -47,40 +38,25 @@ struct MIMIRCOMPOSITEEDITOR_API FMHLedgerRow
     FString ImportStatus;
 };
 
-/**
- * Editor-owned import Ledger stored at `<content_root>/_MH/Ledger`. It lives
- * outside the source tree by construction and is never configurable into it.
- */
+/** Deprecated UObject carrier kept compilable until S4 replaces it. */
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHImportLedger final : public UObject
 {
     GENERATED_BODY()
 
 public:
-    /** ResourceUID -> last applied import state. */
+    /** Explicit transition marker; S4 removes this carrier. */
+    static constexpr bool bIsDeprecated = true;
+
+    /** Serialized FMHResourceKey::ToString() -> last observed reader state. */
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     TMap<FString, FMHLedgerRow> Rows;
 
-    /** Loads `<ContentRoot>/_MH/Ledger`, creating an empty one when missing. */
     static UMHImportLedger* LoadOrCreate(const FString& ContentRoot);
-
-    /** Loads an existing Ledger without creating a package or UObject. */
     static UMHImportLedger* LoadExisting(const FString& ContentRoot);
-
-    /** Writes the owning package to disk; false when the save was rejected. */
     bool Save();
 };
 
-/** Stable snapshot spelling of one resource kind. */
-MIMIRCOMPOSITEEDITOR_API const TCHAR* MHResourceKindLabel(EMHResourceKind Kind);
-MIMIRCOMPOSITEEDITOR_API bool MHResourceKindFromLabel(const FString& Label, EMHResourceKind& OutKind);
-
-/**
- * Plain JSON round-trip of a Ledger row map, independent of UObject packages so
- * commandlets and automation tests can carry reader state without an editor
- * package. This is reader state, not source schema: snapshots belong under
- * Saved/ and must never be written into source_root.
- */
 MIMIRCOMPOSITEEDITOR_API bool MHLedgerSnapshotToJson(
     const TMap<FString, FMHLedgerRow>& Rows,
     FString& OutJson);

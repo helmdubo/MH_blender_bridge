@@ -24,6 +24,4 @@ paths_exclude_pattern = [
   "__pycache__/",
   "*.pyc",
   ".*",
-  "scene/source_manifest.py",
-  "core/source_resolver.py",
 ]

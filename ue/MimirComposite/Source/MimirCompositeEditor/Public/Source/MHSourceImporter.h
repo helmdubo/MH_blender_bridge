@@ -8,10 +8,10 @@
 namespace UE::MimirComposite
 {
 
-/** Empty ResourceUids means the complete stable source snapshot. */
+/** Empty ResourceKeys means the complete stable source snapshot. */
 struct MIMIRCOMPOSITEEDITOR_API FMHImportSourcesScope
 {
-    TArray<FString> ResourceUids;
+    TArray<FMHResourceKey> ResourceKeys;
 
     static FMHImportSourcesScope All() { return FMHImportSourcesScope(); }
 };

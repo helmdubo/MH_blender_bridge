@@ -54,11 +54,6 @@ MIMIRCOMPOSITERUNTIME_API FMHCanonicalResult MHCanonicalJsonObjectPairsBytes(
 	TConstArrayView<TPair<FString, TSharedPtr<FJsonValue>>> Pairs,
 	TArray<uint8>& OutBytes);
 
-/** Build the frozen Source Schema v1 canonical composite value tree. */
-MIMIRCOMPOSITERUNTIME_API FMHCanonicalResult MHCompositeCanonicalForm(
-	const TSharedPtr<FJsonValue>& Document,
-	TSharedPtr<FJsonValue>& OutCanonical);
-
 /** Build the normalized on-disk and integer-only canonical material payloads. */
 MIMIRCOMPOSITERUNTIME_API FMHCanonicalResult MHMaterialForms(
 	FStringView ShaderClass,

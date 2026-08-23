@@ -6,10 +6,11 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопрос
-`OPEN-V4-2` (texture reference), выявленный аудитом S0 как реальная
-неоднозначность между 08 §2/§5 и выжившим texture rule 07 §5, решён owner —
-нормативный текст перенесён в 08 §5.
+Открыты четыре вопроса v4: filesystem aliases (`OPEN-V4-1`), mismatched LOD
+suffix (`OPEN-V4-3`), diagnostic code для общего noncanonical logical name
+(`OPEN-V4-4`) и версии diagnostic JSON (`OPEN-V4-5`). Вопрос `OPEN-V4-2`
+(texture reference), выявленный аудитом S0,
+решён owner — нормативный текст перенесён в 08 §5.
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -45,6 +46,68 @@ writer не интерпретируют, не угадывают и не пуб
 implementation-срезе; S0 новый код не изобретает.
 
 **Прежний статус.** ОТКРЫТ; блокировал соответствующую часть S2 до решения
+owner.
+
+## OPEN-V4-3 — mismatched `_lodNN` suffix в authored LOD collection
+
+**Контекст.** 08 §4 требует временно добавить `_lodNN` mesh-объекту из
+`.lodNN`-коллекции, если суффикса нет. Не определён случай, когда объект уже
+имеет terminal suffix другого уровня, например `wheel_lod00` внутри `.lod01`.
+Сохранение имени классифицирует узел в UE как неверный LOD; молчаливая замена
+суффикса была бы незафиксированным repair.
+
+**Вопрос.** Должен exporter отклонять mismatched suffix либо временно заменять
+его на уровень authored collection с восстановлением исходного имени после
+export?
+
+**Временное fail-closed правило.** Export блокируется существующим
+`MH_E_INVALID_LOD_HIERARCHY`; имя Blender-объекта не изменяется. Совпадающий
+terminal suffix сохраняется, отсутствующий добавляется только в export context
+и всегда восстанавливается в `finally`.
+
+**Статус.** ОТКРЫТ; S1 реализует временный reject и не блокируется для
+каноничных ресурсов.
+
+## OPEN-V4-4 — diagnostic code для noncanonical logical name
+
+**Контекст.** 08 §2 требует exact `[a-z0-9_]+` и fail-closed reject без
+lowercase/sanitize repair, но не называет машинный код общего нарушения.
+Существующий `MH_E_NON_ASCII_RESOURCE_NAME` зарегистрирован в Blender/UE, однако
+его имя уже семантики v4: uppercase, пробел и точка тоже неканоничны, оставаясь
+ASCII.
+
+**Вопрос.** Ратифицировать новый v4-код для любого нарушения canonical logical
+name либо официально расширить смысл/переименовать legacy-код?
+
+**Временное fail-closed правило.** Blender exporter и UE scanner валидируют
+exact `[a-z0-9_]+`, ничего не нормализуют и для любого нарушения возвращают уже
+зарегистрированный `MH_E_NON_ASCII_RESOURCE_NAME`. Новый код в S1 не вводится.
+
+**Статус.** ОТКРЫТ; diagnostic naming требует owner-решения, strict поведение
+S1 не блокируется.
+
+## OPEN-V4-5 — версии v4 diagnostic JSON
+
+**Контекст.** В S1 `MHAnalyzeSources` перешёл с UID и доменных semantic hashes
+на `ResourceKey` и raw hash, а FBX-контракт — с passport/`mh_lod_level` на
+классификацию по именам узлов. Старые теги `mh.analyze_sources:1` и
+`mh.fbxdump:1` описывали несовместимые v2-поля. 08 утверждает Message Log и
+commandlets как идею, но не ратифицирует форму или номер diagnostic JSON;
+старый FBX dump contract уже явно superseded в `UE-QUESTION-14`.
+
+**Вопрос.** Какие tag/version и точные поля должны иметь v4 AnalyzeSources
+report и mapper-facing FBX dump? Нужен ли FBX dump уже до S5, либо его следует
+вернуть вместе с `FMHSceneIR`/StaticMesh importer acceptance?
+
+**Временное fail-closed правило.** S1 не переиспользует старые теги для новых
+байтов. `MHAnalyzeSources` сохраняет console Analyze/Plan, но `-report`
+отклоняется с exit code 2 и не пишет файл. Старый FBX dump commandlet/UI и его
+`mh.fbxdump:1` удалены; v4 dump не вводится без owner-решения. Новых кодов
+ошибок для этого временного правила не добавляется: report preflight использует
+зарегистрированный `MH_E_SOURCE_INDEX_INVALID`.
+
+**Статус.** ОТКРЫТ; не блокирует name-keyed scan/resolve/analyze/plan и FBX
+transport S1, но блокирует структурированные diagnostic artifacts до решения
 owner.
 
 ## OPEN-V2-1 — Provisioning `project_uid`

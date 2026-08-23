@@ -8,25 +8,14 @@ class MHAddonPreferences(bpy.types.AddonPreferences):
 
     source_root: bpy.props.StringProperty(
         name="Project Source Root",
-        description="Project root used to resolve resource UIDs and texture paths",
+        description="Source Protocol v4 resource-tree root",
         subtype="DIR_PATH",
         default="",
-    )
-
-    texture_policy: bpy.props.EnumProperty(
-        name="External Textures",
-        description="How material export handles texture paths outside Source Root",
-        items=(
-            ("transitional", "Transitional", "Allow with a warning"),
-            ("strict", "Strict", "Block export"),
-        ),
-        default="transitional",
     )
 
     def draw(self, _context):
         layout = self.layout
         layout.prop(self, "source_root")
-        layout.prop(self, "texture_policy")
 
 
 def get_prefs(context):

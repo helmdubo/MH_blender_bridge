@@ -9,25 +9,14 @@ No scene names, bundle directories or texture roots participate in this API.
 import contextlib
 import os
 import re
-import uuid
+import tempfile
 
 import bpy
 from mathutils import Matrix
 
-from ..core.canonical import nfc, sanitize_name, validate_resource_name
-from ..core.fbx_passport import (
-    PASSPORT_PROPERTY,
-    canonical_passport,
-    make_fbx_passport,
-    read_fbx_passport,
-)
-from ..core.meshser import MeshAuxRecord, mesh_content_hash
-from ..core.model import MaterialSlot, MeshResource
+from ..core.canonical import validate_resource_name
 from ..core.payload_publish_v2 import payload_lock
-from ..core.uid import PROP_UID, ensure_uid, find_duplicate_uids
 from ..core.validate import MHValidationError
-from .composite_extract import _bag
-from .mesh_extract import _record_for_object
 
 __all__ = [
     "FBX_EXPORT_KWARGS",
@@ -40,7 +29,7 @@ __all__ = [
 # settings; the legacy aggregate exporter can import them while it is retired.
 FBX_EXPORT_KWARGS = dict(
     use_selection=True,
-    use_custom_props=True,
+    use_custom_props=False,
     use_mesh_modifiers=True,
     object_types={"MESH", "EMPTY"},
     bake_anim=False,
@@ -55,9 +44,6 @@ FBX_EXPORT_KWARGS = dict(
 )
 
 BLENDER_METERS_TO_UE_CENTIMETERS = 100.0
-EXPORTER_VERSION = "0.6.0"
-
-
 _LODS_ROOT_RE = re.compile(
     r"^(?P<base>.+)\.lods(?:\.\d{3})?$")
 _LOD_CHILD_RE_TEMPLATE = r"^{base}\.lod(?P<level>\d{{2}})(?:\.\d{{3}})?$"
@@ -80,11 +66,13 @@ def _collection_objects(collection):
 
 
 def _is_static_mesh_aux(obj):
-    upper_name = obj.name.upper()
     return (
-        obj.type == "MESH" and upper_name.startswith("UCX_")
+        obj.type == "MESH" and (
+            obj.name.startswith("UCX_")
+            or obj.name.endswith(("_cls_phys", "_cls_trace", "_cls_both"))
+        )
     ) or (
-        obj.type == "EMPTY" and upper_name.startswith("SOCKET_")
+        obj.type == "EMPTY" and obj.name.startswith("SOCKET_")
     )
 
 
@@ -290,7 +278,14 @@ def _transform_mesh_data(mesh, matrix):
 
 @contextlib.contextmanager
 def _temporary_ue_centimeter_export_state(objects):
-    """Scale geometry/translations x100 for UE and restore them exactly."""
+    """Scale disposable geometry copies/translations x100 for UE.
+
+    Mesh coordinates are stored by Blender as float32. Transforming the live
+    datablock by x100 and then by x0.01 is therefore not reversible and would
+    make a nominally read-only export slowly damage authoring geometry. Export
+    objects are temporarily pointed at scaled Mesh copies instead; the exact
+    original datablock pointers and object matrices are restored in ``finally``.
+    """
     scene = bpy.context.scene
     unit_settings = scene.unit_settings
     saved_unit_state = (
@@ -300,27 +295,27 @@ def _temporary_ue_centimeter_export_state(objects):
     )
 
     object_states = []
-    mesh_data = []
-    seen_mesh_data = set()
+    original_mesh_data = {}
     for obj in objects:
         if obj is None or obj.name not in bpy.data.objects:
             continue
         obj = bpy.data.objects[obj.name]
         object_states.append(
             (obj, obj.matrix_parent_inverse.copy(), obj.matrix_basis.copy()))
-        if (obj.type == "MESH" and obj.data is not None
-                and obj.data not in seen_mesh_data):
-            seen_mesh_data.add(obj.data)
-            mesh_data.append(obj.data)
+        if obj.type == "MESH" and obj.data is not None:
+            original_mesh_data[obj] = obj.data
 
     scale = BLENDER_METERS_TO_UE_CENTIMETERS
     scale_matrix = Matrix.Scale(scale, 4)
-    inverse_scale_matrix = Matrix.Scale(1.0 / scale, 4)
-    scaled_mesh_data = []
+    mesh_copies = {}
     try:
-        for mesh in mesh_data:
-            _transform_mesh_data(mesh, scale_matrix)
-            scaled_mesh_data.append(mesh)
+        for obj, original_mesh in original_mesh_data.items():
+            export_mesh = mesh_copies.get(original_mesh)
+            if export_mesh is None:
+                export_mesh = original_mesh.copy()
+                mesh_copies[original_mesh] = export_mesh
+                _transform_mesh_data(export_mesh, scale_matrix)
+            obj.data = export_mesh
         for obj, matrix_parent_inverse, matrix_basis in object_states:
             obj.matrix_parent_inverse = _scale_matrix_translation(
                 matrix_parent_inverse, scale)
@@ -338,9 +333,12 @@ def _temporary_ue_centimeter_export_state(objects):
             if obj and obj.name in bpy.data.objects:
                 obj.matrix_parent_inverse = matrix_parent_inverse
                 obj.matrix_basis = matrix_basis
-        for mesh in scaled_mesh_data:
-            if mesh and mesh.name in bpy.data.meshes:
-                _transform_mesh_data(mesh, inverse_scale_matrix)
+        for obj, original_mesh in original_mesh_data.items():
+            if obj and obj.name in bpy.data.objects:
+                obj.data = original_mesh
+        for export_mesh in mesh_copies.values():
+            if export_mesh and export_mesh.name in bpy.data.meshes:
+                bpy.data.meshes.remove(export_mesh)
         unit_settings.system = saved_unit_state[0]
         unit_settings.scale_length = saved_unit_state[1]
         unit_settings.length_unit = saved_unit_state[2]
@@ -436,45 +434,29 @@ def _assert_output_under_root(output_dir, source_root):
             "FBX output folder must be inside Project Source Root")
 
 
-def _object_material_slot_pairs(objects):
-    """Return every authored FBX slot mapping, without UID de-duplication."""
-    pairs = set()
-    for obj in objects:
-        for slot in obj.material_slots:
-            material = slot.material
-            if material is None:
-                continue
-            pairs.add((
-                str(slot.name or material.name),
-                material[PROP_UID],
-            ))
-    return pairs
-
-
-def _extract_material_slots(objects):
-    """Extract only FBX descriptor bindings, never material payload data."""
-    slots = []
-    uid_by_slot_name = {}
-    for obj in sorted(objects, key=lambda item: item[PROP_UID]):
+def _material_slot_names(objects):
+    """Validate and return the logical material names transported by FBX."""
+    names = set()
+    for obj in sorted(objects, key=lambda item: item.name):
         for index, slot in enumerate(obj.material_slots):
             material = slot.material
             if material is None:
                 raise MHValidationError(
-                    "MH_E_EMPTY_MATERIAL_SLOT", [obj[PROP_UID]],
+                    "MH_E_EMPTY_MATERIAL_SLOT", [obj.name],
                     f"'{obj.name}' material slot {index} is empty")
-            material_uid = ensure_uid(material)
             slot_name = str(slot.name or material.name)
-            previous = uid_by_slot_name.get(slot_name)
-            if previous is not None and previous != material_uid:
+            try:
+                validate_resource_name(slot_name)
+                validate_resource_name(material.name)
+            except (TypeError, ValueError) as exc:
                 raise MHValidationError(
-                    "MH_E_MATERIAL_SLOT_CONFLICT",
-                    [previous, material_uid],
-                    f"slot name '{slot_name}' maps to different materials")
-            if previous is None:
-                uid_by_slot_name[slot_name] = material_uid
-                slots.append(MaterialSlot(
-                    slot_name=slot_name, material_uid=material_uid))
-    return slots
+                    "MH_E_INVALID_MATERIAL_VALUE", [slot_name], str(exc)) from exc
+            if slot_name != material.name:
+                raise MHValidationError(
+                    "MH_E_MATERIAL_SLOT_CONFLICT", [slot_name, material.name],
+                    "FBX material slot name must equal material logical name")
+            names.add(slot_name)
+    return names
 
 
 def _export_selected_fbx(filepath):
@@ -482,111 +464,61 @@ def _export_selected_fbx(filepath):
     bpy.ops.export_scene.fbx(filepath=filepath, **FBX_EXPORT_KWARGS)
 
 
-@contextlib.contextmanager
-def _temporary_lod_level_properties(levels, implicit_level0=()):
-    """Expose combined-LOD membership to FBX and restore authoring data."""
-    saved = []
-    try:
-        for level, _collection, objects in levels:
-            for obj in objects:
-                existed = "mh_lod_level" in obj
-                previous = obj["mh_lod_level"] if existed else None
-                saved.append((obj, existed, previous))
-                obj["mh_lod_level"] = int(level)
-        for obj in implicit_level0:
-            existed = "mh_lod_level" in obj
-            previous = obj["mh_lod_level"] if existed else None
-            saved.append((obj, existed, previous))
-            if existed:
-                del obj["mh_lod_level"]
-        yield
-    finally:
-        for obj, existed, previous in saved:
-            if obj is None or obj.name not in bpy.data.objects:
-                continue
-            if existed:
-                obj["mh_lod_level"] = previous
-            elif "mh_lod_level" in obj:
-                del obj["mh_lod_level"]
+_LOD_NODE_SUFFIX_RE = re.compile(r"_lod(?P<level>\d{2})$")
 
 
 @contextlib.contextmanager
-def _temporary_passport_properties(objects, passport_text):
-    """Put Carrier B on every exported MESH Model and restore ID properties."""
-    saved = []
-    try:
+def _temporary_lod_node_names(levels):
+    """Expose authored LOD membership in node names and always restore it."""
+    changes = []
+    desired_owners = {}
+    for level, _collection, objects in levels:
+        suffix = f"_lod{level:02d}"
         for obj in objects:
-            if obj.type != "MESH":
+            match = _LOD_NODE_SUFFIX_RE.search(obj.name)
+            if match is not None:
+                if int(match.group("level")) != level:
+                    raise ValueError(
+                        "MH_E_INVALID_LOD_HIERARCHY: mesh object "
+                        f"'{obj.name}' is in LOD {level} but carries "
+                        f"{match.group(0)}")
                 continue
-            existed = PASSPORT_PROPERTY in obj
-            previous = obj[PASSPORT_PROPERTY] if existed else None
-            saved.append((obj, existed, previous))
-            obj[PASSPORT_PROPERTY] = passport_text
+            desired = f"{obj.name}{suffix}"
+            previous = desired_owners.get(desired)
+            if previous is not None and previous != obj:
+                raise ValueError(
+                    "MH_E_INVALID_LOD_HIERARCHY: LOD export node name "
+                    f"'{desired}' is not unique")
+            desired_owners[desired] = obj
+            existing = bpy.data.objects.get(desired)
+            if existing is not None and existing != obj:
+                raise ValueError(
+                    "MH_E_INVALID_LOD_HIERARCHY: temporary LOD node name "
+                    f"'{desired}' is already used by '{existing.name}'")
+            changes.append((obj, obj.name, desired))
+    try:
+        for obj, _original, desired in changes:
+            obj.name = desired
+            if obj.name != desired:
+                raise ValueError(
+                    "MH_E_INVALID_LOD_HIERARCHY: Blender could not assign "
+                    f"temporary LOD node name '{desired}'")
         yield
     finally:
-        for obj, existed, previous in saved:
-            if obj is None or obj.name not in bpy.data.objects:
-                continue
-            if existed:
-                obj[PASSPORT_PROPERTY] = previous
-            elif PASSPORT_PROPERTY in obj:
-                del obj[PASSPORT_PROPERTY]
-
-
-def _repair_duplicate_node_uids(carriers):
-    """Deterministic repair of duplicated node identities (§4 analogue).
-
-    Blender duplication copies custom properties, so a fresh duplicate
-    legitimately collides on ``mh_uid``. Node identity is resource-internal:
-    the lexicographically first owner by datablock name keeps the UID, every
-    other owner receives a fresh one (persisted, logged by the caller as
-    ``MH_W_NODE_UID_REASSIGNED``). Material UIDs are project-global identity
-    and are deliberately NOT repaired here.
-    """
-    repairs = []
-    for uid, owners in sorted(find_duplicate_uids(carriers).items()):
-        keeper, *rest = sorted(owners, key=lambda carrier: carrier.name)
-        for carrier in rest:
-            del carrier[PROP_UID]
-            repairs.append({
-                "uid": uid,
-                "keeper": keeper.name,
-                "renamed": carrier.name,
-                "new_uid": ensure_uid(carrier),
-            })
-    return repairs
+        for obj, original, _desired in reversed(changes):
+            if obj is not None:
+                obj.name = original
 
 
 def _clean_fbx_filename(resource_name):
     validate_resource_name(resource_name)
-    return f"{sanitize_name(resource_name)}.mesh.fbx"
+    return f"{resource_name}.mesh.fbx"
 
 
-def _passport_material_slots(materials, objects):
-    names = {material[PROP_UID]: material.name for material in materials}
-    rows = [{
-        "slot_name": nfc(slot_name),
-        "material_uid": material_uid,
-        "material_name_hint": nfc(names[material_uid]),
-    } for slot_name, material_uid in _object_material_slot_pairs(objects)]
-    return sorted(rows, key=lambda row: row["slot_name"])
-
-
-def _assert_existing_target_uid(filepath, resource_uid):
-    """Validate an existing clean-name target and reject foreign identity."""
-    if not os.path.lexists(filepath):
-        return None
-    if not os.path.isfile(filepath):
-        raise ValueError(
-            "MH_E_PASSPORT_INVALID: FBX target exists but is not a file: "
-            f"{filepath}")
-    current = read_fbx_passport(filepath)
-    current_uid = current.document["resource_uid"]
-    if current_uid != resource_uid:
-        raise ValueError(
-            "MH_E_NAME_COLLISION_DIFFERENT_UID: clean FBX target "
-            f"'{filepath}' owns resource {current_uid}, not {resource_uid}")
-    return current
+def _assert_existing_target(filepath):
+    """Allow file replacement, but never replace a directory target."""
+    if os.path.lexists(filepath) and os.path.isdir(filepath):
+        raise ValueError(f"FBX target exists as a directory: {filepath}")
 
 
 def export_fbx_collection(
@@ -594,11 +526,9 @@ def export_fbx_collection(
     """Export one selected collection as one static-mesh resource.
 
     A regular collection writes one FBX. A recognized dag4blend ``.lods``
-    hierarchy also writes one FBX containing every authored level; each model
-    node carries a temporary integer ``mh_lod_level`` custom property.
-
-    The FBX is the v2 source-of-truth payload. Its canonical passport is copied
-    to every exported MESH Model. No export manifest is read or written here.
+    hierarchy writes one FBX containing every authored level. Render mesh node
+    names temporarily carry their ``_lodNN`` suffix; no MH properties are
+    written to the FBX.
     """
     if collection is None:
         raise ValueError("collection is required")
@@ -629,7 +559,6 @@ def export_fbx_collection(
             f"MH_E_EMPTY_RESOURCE_COLLECTION: '{collection.name}' has no "
             "mesh objects in itself or recursive child collections")
 
-    resource_uid = ensure_uid(collection)
     filename = _clean_fbx_filename(resource_name)
     resolved_output_dir = os.path.abspath(
         bpy.path.abspath(os.fspath(output_dir)))
@@ -638,7 +567,7 @@ def export_fbx_collection(
     if isinstance(source_root, (str, os.PathLike)) and str(source_root).strip():
         resolved_source_root = _resolved_source_root(source_root)
         _assert_output_under_root(resolved_output_dir, resolved_source_root)
-    _assert_existing_target_uid(filepath, resource_uid)
+    _assert_existing_target(filepath)
 
     # AMENDMENT_node_hierarchy: Blender silently re-roots children of
     # non-exported parents with baked world transforms. Every transported
@@ -648,32 +577,10 @@ def export_fbx_collection(
         parent = obj.parent
         if parent is not None and parent.as_pointer() not in transported_ids:
             raise MHValidationError(
-                "MH_E_PARENT_OUTSIDE_RESOURCE", [resource_uid],
+                "MH_E_PARENT_OUTSIDE_RESOURCE", [resource_name],
                 f"'{obj.name}' is parented to '{parent.name}', which is not "
                 f"part of resource collection '{collection.name}'; move the "
                 "parent into the collection or clear the parenting")
-
-    for obj in export_objects:
-        ensure_uid(obj)
-        if obj.data is not None:
-            ensure_uid(obj.data)
-    uid_repairs = _repair_duplicate_node_uids(export_objects)
-    unique_datablocks = []
-    seen_datablocks = set()
-    for obj in export_objects:
-        data = obj.data
-        if data is None or data.as_pointer() in seen_datablocks:
-            continue
-        seen_datablocks.add(data.as_pointer())
-        unique_datablocks.append(data)
-    uid_repairs.extend(_repair_duplicate_node_uids(unique_datablocks))
-    surviving = (find_duplicate_uids(export_objects)
-                 or find_duplicate_uids(unique_datablocks))
-    if surviving:
-        uid = sorted(surviving)[0]
-        raise MHValidationError(
-            "MH_E_DUPLICATE_NODE_UID", [uid],
-            "node mh_uid collision survived deterministic repair")
 
     used_materials = []
     seen_materials = set()
@@ -683,90 +590,23 @@ def export_fbx_collection(
             if material is None or material.as_pointer() in seen_materials:
                 continue
             seen_materials.add(material.as_pointer())
-            ensure_uid(material)
             used_materials.append(material)
-    duplicate_material_uids = find_duplicate_uids(used_materials)
-    if duplicate_material_uids:
-        uid = sorted(duplicate_material_uids)[0]
-        raise MHValidationError(
-            "MH_E_DUPLICATE_RESOURCE_UID", [uid],
-            "materials in the selected collection share one mh_uid")
 
     materials = used_materials
     if lod_structure is None:
-        material_slots = _extract_material_slots(objects)
+        _material_slot_names(objects)
     else:
         _level0, _collection0, level0_objects = payload_levels[0]
-        material_slots = _extract_material_slots(level0_objects)
-        base_slots = _object_material_slot_pairs(level0_objects)
+        base_slots = _material_slot_names(level0_objects)
         for level, _child, level_objects in payload_levels[1:]:
-            _extract_material_slots(level_objects)
-            missing_slots = sorted(
-                _object_material_slot_pairs(level_objects) - base_slots
-            )
+            missing_slots = sorted(_material_slot_names(level_objects) - base_slots)
             if missing_slots:
-                detail = ", ".join(
-                    f"{name} ({uid})" for name, uid in missing_slots)
                 raise MHValidationError(
                     "MH_E_LOD_SLOT_NOT_IN_BASE",
-                    [uid for _name, uid in missing_slots],
-                    f"LOD{level} uses slots absent from LOD0: {detail}")
+                    missing_slots,
+                    f"LOD{level} uses slots absent from LOD0: "
+                    f"{', '.join(missing_slots)}")
     scene = _find_export_scene(collection)
-    window = bpy.context.window
-    original_scene = window.scene if window is not None else None
-    try:
-        if window is not None:
-            window.scene = scene
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        records = []
-        for level, _child, level_objects in payload_levels:
-            records.extend(
-                (level, obj[PROP_UID], _record_for_object(obj, depsgraph))
-                for obj in level_objects)
-        aux_records = []
-        for obj in aux_objects:
-            if obj.type == "MESH":
-                aux_records.append(MeshAuxRecord(
-                    kind="collision",
-                    name=obj.name,
-                    mesh=_record_for_object(obj, depsgraph),
-                ))
-            else:
-                transform = tuple(
-                    component for row in obj.matrix_world for component in row)
-                aux_records.append(MeshAuxRecord(
-                    kind="socket",
-                    name=obj.name,
-                    transform=transform,
-                ))
-        combined_hash = mesh_content_hash(records, aux_records)
-    finally:
-        if window is not None and original_scene is not None:
-            window.scene = original_scene
-
-    resource = MeshResource(
-        uid=resource_uid,
-        name=resource_name,
-        content_hash=combined_hash,
-        material_slots=material_slots,
-        properties=_bag(collection),
-    )
-    lod_policy = "authored" if lod_structure is not None else "generated"
-    passport_slot_objects = (
-        payload_levels[0][2] if lod_structure is not None else objects)
-    passport_slots = _passport_material_slots(
-        materials, passport_slot_objects)
-    passport = make_fbx_passport(
-        resource_uid=resource_uid,
-        name=nfc(resource_name),
-        lod_levels=[level for level, _child, _objects in payload_levels],
-        lod_policy=lod_policy,
-        geometry_hash=combined_hash,
-        material_slots=passport_slots,
-        properties=resource.properties,
-        exporter=f"mh4blend {EXPORTER_VERSION}",
-    )
-    passport_text = canonical_passport(passport)
     validation = {"errors": [], "warnings": []}
     if lod_structure is not None and lod_structure["ignored_aux"]:
         ignored = ", ".join(
@@ -775,54 +615,29 @@ def export_fbx_collection(
             for level, name in lod_structure["ignored_aux"])
         validation["warnings"].append({
             "code": "MH_W_LOD_AUX_NODE_IGNORED",
-            "subjects": [resource_uid],
+            "subjects": [resource_name],
             "message": f"out-of-LOD0 auxiliary nodes were ignored: {ignored}",
-        })
-    for repair in uid_repairs:
-        validation["warnings"].append({
-            "code": "MH_W_NODE_UID_REASSIGNED",
-            "subjects": [repair["uid"], repair["new_uid"]],
-            "message": (
-                f"duplicate node uid kept by '{repair['keeper']}'; "
-                f"'{repair['renamed']}' received {repair['new_uid']}"),
         })
 
     payload_updates = [{"filepath": filepath, "written": False}]
     written = False
-    tmp = os.path.join(
-        resolved_output_dir,
-        f".{filename}.mh-tmp-{os.getpid()}-{uuid.uuid4().hex}")
     if not dry_run:
         os.makedirs(resolved_output_dir, exist_ok=True)
-        lod_properties = payload_levels if lod_structure is not None else []
-        # Group empties are structure, not LOD payload: they never carry
-        # mh_lod_level, so any stale authored value is stripped for export.
-        implicit_lod0 = (aux_objects + group_objects)
-        if lod_structure is None:
-            implicit_lod0 = export_objects
+        descriptor, tmp = tempfile.mkstemp(
+            prefix=f".{filename}.mh-tmp-", dir=resolved_output_dir)
+        os.close(descriptor)
+        os.remove(tmp)
         with payload_lock(filepath, source_root=resolved_source_root):
-            # The preflight above gives an early artist-facing error; this
-            # locked recheck closes the two-writer collision race.
-            _assert_existing_target_uid(filepath, resource_uid)
+            _assert_existing_target(filepath)
             try:
-                with _temporary_passport_properties(
-                        export_objects, passport_text):
-                    with _temporary_lod_level_properties(
-                            lod_properties, implicit_lod0):
-                        with _temporary_selection_context(
-                                scene, export_objects):
-                            with _temporary_ue_centimeter_export_state(
-                                    export_objects):
-                                _export_selected_fbx(tmp)
-                staged = read_fbx_passport(tmp)
-                mesh_model_count = sum(
-                    obj.type == "MESH" for obj in export_objects)
-                if (staged.canonical_text != passport_text
-                        or staged.copy_count != mesh_model_count):
-                    raise ValueError(
-                        "MH_E_PASSPORT_INVALID: staged FBX Carrier B does "
-                        "not match the intended passport/model count")
-                _assert_existing_target_uid(filepath, resource_uid)
+                levels = payload_levels if lod_structure is not None else []
+                with _temporary_lod_node_names(levels):
+                    with _temporary_selection_context(scene, export_objects):
+                        with _temporary_ue_centimeter_export_state(export_objects):
+                            _export_selected_fbx(tmp)
+                if not os.path.isfile(tmp):
+                    raise RuntimeError("FBX exporter did not create its staged file")
+                _assert_existing_target(filepath)
                 os.replace(tmp, filepath)
                 payload_updates[0]["written"] = True
                 written = True
@@ -836,9 +651,8 @@ def export_fbx_collection(
         "written": written,
         "objects_exported": len(export_objects),
         "payload_updates": payload_updates,
-        "resource": resource,
+        "resource_name": resource_name,
+        "lod_levels": [level for level, _child, _objects in payload_levels],
         "materials": materials,
-        "passport": passport,
-        "passport_text": passport_text,
         "validation": validation,
     }

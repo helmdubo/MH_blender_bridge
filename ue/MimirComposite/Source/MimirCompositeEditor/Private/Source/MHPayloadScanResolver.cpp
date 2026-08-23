@@ -1,13 +1,9 @@
 #include "Source/MHPayloadScanResolver.h"
 
-#include "Canonical/MHCanonical.h"
-#include "Codec/MHCompositeCodec.h"
-#include "Codec/MHMaterialCodec.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "Source/MHFbxPassport.h"
 #include "Source/MHPayloadHashes.h"
 
 namespace UE::MimirComposite
@@ -34,56 +30,23 @@ bool SameFileState(const FPayloadFileState& A, const FPayloadFileState& B)
     return A.Size == B.Size && A.Timestamp == B.Timestamp;
 }
 
-bool ReadInitialPayloadBytes(
+bool ReadStablePayload(
     const FString& Path,
     TArray<uint8>& OutBytes,
-    FPayloadFileState& OutState,
     FString& OutError)
 {
-    FPayloadFileState AfterRead;
-    if (!ReadFileState(Path, OutState) ||
+    FPayloadFileState Before;
+    FPayloadFileState After;
+    if (!ReadFileState(Path, Before) ||
         !FFileHelper::LoadFileToArray(OutBytes, *Path) ||
-        !ReadFileState(Path, AfterRead))
+        !ReadFileState(Path, After))
     {
-        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: cannot read payload bytes");
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: cannot read source payload");
         return false;
     }
-    if (!SameFileState(OutState, AfterRead) ||
-        static_cast<int64>(OutBytes.Num()) != OutState.Size)
+    if (!SameFileState(Before, After) || static_cast<int64>(OutBytes.Num()) != Before.Size)
     {
-        OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: payload changed during byte read");
-        return false;
-    }
-    return true;
-}
-
-bool ConfirmPayloadBytes(
-    const FString& Path,
-    const FPayloadFileState& InitialState,
-    TConstArrayView<uint8> InitialBytes,
-    FString& OutError)
-{
-    FPayloadFileState BeforeRead;
-    FPayloadFileState AfterRead;
-    TArray<uint8> ConfirmedBytes;
-    if (!ReadFileState(Path, BeforeRead) ||
-        !FFileHelper::LoadFileToArray(ConfirmedBytes, *Path) ||
-        !ReadFileState(Path, AfterRead))
-    {
-        OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: payload became unreadable during scan");
-        return false;
-    }
-    if (!SameFileState(InitialState, BeforeRead) ||
-        !SameFileState(InitialState, AfterRead) ||
-        static_cast<int64>(ConfirmedBytes.Num()) != InitialState.Size ||
-        ConfirmedBytes.Num() != InitialBytes.Num() ||
-        (ConfirmedBytes.Num() > 0 &&
-         FMemory::Memcmp(
-             ConfirmedBytes.GetData(),
-             InitialBytes.GetData(),
-             ConfirmedBytes.Num()) != 0))
-    {
-        OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: payload bytes changed during scan");
+        OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload changed during scan");
         return false;
     }
     return true;
@@ -101,30 +64,16 @@ bool ValidateNoNestedFilesystemAlias(
         const ESymlinkResult Result = PlatformFile.IsSymlink(*Component);
         if (Result != ESymlinkResult::NonSymlink)
         {
-            if (Result == ESymlinkResult::Symlink)
-            {
-                OutError = FString::Printf(
-                    TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: nested filesystem alias is forbidden: %s"),
-                    *Component);
-            }
-            else
-            {
-                OutError = FString::Printf(
-                    TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: filesystem alias status is unavailable: %s"),
-                    *Component);
-            }
+            OutError = FString::Printf(
+                TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: nested filesystem alias is forbidden or unavailable: %s"),
+                *Component);
             return false;
         }
-
         FString Parent = FPaths::GetPath(Component);
         FPaths::NormalizeDirectoryName(Parent);
-        if (Parent.IsEmpty() || Parent.Equals(Component, ESearchCase::IgnoreCase) ||
-            (!Parent.Equals(SourceRoot, ESearchCase::IgnoreCase) &&
-             !FPaths::IsUnderDirectory(Parent, SourceRoot)))
+        if (Parent.IsEmpty() || Parent.Equals(Component, ESearchCase::IgnoreCase))
         {
-            OutError = FString::Printf(
-                TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot prove payload ancestry: %s"),
-                *PayloadPath);
+            OutError = TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: source path parent chain is invalid");
             return false;
         }
         Component = MoveTemp(Parent);
@@ -132,7 +81,149 @@ bool ValidateNoNestedFilesystemAlias(
     return true;
 }
 
+bool IsCanonicalLogicalName(const FString& Value)
+{
+    if (Value.IsEmpty())
+    {
+        return false;
+    }
+    for (const TCHAR Character : Value)
+    {
+        if (!((Character >= TEXT('a') && Character <= TEXT('z')) ||
+              (Character >= TEXT('0') && Character <= TEXT('9')) ||
+              Character == TEXT('_')))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsTextureExtension(const FString& Extension)
+{
+    static const TSet<FString> Extensions = {
+        TEXT("png"), TEXT("tga"), TEXT("tif"), TEXT("tiff"), TEXT("exr"),
+        TEXT("jpg"), TEXT("jpeg"), TEXT("dds"), TEXT("hdr")};
+    return Extensions.Contains(Extension);
+}
+
+bool ResourceKeyLess(const FMHResourceKey& A, const FMHResourceKey& B)
+{
+    if (A.Kind != B.Kind)
+    {
+        return static_cast<uint8>(A.Kind) < static_cast<uint8>(B.Kind);
+    }
+    return A.LogicalName < B.LogicalName;
+}
+
 } // namespace
+
+const TCHAR* MHResourceKindLabel(const EMHResourceKind Kind)
+{
+    switch (Kind)
+    {
+    case EMHResourceKind::StaticMesh: return TEXT("static_mesh");
+    case EMHResourceKind::Material: return TEXT("material");
+    case EMHResourceKind::Composite: return TEXT("composite");
+    case EMHResourceKind::Texture: return TEXT("texture");
+    }
+    return TEXT("unknown");
+}
+
+bool MHResourceKindFromLabel(const FString& Label, EMHResourceKind& OutKind)
+{
+    for (const EMHResourceKind Kind : {
+        EMHResourceKind::StaticMesh,
+        EMHResourceKind::Material,
+        EMHResourceKind::Composite,
+        EMHResourceKind::Texture})
+    {
+        if (Label == MHResourceKindLabel(Kind))
+        {
+            OutKind = Kind;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FMHResourceKey::IsCanonical() const
+{
+    switch (Kind)
+    {
+    case EMHResourceKind::StaticMesh:
+    case EMHResourceKind::Material:
+    case EMHResourceKind::Composite:
+    case EMHResourceKind::Texture:
+        return IsCanonicalLogicalName(LogicalName);
+    }
+    return false;
+}
+
+FString FMHResourceKey::ToString() const
+{
+    return FString::Printf(TEXT("%s:%s"), MHResourceKindLabel(Kind), *LogicalName);
+}
+
+bool MHResourceKeyFromSourceFile(
+    const FString& Path,
+    FMHResourceKey& OutKey,
+    FString& OutError)
+{
+    OutKey = FMHResourceKey();
+    OutError.Reset();
+
+    const FString Filename = FPaths::GetCleanFilename(Path);
+    const FString LowerFilename = Filename.ToLower();
+    FString LogicalName;
+    FString CanonicalSuffix;
+
+    if (LowerFilename.EndsWith(TEXT(".mesh.fbx")))
+    {
+        OutKey.Kind = EMHResourceKind::StaticMesh;
+        CanonicalSuffix = TEXT(".mesh.fbx");
+    }
+    else if (LowerFilename.EndsWith(TEXT(".material")))
+    {
+        OutKey.Kind = EMHResourceKind::Material;
+        CanonicalSuffix = TEXT(".material");
+    }
+    else if (LowerFilename.EndsWith(TEXT(".composite")))
+    {
+        OutKey.Kind = EMHResourceKind::Composite;
+        CanonicalSuffix = TEXT(".composite");
+    }
+    else
+    {
+        const FString Extension = FPaths::GetExtension(LowerFilename, false);
+        if (!IsTextureExtension(Extension))
+        {
+            return false;
+        }
+        OutKey.Kind = EMHResourceKind::Texture;
+        CanonicalSuffix = FString::Printf(TEXT(".%s"), *Extension);
+    }
+
+    if (!Filename.EndsWith(CanonicalSuffix, ESearchCase::CaseSensitive))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_INVALID: source filename extension is not canonical: %s"),
+            *Filename);
+        return false;
+    }
+
+    LogicalName = Filename.LeftChop(CanonicalSuffix.Len());
+    if (!IsCanonicalLogicalName(LogicalName))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_NON_ASCII_RESOURCE_NAME: source logical name must match [a-z0-9_]+: %s"),
+            *Filename);
+        return false;
+    }
+
+    OutKey.LogicalName = MoveTemp(LogicalName);
+    return true;
+}
 
 FMHPayloadScanResolver::FMHPayloadScanResolver(FString InSourceRoot)
     : SourceRoot(MoveTemp(InSourceRoot))
@@ -143,134 +234,39 @@ void FMHPayloadScanResolver::QuarantinePayload(
     const FString& Path,
     const FString& Diagnostic)
 {
-    FString NormalizedPath = FPaths::ConvertRelativePathToFull(Path);
-    FPaths::NormalizeFilename(NormalizedPath);
-    const FString QualifiedDiagnostic =
-        FString::Printf(TEXT("%s: %s"), *NormalizedPath, *Diagnostic);
-    Quarantined.Add(QualifiedDiagnostic);
-
     FMHSourceQuarantine& Entry = QuarantineEntries.AddDefaulted_GetRef();
-    Entry.PayloadPath = MoveTemp(NormalizedPath);
-    Entry.Diagnostic = QualifiedDiagnostic;
+    Entry.PayloadPath = Path;
+    FPaths::NormalizeFilename(Entry.PayloadPath);
+    Entry.Diagnostic = FString::Printf(TEXT("%s: %s"), *Entry.PayloadPath, *Diagnostic);
 }
 
 void FMHPayloadScanResolver::AddPayloadFile(const FString& Path)
 {
-    TArray<uint8> Bytes;
-    FPayloadFileState InitialState;
-    FString SnapshotError;
-    if (!ReadInitialPayloadBytes(Path, Bytes, InitialState, SnapshotError))
+    FMHResourceKey Key;
+    FString KeyError;
+    if (!MHResourceKeyFromSourceFile(Path, Key, KeyError))
     {
-        QuarantinePayload(Path, SnapshotError);
+        if (!KeyError.IsEmpty())
+        {
+            QuarantinePayload(Path, KeyError);
+        }
+        return;
+    }
+
+    TArray<uint8> Bytes;
+    FString ReadError;
+    if (!ReadStablePayload(Path, Bytes, ReadError))
+    {
+        QuarantinePayload(Path, ReadError);
         return;
     }
 
     FCandidate Candidate;
+    Candidate.Key = Key;
     Candidate.Path = Path;
-    Candidate.Fingerprint = MHPayloadFingerprint(Bytes);
-
-    if (Path.EndsWith(TEXT(".mesh.fbx")))
-    {
-        FMHFbxPassport Passport;
-        FString Error;
-        const bool bPassportValid = MHReadFbxPassport(Path, Passport, Error);
-        if (!ConfirmPayloadBytes(Path, InitialState, Bytes, SnapshotError))
-        {
-            QuarantinePayload(Path, SnapshotError);
-            return;
-        }
-        if (!bPassportValid)
-        {
-            QuarantinePayload(Path, Error);
-            return;
-        }
-        Candidate.Kind = EMHResourceKind::StaticMesh;
-        Candidate.Uid = Passport.ResourceUid;
-        Candidate.Name = Passport.Name;
-        Candidate.GeometryHash = Passport.GeometryHash;
-        Candidate.DescriptorHash = MHPassportDescriptorHash(Passport);
-        if (Candidate.DescriptorHash.IsEmpty())
-        {
-            QuarantinePayload(
-                Path,
-                TEXT("MH_E_PASSPORT_INVALID: passport descriptor cannot be canonicalized"));
-            return;
-        }
-    }
-    else if (Path.EndsWith(TEXT(".composite")))
-    {
-        FMHCompositeDocument Document;
-        const FMHCanonicalResult Result = MHParseCompositeV2(Bytes, Document);
-        if (!Result.bSuccess)
-        {
-            if (!ConfirmPayloadBytes(Path, InitialState, Bytes, SnapshotError))
-            {
-                QuarantinePayload(Path, SnapshotError);
-                return;
-            }
-            if (Result.Error.StartsWith(TEXT("MH_W_LEGACY_COMPOSITE_V1")))
-            {
-                LegacySkipped.Add(Path);
-            }
-            else
-            {
-                QuarantinePayload(Path, Result.Error);
-            }
-            return;
-        }
-        Candidate.Kind = EMHResourceKind::Composite;
-        Candidate.Uid = Document.Uid;
-        Candidate.Name = Document.Name;
-        FString HashError;
-        if (!MHCompositeSemanticHash(Bytes, Candidate.DescriptorHash, HashError))
-        {
-            if (!ConfirmPayloadBytes(Path, InitialState, Bytes, SnapshotError))
-            {
-                QuarantinePayload(Path, SnapshotError);
-                return;
-            }
-            QuarantinePayload(Path, HashError);
-            return;
-        }
-    }
-    else
-    {
-        FMHMaterialDocument Document;
-        const FMHCanonicalResult Result = MHParseMaterialV1(Bytes, Document);
-        if (!Result.bSuccess)
-        {
-            if (!ConfirmPayloadBytes(Path, InitialState, Bytes, SnapshotError))
-            {
-                QuarantinePayload(Path, SnapshotError);
-                return;
-            }
-            QuarantinePayload(Path, Result.Error);
-            return;
-        }
-        Candidate.Kind = EMHResourceKind::Material;
-        Candidate.Uid = Document.Uid;
-        Candidate.Name = Document.Name;
-        FString HashError;
-        if (!MHMaterialSemanticHash(Bytes, Candidate.DescriptorHash, HashError))
-        {
-            if (!ConfirmPayloadBytes(Path, InitialState, Bytes, SnapshotError))
-            {
-                QuarantinePayload(Path, SnapshotError);
-                return;
-            }
-            QuarantinePayload(Path, HashError);
-            return;
-        }
-    }
-
-    if (!ConfirmPayloadBytes(Path, InitialState, Bytes, SnapshotError))
-    {
-        QuarantinePayload(Path, SnapshotError);
-        return;
-    }
-
+    Candidate.RawHash = MHRawPayloadHash(Bytes);
+    CandidatesByKey.FindOrAdd(Key).Add(MoveTemp(Candidate));
     ++CandidateFileCount;
-    CandidatesByUid.FindOrAdd(Candidate.Uid).Add(MoveTemp(Candidate));
 }
 
 bool FMHPayloadScanResolver::DiscoverPayloadPaths(
@@ -283,26 +279,31 @@ bool FMHPayloadScanResolver::DiscoverPayloadPaths(
         *SourceRoot,
         [this, &OutPaths, &OutError](const TCHAR* Path, const bool bIsDirectory)
         {
-            if (!bIsDirectory)
+            if (bIsDirectory)
             {
-                FString File = FPaths::ConvertRelativePathToFull(Path);
-                FPaths::NormalizeFilename(File);
-                if (!FPaths::IsUnderDirectory(File, SourceRoot))
+                return true;
+            }
+
+            FString File = FPaths::ConvertRelativePathToFull(Path);
+            FPaths::NormalizeFilename(File);
+            if (!FPaths::IsUnderDirectory(File, SourceRoot))
+            {
+                OutError = FString::Printf(
+                    TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: discovered file escapes source_root: %s"),
+                    *File);
+                return false;
+            }
+
+            FMHResourceKey IgnoredKey;
+            FString ClassificationError;
+            const bool bRecognized = MHResourceKeyFromSourceFile(File, IgnoredKey, ClassificationError);
+            if (bRecognized || !ClassificationError.IsEmpty())
+            {
+                if (!ValidateNoNestedFilesystemAlias(SourceRoot, File, OutError))
                 {
-                    OutError = FString::Printf(
-                        TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: discovered payload escapes source_root: %s"),
-                        *File);
                     return false;
                 }
-                if (File.EndsWith(TEXT(".mesh.fbx")) || File.EndsWith(TEXT(".composite")) ||
-                    File.EndsWith(TEXT(".material")))
-                {
-                    if (!ValidateNoNestedFilesystemAlias(SourceRoot, File, OutError))
-                    {
-                        return false;
-                    }
-                    OutPaths.Add(MoveTemp(File));
-                }
+                OutPaths.Add(MoveTemp(File));
             }
             return true;
         });
@@ -323,13 +324,12 @@ bool FMHPayloadScanResolver::DiscoverPayloadPaths(
 bool FMHPayloadScanResolver::Initialize(FString& OutError)
 {
     OutError.Reset();
-    CandidatesByUid.Reset();
-    Quarantined.Reset();
+    CandidatesByKey.Reset();
     QuarantineEntries.Reset();
-    LegacySkipped.Reset();
     CandidateFileCount = 0;
 
     SourceRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(SourceRoot);
     if (!IFileManager::Get().DirectoryExists(*SourceRoot))
     {
         OutError = FString::Printf(
@@ -338,113 +338,139 @@ bool FMHPayloadScanResolver::Initialize(FString& OutError)
         return false;
     }
 
-    FPaths::NormalizeDirectoryName(SourceRoot);
-
     TArray<FString> PayloadPaths;
     if (!DiscoverPayloadPaths(PayloadPaths, OutError))
     {
         return false;
     }
-
     for (const FString& Path : PayloadPaths)
     {
         AddPayloadFile(Path);
     }
 
-    TArray<FString> ConfirmedPayloadPaths;
-    if (!DiscoverPayloadPaths(ConfirmedPayloadPaths, OutError))
+    TArray<FString> ConfirmedPaths;
+    if (!DiscoverPayloadPaths(ConfirmedPaths, OutError) || ConfirmedPaths != PayloadPaths)
     {
-        CandidatesByUid.Reset();
+        CandidatesByKey.Reset();
+        QuarantineEntries.Reset();
+        CandidateFileCount = 0;
+        if (OutError.IsEmpty())
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload set changed during scan");
+        }
         return false;
     }
-    if (ConfirmedPayloadPaths != PayloadPaths)
+
+    // Path equality alone does not confirm an immutable snapshot: a writer can
+    // atomically replace one payload at the same path after the first read.
+    // Re-read and re-hash every valid candidate so Initialize never publishes
+    // a path paired with bytes from an earlier source generation.
+    for (const FString& Path : ConfirmedPaths)
     {
-        OutError = FString::Printf(
-            TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload set changed during scan: %s"),
-            *SourceRoot);
-        CandidatesByUid.Reset();
-        return false;
+        FMHResourceKey Key;
+        FString ClassificationError;
+        if (!MHResourceKeyFromSourceFile(Path, Key, ClassificationError))
+        {
+            // DiscoverPayloadPaths includes invalid known payload names so they
+            // remain quarantined. Their diagnostic is path-derived, not byte-
+            // derived, so no content confirmation is required.
+            if (!ClassificationError.IsEmpty())
+            {
+                continue;
+            }
+            OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload classification changed during scan");
+            CandidatesByKey.Reset();
+            QuarantineEntries.Reset();
+            CandidateFileCount = 0;
+            return false;
+        }
+
+        TArray<uint8> ConfirmedBytes;
+        FString ReadError;
+        const TArray<FCandidate>* Candidates = CandidatesByKey.Find(Key);
+        const FCandidate* Candidate = Candidates != nullptr
+            ? Candidates->FindByPredicate([&Path](const FCandidate& Value)
+                {
+                    return Value.Path == Path;
+                })
+            : nullptr;
+        if (!ReadStablePayload(Path, ConfirmedBytes, ReadError) || Candidate == nullptr ||
+            Candidate->RawHash != MHRawPayloadHash(ConfirmedBytes))
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload bytes changed during scan: %s"),
+                *Path);
+            CandidatesByKey.Reset();
+            QuarantineEntries.Reset();
+            CandidateFileCount = 0;
+            return false;
+        }
     }
     return true;
 }
 
-TArray<FString> FMHPayloadScanResolver::GetAllUids() const
+FMHSourceSnapshot FMHPayloadScanResolver::GetSnapshot() const
 {
-    TArray<FString> Uids;
-    CandidatesByUid.GenerateKeyArray(Uids);
-    Uids.Sort();
-    return Uids;
+    FMHSourceSnapshot Snapshot;
+    CandidatesByKey.GenerateKeyArray(Snapshot.ResourceKeys);
+    Snapshot.ResourceKeys.Sort(ResourceKeyLess);
+    Snapshot.Quarantined = QuarantineEntries;
+    for (const FMHSourceQuarantine& Entry : QuarantineEntries)
+    {
+        Snapshot.Errors.Add(Entry.Diagnostic);
+    }
+    for (const TPair<FMHResourceKey, TArray<FCandidate>>& Pair : CandidatesByKey)
+    {
+        if (Pair.Value.Num() > 1)
+        {
+            Snapshot.Warnings.Add(FString::Printf(
+                TEXT("MH_W_DUPLICATE_RESOURCE_NAME: %s has %d candidates"),
+                *Pair.Key.ToString(),
+                Pair.Value.Num()));
+        }
+    }
+    Snapshot.Warnings.Sort();
+    return Snapshot;
 }
 
-FMHResolveOutcome FMHPayloadScanResolver::Resolve(
-    const FString& ResourceUid,
-    const EMHResourceKind ExpectedKind)
+FMHResolveOutcome FMHPayloadScanResolver::Resolve(const FMHResourceKey& Key)
 {
     FMHResolveOutcome Outcome;
+    if (!Key.IsCanonical())
+    {
+        Outcome.Status = EMHResolveStatus::Invalid;
+        Outcome.Diagnostic = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_INVALID: noncanonical resource key %s"),
+            *Key.ToString());
+        return Outcome;
+    }
 
-    const TArray<FCandidate>* Candidates = CandidatesByUid.Find(ResourceUid);
-    if (Candidates == nullptr || Candidates->Num() == 0)
+    const TArray<FCandidate>* Candidates = CandidatesByKey.Find(Key);
+    if (Candidates == nullptr || Candidates->IsEmpty())
     {
         Outcome.Status = EMHResolveStatus::Unresolved;
         Outcome.Diagnostic = FString::Printf(
-            TEXT("MH_E_RESOURCE_NOT_FOUND: no valid payload declares UID %s"),
-            *ResourceUid);
+            TEXT("MH_E_RESOURCE_NOT_FOUND: no source payload for %s"),
+            *Key.ToString());
         return Outcome;
     }
-
-    TArray<const FCandidate*> Matching;
-    bool bMixedKinds = false;
     for (const FCandidate& Candidate : *Candidates)
     {
         Outcome.CandidatePaths.Add(Candidate.Path);
-        bMixedKinds |= Candidate.Kind != (*Candidates)[0].Kind;
-        if (Candidate.Kind == ExpectedKind)
-        {
-            Matching.Add(&Candidate);
-        }
     }
-    if (bMixedKinds)
+    if (Candidates->Num() > 1)
     {
-        Outcome.Status = EMHResolveStatus::DivergentRevisions;
+        Outcome.Status = EMHResolveStatus::Ambiguous;
         Outcome.Diagnostic = FString::Printf(
-            TEXT("MH_E_DIVERGENT_REVISIONS: UID %s is declared by multiple resource kinds; manual choice required"),
-            *ResourceUid);
-        return Outcome;
-    }
-
-    for (int32 Index = 1; Index < Candidates->Num(); ++Index)
-    {
-        if ((*Candidates)[Index].Fingerprint != (*Candidates)[0].Fingerprint)
-        {
-            Outcome.Status = EMHResolveStatus::DivergentRevisions;
-            Outcome.Diagnostic = FString::Printf(
-                TEXT("MH_E_DIVERGENT_REVISIONS: UID %s has divergent payload revisions; manual choice required"),
-                *ResourceUid);
-            return Outcome;
-        }
-    }
-    if (Matching.Num() == 0)
-    {
-        Outcome.Status = EMHResolveStatus::KindMismatch;
-        Outcome.Diagnostic = FString::Printf(
-            TEXT("MH_E_RESOURCE_NOT_FOUND: UID %s exists but no candidate has the expected kind"),
-            *ResourceUid);
+            TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME: %s has %d candidates"),
+            *Key.ToString(),
+            Candidates->Num());
         return Outcome;
     }
 
     Outcome.Status = EMHResolveStatus::Resolved;
-    Outcome.PayloadPath = Matching[0]->Path;
-    Outcome.Name = Matching[0]->Name;
-    Outcome.Fingerprint = Matching[0]->Fingerprint;
-    Outcome.GeometryHash = Matching[0]->GeometryHash;
-    Outcome.DescriptorHash = Matching[0]->DescriptorHash;
-    if (Matching.Num() > 1)
-    {
-        Outcome.Diagnostic = FString::Printf(
-            TEXT("MH_W_DUPLICATE_IDENTICAL_PAYLOAD: UID %s has %d byte-identical payloads"),
-            *ResourceUid,
-            Matching.Num());
-    }
+    Outcome.PayloadPath = (*Candidates)[0].Path;
+    Outcome.RawHash = (*Candidates)[0].RawHash;
     return Outcome;
 }
 

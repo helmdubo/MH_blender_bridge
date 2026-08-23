@@ -1,13 +1,4 @@
-"""Canonical form, quantization and hashing for the Mimir composite pipeline.
-
-This module is the *reference implementation* of docs/01_bundle_schema_v1.md,
-sections 6.1 (machine error codes), 8 (canonical JSON, quantization, xxh3
-hashing), 10 (name validation and resource file naming) and 11 (quaternion
-canonicalization).
-
-The spec document is normative. Where this module makes a choice the spec does
-not pin down, the choice is marked with a `SPEC NOTE:` comment so the future
-C++ implementation in the UE plugin can mirror it exactly.
+"""Shared bpy-free canonical primitives for Source Protocol v4.
 
 Design constraints (§8):
 
@@ -45,20 +36,15 @@ __all__ = [
     "quantize",
     "canonicalize_quat",
     "canonical_json_bytes",
-    "composite_canonical_form",
-    "composite_content_hash",
     "hash_hex",
     "nfc",
     "validate_resource_name",
-    "sanitize_name",
     "resource_filename",
     "ERROR_CODES",
     "P_TRANSLATION_CM",
     "P_ROTATION_QUAT",
     "P_SCALE",
-    "P_WEIGHT",
     "P_PROPERTIES",
-    "P_DEFAULT",
 ]
 
 # --------------------------------------------------------------------------
@@ -72,15 +58,13 @@ __all__ = [
 ERROR_CODES = frozenset(
     {
         # Blender export and/or UE import
-        "MH_E_DUPLICATE_NODE_UID",
-        "MH_E_DUPLICATE_RESOURCE_UID",
         "MH_E_COMPOSITE_CYCLE",
+        "MH_E_AMBIGUOUS_RESOURCE_NAME",
         "MH_E_AMBIGUOUS_RESOURCE_OWNER",
         "MH_E_UNRESOLVED_EXTERNAL",
         "MH_E_DANGLING_PARENT",
         "MH_E_PARENT_CYCLE",
         # Blender export
-        "MH_E_MISSING_COLLECTION_UID",
         "MH_E_EMPTY_RESOURCE_COLLECTION",
         "MH_E_NESTED_COMPOSITE_COLLECTION",
         "MH_E_INVALID_COLLECTION_OFFSET",
@@ -89,8 +73,6 @@ ERROR_CODES = frozenset(
         "MH_E_LOD_LEVELS_SPARSE",
         "MH_E_LOD_SLOT_NOT_IN_BASE",
         "MH_E_DEPRECATED_LOD_ROWS",
-        "MH_E_NAME_COLLISION_DIFFERENT_UID",
-        "MH_E_PASSPORT_INVALID",
         "MH_E_DIVERGENT_REVISIONS",
         "MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED",
         "MH_E_PAYLOAD_LOCK_TIMEOUT",
@@ -98,23 +80,14 @@ ERROR_CODES = frozenset(
         "MH_E_SOURCE_INDEX_INVALID",
         "MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT",
         "MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED",
-        # Explicit one-shot v1 -> v2 migration only
-        "MH_E_PENDING_EXPORT_MARKER",
-        "MH_E_V1_MIGRATION_INVALID",
-        "MH_E_V1_MIGRATION_FAILED",
-        "MH_E_V1_MIGRATION_CLEANUP_FAILED",
-        "MH_E_V1_MIGRATION_IDENTITY_MISMATCH",
-        "MH_E_MIGRATION_MESH_COLLECTION_NOT_FOUND",
         # Standalone composite import preflight
         "MH_E_INVALID_COMPOSITE",
         "MH_E_UNSUPPORTED_NODE_KIND",
         "MH_E_INVALID_RESOURCE_SOURCE",
         "MH_E_INVALID_EXPORT_MANIFEST",
         "MH_E_RESOURCE_KIND_MISMATCH",
-        "MH_E_RESOURCE_UID_MISMATCH",
         "MH_E_NAN_INF_VALUE",
         "MH_E_INVALID_SCALE",
-        "MH_E_UID8_COLLISION",
         "MH_E_NON_ASCII_RESOURCE_NAME",
         # Blender export (materials/textures, D23/D27)
         "MH_E_EMPTY_MATERIAL_SLOT",
@@ -123,20 +96,18 @@ ERROR_CODES = frozenset(
         "MH_E_TEXTURE_OUTSIDE_ROOT",
         # UE import
         "MH_E_UNKNOWN_SCHEMA_VERSION",
-        "MH_E_FOREIGN_UID_OWNER",
         "MH_E_NAME_MISMATCH",
         "MH_E_TARGET_NAME_COLLISION",
-        "MH_E_LOD_PASSPORT_MISMATCH",
         # warnings
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",
+        "MH_W_DUPLICATE_RESOURCE_NAME",
         "MH_W_COMPOSITE_CYCLE",
         "MH_W_UNRESOLVED_RESOURCE",
         "MH_W_TEXTURE_OUTSIDE_ROOT",
         "MH_W_TEXTURE_BASENAME_AMBIGUOUS",
         "MH_W_TEXTURE_NOT_FOUND",
         "MH_W_LOD_AUX_NODE_IGNORED",
-        "MH_W_NODE_UID_REASSIGNED",
         "MH_W_MATERIAL_NOT_FOUND",
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
@@ -144,12 +115,6 @@ ERROR_CODES = frozenset(
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
         "MH_W_UNKNOWN_SHADER_CLASS",
         "MH_W_PAYLOAD_EXTERNAL_MODIFIED",
-        "MH_W_NO_EMBEDDED_IDENTITY",
-        "MH_W_DEPRECATED_PER_LOD_PASSPORT_MIGRATION_REQUIRED",
-        "MH_W_DUPLICATE_IDENTICAL_PAYLOAD",
-        "MH_W_FBX_CARRIER_READER_UNAVAILABLE",
-        "MH_W_LEGACY_PAYLOAD_NO_PASSPORT",
-        "MH_W_LEGACY_COMPOSITE_V1_MIGRATION_REQUIRED",
     }
 )
 
@@ -160,24 +125,7 @@ ERROR_CODES = frozenset(
 P_TRANSLATION_CM = 3  # 0.001 cm
 P_ROTATION_QUAT = 6  # 1e-6
 P_SCALE = 6  # 1e-6
-P_WEIGHT = 4  # 1e-4
 P_PROPERTIES = 6  # 1e-6
-
-# SPEC NOTE: §8.2 lists the quantized field classes but does not name a rule
-# for numbers appearing anywhere else (unknown keys, hand-edited files). We use
-# the `properties` exponent as the global default so that *every* such number in
-# the canonical form is a scaled integer, and so that a value written as `2` and
-# the same value written as `2.0` cannot ever produce two different hashes.
-P_DEFAULT = P_PROPERTIES
-
-# SPEC NOTE: the two known schema fields that carry a plain integer rather than
-# a continuous quantity - §8.2 does not list them as a quantized class, and
-# quantizing them would put a nonsensical `"schema_version":1000000` into the
-# canonical form and would destroy `seed_salt` as an exact hash input (§5).
-# They pass through unchanged when they are ints; anything else at those keys
-# is invalid data and falls back to the default quantization, so that the
-# canonical form still never contains a float.
-_PASSTHROUGH_INT_KEYS = frozenset({"schema_version", "seed_salt"})
 
 
 # --------------------------------------------------------------------------
@@ -424,161 +372,7 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 
 # --------------------------------------------------------------------------
-# §8 - composite canonical form
-# --------------------------------------------------------------------------
-
-
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _canon_generic(value: Any, p: int) -> Any:
-    """Recursively canonicalize an unspecified subtree.
-
-    Every number found is quantized with exponent `p`; everything else (strings,
-    bools, null, unknown keys and unknown nesting) passes through untouched -
-    the broken_properties principle of §3: unknown data is transported as is.
-    """
-    if isinstance(value, dict):
-        return {k: _canon_generic(v, p) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_canon_generic(v, p) for v in value]
-    if _is_number(value):
-        return quantize(value, p)
-    return value
-
-
-def _canon_passthrough_int(value: Any) -> Any:
-    """Canonicalize a known plain-integer field (see `_PASSTHROUGH_INT_KEYS`)."""
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, float):
-        return quantize(value, P_DEFAULT)
-    return _canon_generic(value, P_DEFAULT)
-
-
-def _canon_vector(value: Any, p: int, length: int | None = None) -> Any:
-    """Canonicalize a fixed-length numeric vector, falling back to generic."""
-    if isinstance(value, (list, tuple)) and (length is None or len(value) == length):
-        if all(_is_number(c) for c in value):
-            return [quantize(c, p) for c in value]
-    return _canon_generic(value, p)
-
-
-def _canon_rotation_quat(value: Any) -> Any:
-    """Canonicalize `local_transform.rotation_quat`.
-
-    The on-disk value is already normalized and sign-canonicalized by the
-    exporter (§11), so this only quantizes - but the sign canonicalization is
-    re-applied defensively on the quantized integers, because a hand-edited or
-    third-party file must not be able to produce two hashes for one rotation.
-    """
-    if isinstance(value, (list, tuple)) and len(value) == 4 and all(_is_number(c) for c in value):
-        quantized = [quantize(c, P_ROTATION_QUAT) for c in value]
-        return list(_canonicalize_quat_sign(quantized))
-    return _canon_generic(value, P_ROTATION_QUAT)
-
-
-def _canon_local_transform(value: Any) -> Any:
-    if not isinstance(value, dict):
-        return _canon_generic(value, P_DEFAULT)
-    out: dict[str, Any] = {}
-    for key, sub in value.items():
-        if key == "translation_cm":
-            out[key] = _canon_vector(sub, P_TRANSLATION_CM, 3)
-        elif key == "rotation_quat":
-            out[key] = _canon_rotation_quat(sub)
-        elif key == "scale":
-            out[key] = _canon_vector(sub, P_SCALE, 3)
-        else:
-            # Unknown key inside a known object: default exponent.
-            out[key] = _canon_generic(sub, P_DEFAULT)
-    return out
-
-
-def _canon_variant(value: Any) -> Any:
-    if not isinstance(value, dict):
-        return _canon_generic(value, P_DEFAULT)
-    out: dict[str, Any] = {}
-    for key, sub in value.items():
-        if key == "weight":
-            out[key] = _canon_generic(sub, P_WEIGHT)
-        else:
-            out[key] = _canon_generic(sub, P_DEFAULT)
-    return out
-
-
-def _canon_node(node: Any) -> Any:
-    if not isinstance(node, dict):
-        return _canon_generic(node, P_DEFAULT)
-    out: dict[str, Any] = {}
-    for key, sub in node.items():
-        if key == "local_transform":
-            out[key] = _canon_local_transform(sub)
-        elif key == "properties":
-            out[key] = _canon_generic(sub, P_PROPERTIES)
-        elif key == "variants" and isinstance(sub, (list, tuple)):
-            out[key] = [_canon_variant(v) for v in sub]
-        elif key in _PASSTHROUGH_INT_KEYS:
-            out[key] = _canon_passthrough_int(sub)
-        else:
-            out[key] = _canon_generic(sub, P_DEFAULT)
-    return out
-
-
-def _node_sort_key(node: Any) -> bytes:
-    if isinstance(node, dict):
-        uid = node.get("node_uid")
-        if isinstance(uid, str):
-            return nfc(uid).encode("utf-8")
-    return b""
-
-
-def _nfc_tree(value: Any) -> Any:
-    """Normalize every string and every object key of a tree to NFC (§8.4).
-
-    `canonical_json_bytes` normalizes on its own, so this only matters for
-    callers that inspect or compare the canonical value tree directly (the
-    golden vectors do) - it makes that tree spelling-independent too.
-    """
-    if isinstance(value, dict):
-        return {key: _nfc_tree(sub) for key, sub in _nfc_sorted_items(value)}
-    if isinstance(value, (list, tuple)):
-        return [_nfc_tree(sub) for sub in value]
-    if isinstance(value, str):
-        return nfc(value)
-    return value
-
-
-def composite_canonical_form(doc: dict) -> dict:
-    """Build the canonical value tree of a parsed `*.composite` document (§8).
-
-    Input is the document exactly as parsed from disk (numbers are decimal
-    ints/floats). Output is a tree of dict / list / str / int / bool / None
-    with every number replaced by its scaled integer, every string normalized
-    to NFC, and the `nodes` array sorted by `node_uid` (bytewise). Key order in
-    the returned dicts is irrelevant: `canonical_json_bytes` sorts keys itself.
-    """
-    if not isinstance(doc, dict):
-        raise TypeError("composite document must be a JSON object")
-
-    out: dict[str, Any] = {}
-    for key, value in doc.items():
-        if key == "nodes" and isinstance(value, (list, tuple)):
-            nodes = [_canon_node(n) for n in value]
-            nodes.sort(key=_node_sort_key)
-            out[key] = nodes
-        elif key in _PASSTHROUGH_INT_KEYS:
-            out[key] = _canon_passthrough_int(value)
-        else:
-            # Unknown / reserved top-level values: default exponent (see the
-            # P_DEFAULT note above).
-            out[key] = _canon_generic(value, P_DEFAULT)
-    return _nfc_tree(out)
-
-
-# --------------------------------------------------------------------------
-# §8.3 - hashing
+# canonical hashing
 # --------------------------------------------------------------------------
 
 
@@ -592,34 +386,19 @@ def hash_hex(data: bytes) -> str:
     return "xxh3:" + xxhash.xxh3_64(data).hexdigest()
 
 
-def composite_content_hash(doc: dict) -> str:
-    """content_hash of a parsed `*.composite` document (§2, §8)."""
-    return hash_hex(canonical_json_bytes(composite_canonical_form(doc)))
-
-
 # --------------------------------------------------------------------------
 # §10 - name validation and file naming
 # --------------------------------------------------------------------------
 
-# Resource / composite / bundle names are validated BEFORE sanitization: they
-# must be plain ASCII `[A-Za-z0-9_ -]`. There is no transliteration - a
-# transliteration table would be a second eternal cross-implementation
-# contract, and these names become UE package names. Non-ASCII stays legal in
-# node `display_name` and in `properties` values, which never reach file names.
-_RESOURCE_NAME_RE = re.compile(r"^[A-Za-z0-9_ -]+$")
-
-_ALLOWED_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
-
-_WINDOWS_RESERVED = frozenset(
-    ["con", "prn", "aux", "nul"]
-    + [f"com{i}" for i in range(1, 10)]
-    + [f"lpt{i}" for i in range(1, 10)]
-)
+# Resource identity is the exact logical filename stem. There is no lowercase,
+# sanitization, transliteration, or other writer repair.
+_RESOURCE_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 
 def validate_resource_name(name: str) -> None:
-    """Validate a resource / composite / bundle name before sanitization (§10).
+    """Validate a Source Protocol v4 logical resource name.
 
-    The name must be non-empty and consist of ``[A-Za-z0-9_ -]`` only.
+    The name must be non-empty and consist of ``[a-z0-9_]`` only. Readers and
+    writers never lowercase or otherwise repair a noncanonical name.
 
     Raises:
         TypeError: if `name` is not a string.
@@ -631,52 +410,14 @@ def validate_resource_name(name: str) -> None:
         raise TypeError("name must be a string")
     if not _RESOURCE_NAME_RE.match(name):
         raise ValueError(
-            "MH_E_NON_ASCII_RESOURCE_NAME: resource, composite and bundle names must be "
-            f"non-empty and match [A-Za-z0-9_ -]; rename the resource: {name!r}"
+            "MH_E_NON_ASCII_RESOURCE_NAME: logical resource names must be "
+            f"non-empty and match [a-z0-9_]+ exactly: {name!r}"
         )
 
 
-def sanitize_name(name: str) -> str:
-    """Sanitize an already validated name for use in a file name (§10).
-
-    lowercase -> every char outside ``[a-z0-9_]`` becomes ``_`` (no
-    transliteration) -> runs of ``_`` collapse to one -> empty result becomes
-    ``unnamed`` -> Windows reserved base names get a ``_`` prefix (checked on
-    the sanitized string, so ``con`` -> ``_con`` but ``con 1`` -> ``con_1``).
-
-    On a validated name (§10) the only characters step 2 ever replaces are the
-    space and the dash. The function stays total for arbitrary input so that it
-    can be used on unvalidated strings for previews and diagnostics -
-    `validate_resource_name` is what rejects them.
-    """
-    if not isinstance(name, str):
-        raise TypeError("name must be a string")
-
-    lowered = name.lower()
-    chars: list[str] = []
-    for ch in lowered:
-        replacement = ch if ch in _ALLOWED_NAME_CHARS else "_"
-        if replacement == "_" and chars and chars[-1] == "_":
-            continue  # collapse runs of underscores
-        chars.append(replacement)
-
-    result = "".join(chars)
-    if not result:
-        return "unnamed"
-    if result in _WINDOWS_RESERVED:
-        return "_" + result
-    return result
-
-
-def resource_filename(name: str, uid: str, ext: str) -> str:
-    """Build the clean v2 artist-facing ``<sanitized_name><ext>`` filename.
-
-    ``uid`` remains in the signature so migration helpers and existing host
-    adapters can call one API while transitioning their storage.  It is
-    deliberately not encoded in the filename: identity is embedded in the
-    payload passport and resolved through the external local index.
-    """
+def resource_filename(name: str, ext: str) -> str:
+    """Build the v4 ``<logical_name><compound_extension>`` filename."""
     validate_resource_name(name)
-    if not isinstance(uid, str):
-        raise TypeError("uid must be a string")
-    return f"{sanitize_name(name)}{ext}"
+    if not isinstance(ext, str) or not ext.startswith("."):
+        raise ValueError("ext must be a dot-prefixed string")
+    return f"{name}{ext}"

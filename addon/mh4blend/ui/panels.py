@@ -20,8 +20,6 @@ class MH_PT_source_tools(bpy.types.Panel):
         project = layout.box()
         project.label(text="Project", icon="FILE_FOLDER")
         project.prop(preferences, "source_root", text="Source Root")
-        project.prop(preferences, "texture_policy", text="External Textures")
-        project.operator("mh.migrate_sources_v2", icon="FILE_REFRESH")
 
         fbx = layout.box()
         fbx.label(text="FBX Export", icon="MESH_CUBE")
@@ -36,14 +34,14 @@ class MH_PT_source_tools(bpy.types.Panel):
         if scene.mh_composite_mode == "IMPORT":
             box.prop(scene, "mh_composite_import_path", text="File")
             box.operator("mh.import_composite", icon="IMPORT")
-            box.label(text="Recursive composites and FBX: always on")
+            box.label(text="v4 implementation arrives in S3")
         else:
             box.prop(
                 scene, "mh_composite_export_collection", text="Collection")
             box.prop(
                 scene, "mh_composite_export_directory", text="Folder")
             box.operator("mh.export_composite", icon="EXPORT")
-            box.label(text="Empty Collection Instances = nodes")
+            box.label(text="v4 implementation arrives in S3")
 
         materials = layout.box()
         materials.label(text="Materials", icon="MATERIAL")
@@ -51,9 +49,7 @@ class MH_PT_source_tools(bpy.types.Panel):
         materials.prop(
             scene, "mh_material_directory", text="Folder (first export)")
         materials.operator("mh.export_material", icon="EXPORT")
-        materials.separator()
-        materials.operator("mh.actualize_texture_paths", icon="FILE_REFRESH")
-        materials.label(text="Matches full texture filename under Source Root")
+        materials.label(text="v4 implementation arrives in S2")
         layout.label(text="Log: Text Editor > mh_export_log", icon="TEXT")
 
 

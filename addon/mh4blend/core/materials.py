@@ -1,6 +1,6 @@
 """Pure material fingerprinting and optional shader-registry parsing.
 
-Material identity (UID/name) is deliberately outside the fingerprint.  The
+Material identity (kind + logical name) is deliberately outside the fingerprint. The
 content hash answers only whether the UE material payload changed:
 ``shader_class + params + textures``.  Numeric material parameters use the
 same p=6 generic/property quantization as the canonical JSON contract, so an

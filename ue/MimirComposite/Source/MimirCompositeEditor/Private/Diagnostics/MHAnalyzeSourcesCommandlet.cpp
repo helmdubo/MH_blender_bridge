@@ -1,16 +1,8 @@
 #include "Diagnostics/MHAnalyzeSourcesCommandlet.h"
 
-#include "Diagnostics/MHReaderOutputPath.h"
-#include "Dom/JsonObject.h"
-#include "Dom/JsonValue.h"
-#include "HAL/FileManager.h"
 #include "Ledger/MHImportLedger.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
-#include "Misc/Paths.h"
-#include "Policies/PrettyJsonPrintPolicy.h"
-#include "Serialization/JsonSerializer.h"
-#include "Serialization/JsonWriter.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
@@ -20,89 +12,6 @@
 DEFINE_LOG_CATEGORY_STATIC(LogMHAnalyzeSources, Display, All);
 
 using namespace UE::MimirComposite;
-
-namespace
-{
-
-TSharedPtr<FJsonValue> AnalyzeSourcesStringArray(const TArray<FString>& Values)
-{
-    TArray<TSharedPtr<FJsonValue>> Items;
-    for (const FString& Value : Values)
-    {
-        Items.Add(MakeShared<FJsonValueString>(Value));
-    }
-    return MakeShared<FJsonValueArray>(MoveTemp(Items));
-}
-
-FString AnalyzeSourcesReportJson(const FString& SourceRoot, const FMHSourceAnalysis& Analysis)
-{
-    TArray<TSharedPtr<FJsonValue>> Entries;
-    for (const FMHSourceAnalysisEntry& Entry : Analysis.Entries)
-    {
-        const TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
-        Object->SetStringField(TEXT("resource_uid"), Entry.ResourceUid);
-        Object->SetStringField(TEXT("kind"), MHResourceKindLabel(Entry.Kind));
-        Object->SetStringField(TEXT("name"), Entry.Name);
-        Object->SetStringField(TEXT("classification"), MHSourceChangeLabel(Entry.Change));
-        Object->SetStringField(TEXT("source_path"), Entry.SourcePath);
-        Object->SetStringField(TEXT("geometry_hash"), Entry.GeometryHash);
-        Object->SetStringField(TEXT("descriptor_hash"), Entry.DescriptorHash);
-        Object->SetStringField(TEXT("payload_fingerprint"), Entry.Fingerprint);
-        Object->SetField(TEXT("warnings"), AnalyzeSourcesStringArray(Entry.Warnings));
-        Object->SetField(TEXT("errors"), AnalyzeSourcesStringArray(Entry.Errors));
-        Entries.Add(MakeShared<FJsonValueObject>(Object));
-    }
-
-    const TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-    Root->SetStringField(TEXT("tag"), TEXT("mh.analyze_sources:1"));
-    Root->SetStringField(TEXT("source_root"), SourceRoot);
-    Root->SetArrayField(TEXT("entries"), Entries);
-    Root->SetField(TEXT("warnings"), AnalyzeSourcesStringArray(Analysis.Warnings));
-    Root->SetField(TEXT("errors"), AnalyzeSourcesStringArray(Analysis.Errors));
-
-    FString Json;
-    const TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
-        TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&Json);
-    FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
-    return Json;
-}
-
-bool ResolveOutputArgument(
-    const TCHAR* ArgumentName,
-    const FString& SourceRoot,
-    FString& InOutPath)
-{
-    if (InOutPath.IsEmpty())
-    {
-        return true;
-    }
-
-    FString ResolvedPath;
-    FString Error;
-    if (!MHResolveReaderOutputPath(SourceRoot, InOutPath, ResolvedPath, Error))
-    {
-        UE_LOG(
-            LogMHAnalyzeSources,
-            Error,
-            TEXT("-%s rejected: %s"),
-            ArgumentName,
-            *Error);
-        return false;
-    }
-
-    InOutPath = MoveTemp(ResolvedPath);
-    return true;
-}
-
-bool EnsureOutputDirectory(const FString& OutputPath)
-{
-    const FString Directory = FPaths::GetPath(OutputPath);
-    return !Directory.IsEmpty() &&
-        (IFileManager::Get().DirectoryExists(*Directory) ||
-         IFileManager::Get().MakeDirectory(*Directory, true));
-}
-
-} // namespace
 
 UMHAnalyzeSourcesCommandlet::UMHAnalyzeSourcesCommandlet(const FObjectInitializer& ObjectInitializer)
     : Super(ObjectInitializer)
@@ -129,7 +38,7 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
             LogMHAnalyzeSources,
             Error,
             TEXT("Usage: -run=MHAnalyzeSources -root=<source_root> [-ledger=<snapshot.json>] ")
-            TEXT("[-report=<out.json>]"));
+            TEXT("[-report=<disabled-until-owner-schema-decision>]"));
         return 2;
     }
 
@@ -152,8 +61,12 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
         return 2;
     }
 
-    if (!ResolveOutputArgument(TEXT("report"), SourceRoot, ReportPath))
+    if (!ReportPath.IsEmpty())
     {
+        UE_LOG(
+            LogMHAnalyzeSources,
+            Error,
+            TEXT("MH_E_SOURCE_INDEX_INVALID: -report is disabled until the owner ratifies a v4 diagnostic schema; no legacy tag is reused"));
         return 2;
     }
 
@@ -192,9 +105,9 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
     UE_LOG(
         LogMHAnalyzeSources,
         Display,
-        TEXT("scanned %s: %d valid UIDs, %d reader-state rows, %d classified resources"),
+        TEXT("scanned %s: %d resource keys, %d deprecated Ledger rows, %d classified resources"),
         *SourceRoot,
-        Snapshot.ResourceUids.Num(),
+        Snapshot.ResourceKeys.Num(),
         Ledger.Num(),
         Analysis.Entries.Num());
 
@@ -205,8 +118,8 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
             Display,
             TEXT("%-18s %-11s %-24s %s"),
             MHSourceChangeLabel(Entry.Change),
-            MHResourceKindLabel(Entry.Kind),
-            Entry.Name.IsEmpty() ? TEXT("-") : *Entry.Name,
+            MHResourceKindLabel(Entry.Key.Kind),
+            *Entry.Key.LogicalName,
             Entry.SourcePath.IsEmpty() ? TEXT("-") : *Entry.SourcePath);
         for (const FString& Warning : Entry.Warnings)
         {
@@ -224,21 +137,6 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
     for (const FString& Error : Analysis.Errors)
     {
         UE_LOG(LogMHAnalyzeSources, Error, TEXT("%s"), *Error);
-    }
-
-    if (!ReportPath.IsEmpty())
-    {
-        const FString ReportJson = AnalyzeSourcesReportJson(SourceRoot, Analysis);
-        if (!EnsureOutputDirectory(ReportPath) ||
-            !FFileHelper::SaveStringToFile(
-                ReportJson,
-                *ReportPath,
-                FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-        {
-            UE_LOG(LogMHAnalyzeSources, Error, TEXT("cannot write report %s"), *ReportPath);
-            return 1;
-        }
-        UE_LOG(LogMHAnalyzeSources, Display, TEXT("report written: %s"), *ReportPath);
     }
 
     return Analysis.HasErrors() ? 1 : 0;
