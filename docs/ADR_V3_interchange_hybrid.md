@@ -154,7 +154,7 @@ Blender writer; до этого действует текущий passport/`mh_u
 mh_node_schema = 1
 mh_node_uid            (legacy mh_uid читается как migration alias)
 mh_geometry_uid
-mh_role                render | collision | socket | marker
+mh_role                render | collision | socket | marker | group
 mh_lod_level           int
 mh_owner_resource_uid
 mh_owner_node_uid      (optional)
@@ -166,6 +166,11 @@ mh_fx_profile          stable project key
 Суффиксы `UCX_`/`SOCKET_`/`_cls_*` остаются authoring UX Blender; writer
 преобразует их в metadata; UE mapper строит семантику из properties, suffix —
 validation/fallback. Rename после этого не ломает контракт.
+
+`group` — организационный null node (AMENDMENT_node_hierarchy r2): полная
+иерархия транспортируется, UE не создаёт из групп ассетов, но хранит их в
+node table provenance. Skeleton/кости — зарезервированное расширение
+транспорта, отдельный amendment.
 
 Collision mapping: `physics -> PhysicsOnly + ContributeToMass`,
 `query -> QueryOnly + !ContributeToMass`, `both -> QueryAndPhysics`

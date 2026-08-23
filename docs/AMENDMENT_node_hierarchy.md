@@ -1,8 +1,10 @@
 # AMENDMENT — node hierarchy and organizational empties in `*.mesh.fbx`
 
-Статус: **ACTIVE, fail-closed**. Дополняет Combined-LOD v2 profile и `05`;
-байты существующих payload'ов не меняет. Открытая семантика групп вынесена в
-`UE-QUESTION-19`.
+Статус: **ACTIVE (r2)**. Дополняет Combined-LOD v2 profile и `05`. r1 этого
+документа предлагал fail-closed запрет групп (`MH_E_UNTRANSPORTED_GROUP_NODE`);
+owner решил `UE-QUESTION-19` иначе — **полная иерархия транспортируется**.
+Запретный гвард r1 superseded и не реализуется. Семантика существующих
+payload'ов не пересматривается: их геометрические хэши действительны.
 
 ## 1. Установленный факт (field finding, 2026-08)
 
@@ -30,55 +32,79 @@ mesh node с `parent_index: -1` и пустыми `child_indices`, тогда к
   для FBX, экспортированных generic-экспортом Blender без селекционного
   фильтра; к транспорту mh4blend это отношения не имеет.
 
-## 2. Нормативные правила (сейчас)
+## 2. Нормативные правила (r2, owner decision)
 
-1. Транспортируемое множество узлов `*.mesh.fbx` фиксируется явно:
-   render mesh nodes всех LOD, `UCX_*`, `SOCKET_*`. Прочие объекты
-   коллекции в transport **не входят**.
-2. Тихое выбрасывание группирующего узла с перекорневлением детей —
-   дефект контракта, а не поведение по умолчанию. Blender writer обязан
-   (следующий addon slice) при экспорте обнаруживать не-aux `EMPTY` среди
-   членов ресурсной коллекции и завершаться fail-closed:
+1. **Транспортируемое множество** узлов `*.mesh.fbx`: render mesh nodes всех
+   LOD, aux `UCX_*`/`SOCKET_*`, и **все организационные `EMPTY` («group»)**
+   ресурсной коллекции (включая авторенные в `.lods`-контейнере между
+   уровневыми коллекциями). `ARMATURE`/кости зарезервированы будущим
+   amendment'ом и пока не транспортируются.
+2. **Иерархия сохраняется.** Группы экспортируются обычными null Model
+   nodes; parenting детей не срезается, transforms не запекаются. Groups —
+   структура, не LOD payload: они не несут `mh_lod_level` (stale-значения
+   срезаются на экспорт) и не являются Carrier B (passport остаётся на
+   каждом MESH Model, `05` §4.2 и consensus-проверка `copy_count`
+   неизменны). Node identity (`mh_uid`) присваивается и группам.
+3. **Замыкание по родителям.** Родитель каждого транспортируемого объекта
+   обязан быть транспортируемым или `None`; иначе Blender молча
+   перекорневил бы ребёнка с запечённым world transform. Экспорт
+   завершается fail-closed:
 
    ```text
-   MH_E_UNTRANSPORTED_GROUP_NODE: empty '<name>' in '<collection>' is not
-   part of the mesh transport; flatten it intentionally or move the group
-   semantics to a .composite (UE-QUESTION-19)
+   MH_E_PARENT_OUTSIDE_RESOURCE: '<child>' is parented to '<parent>',
+   which is not part of resource collection '<collection>'
    ```
 
-   До реализации гварда авторам предписано не держать организационные
-   пустышки внутри `.lodNN`-коллекций; проверка — `MHFbxDump`
-   (`summary.node_count == summary.mesh_node_count` + aux).
-3. `MHFbxDump` остаётся арбитром: расхождение «Blender-иерархия ↔ дамп»
-   трактуется как факт о writer'е, не о дампе. ROADMAP: гистограмма
-   attribute-типов в summary, чтобы не-mesh классы были видны одной строкой.
-4. Baked-transform последствия текущего поведения признаются honest debt:
-   существующие payload'ы валидны, их `geometry_hash` не пересматривается.
+4. **Semantic hash не меняется.** Durable stream `mh.meshser:2` по-прежнему
+   состоит из mesh-записей в world space (`matrix_world`) и aux; группы
+   участвуют только через влияние на world-матрицы детей. Появление
+   иерархии в FBX без перемещения мешей — raw-изменение
+   (`REPACK`/`NO_CHANGE` классы), не геометрическое.
+5. **UE mapper** обязан использовать evaluated **global** transforms mesh
+   nodes (мировое положение мешей идентично при плоском и иерархическом
+   FBX). Null group nodes — признанная структура: не ошибка и не warning;
+   они входят в node table provenance (ADR v3 §8) c `mh_role=group`.
+6. **`MHFbxDump` остаётся арбитром** содержимого файла. ROADMAP: гистограмма
+   attribute-типов в summary.
+7. **Random/variant механики внутри mesh FBX не существует.** Групповые
+   пустышки не несут селекторной семантики; вариантные наборы — уровень
+   `.composite` (отдельный amendment, если потребуется).
 
-## 3. UE-QUESTION-19 — семантика организационных/групповых узлов
+## 3. Duplicate node UID repair (owner requirement)
 
-**Контекст.** Авторские сцены (dag4blend-наследие) содержат группирующие
-Empty (пример: `random` — в Dagor это селектор случайного варианта).
-Combined-LOD профиль определяет ресурс как ОДИН static mesh; molчаливое
-слияние всех детей группы в LOD0 может физически склеить взаимоисключающие
-варианты. Research-модель (ADR v3 §7–8) хранит `ParentNodeUid` и
-предполагает узловую иерархию в provenance.
+Blender-дублирование (`Shift+D`/`Alt+D`) копирует custom properties, поэтому
+свежий дубликат легитимно совпадает по `mh_uid` с оригиналом. Отказ экспорта
+в этой ситуации — дефект UX, а не защита.
 
-**Вопрос.** Что означает группа внутри mesh-ресурса:
+Нормативно:
 
-- **A.** Транспортировать пустышки как узлы `mh_role=group` (null nodes,
-  иерархия сохраняется в FBX и provenance; UE не создаёт из них ассетов);
-- **B.** Запретить группы в mesh-ресурсе; групповые/вариантные семантики
-  (random-селекторы, switch-наборы) принадлежат `.composite`, где каждый
-  вариант — отдельный ресурс/узел графа.
+1. Node-UID коллизии среди транспортируемых **объектов** и среди уникальных
+   (по указателю) **mesh datablocks** чинятся на экспорт детерминированно:
+   владельцы сортируются по имени datablock'а; первый сохраняет UID,
+   остальные получают свежие UUID4 (персистентно, через lazy-assignment §4).
+   Каждая замена логируется:
 
-**Рекомендация.** **B** для `*.mesh.fbx` (сохраняет инвариант «один UID —
-один StaticMesh», не размывает Combined-LOD), плюс расширение схемы
-`.composite` узлом-селектором отдельным amendment. **A** остаётся fallback,
-если field-практика покажет массовые организационные пустышки без
-вариантной семантики.
+   ```text
+   MH_W_NODE_UID_REASSIGNED [old_uid, new_uid]:
+   duplicate node uid kept by '<keeper>'; '<renamed>' received <new_uid>
+   ```
 
-**Временное правило.** Fail-closed §2.2: экспорт с не-aux пустышкой внутри
-ресурсной коллекции блокируется; выбор A/B не предрешается.
+2. Linked-дубликаты (`Alt+D`) делят один datablock — это не коллизия
+   datablock-UID (дедуп по указателю); чинится только object-UID.
+3. Repair — resource-internal операция: цена неверного выбора keeper'а —
+   один честный rebuild ресурса (`UID repair может дать честный rewrite`,
+   закрытый вопрос v1). Поэтому арбитраж по manifest'у (§4.1) не требуется.
+4. **Material UID не чинится никогда**: это project-global identity
+   (library). Коллизия материалов остаётся fail-closed
+   `MH_E_DUPLICATE_RESOURCE_UID`.
+5. Пост-repair коллизия (патологический carrier) — прежний fail-closed
+   `MH_E_DUPLICATE_NODE_UID`.
 
-**Статус.** ОТКРЫТ; временное правило ACTIVE.
+## 4. UE-QUESTION-19 — РЕШЕНО OWNER
+
+Полная иерархия (группы + меши) транспортируется; вариант B r1 (запрет групп,
+семантики в `.composite`) отклонён; random-механика в FBX не нужна (имя
+`random` в field-кейсе было тестовым). Кости — возможное будущее расширение
+транспорта, зарезервировано. Реализация r2 — `addon/mh4blend/scene/
+export_fbx.py` (gather groups, parent closure, UID repair) + gates в
+`tests/test_export_fbx_bpy.py`.

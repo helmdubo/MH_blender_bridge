@@ -89,6 +89,13 @@ def _is_static_mesh_aux(obj):
 
 
 def _collection_resource_objects(collection):
+    """Split recursive membership into (geometry, aux, groups).
+
+    ``groups`` are organizational EMPTY objects (everything that is not a
+    ``SOCKET_*`` aux). AMENDMENT_node_hierarchy: they are part of the FBX
+    transport as plain null nodes so the authored hierarchy survives instead
+    of Blender silently re-rooting children with baked world transforms.
+    """
     members = _collection_objects(collection)
     aux = [obj for obj in members if _is_static_mesh_aux(obj)]
     aux_ids = {obj.as_pointer() for obj in aux}
@@ -96,12 +103,16 @@ def _collection_resource_objects(collection):
         obj for obj in members
         if obj.type == "MESH" and obj.as_pointer() not in aux_ids
     ]
-    return geometry, aux
+    groups = [
+        obj for obj in members
+        if obj.type == "EMPTY" and obj.as_pointer() not in aux_ids
+    ]
+    return geometry, aux, groups
 
 
 def _collection_mesh_objects(collection):
     """Return recursive semantic geometry, excluding FBX aux nodes."""
-    geometry, _aux = _collection_resource_objects(collection)
+    geometry, _aux, _groups = _collection_resource_objects(collection)
     return geometry
 
 
@@ -180,9 +191,11 @@ def _dagor_lod_structure(collection):
     level_objects = []
     level0_aux = []
     ignored_aux = []
+    level_aux_ids = set()
     object_level = {}
     for level, child in sorted(levels.items()):
-        objects, aux = _collection_resource_objects(child)
+        objects, aux, _child_groups = _collection_resource_objects(child)
+        level_aux_ids.update(obj.as_pointer() for obj in aux)
         if level == 0:
             level0_aux.extend(aux)
         elif aux:
@@ -217,11 +230,19 @@ def _dagor_lod_structure(collection):
                     f"'{obj.name}' in LOD {level} is parented to "
                     f"'{parent.name}' in LOD {parent_level}")
 
+    # Groups live at container scope: the recursive root gather also covers
+    # empties authored directly in `.lods` or between level collections.
+    _root_geometry, root_aux, groups = _collection_resource_objects(collection)
+    for aux_obj in root_aux:
+        if aux_obj.as_pointer() not in level_aux_ids:
+            ignored_aux.append(("root", aux_obj.name))
+
     return {
         "resource_name": resource_name,
         "levels": level_objects,
         "level0_aux": level0_aux,
         "ignored_aux": ignored_aux,
+        "groups": groups,
     }
 
 
@@ -512,6 +533,30 @@ def _temporary_passport_properties(objects, passport_text):
                 del obj[PASSPORT_PROPERTY]
 
 
+def _repair_duplicate_node_uids(carriers):
+    """Deterministic repair of duplicated node identities (§4 analogue).
+
+    Blender duplication copies custom properties, so a fresh duplicate
+    legitimately collides on ``mh_uid``. Node identity is resource-internal:
+    the lexicographically first owner by datablock name keeps the UID, every
+    other owner receives a fresh one (persisted, logged by the caller as
+    ``MH_W_NODE_UID_REASSIGNED``). Material UIDs are project-global identity
+    and are deliberately NOT repaired here.
+    """
+    repairs = []
+    for uid, owners in sorted(find_duplicate_uids(carriers).items()):
+        keeper, *rest = sorted(owners, key=lambda carrier: carrier.name)
+        for carrier in rest:
+            del carrier[PROP_UID]
+            repairs.append({
+                "uid": uid,
+                "keeper": keeper.name,
+                "renamed": carrier.name,
+                "new_uid": ensure_uid(carrier),
+            })
+    return repairs
+
+
 def _clean_fbx_filename(resource_name):
     validate_resource_name(resource_name)
     return f"{sanitize_name(resource_name)}.mesh.fbx"
@@ -571,9 +616,11 @@ def export_fbx_collection(
         collect_collection_mesh_objects(collection))
     if lod_structure is not None:
         aux_objects = lod_structure["level0_aux"]
+        group_objects = lod_structure["groups"]
     else:
-        _geometry, aux_objects = _collection_resource_objects(collection)
-    export_objects = objects + aux_objects
+        _geometry, aux_objects, group_objects = (
+            _collection_resource_objects(collection))
+    export_objects = objects + aux_objects + group_objects
     payload_levels = (
         lod_structure["levels"] if lod_structure is not None
         else [(0, collection, objects)])
@@ -593,16 +640,40 @@ def export_fbx_collection(
         _assert_output_under_root(resolved_output_dir, resolved_source_root)
     _assert_existing_target_uid(filepath, resource_uid)
 
-    for obj in objects:
+    # AMENDMENT_node_hierarchy: Blender silently re-roots children of
+    # non-exported parents with baked world transforms. Every transported
+    # object's parent must therefore be transported too (or None).
+    transported_ids = {obj.as_pointer() for obj in export_objects}
+    for obj in export_objects:
+        parent = obj.parent
+        if parent is not None and parent.as_pointer() not in transported_ids:
+            raise MHValidationError(
+                "MH_E_PARENT_OUTSIDE_RESOURCE", [resource_uid],
+                f"'{obj.name}' is parented to '{parent.name}', which is not "
+                f"part of resource collection '{collection.name}'; move the "
+                "parent into the collection or clear the parenting")
+
+    for obj in export_objects:
         ensure_uid(obj)
         if obj.data is not None:
             ensure_uid(obj.data)
-    duplicate_object_uids = find_duplicate_uids(objects)
-    if duplicate_object_uids:
-        uid = sorted(duplicate_object_uids)[0]
+    uid_repairs = _repair_duplicate_node_uids(export_objects)
+    unique_datablocks = []
+    seen_datablocks = set()
+    for obj in export_objects:
+        data = obj.data
+        if data is None or data.as_pointer() in seen_datablocks:
+            continue
+        seen_datablocks.add(data.as_pointer())
+        unique_datablocks.append(data)
+    uid_repairs.extend(_repair_duplicate_node_uids(unique_datablocks))
+    surviving = (find_duplicate_uids(export_objects)
+                 or find_duplicate_uids(unique_datablocks))
+    if surviving:
+        uid = sorted(surviving)[0]
         raise MHValidationError(
             "MH_E_DUPLICATE_NODE_UID", [uid],
-            "mesh objects in the selected collection share one mh_uid")
+            "node mh_uid collision survived deterministic repair")
 
     used_materials = []
     seen_materials = set()
@@ -699,12 +770,21 @@ def export_fbx_collection(
     validation = {"errors": [], "warnings": []}
     if lod_structure is not None and lod_structure["ignored_aux"]:
         ignored = ", ".join(
-            f"LOD{level} '{name}'"
+            (f"LOD{level} '{name}'" if level != "root"
+             else f"container '{name}'")
             for level, name in lod_structure["ignored_aux"])
         validation["warnings"].append({
             "code": "MH_W_LOD_AUX_NODE_IGNORED",
             "subjects": [resource_uid],
-            "message": f"higher-LOD auxiliary nodes were ignored: {ignored}",
+            "message": f"out-of-LOD0 auxiliary nodes were ignored: {ignored}",
+        })
+    for repair in uid_repairs:
+        validation["warnings"].append({
+            "code": "MH_W_NODE_UID_REASSIGNED",
+            "subjects": [repair["uid"], repair["new_uid"]],
+            "message": (
+                f"duplicate node uid kept by '{repair['keeper']}'; "
+                f"'{repair['renamed']}' received {repair['new_uid']}"),
         })
 
     payload_updates = [{"filepath": filepath, "written": False}]
@@ -715,8 +795,11 @@ def export_fbx_collection(
     if not dry_run:
         os.makedirs(resolved_output_dir, exist_ok=True)
         lod_properties = payload_levels if lod_structure is not None else []
-        implicit_lod0 = aux_objects if lod_structure is not None \
-            else export_objects
+        # Group empties are structure, not LOD payload: they never carry
+        # mh_lod_level, so any stale authored value is stripped for export.
+        implicit_lod0 = (aux_objects + group_objects)
+        if lod_structure is None:
+            implicit_lod0 = export_objects
         with payload_lock(filepath, source_root=resolved_source_root):
             # The preflight above gives an early artist-facing error; this
             # locked recheck closes the two-writer collision race.

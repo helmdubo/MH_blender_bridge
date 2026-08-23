@@ -195,10 +195,13 @@ canonicalization после решения вопроса.
 
 ### UE-QUESTION-19 — организационные/групповые Empty в mesh-ресурсе
 
-Полная формулировка, field-факт (пустышка `random`, перекорневление детей с
-запечёнными transforms, честность `MHFbxDump`) и временное fail-closed правило
-(`MH_E_UNTRANSPORTED_GROUP_NODE`) — в `AMENDMENT_node_hierarchy.md` §3.
-Варианты: (A) транспорт `mh_role=group` null nodes; (B) группы запрещены в
-mesh-ресурсе, вариантные семантики принадлежат `.composite`. Рекомендация — B.
+Field-факт (перекорневление детей невыбранного Empty с запечёнными
+transforms; честность `MHFbxDump`) — в `AMENDMENT_node_hierarchy.md` §1.
 
-**Статус.** ОТКРЫТ; временное правило ACTIVE.
+**Статус.** РЕШЕНО OWNER (r2 amendment'а): полная иерархия — группы + меши —
+транспортируется null nodes с сохранением parenting; `mh_lod_level`/Carrier B
+на группы не распространяются; замыкание по родителям fail-closed
+(`MH_E_PARENT_OUTSIDE_RESOURCE`); random/variant механики в mesh FBX нет;
+кости зарезервированы будущим amendment. Одновременно ратифицирован
+deterministic duplicate node-UID repair (`MH_W_NODE_UID_REASSIGNED`);
+material UID не чинится никогда.
