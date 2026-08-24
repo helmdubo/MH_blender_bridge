@@ -26,10 +26,13 @@ def test_register_exposes_only_v4_workflow_surfaces():
             "mh_composite_export_directory",
         ):
             assert hasattr(scene_type, name)
+        assert hasattr(bpy.types.Material, "mh4blend")
         assert bpy.context.scene.mh_fbx_export_materials is False
         assert {cls.bl_idname for cls in ops.CLASSES} == {
             "mh.export_fbx", "mh.export_material", "mh.export_composite",
-            "mh.import_composite",
+            "mh.import_composite", "mh.material_texture_add",
+            "mh.material_texture_remove", "mh.material_param_add",
+            "mh.material_param_remove",
         }
         assert {cls.bl_category for cls in panels.CLASSES} == {"MH"}
     finally:
@@ -44,7 +47,7 @@ def test_register_exposes_only_v4_workflow_surfaces():
         assert not hasattr(bpy.types.Scene, name)
 
 
-def test_pending_material_export_blocks_before_fbx_publish(tmp_path, monkeypatch):
+def test_material_export_option_is_forwarded_to_fbx_workflow(tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     mh4blend.register()
     try:
@@ -63,14 +66,71 @@ def test_pending_material_export_blocks_before_fbx_publish(tmp_path, monkeypatch
         monkeypatch.setattr(
             ops,
             "export_fbx_collection",
-            lambda *_args, **_kwargs: calls.append("FBX"),
+            lambda *_args, **kwargs: (
+                calls.append(kwargs),
+                {"filepath": str(tmp_path / "asset.mesh.fbx")},
+            )[1],
         )
 
-        with pytest.raises(RuntimeError, match="unavailable until slice S2"):
-            bpy.ops.mh.export_fbx()
-        assert calls == []
-        assert not list(tmp_path.iterdir())
-        assert "unavailable until slice S2" in bpy.data.texts[
-            ops.LOG_TEXT_NAME].as_string()
+        assert bpy.ops.mh.export_fbx() == {"FINISHED"}
+        assert len(calls) == 1
+        assert calls[0]["export_materials"] is True
     finally:
         mh4blend.unregister()
+
+
+def test_material_collection_operators_use_deterministic_valid_defaults():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        material = bpy.data.materials.new("wall")
+        bpy.context.scene.mh_material = material
+        settings = material.mh4blend
+        settings.mode = "CLASS"
+
+        assert bpy.ops.mh.material_texture_add() == {"FINISHED"}
+        assert bpy.ops.mh.material_texture_add() == {"FINISHED"}
+        assert [row.slot for row in settings.textures] == [0, 1]
+        assert bpy.ops.mh.material_texture_remove(index=0) == {"FINISHED"}
+        assert [row.slot for row in settings.textures] == [1]
+        assert bpy.ops.mh.material_texture_add() == {"FINISHED"}
+        assert [row.slot for row in settings.textures] == [1, 0]
+
+        assert bpy.ops.mh.material_param_add() == {"FINISHED"}
+        assert bpy.ops.mh.material_param_add() == {"FINISHED"}
+        assert [row.name for row in settings.params] == ["param", "param_1"]
+        assert all(row.kind == "SCALAR" for row in settings.params)
+        assert bpy.ops.mh.material_param_remove(index=0) == {"FINISHED"}
+        assert [row.name for row in settings.params] == ["param_1"]
+    finally:
+        mh4blend.unregister()
+
+
+def test_texture_add_is_fail_closed_when_all_slots_are_used_or_library_mode():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        material = bpy.data.materials.new("wall")
+        bpy.context.scene.mh_material = material
+        settings = material.mh4blend
+        settings.mode = "CLASS"
+        for _index in range(16):
+            assert bpy.ops.mh.material_texture_add() == {"FINISHED"}
+        assert [row.slot for row in settings.textures] == list(range(16))
+        with pytest.raises(RuntimeError, match="all texture slots"):
+            bpy.ops.mh.material_texture_add()
+        assert len(settings.textures) == 16
+
+        settings.mode = "LIBRARY"
+        with pytest.raises(RuntimeError, match="cannot have overrides"):
+            bpy.ops.mh.material_param_add()
+        assert len(settings.params) == 0
+    finally:
+        mh4blend.unregister()
+
+
+def test_composite_picker_does_not_accept_uppercase_extension(tmp_path):
+    path = tmp_path / "asset.COMPOSITE"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
+        ops._filepath(str(path))

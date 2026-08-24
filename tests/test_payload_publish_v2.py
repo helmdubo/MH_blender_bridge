@@ -85,6 +85,28 @@ def test_atomic_publish_uses_external_lock_sibling_temp_and_complete_bytes(
     assert caught.value.code == "MH_E_SOURCE_INDEX_INVALID"
 
 
+def test_read_back_validator_runs_before_replace_and_preserves_old_on_reject(
+        tmp_path):
+    target = tmp_path / "source" / "wall.material"
+    target.parent.mkdir()
+    target.write_bytes(b"old authority")
+    observed = []
+
+    def reject(payload):
+        observed.append(payload)
+        raise ValueError("synthetic read-back rejection")
+
+    with pytest.raises(ValueError, match="read-back rejection"):
+        atomic_publish_bytes(
+            target, b"new complete payload",
+            lock_root=tmp_path / "locks",
+            read_back_validator=reject)
+
+    assert observed == [b"new complete payload"]
+    assert target.read_bytes() == b"old authority"
+    assert list(target.parent.glob(".*.mh-tmp-*")) == []
+
+
 def test_atomic_json_is_deterministic_utf8_and_rejects_nan(tmp_path):
     target = tmp_path / "cache" / "index.json"
     locks = tmp_path / "locks"

@@ -450,7 +450,8 @@ def _material_slot_names(objects):
                 validate_resource_name(material.name)
             except (TypeError, ValueError) as exc:
                 raise MHValidationError(
-                    "MH_E_INVALID_MATERIAL_VALUE", [slot_name], str(exc)) from exc
+                    "MH_E_NONCANONICAL_RESOURCE_NAME",
+                    [slot_name, material.name], str(exc)) from exc
             if slot_name != material.name:
                 raise MHValidationError(
                     "MH_E_MATERIAL_SLOT_CONFLICT", [slot_name, material.name],
@@ -478,31 +479,33 @@ def _temporary_lod_node_names(levels):
             match = _LOD_NODE_SUFFIX_RE.search(obj.name)
             if match is not None:
                 if int(match.group("level")) != level:
-                    raise ValueError(
-                        "MH_E_INVALID_LOD_HIERARCHY: mesh object "
-                        f"'{obj.name}' is in LOD {level} but carries "
-                        f"{match.group(0)}")
+                    raise MHValidationError(
+                        "MH_E_INVALID_LOD_HIERARCHY", [obj.name],
+                        f"mesh object '{obj.name}' is in LOD {level} but "
+                        f"carries {match.group(0)}")
                 continue
             desired = f"{obj.name}{suffix}"
             previous = desired_owners.get(desired)
             if previous is not None and previous != obj:
-                raise ValueError(
-                    "MH_E_INVALID_LOD_HIERARCHY: LOD export node name "
-                    f"'{desired}' is not unique")
+                raise MHValidationError(
+                    "MH_E_INVALID_LOD_HIERARCHY", [desired],
+                    f"LOD export node name '{desired}' is not unique")
             desired_owners[desired] = obj
             existing = bpy.data.objects.get(desired)
             if existing is not None and existing != obj:
-                raise ValueError(
-                    "MH_E_INVALID_LOD_HIERARCHY: temporary LOD node name "
-                    f"'{desired}' is already used by '{existing.name}'")
+                raise MHValidationError(
+                    "MH_E_INVALID_LOD_HIERARCHY", [desired, existing.name],
+                    f"temporary LOD node name '{desired}' is already used by "
+                    f"'{existing.name}'")
             changes.append((obj, obj.name, desired))
     try:
         for obj, _original, desired in changes:
             obj.name = desired
             if obj.name != desired:
-                raise ValueError(
-                    "MH_E_INVALID_LOD_HIERARCHY: Blender could not assign "
-                    f"temporary LOD node name '{desired}'")
+                raise MHValidationError(
+                    "MH_E_INVALID_LOD_HIERARCHY", [desired],
+                    f"Blender could not assign temporary LOD node name "
+                    f"'{desired}'")
         yield
     finally:
         for obj, original, _desired in reversed(changes):
@@ -522,7 +525,8 @@ def _assert_existing_target(filepath):
 
 
 def export_fbx_collection(
-        collection, output_dir, *, dry_run=False, source_root=""):
+        collection, output_dir, *, dry_run=False, source_root="",
+        export_materials=False):
     """Export one selected collection as one static-mesh resource.
 
     A regular collection writes one FBX. A recognized dag4blend ``.lods``
@@ -619,8 +623,22 @@ def export_fbx_collection(
             "message": f"out-of-LOD0 auxiliary nodes were ignored: {ignored}",
         })
 
+    prepared_materials = []
+    if export_materials:
+        if resolved_source_root is None:
+            raise ValueError(
+                "Project Source Root is required when Export Materials is enabled")
+        from .export_material import prepare_blender_material_export
+        prepared_materials = [
+            prepare_blender_material_export(
+                material, resolved_output_dir,
+                source_root=resolved_source_root)
+            for material in sorted(materials, key=lambda item: item.name)
+        ]
+
     payload_updates = [{"filepath": filepath, "written": False}]
     written = False
+    material_updates = []
     if not dry_run:
         os.makedirs(resolved_output_dir, exist_ok=True)
         descriptor, tmp = tempfile.mkstemp(
@@ -644,6 +662,13 @@ def export_fbx_collection(
             finally:
                 with contextlib.suppress(OSError):
                     os.remove(tmp)
+        if prepared_materials:
+            from .export_material import write_prepared_material
+            material_updates = [
+                write_prepared_material(
+                    prepared, source_root=resolved_source_root)
+                for prepared in prepared_materials
+            ]
 
     return {
         "ok": True,
@@ -654,5 +679,6 @@ def export_fbx_collection(
         "resource_name": resource_name,
         "lod_levels": [level for level, _child, _objects in payload_levels],
         "materials": materials,
+        "material_updates": material_updates,
         "validation": validation,
     }

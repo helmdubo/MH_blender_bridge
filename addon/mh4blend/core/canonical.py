@@ -88,12 +88,16 @@ ERROR_CODES = frozenset(
         "MH_E_RESOURCE_KIND_MISMATCH",
         "MH_E_NAN_INF_VALUE",
         "MH_E_INVALID_SCALE",
-        "MH_E_NON_ASCII_RESOURCE_NAME",
+        "MH_E_NONCANONICAL_RESOURCE_NAME",
         # Blender export (materials/textures, D23/D27)
         "MH_E_EMPTY_MATERIAL_SLOT",
         "MH_E_INVALID_MATERIAL_VALUE",
+        "MH_E_MATERIAL_GRAMMAR",
+        "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE",
         "MH_E_MATERIAL_SLOT_CONFLICT",
+        "MH_E_NONCANONICAL_TEXTURE_REFERENCE",
         "MH_E_TEXTURE_OUTSIDE_ROOT",
+        "MH_E_UNRESOLVED_TEXTURE_REFERENCE",
         # UE import
         "MH_E_UNKNOWN_SCHEMA_VERSION",
         "MH_E_NAME_MISMATCH",
@@ -108,6 +112,7 @@ ERROR_CODES = frozenset(
         "MH_W_TEXTURE_BASENAME_AMBIGUOUS",
         "MH_W_TEXTURE_NOT_FOUND",
         "MH_W_LOD_AUX_NODE_IGNORED",
+        "MH_W_MANAGED_ASSET_LOCALLY_MODIFIED",
         "MH_W_MATERIAL_NOT_FOUND",
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
@@ -403,14 +408,14 @@ def validate_resource_name(name: str) -> None:
     Raises:
         TypeError: if `name` is not a string.
         ValueError: whose message starts with the machine code
-            ``MH_E_NON_ASCII_RESOURCE_NAME`` (§6.1) on any violation, the empty
+            ``MH_E_NONCANONICAL_RESOURCE_NAME`` (§2) on any violation, the empty
             name included.
     """
     if not isinstance(name, str):
         raise TypeError("name must be a string")
     if not _RESOURCE_NAME_RE.match(name):
         raise ValueError(
-            "MH_E_NON_ASCII_RESOURCE_NAME: logical resource names must be "
+            "MH_E_NONCANONICAL_RESOURCE_NAME: logical resource names must be "
             f"non-empty and match [a-z0-9_]+ exactly: {name!r}"
         )
 

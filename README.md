@@ -3,11 +3,10 @@
 > **ACTIVE TARGET: MH SOURCE PROTOCOL V4.** Единственный норматив —
 > [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md).
 > Порядок реализации и definition of done —
-> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). S0 принят и
-> смержен; S1 удаляет из production-кода UID/passport/meshser и переводит FBX
-> export и UE scan/resolve/analyze/plan на name-keyed основу v4. Полные форматы
-> Material/Composite, индекс, builders и watcher вводятся только следующими
-> срезами S2–S6.
+> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). S0 и S1 приняты
+> и смержены. Активный срез S2 реализует Material v4, texture ResourceKey
+> resolution, UE import/Publish/Adopt и applied-state receipt; S3–S6 последовательно
+> добавят Composite, индекс, StaticMesh importer и watcher/commandlets/UX.
 
 ## Source Protocol v4 в одном экране
 
@@ -84,16 +83,17 @@ UID/passport → S2 materials → S3 composites → S4 index → S5 StaticMesh i
 → S6 watcher/commandlets/UX. Каждый срез имеет ветку `v4/s<N>-*` и квитанцию
 `docs/receipts/v4_s<N>.md`; исполнитель не мержит PR самостоятельно.
 
-Текущее состояние S1: Blender пишет обычный Combined-LOD FBX с временными
-`_lodNN`-именами узлов, полной иерархией и parent closure, без MH custom
-properties; UE scanner/resolver и Analyze/Plan используют
-`ResourceKey = Kind + LogicalName`. Legacy Ledger оставлен только как явно
-deprecated reader state до замены индексом в S4. Material/Composite операции,
-чьи v4-форматы появятся в S2/S3, временно блокируются fail-closed.
-Структурированные diagnostic JSON не переиспользуют несовместимые v2-теги:
-до решения [`OPEN-V4-5`](docs/QUESTIONS.md#open-v4-5--версии-v4-diagnostic-json)
-`MHAnalyzeSources -report` отклоняется, а v4 FBX dump отложен как минимум до
-среза импортёра S5; console Analyze/Plan остаётся доступен.
+Текущий кандидат S2 сохраняет S1 Combined-LOD FBX и name-keyed
+scan/resolve/analyze/plan. Blender читает и атомарно пишет закрытый Material v4
+JSON; UE импортирует Material Instance in-place, хранит editor-only applied
+state, публикует canonical JSON и поддерживает явный Adopt для unmanaged MI.
+Material textures резолвятся прямым сканом source-дерева до появления индекса
+в S4. Library- и class-родители используют отдельные настраиваемые реестры;
+receipt хранит только tagged logical token `class:<name>|library:<name>`, а
+каждый resolve и reverse lookup выполняется по актуальному source/MI state.
+Composite остаётся fail-closed до S3. Legacy Ledger остаётся deprecated reader
+state до удаления в S4; v4 FBX dump возвращается в S5, структурированный
+AnalyzeSources report — в S6. Кандидат S2 ожидает внешнего review и owner merge.
 
 Python-проверка без Blender:
 

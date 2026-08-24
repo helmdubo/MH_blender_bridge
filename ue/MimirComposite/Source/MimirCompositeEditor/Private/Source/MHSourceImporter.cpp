@@ -5,6 +5,10 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Logging/MessageLog.h"
 #include "MessageLogModule.h"
+#include "Material/MHMaterialImporter.h"
+#include "Material/MHMaterialAdoptDialog.h"
+#include "Material/MHMaterialSourceData.h"
+#include "Materials/MaterialInstanceConstant.h"
 #include "Misc/MessageDialog.h"
 #include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
@@ -215,18 +219,107 @@ bool UMHSourceImporter::ImportSources(
         return false;
     }
 
-    const bool bPlanSucceeded = MHBuildSourceImportPlan(
+    MHBuildSourceImportPlan(
         *Services.ChangeDetector,
         *Services.Resolver,
         SourceRoot,
         Scope,
         OutAnalysis,
         bOutExecuted);
+    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    {
+        if (Entry.Key.Kind != EMHResourceKind::Material || !Entry.Errors.IsEmpty() ||
+            !(Entry.Change == EMHSourceChange::Create ||
+              Entry.Change == EMHSourceChange::Reimport ||
+              Entry.Change == EMHSourceChange::Move))
+        {
+            continue;
+        }
+        FMHMaterialOperationResult MaterialResult = MHImportMaterialV4(
+            Entry,
+            *Services.Resolver,
+            SourceRoot,
+            *Settings);
+        Entry.Warnings.Append(MaterialResult.Warnings);
+        if (!MaterialResult.Succeeded())
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.bLedgerAdvanceAllowed = false;
+            Entry.Errors.Add(MaterialResult.Error);
+        }
+        else
+        {
+            bOutExecuted = true;
+        }
+    }
     PresentPlan(OutAnalysis);
+    return !OutAnalysis.HasErrors();
+}
 
-    // TODO(QUESTION-17): C1 deliberately stops after Plan presentation. C2
-    // supplies builders and the successful-operation-only Ledger commit.
-    return bPlanSucceeded;
+bool UMHSourceImporter::PublishMaterial(
+    UMaterialInstanceConstant* Material,
+    const FString& AdoptFolder,
+    const FString& AdoptLogicalName,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || Material == nullptr)
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: PublishMaterial requires a material on the game thread");
+        return false;
+    }
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (Settings == nullptr || Settings->GetSourceRootPath().IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+    FMHMaterialAdoptTarget Adopt;
+    const FMHMaterialAdoptTarget* AdoptPtr = nullptr;
+    if (!AdoptFolder.IsEmpty() || !AdoptLogicalName.IsEmpty())
+    {
+        Adopt.Folder = AdoptFolder;
+        Adopt.LogicalName = AdoptLogicalName;
+        AdoptPtr = &Adopt;
+    }
+    FMHMaterialOperationResult Result = MHPublishMaterialV4(
+        *Material,
+        Settings->GetSourceRootPath(),
+        *Settings,
+        AdoptPtr);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    return Result.Succeeded();
+}
+
+bool UMHSourceImporter::PublishMaterialInteractive(
+    UMaterialInstanceConstant* Material,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || Material == nullptr)
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: PublishMaterialInteractive requires a material on the game thread");
+        return false;
+    }
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (Settings == nullptr || Settings->GetSourceRootPath().IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+    const UMHMaterialSourceData* Data = Cast<UMHMaterialSourceData>(
+        Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+    FMHMaterialOperationResult Result = Data != nullptr && !Data->SourceRelativePath.IsEmpty()
+        ? MHPublishMaterialV4(*Material, Settings->GetSourceRootPath(), *Settings)
+        : MHShowMaterialAdoptDialog(*Material, Settings->GetSourceRootPath(), *Settings);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    return Result.Succeeded();
 }
 
 void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
@@ -268,7 +361,7 @@ void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
     }
 
     const FString Summary = FString::Printf(
-        TEXT("Mimir startup plan: %d resources, %d blocked. C1 is Analyze/Plan-only; no assets or Ledger rows were changed."),
+        TEXT("Mimir source pass: %d resources, %d blocked. S2 executes material entries; later kinds remain plan-only."),
         Analysis.Entries.Num(),
         Analysis.CountOf(EMHSourceChange::Blocked));
     Log.Info(FText::FromString(Summary));

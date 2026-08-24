@@ -5,6 +5,8 @@
 #include "Source/MHSourceAnalyzer.h"
 #include "MHSourceImporter.generated.h"
 
+class UMaterialInstanceConstant;
+
 namespace UE::MimirComposite
 {
 
@@ -52,11 +54,25 @@ public:
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
 
-    /** Game-thread only. C1 returns a plan and always leaves bOutExecuted false. */
+    /** Game-thread only. S2 executes material entries; later kinds stay plan-only. */
     bool ImportSources(
         const UE::MimirComposite::FMHImportSourcesScope& Scope,
         UE::MimirComposite::FMHSourceAnalysis& OutAnalysis,
         bool& bOutExecuted);
+
+    /** Explicit full-overwrite publish. Adopt folder/name are required for unmanaged MIs. */
+    bool PublishMaterial(
+        UMaterialInstanceConstant* Material,
+        const FString& AdoptFolder,
+        const FString& AdoptLogicalName,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
+
+    /** Opens the S2 folder+name modal only when the MI has no source receipt. */
+    bool PublishMaterialInteractive(
+        UMaterialInstanceConstant* Material,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
 
 private:
     void OnAssetRegistryFilesLoaded();

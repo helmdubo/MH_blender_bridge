@@ -1,8 +1,4 @@
-"""Small name-keyed in-memory DTOs shared by v4 host adapters.
-
-Material and composite disk codecs intentionally remain absent until S2 and
-S3. These types carry no storage compatibility behavior.
-"""
+"""Small name-keyed in-memory DTOs shared by v4 host adapters."""
 
 from dataclasses import dataclass, field
 
@@ -67,6 +63,7 @@ class MaterialResource:
     name: str
     material_class: str | None = None
     library: str | None = None
+    twosided: bool | None = None
     textures: dict = field(default_factory=dict)
     params: dict = field(default_factory=dict)
 

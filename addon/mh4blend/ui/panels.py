@@ -48,8 +48,51 @@ class MH_PT_source_tools(bpy.types.Panel):
         materials.prop(scene, "mh_material", text="Material")
         materials.prop(
             scene, "mh_material_directory", text="Folder (first export)")
+        material = scene.mh_material
+        if material is not None:
+            settings = material.mh4blend
+            materials.prop(settings, "mode", expand=True)
+            if settings.mode == "LIBRARY":
+                materials.prop(settings, "library")
+                materials.label(
+                    text="Library form has no local overrides", icon="INFO")
+            else:
+                materials.prop(settings, "material_class")
+                row = materials.row(align=True)
+                row.prop(settings, "twosided_override")
+                value = row.row(align=True)
+                value.enabled = settings.twosided_override
+                value.prop(settings, "twosided")
+
+                textures = materials.box()
+                header = textures.row()
+                header.label(text="Textures", icon="TEXTURE")
+                header.operator(
+                    "mh.material_texture_add", text="", icon="ADD")
+                for index, texture in enumerate(settings.textures):
+                    row = textures.row(align=True)
+                    row.prop(texture, "slot", text="Slot")
+                    row.prop(texture, "image", text="")
+                    remove = row.operator(
+                        "mh.material_texture_remove", text="", icon="REMOVE")
+                    remove.index = index
+
+                params = materials.box()
+                header = params.row()
+                header.label(text="Parameters", icon="PROPERTIES")
+                header.operator("mh.material_param_add", text="", icon="ADD")
+                for index, parameter in enumerate(settings.params):
+                    row = params.row(align=True)
+                    row.prop(parameter, "name", text="")
+                    row.prop(parameter, "kind", text="")
+                    if parameter.kind == "VECTOR":
+                        row.prop(parameter, "vector", text="")
+                    else:
+                        row.prop(parameter, "scalar", text="")
+                    remove = row.operator(
+                        "mh.material_param_remove", text="", icon="REMOVE")
+                    remove.index = index
         materials.operator("mh.export_material", icon="EXPORT")
-        materials.label(text="v4 implementation arrives in S2")
         layout.label(text="Log: Text Editor > mh_export_log", icon="TEXT")
 
 

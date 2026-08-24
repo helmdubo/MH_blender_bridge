@@ -1,0 +1,50 @@
+{
+  "schema": "mh.material_v4_vectors",
+  "vectors": [
+    {
+      "name": "class_full",
+      "value": {
+        "class": "rendinst_perlin_layered",
+        "twosided": false,
+        "textures": {
+          "tex15": "detail_n",
+          "tex2": "marble_n",
+          "tex0": "marble_d"
+        },
+        "params": {
+          "z_scalar": 1.0,
+          "paint_details": [0.9, 0.8, 0.65, 63.0],
+          "a_scalar": 0.125
+        }
+      },
+      "canonical_utf8": "{\n  \"class\": \"rendinst_perlin_layered\",\n  \"twosided\": false,\n  \"textures\": {\n    \"tex0\": \"marble_d\",\n    \"tex2\": \"marble_n\",\n    \"tex15\": \"detail_n\"\n  },\n  \"params\": {\n    \"a_scalar\": 0.125,\n    \"paint_details\": [\n      0.9,\n      0.8,\n      0.65,\n      63\n    ],\n    \"z_scalar\": 1\n  }\n}\n"
+    },
+    {
+      "name": "class_minimal",
+      "value": {
+        "class": "simple"
+      },
+      "canonical_utf8": "{\n  \"class\": \"simple\"\n}\n"
+    },
+    {
+      "name": "library",
+      "value": {
+        "library": "concrete_wet_01"
+      },
+      "canonical_utf8": "{\n  \"library\": \"concrete_wet_01\"\n}\n"
+    },
+    {
+      "name": "numeric_edges_float32",
+      "value": {
+        "class": "numeric_probe",
+        "params": {
+          "large_integral": 1e+20,
+          "negative_zero": -0.0,
+          "non_float32_exact": 0.10000000001,
+          "small_exponent": 1e-07
+        }
+      },
+      "canonical_utf8": "{\n  \"class\": \"numeric_probe\",\n  \"params\": {\n    \"large_integral\": 1e+20,\n    \"negative_zero\": 0,\n    \"non_float32_exact\": 0.1,\n    \"small_exponent\": 1e-07\n  }\n}\n"
+    }
+  ]
+}
