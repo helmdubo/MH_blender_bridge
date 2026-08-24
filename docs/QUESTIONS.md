@@ -200,7 +200,18 @@ Publish.
 
 ## OPEN-V4-8 — library-mode round-trip и Blender authoring mapping
 
-**Статус. РЕШЕНО OWNER — нормативно в 08 §5 (этот docs-коммит).**
+**Ревизия owner (полевое решение, PR #16).** Часть первоначального решения
+о dag4blend пересмотрена owner'ом в поле: для class-формы writer теперь
+АВТОМАТИЧЕСКИ извлекает семантику из заполненного `dagormat`
+(`shader_class`, `textures.tex0–tex15`, `optional`, `sides 0|1 → явный
+twosided`); mh4blend property group — приоритетные точечные overrides.
+Непредставимое (`sides=2`, типы вне number/vector4) — fail-closed
+`MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`, без потери данных. НЕ пересмотрено:
+`is_proxy`/`proxy_path` не читаются, proxymat superseded library-формой,
+`tex16support` не существует. Нормативный текст — 08 §5 (правка PR #16).
+
+**Прежний статус (первоначальное решение). РЕШЕНО OWNER — нормативно в 08
+§5 (этот docs-коммит).**
 Подтверждено: любой локальный override у MI c library-parent делает Publish
 `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`; молчаливый discard и расширение JSON
 запрещены. Импорт library-формы — полный apply (reparent + очистка
