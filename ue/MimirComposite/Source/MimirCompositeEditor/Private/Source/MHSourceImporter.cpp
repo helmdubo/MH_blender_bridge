@@ -416,6 +416,238 @@ bool UMHSourceImporter::ReimportStaticMesh(
     return Result.bRebuilt;
 }
 
+bool UMHSourceImporter::ReimportMaterial(
+    UMaterialInstanceConstant* Material,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || Material == nullptr)
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: ReimportMaterial requires a material instance on the game thread");
+        return false;
+    }
+
+    const UMHMaterialSourceData* Data = Cast<UMHMaterialSourceData>(
+        Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+    if (Data == nullptr || Data->LogicalName.IsEmpty() || Data->SourceRelativePath.IsEmpty())
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: material '%s' has no v4 source receipt"),
+            *Material->GetPathName());
+        return false;
+    }
+
+    FMHResourceKey MaterialKey;
+    MaterialKey.Kind = EMHResourceKind::Material;
+    MaterialKey.LogicalName = Data->LogicalName;
+    if (!MaterialKey.IsCanonical())
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: managed material '%s' has noncanonical receipt name '%s'"),
+            *Material->GetPathName(),
+            *Data->LogicalName);
+        return false;
+    }
+
+    const FString ExpectedPackageName = FString(TEXT("/Game/MH/Generated/Materials/")) + MaterialKey.LogicalName;
+    const FString ExpectedObjectPath = ExpectedPackageName + TEXT(".") + MaterialKey.LogicalName;
+    if (Material->GetPathName() != ExpectedObjectPath ||
+        StaticLoadObject(UMaterialInstanceConstant::StaticClass(), nullptr, *ExpectedObjectPath) != Material)
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: '%s' is not canonical managed material '%s'"),
+            *Material->GetPathName(),
+            *ExpectedObjectPath);
+        return false;
+    }
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    {
+        return false;
+    }
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key = MoveTemp(MaterialKey);
+    const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Entry.Key);
+    if (Outcome.Status != EMHResolveStatus::Resolved)
+    {
+        OutError = Outcome.Diagnostic.IsEmpty()
+            ? FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: source for material:%s does not resolve"),
+                *Entry.Key.LogicalName)
+            : Outcome.Diagnostic;
+        return false;
+    }
+
+    Entry.PayloadPath = Outcome.PayloadPath;
+    FString RelativeBase = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(RelativeBase);
+    RelativeBase += TEXT("/");
+    Entry.SourcePath = Outcome.PayloadPath;
+    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source path for material:%s from '%s'"),
+            *Entry.Key.LogicalName,
+            *Outcome.PayloadPath);
+        return false;
+    }
+    FPaths::NormalizeFilename(Entry.SourcePath);
+    Entry.RawHash = Outcome.RawHash;
+    Entry.Change = EMHSourceChange::Reimport;
+
+    FMHMaterialOperationResult Result = MHImportMaterialV4(
+        Entry,
+        *Services.Resolver,
+        SourceRoot,
+        *Settings);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    if (!Result.Succeeded())
+    {
+        if (!OutError.Contains(Outcome.PayloadPath, ESearchCase::CaseSensitive))
+        {
+            OutError = FString::Printf(TEXT("%s: %s"), *Outcome.PayloadPath, *OutError);
+        }
+        return false;
+    }
+    if (Result.Material != Material)
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: material:%s reimport resolved a different managed UObject"),
+            *Entry.Key.LogicalName);
+        return false;
+    }
+    return true;
+}
+
+bool UMHSourceImporter::ImportCompositeFile(
+    const FString& Filename,
+    const FString& TargetPackageName,
+    UMHCompositeAsset*& OutAsset,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutAsset = nullptr;
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread())
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: ImportCompositeFile must run on the game thread");
+        return false;
+    }
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (Settings == nullptr || SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FString AbsoluteRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FString AbsoluteFile = FPaths::ConvertRelativePathToFull(Filename);
+    FPaths::NormalizeDirectoryName(AbsoluteRoot);
+    FPaths::NormalizeFilename(AbsoluteFile);
+    FPaths::CollapseRelativeDirectories(AbsoluteRoot);
+    FPaths::CollapseRelativeDirectories(AbsoluteFile);
+    if (!FPaths::GetExtension(AbsoluteFile, true).Equals(TEXT(".composite"), ESearchCase::CaseSensitive) ||
+        !FPaths::IsUnderDirectory(AbsoluteFile, AbsoluteRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: manual .composite import accepts only a source file already inside source_root '%s'"),
+            *AbsoluteFile,
+            *AbsoluteRoot);
+        return false;
+    }
+
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::Composite;
+    Key.LogicalName = FPaths::GetBaseFilename(AbsoluteFile);
+    if (!Key.IsCanonical())
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_NONCANONICAL_RESOURCE_NAME: composite filename must be <[a-z0-9_]+>.composite"),
+            *AbsoluteFile);
+        return false;
+    }
+
+    const FString ExpectedPackageName = FString(TEXT("/Game/MH/Generated/Composites/")) + Key.LogicalName;
+    if (!TargetPackageName.Equals(ExpectedPackageName, ESearchCase::CaseSensitive))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: import this file into '%s'; generated composites cannot be created in '%s'"),
+            *AbsoluteFile,
+            *ExpectedPackageName,
+            *TargetPackageName);
+        return false;
+    }
+
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+    const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Key);
+    FString ResolvedPath = FPaths::ConvertRelativePathToFull(Outcome.PayloadPath);
+    FPaths::NormalizeFilename(ResolvedPath);
+    FPaths::CollapseRelativeDirectories(ResolvedPath);
+    if (Outcome.Status != EMHResolveStatus::Resolved ||
+        !ResolvedPath.Equals(AbsoluteFile, ESearchCase::IgnoreCase))
+    {
+        const FString Diagnostic = Outcome.Diagnostic.IsEmpty()
+            ? FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: composite:%s is not the unique resolved candidate for this file"),
+                *Key.LogicalName)
+            : Outcome.Diagnostic;
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *Diagnostic);
+        return false;
+    }
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key = Key;
+    Entry.PayloadPath = Outcome.PayloadPath;
+    Entry.SourcePath = AbsoluteFile;
+    FString RelativeBase = AbsoluteRoot + TEXT("/");
+    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source-relative composite path"),
+            *AbsoluteFile);
+        return false;
+    }
+    FPaths::NormalizeFilename(Entry.SourcePath);
+    Entry.RawHash = Outcome.RawHash;
+    Entry.Change = EMHSourceChange::Reimport;
+
+    FMHCompositeOperationResult Result = MHImportCompositeV4(
+        Entry,
+        *Services.Resolver,
+        SourceRoot,
+        *Settings);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    if (!Result.Succeeded())
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+    OutAsset = Result.Asset;
+    return true;
+}
+
 bool UMHSourceImporter::PublishMaterial(
     UMaterialInstanceConstant* Material,
     const FString& AdoptFolder,

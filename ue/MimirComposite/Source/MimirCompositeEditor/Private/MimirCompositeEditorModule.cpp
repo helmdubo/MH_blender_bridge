@@ -1,8 +1,12 @@
 #include "MimirCompositeEditorModule.h"
 
+#include "AssetRegistry/AssetData.h"
+#include "ContentBrowserMenuContexts.h"
 #include "CoreGlobals.h"
+#include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
+#include "Logging/MessageLog.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MessageLogModule.h"
@@ -11,8 +15,14 @@
 #include "Source/MHSourceComposition.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "Engine/StaticMeshSocket.h"
+#include "Source/MHSourceImporter.h"
 #include "Texture/MHTextureSourceData.h"
+#include "ToolMenu.h"
+#include "ToolMenuSection.h"
+#include "ToolMenus.h"
 #include "UObject/AssetRegistryTagsContext.h"
+
+#define LOCTEXT_NAMESPACE "MimirCompositeEditor"
 
 namespace
 {
@@ -86,6 +96,85 @@ void MarkManagedStaticMeshLocallyModified(UObject* Object)
     StaticMesh->MarkPackageDirty();
 }
 
+void ExecuteReimportManagedMaterials(const FToolMenuContext& MenuContext)
+{
+    const UContentBrowserAssetContextMenuContext* Context =
+        UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext);
+    if (Context == nullptr)
+    {
+        return;
+    }
+
+    FMessageLog Log(TEXT("Mimir"));
+    Log.NewPage(LOCTEXT("ReimportManagedMaterialsPage", "Reimport managed materials"));
+    UMHSourceImporter* Importer = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHSourceImporter>()
+        : nullptr;
+    if (Importer == nullptr)
+    {
+        Log.Error(LOCTEXT(
+            "MissingSourceImporter",
+            "MH_E_IMPORT_THREAD_INVALID: MH Source Importer subsystem is unavailable"));
+        Log.Notify(
+            LOCTEXT("ManagedMaterialReimportFailed", "MH material reimport failed"),
+            EMessageSeverity::Error,
+            true);
+        return;
+    }
+
+    int32 Succeeded = 0;
+    int32 Failed = 0;
+    const TArray<UMaterialInstanceConstant*> Materials =
+        Context->LoadSelectedObjects<UMaterialInstanceConstant>();
+    for (UMaterialInstanceConstant* Material : Materials)
+    {
+        if (Material == nullptr)
+        {
+            continue;
+        }
+        TArray<FString> Warnings;
+        FString Error;
+        if (!Importer->ReimportMaterial(Material, Warnings, Error))
+        {
+            ++Failed;
+            Log.Error(FText::FromString(FString::Printf(
+                TEXT("%s: %s"),
+                *Material->GetPathName(),
+                *Error)));
+            continue;
+        }
+
+        ++Succeeded;
+        Log.Info(FText::FromString(FString::Printf(
+            TEXT("Reimported %s from the current project source document"),
+            *Material->GetPathName())));
+        for (const FString& Warning : Warnings)
+        {
+            Log.Warning(FText::FromString(FString::Printf(
+                TEXT("%s: %s"),
+                *Material->GetPathName(),
+                *Warning)));
+        }
+    }
+
+    if (Materials.IsEmpty())
+    {
+        Log.Error(LOCTEXT(
+            "NoMaterialInstancesSelected",
+            "MH_E_INVALID_RESOURCE_SOURCE: no Material Instance assets were selected"));
+        ++Failed;
+    }
+    Log.Notify(
+        FText::Format(
+            LOCTEXT(
+                "ManagedMaterialReimportSummary",
+                "MH material reimport: {0} succeeded, {1} failed"),
+            FText::AsNumber(Succeeded),
+            FText::AsNumber(Failed)),
+        Failed > 0 ? EMessageSeverity::Error : EMessageSeverity::Info,
+        true);
+}
+
 } // namespace
 
 void FMimirCompositeEditorModule::StartupModule()
@@ -105,11 +194,19 @@ void FMimirCompositeEditorModule::StartupModule()
     LogOptions.bShowPages = true;
     LogOptions.bAllowClear = true;
     MessageLogModule.RegisterLogListing("Mimir", INVTEXT("Mimir"), LogOptions);
+
+    UToolMenus::RegisterStartupCallback(
+        FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FMimirCompositeEditorModule::RegisterMenus));
 }
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
     UE::MimirComposite::MHShutdownProjectIndex();
+    if (!IsRunningCommandlet())
+    {
+        UToolMenus::UnRegisterStartupCallback(this);
+        UToolMenus::UnregisterOwner(this);
+    }
     if (ObjectModifiedHandle.IsValid())
     {
         FCoreUObjectDelegates::OnObjectModified.Remove(ObjectModifiedHandle);
@@ -126,4 +223,53 @@ void FMimirCompositeEditorModule::ShutdownModule()
     }
 }
 
+void FMimirCompositeEditorModule::RegisterMenus()
+{
+    FToolMenuOwnerScoped OwnerScoped(this);
+    UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(
+        UMaterialInstanceConstant::StaticClass());
+    if (Menu == nullptr)
+    {
+        return;
+    }
+
+    FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("GetAssetActions"));
+    Section.AddDynamicEntry(
+        TEXT("MHManagedMaterialActions"),
+        FNewToolMenuSectionDelegate::CreateLambda([](FToolMenuSection& DynamicSection)
+        {
+            const UContentBrowserAssetContextMenuContext* Context =
+                UContentBrowserAssetContextMenuContext::FindContextWithAssets(DynamicSection);
+            if (Context == nullptr)
+            {
+                return;
+            }
+
+            const bool bHasMaterialInstance = Context->SelectedAssets.ContainsByPredicate(
+                [](const FAssetData& Asset)
+                {
+                    return Asset.IsInstanceOf(UMaterialInstanceConstant::StaticClass());
+                });
+            if (!bHasMaterialInstance)
+            {
+                return;
+            }
+
+            FToolUIAction Action;
+            Action.ExecuteAction = FToolMenuExecuteAction::CreateStatic(
+                &ExecuteReimportManagedMaterials);
+            DynamicSection.AddMenuEntry(
+                TEXT("MHReimportManagedMaterials"),
+                LOCTEXT("ReimportManagedMaterials", "Reimport from MH Source"),
+                LOCTEXT(
+                    "ReimportManagedMaterialsTooltip",
+                    "Force a full source-wins reimport of the selected managed Material Instances. "
+                    "Parent, textures, parameters and base overrides are replaced from the current .material files."),
+                FSlateIcon(),
+                Action);
+        }));
+}
+
 IMPLEMENT_MODULE(FMimirCompositeEditorModule, MimirCompositeEditor)
+
+#undef LOCTEXT_NAMESPACE

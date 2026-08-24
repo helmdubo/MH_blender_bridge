@@ -25,12 +25,14 @@ public class MimirCompositeEditor : ModuleRules
             {
                 "AssetTools",
                 "AssetRegistry",
+                "ContentBrowser",
                 "Json",
                 "MessageLog",
                 "Projects",
                 "Slate",
                 "SlateCore",
                 "SQLiteCore",
+                "ToolMenus",
                 "UnrealEd"
             });
 

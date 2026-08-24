@@ -67,6 +67,20 @@ public:
         TArray<FString>& OutWarnings,
         FString& OutError);
 
+    /** Explicit source-wins material rebuild; reapplies the complete managed source document. */
+    bool ReimportMaterial(
+        UMaterialInstanceConstant* Material,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
+
+    /** Manual file-drop adapter. The file must already be the unique source_root candidate. */
+    bool ImportCompositeFile(
+        const FString& Filename,
+        const FString& TargetPackageName,
+        UMHCompositeAsset*& OutAsset,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
+
     /** Explicit full-overwrite publish. Adopt folder/name are required for unmanaged MIs. */
     bool PublishMaterial(
         UMaterialInstanceConstant* Material,

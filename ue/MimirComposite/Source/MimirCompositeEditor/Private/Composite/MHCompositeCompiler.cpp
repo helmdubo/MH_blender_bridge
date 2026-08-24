@@ -124,7 +124,9 @@ USceneComponent* NewSceneComponent(
         return Parent;
     }
     const FName Name = MakeUniqueObjectName(Context.Target, Class, FName(*Label));
-    USceneComponent* Component = NewObject<USceneComponent>(Context.Target, Class, Name, RF_Transactional);
+    constexpr EObjectFlags DerivedFlags =
+        RF_Transactional | RF_Transient | RF_DuplicateTransient | RF_TextExportTransient;
+    USceneComponent* Component = NewObject<USceneComponent>(Context.Target, Class, Name, DerivedFlags);
     Context.Target->AddInstanceComponent(Component);
     if (Parent != nullptr)
     {
@@ -239,14 +241,17 @@ bool Run(
             Target,
             USceneComponent::StaticClass(),
             MakeUniqueObjectName(Target, USceneComponent::StaticClass(), TEXT("MHCompositeRoot")),
-            RF_Transactional);
+            RF_Transactional | RF_Transient | RF_DuplicateTransient | RF_TextExportTransient);
         Target->AddInstanceComponent(Root);
         Target->SetRootComponent(Root);
         Root->RegisterComponent();
         Root->SetWorldTransform(TargetWorld, false, nullptr, ETeleportType::TeleportPhysics);
         if (OutCreatedSyntheticRoot != nullptr) *OutCreatedSyntheticRoot = Root;
     }
-    if (!WalkNodes(Document.Nodes, Context, Root, FTransform::Identity))
+    const FTransform DocumentBasis = Target != nullptr
+        ? Target->GetActorTransform()
+        : FTransform::Identity;
+    if (!WalkNodes(Document.Nodes, Context, Root, DocumentBasis))
     {
         OutError = MoveTemp(Context.Error);
         return false;

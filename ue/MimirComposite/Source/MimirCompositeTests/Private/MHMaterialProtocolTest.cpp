@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Dom/JsonObject.h"
+#include "Editor.h"
 #include "Engine/Texture2D.h"
 #include "HAL/FileManager.h"
 #include "ImageUtils.h"
@@ -16,12 +17,15 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "ObjectTools.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHPayloadScanResolver.h"
 #include "Source/MHSourceAnalyzer.h"
+#include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImporter.h"
 #include "StaticParameterSet.h"
 #include "Texture/MHTextureSourceData.h"
 #include "UObject/Package.h"
@@ -74,6 +78,39 @@ UTexture* MakeTexture(const FString& Token)
         return Existing;
     }
     return NewObject<UTexture2D>(Package, FName(*Token), RF_Public | RF_Standalone);
+}
+
+void DeleteTestAssetPackage(const FString& PackageName)
+{
+    const FString AssetName = FPackageName::GetLongPackageAssetName(PackageName);
+    const FString ObjectPath = PackageName + TEXT(".") + AssetName;
+    if (UObject* Asset = StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath))
+    {
+        ObjectTools::DeleteSingleObject(Asset, false);
+    }
+    if (UPackage* Package = FindPackage(nullptr, *PackageName))
+    {
+        Package->SetDirtyFlag(false);
+    }
+    const FString Filename = FPackageName::LongPackageNameToFilename(
+        PackageName,
+        FPackageName::GetAssetPackageExtension());
+    IFileManager::Get().Delete(*Filename, false, true, true);
+}
+
+void DeleteStaleGeneratedTestAssets(const FString& PackageRoot, const FString& Prefix)
+{
+    const FString Directory = FPackageName::LongPackageNameToFilename(PackageRoot);
+    TArray<FString> Filenames;
+    IFileManager::Get().FindFiles(
+        Filenames,
+        *FPaths::Combine(Directory, Prefix + TEXT("*.uasset")),
+        true,
+        false);
+    for (const FString& Filename : Filenames)
+    {
+        DeleteTestAssetPackage(PackageRoot / FPaths::GetBaseFilename(Filename));
+    }
 }
 
 bool ErrorStartsWith(const FString& Error, const TCHAR* Code)
@@ -1277,6 +1314,205 @@ bool FMHMaterialAppliedParentReceiptsTest::RunTest(const FString& Parameters)
         LibraryParent,
         TEXT("s2_open9_library_adopt"),
         TEXT("library:open9_library_parent"));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHMaterialExplicitSourceWinsReimportTest,
+    "Mimir.V4.Material.ExplicitSourceWinsReimport",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHMaterialExplicitSourceWinsReimportTest::RunTest(const FString& Parameters)
+{
+    DeleteStaleGeneratedTestAssets(TEXT("/Game/MH/Generated/Materials"), TEXT("s6_force_mi_"));
+    DeleteStaleGeneratedTestAssets(TEXT("/Game/MH/Generated/Textures"), TEXT("s6_texture_a_"));
+    DeleteStaleGeneratedTestAssets(TEXT("/Game/MH/Generated/Textures"), TEXT("s6_texture_b_"));
+
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    const FString LogicalName = TEXT("s6_force_mi_") + Suffix;
+    const FString ParentAName = TEXT("s6_parent_a_") + Suffix;
+    const FString ParentBName = TEXT("s6_parent_b_") + Suffix;
+    const FString TextureAName = TEXT("s6_texture_a_") + Suffix;
+    const FString TextureBName = TEXT("s6_texture_b_") + Suffix;
+    const FString SourceRoot = FPaths::Combine(
+        FPaths::ProjectSavedDir(),
+        TEXT("MimirCompositeTests"),
+        LogicalName);
+    const FString SourcePath = FPaths::Combine(SourceRoot, LogicalName + TEXT(".material"));
+    IFileManager::Get().MakeDirectory(*SourceRoot, true);
+
+    UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+    const FDirectoryPath PreviousSourceRoot = Settings->SourceRoot;
+    const FString PreviousMasterRoot = Settings->MasterRoot;
+    const FString PreviousLibraryRoot = Settings->LibraryRoot;
+    Settings->SourceRoot.Path = SourceRoot;
+    Settings->MasterRoot = TEXT("/Game/MH/TestMasterMaterials");
+    Settings->LibraryRoot = TEXT("/Game/MH/TestMaterialLibrary");
+
+    UMaterial* ParentA = MakeParent(Settings->MasterRoot, ParentAName);
+    UMaterial* ParentB = MakeParent(Settings->MasterRoot, ParentBName);
+    bool bPassed = TestNotNull(TEXT("first registered parent exists"), ParentA);
+    bPassed &= TestNotNull(TEXT("replacement registered parent exists"), ParentB);
+    bPassed &= TestTrue(
+        TEXT("first texture source written"),
+        WriteTestPng(FPaths::Combine(SourceRoot, TextureAName + TEXT(".png")), FColor::Red));
+    bPassed &= TestTrue(
+        TEXT("replacement texture source written"),
+        WriteTestPng(FPaths::Combine(SourceRoot, TextureBName + TEXT(".png")), FColor::Green));
+
+    FMHMaterialDocument Initial;
+    Initial.Parent = ParentAName;
+    Initial.bHasTwoSided = true;
+    Initial.bTwoSided = true;
+    Initial.Textures.Add(0, TextureAName);
+    FMHMaterialParameter InitialScalar;
+    InitialScalar.Scalar = 1.0f;
+    Initial.Params.Add(TEXT("old_scalar"), InitialScalar);
+    FMHMaterialParameter InitialVector;
+    InitialVector.bVector = true;
+    InitialVector.Vector = FVector4f(1.0f, 2.0f, 3.0f, 4.0f);
+    Initial.Params.Add(TEXT("old_vector"), InitialVector);
+    TArray<uint8> InitialBytes;
+    FString Error;
+    bPassed &= TestTrue(TEXT("initial material canonicalizes"), MHWriteCanonicalMaterialV4(Initial, InitialBytes, Error));
+    bPassed &= TestTrue(TEXT("initial material source written"), FFileHelper::SaveArrayToFile(InitialBytes, *SourcePath));
+
+    FMHPayloadScanResolver InitialResolver(SourceRoot);
+    bPassed &= TestTrue(TEXT("initial source scans"), InitialResolver.Initialize(Error));
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::Material;
+    Key.LogicalName = LogicalName;
+    const FMHResolveOutcome InitialOutcome = InitialResolver.Resolve(Key);
+    FMHMaterialOperationResult Imported = MHImportMaterialV4(
+        MaterialEntry(LogicalName, LogicalName + TEXT(".material"), InitialOutcome),
+        InitialResolver,
+        SourceRoot,
+        *Settings);
+    bPassed &= TestTrue(TEXT("initial managed material imports"), Imported.Succeeded());
+    if (!Imported.Succeeded())
+    {
+        AddError(Imported.Error);
+    }
+
+    UMaterialInstanceConstant* Material = Imported.Material;
+    if (Material != nullptr)
+    {
+        Material->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(TEXT("local_only")), 99.0f);
+        Material->SetVectorParameterValueEditorOnly(
+            FMaterialParameterInfo(TEXT("local_vector")),
+            FLinearColor::White);
+        Material->SetTextureParameterValueEditorOnly(
+            FMaterialParameterInfo(TEXT("tex7")),
+            MakeTexture(TextureAName));
+        FMaterialInstanceBasePropertyOverrides LocalOverrides;
+        LocalOverrides.bOverride_TwoSided = true;
+        LocalOverrides.TwoSided = true;
+        Material->BasePropertyOverrides = LocalOverrides;
+    }
+
+    FMHMaterialDocument Replacement;
+    Replacement.Parent = ParentBName;
+    Replacement.Textures.Add(1, TextureBName);
+    FMHMaterialParameter ReplacementScalar;
+    ReplacementScalar.Scalar = 0.5f;
+    Replacement.Params.Add(TEXT("new_scalar"), ReplacementScalar);
+    FMHMaterialParameter ReplacementVector;
+    ReplacementVector.bVector = true;
+    ReplacementVector.Vector = FVector4f(0.25f, 0.5f, 0.75f, 1.0f);
+    Replacement.Params.Add(TEXT("new_vector"), ReplacementVector);
+    TArray<uint8> ReplacementBytes;
+    bPassed &= TestTrue(
+        TEXT("replacement material canonicalizes"),
+        MHWriteCanonicalMaterialV4(Replacement, ReplacementBytes, Error));
+    bPassed &= TestTrue(
+        TEXT("replacement project source written"),
+        FFileHelper::SaveArrayToFile(ReplacementBytes, *SourcePath));
+
+    UMHSourceImporter* SourceImporter = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHSourceImporter>()
+        : nullptr;
+    bPassed &= TestNotNull(TEXT("source importer subsystem exists"), SourceImporter);
+    TArray<FString> Warnings;
+    if (SourceImporter != nullptr && Material != nullptr)
+    {
+        bPassed &= TestTrue(
+            TEXT("explicit reimport applies changed source"),
+            SourceImporter->ReimportMaterial(Material, Warnings, Error));
+        if (!Error.IsEmpty()) AddError(Error);
+        bPassed &= TestEqual(
+            TEXT("full reimport replaces parent"),
+            Material->Parent.Get(),
+            static_cast<UMaterialInterface*>(ParentB));
+        bPassed &= TestEqual(TEXT("only source scalar remains"), Material->ScalarParameterValues.Num(), 1);
+        bPassed &= TestEqual(TEXT("only source vector remains"), Material->VectorParameterValues.Num(), 1);
+        bPassed &= TestEqual(TEXT("only source texture remains"), Material->TextureParameterValues.Num(), 1);
+        if (Material->ScalarParameterValues.Num() == 1)
+        {
+            bPassed &= TestEqual(
+                TEXT("replacement scalar name"),
+                Material->ScalarParameterValues[0].ParameterInfo.Name,
+                FName(TEXT("new_scalar")));
+        }
+        if (Material->VectorParameterValues.Num() == 1)
+        {
+            bPassed &= TestEqual(
+                TEXT("replacement vector name"),
+                Material->VectorParameterValues[0].ParameterInfo.Name,
+                FName(TEXT("new_vector")));
+        }
+        if (Material->TextureParameterValues.Num() == 1)
+        {
+            bPassed &= TestEqual(
+                TEXT("replacement texture slot"),
+                Material->TextureParameterValues[0].ParameterInfo.Name,
+                FName(TEXT("tex1")));
+            bPassed &= TestEqual(
+                TEXT("replacement texture asset"),
+                Material->TextureParameterValues[0].ParameterValue->GetName(),
+                TextureBName);
+        }
+        bPassed &= TestFalse(TEXT("absent twosided override is cleared"), Material->HasOverridenBaseProperties());
+        bPassed &= TestTrue(
+            TEXT("local modification warning is reported before overwrite"),
+            Warnings.ContainsByPredicate([](const FString& Warning)
+            {
+                return Warning.StartsWith(TEXT("MH_W_MANAGED_ASSET_LOCALLY_MODIFIED"));
+            }));
+
+        Material->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(TEXT("second_local_only")), 7.0f);
+        Warnings.Reset();
+        Error.Reset();
+        bPassed &= TestTrue(
+            TEXT("equal-hash explicit reimport still reapplies source"),
+            SourceImporter->ReimportMaterial(Material, Warnings, Error));
+        bPassed &= TestEqual(
+            TEXT("equal-hash reimport removes local-only override"),
+            Material->ScalarParameterValues.Num(),
+            1);
+
+        const UMHMaterialSourceData* Receipt = Cast<UMHMaterialSourceData>(
+            Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+        bPassed &= TestNotNull(TEXT("receipt remains attached"), Receipt);
+        if (Receipt != nullptr)
+        {
+            bPassed &= TestEqual(TEXT("receipt raw hash advances"), Receipt->SourceHash, MHRawPayloadHash(ReplacementBytes));
+            bPassed &= TestEqual(
+                TEXT("receipt parent advances"),
+                Receipt->AppliedParent,
+                FString(TEXT("class:")) + ParentBName);
+        }
+    }
+
+    Settings->SourceRoot = PreviousSourceRoot;
+    Settings->MasterRoot = PreviousMasterRoot;
+    Settings->LibraryRoot = PreviousLibraryRoot;
+    MHShutdownProjectIndex();
+    DeleteTestAssetPackage(TEXT("/Game/MH/Generated/Materials/") + LogicalName);
+    DeleteTestAssetPackage(TEXT("/Game/MH/Generated/Textures/") + TextureAName);
+    DeleteTestAssetPackage(TEXT("/Game/MH/Generated/Textures/") + TextureBName);
+    DeleteTestAssetPackage(TEXT("/Game/MH/TestMasterMaterials/") + ParentAName);
+    DeleteTestAssetPackage(TEXT("/Game/MH/TestMasterMaterials/") + ParentBName);
+    IFileManager::Get().DeleteDirectory(*SourceRoot, false, true);
     return bPassed;
 }
 
