@@ -11,4 +11,5 @@ public:
 
 private:
     FDelegateHandle AssetRegistryTagsHandle;
+    FDelegateHandle ObjectModifiedHandle;
 };

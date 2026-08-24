@@ -7,6 +7,7 @@
 
 class UMaterialInstanceConstant;
 class UMHCompositeAsset;
+class UStaticMesh;
 
 namespace UE::MimirComposite
 {
@@ -54,11 +55,17 @@ public:
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
 
-    /** Game-thread only. S3 executes material and Composite entries; mesh stays plan-only. */
+    /** Game-thread only. Executes material -> static mesh -> Composite in dependency order. */
     bool ImportSources(
         const UE::MimirComposite::FMHImportSourcesScope& Scope,
         UE::MimirComposite::FMHSourceAnalysis& OutAnalysis,
         bool& bOutExecuted);
+
+    /** Explicit source-wins mesh rebuild; bypasses equal-hash NO_CHANGE. */
+    bool ReimportStaticMesh(
+        UStaticMesh* StaticMesh,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
 
     /** Explicit full-overwrite publish. Adopt folder/name are required for unmanaged MIs. */
     bool PublishMaterial(

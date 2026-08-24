@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/Texture2D.h"
 #include "HAL/FileManager.h"
+#include "MHGoldenRoot.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
@@ -12,6 +13,12 @@
 #include "Source/MHSourceComposition.h"
 #include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
+
+#pragma pack(push, 8)
+THIRD_PARTY_INCLUDES_START
+#include <fbxsdk.h>
+THIRD_PARTY_INCLUDES_END
+#pragma pack(pop)
 
 namespace UE::MimirComposite::Tests
 {
@@ -98,6 +105,79 @@ bool OpenIndex(FMHProjectResourceIndex& Index, FAutomationTestBase& Test)
     const bool bOpened = Index.Open(bRecreated, Error);
     if (!bOpened) Test.AddError(Error);
     return bOpened;
+}
+
+FbxNode* FindFirstMeshNode(FbxNode* Node)
+{
+    if (Node == nullptr)
+    {
+        return nullptr;
+    }
+    if (Node->GetMesh() != nullptr)
+    {
+        return Node;
+    }
+    for (int32 ChildIndex = 0; ChildIndex < Node->GetChildCount(); ++ChildIndex)
+    {
+        if (FbxNode* MeshNode = FindFirstMeshNode(Node->GetChild(ChildIndex)))
+        {
+            return MeshNode;
+        }
+    }
+    return nullptr;
+}
+
+bool CopyFbxWithMaterialSlot(
+    const FString& SourcePath,
+    const FString& DestinationPath,
+    const FString& MaterialName,
+    FString& OutError)
+{
+    OutError.Reset();
+    FbxManager* Manager = FbxManager::Create();
+    if (Manager == nullptr)
+    {
+        OutError = TEXT("FbxManager::Create failed");
+        return false;
+    }
+    FbxIOSettings* IOSettings = FbxIOSettings::Create(Manager, IOSROOT);
+    Manager->SetIOSettings(IOSettings);
+    FbxScene* Scene = FbxScene::Create(Manager, "MHProjectIndexSlotFixture");
+    FbxImporter* Importer = FbxImporter::Create(Manager, "MHProjectIndexSlotImporter");
+    if (!Importer->Initialize(TCHAR_TO_UTF8(*SourcePath), -1, IOSettings) ||
+        !Importer->Import(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Importer->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+
+    FbxNode* MeshNode = FindFirstMeshNode(Scene->GetRootNode());
+    FbxMesh* Mesh = MeshNode != nullptr ? MeshNode->GetMesh() : nullptr;
+    if (Mesh == nullptr)
+    {
+        OutError = TEXT("golden FBX contains no mesh node");
+        Manager->Destroy();
+        return false;
+    }
+    FbxSurfacePhong* Material = FbxSurfacePhong::Create(Scene, TCHAR_TO_UTF8(*MaterialName));
+    MeshNode->AddMaterial(Material);
+    FbxGeometryElementMaterial* MaterialLayer = Mesh->CreateElementMaterial();
+    MaterialLayer->SetMappingMode(FbxGeometryElement::eAllSame);
+    MaterialLayer->SetReferenceMode(FbxGeometryElement::eIndexToDirect);
+    MaterialLayer->GetIndexArray().Add(0);
+
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(DestinationPath), true);
+    FbxExporter* Exporter = FbxExporter::Create(Manager, "MHProjectIndexSlotExporter");
+    if (!Exporter->Initialize(TCHAR_TO_UTF8(*DestinationPath), -1, IOSettings) ||
+        !Exporter->Export(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Exporter->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    Manager->Destroy();
+    return true;
 }
 
 } // namespace
@@ -232,6 +312,75 @@ bool FMHProjectIndexRebuildTest::RunTest(const FString& Parameters)
         }
     }
     bPassed &= TestEqual(TEXT("rebuild logical dump is identical"), SecondDump, FirstDump);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProjectIndexStaticMeshSlotDependencyTest,
+    "Mimir.V4.ProjectIndex.StaticMeshSlotDependency",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProjectIndexStaticMeshSlotDependencyTest::RunTest(const FString& Parameters)
+{
+    FIndexFixture Fixture;
+    FString GoldenRoot;
+    if (!ResolveGoldenRoot(*this, GoldenRoot)) return false;
+    const FString SourceFbx = FPaths::Combine(
+        GoldenRoot,
+        TEXT("fixtures/axis/axis_probe.fbx"));
+    const FString MeshPath = FPaths::Combine(Fixture.Root, TEXT("meshes/crate.mesh.fbx"));
+    const FString MaterialPath = FPaths::Combine(Fixture.Root, TEXT("materials/crate_surface.material"));
+    FString Error;
+    bool bPassed = TestTrue(
+        TEXT("create FBX with one material slot"),
+        CopyFbxWithMaterialSlot(SourceFbx, MeshPath, TEXT("crate_surface"), Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= WriteUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n"));
+
+    const FMHResourceKey MeshKey = Key(EMHResourceKind::StaticMesh, TEXT("crate"));
+    FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
+    if (!OpenIndex(Index, *this)) return false;
+    FMHProjectIndexUpdateResult Update;
+    Error.Reset();
+    bPassed &= TestTrue(TEXT("scan FBX material slot"), Index.FullScan({}, Update, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    const FMHResolveOutcome MeshOutcome = Index.Resolve(MeshKey);
+    if (MeshOutcome.Status != EMHResolveStatus::Resolved)
+    {
+        AddError(FString::Printf(
+            TEXT("static mesh resolution failed: %s"),
+            *MeshOutcome.Diagnostic));
+    }
+    bPassed &= TestEqual(
+        TEXT("mesh resolves while slot material exists"),
+        MeshOutcome.Status,
+        EMHResolveStatus::Resolved);
+
+    FString Dump;
+    bPassed &= TestTrue(TEXT("dependency dump builds"), Index.BuildNormalizedDump(Dump, Error));
+    const bool bHasSlotDependency = Dump.Contains(TEXT(
+        "Dependencies\tstatic_mesh\tcrate\tmaterial\tcrate_surface\tslot\tmeshes/crate.mesh.fbx\n"));
+    if (!bHasSlotDependency)
+    {
+        AddError(FString::Printf(TEXT("slot dependency missing from dump:\n%s"), *Dump));
+    }
+    bPassed &= TestTrue(TEXT("FBX slot is projected as the closed dependency tuple"), bHasSlotDependency);
+    Index.Close();
+
+    bool bRecreated = false;
+    bPassed &= TestTrue(TEXT("reopen index containing slot tuple"), Index.Open(bRecreated, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestFalse(
+        TEXT("static_mesh to material slot tuple is accepted by dictionary validation"),
+        bRecreated);
+
+    bPassed &= TestTrue(TEXT("remove slot material"), IFileManager::Get().Delete(*MaterialPath));
+    bPassed &= TestTrue(TEXT("upsert removed slot material"), Index.UpsertPaths({MaterialPath}, Update, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestEqual(
+        TEXT("missing slot material transitively blocks static mesh"),
+        Index.Resolve(MeshKey).Status,
+        EMHResolveStatus::Invalid);
     return bPassed;
 }
 

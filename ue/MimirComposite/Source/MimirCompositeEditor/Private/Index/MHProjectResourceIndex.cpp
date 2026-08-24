@@ -1,6 +1,8 @@
 #include "Index/MHProjectResourceIndex.h"
 
 #include "Composite/MHCompositeProtocol.h"
+#include "Geometry/MHFbxSceneTranslator.h"
+#include "Geometry/MHSceneIR.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "Material/MHMaterialProtocol.h"
@@ -926,9 +928,10 @@ private:
                      "SELECT COUNT(*) FROM Mismatches;")) ||
             HasInvalidRows(
                 TEXT("SELECT COUNT(*) FROM Dependencies WHERE "
-                     "owner_kind NOT IN ('material','composite') "
-                     "OR target_kind NOT IN ('static_mesh','composite','texture') "
-                     "OR role NOT IN ('texture','placement_mesh','placement_composite');")) ||
+                     "NOT ((owner_kind='material' AND target_kind='texture' AND role='texture') "
+                     "OR (owner_kind='composite' AND target_kind='static_mesh' AND role='placement_mesh') "
+                     "OR (owner_kind='composite' AND target_kind='composite' AND role='placement_composite') "
+                     "OR (owner_kind='static_mesh' AND target_kind='material' AND role='slot'));")) ||
             HasInvalidRows(
                 TEXT("SELECT COUNT(*) FROM GeneratedAssets WHERE "
                      "key_valid NOT IN (0,1) OR receipt_valid NOT IN (0,1) "
@@ -1213,7 +1216,31 @@ private:
         OutCandidate.ParseStatus = ECandidateParseStatus::Ok;
 
         FString ParseError;
-        if (Key.Kind == EMHResourceKind::Material)
+        if (Key.Kind == EMHResourceKind::StaticMesh)
+        {
+            FMHSceneIR Scene;
+            FMHFbxSceneTranslator Translator;
+            if (!Translator.Translate(Key.LogicalName, Bytes, Scene, ParseError))
+            {
+                OutCandidate.ParseStatus = ECandidateParseStatus::InvalidPayload;
+                OutCandidate.Diagnostic = ParseError;
+            }
+            else
+            {
+                TArray<FString> SortedNames = Scene.MaterialNames;
+                SortedNames.Sort();
+                for (const FString& MaterialName : SortedNames)
+                {
+                    FIndexedDependency& Dependency = OutCandidate.Dependencies.AddDefaulted_GetRef();
+                    Dependency.Owner = Key;
+                    Dependency.Target.Kind = EMHResourceKind::Material;
+                    Dependency.Target.LogicalName = MaterialName;
+                    Dependency.Role = TEXT("slot");
+                    Dependency.OwnerPath = OutCandidate.RelativePath;
+                }
+            }
+        }
+        else if (Key.Kind == EMHResourceKind::Material)
         {
             FMHMaterialDocument Document;
             if (!MHParseMaterialV4(Bytes, Document, ParseError))
@@ -2216,7 +2243,7 @@ bool FMHProjectResourceIndex::FImpl::IsImportBlocked(
         if (Diagnostic.IsEmpty())
         {
             FSQLitePreparedStatement DependencyStatement = Database->PrepareStatement(
-                TEXT("SELECT DISTINCT target_kind,target_name FROM Dependencies WHERE owner_kind=?1 AND owner_name=?2 ORDER BY target_kind,target_name;"));
+                TEXT("SELECT DISTINCT target_kind,target_name,role FROM Dependencies WHERE owner_kind=?1 AND owner_name=?2 ORDER BY target_kind,target_name,role;"));
             if (!DependencyStatement.IsValid() ||
                 !DependencyStatement.SetBindingValueByIndex(1, Kind) ||
                 !DependencyStatement.SetBindingValueByIndex(2, Current.LogicalName))
@@ -2228,9 +2255,11 @@ bool FMHProjectResourceIndex::FImpl::IsImportBlocked(
                 while (DependencyStatement.Step() == ESQLitePreparedStatementStepResult::Row)
                 {
                     FString TargetKindLabel;
+                    FString Role;
                     FMHResourceKey Target;
                     if (!DependencyStatement.GetColumnValueByIndex(0, TargetKindLabel) ||
                         !DependencyStatement.GetColumnValueByIndex(1, Target.LogicalName) ||
+                        !DependencyStatement.GetColumnValueByIndex(2, Role) ||
                         !MHResourceKindFromLabel(TargetKindLabel, Target.Kind))
                     {
                         Diagnostic = TEXT("MH_E_SOURCE_INDEX_INVALID: malformed dependency target");
@@ -2239,10 +2268,21 @@ bool FMHProjectResourceIndex::FImpl::IsImportBlocked(
                     FString TargetDiagnostic;
                     if (Visit(Target, TargetDiagnostic))
                     {
-                        Diagnostic = FString::Printf(
-                            TEXT("%s; dependent %s is blocked"),
-                            *TargetDiagnostic,
-                            *Current.ToString());
+                        if (Current.Kind == EMHResourceKind::StaticMesh && Role == TEXT("slot"))
+                        {
+                            Diagnostic = FString::Printf(
+                                TEXT("MH_E_UNRESOLVED_MATERIAL_REFERENCE: slot '%s' required by %s is blocked (%s)"),
+                                *Target.LogicalName,
+                                *Current.ToString(),
+                                *TargetDiagnostic);
+                        }
+                        else
+                        {
+                            Diagnostic = FString::Printf(
+                                TEXT("%s; dependent %s is blocked"),
+                                *TargetDiagnostic,
+                                *Current.ToString());
+                        }
                         break;
                     }
                 }
