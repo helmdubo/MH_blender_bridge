@@ -21,6 +21,7 @@ from ..core.materials import resolve_texture_reference
 from ..core.mesh_nodes import MeshImportPlan, MeshNode, build_mesh_import_plan
 from ..core.validate import MHValidationError
 from .export_material import apply_material_resource, read_material_file
+from .resource_markers import stamp_resource_collection
 
 __all__ = [
     "FBX_IMPORT_KWARGS",
@@ -614,6 +615,7 @@ def _execute_import(filepath: Path, source_root: Path, transaction):
 
     # Stage 4: restore dag4blend-compatible authoring collections.
     collection = _stage_restructure(plan, staging, by_name)
+    stamp_resource_collection(collection, "mesh", plan.resource_name)
     return {
         "ok": True,
         "filepath": str(filepath),

@@ -13,6 +13,10 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 from mh4blend.core.validate import MHValidationError  # noqa: E402
 from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
 from mh4blend.scene.import_fbx import parse_mesh_fbx  # noqa: E402
+from mh4blend.scene.resource_markers import (  # noqa: E402
+    COLLECTION_KIND_KEY,
+    COLLECTION_RESOURCE_KEY,
+)
 
 export_fbx_module = importlib.import_module("mh4blend.scene.export_fbx")
 
@@ -146,6 +150,8 @@ def test_export_rewrites_plain_fbx_without_custom_properties(tmp_path):
     second = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
     assert Path(first["filepath"]).name == "selected_resource.mesh.fbx"
     assert first["written"] is second["written"] is True
+    assert collection[COLLECTION_KIND_KEY] == "mesh"
+    assert collection[COLLECTION_RESOURCE_KEY] == "selected_resource"
     assert direct["mh_old_property"] == "artist value"
     models = _fbx_models(second["filepath"])
     assert {"Direct", "Nested"} <= set(models)

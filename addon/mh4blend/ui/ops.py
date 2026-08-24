@@ -6,13 +6,7 @@ import os
 import bpy
 
 from .. import prefs as prefs_mod
-from ..core.canonical import validate_resource_name
-from ..scene.export_composite import (
-    NODE_KIND_KEY,
-    NODE_NAME_KEY,
-    NODE_RESOURCE_KEY,
-    export_composite_collection,
-)
+from ..scene.export_composite import export_composite_collection
 from ..scene.export_fbx import export_fbx_collection
 from ..scene.export_material import (
     prepare_blender_material_export,
@@ -307,115 +301,6 @@ class MH_OT_export_composite(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class MH_OT_set_composite_placement(bpy.types.Operator):
-    bl_idname = "mh.set_composite_placement"
-    bl_label = "Set Active Placement"
-    bl_description = (
-        "Set Source Protocol v4 kind and logical resource on the active "
-        "composite placement")
-    bl_options = {"REGISTER", "UNDO"}
-
-    kind: bpy.props.EnumProperty(
-        name="Kind",
-        items=(
-            ("mesh", "Mesh", "Place a static-mesh resource"),
-            ("actor", "Actor", "Place an ActorClassRegistry token"),
-            ("composite", "Composite", "Place another composite resource"),
-            ("group", "Group", "Transform-only hierarchy node"),
-        ),
-        default="mesh")
-    resource: bpy.props.StringProperty(
-        name="Resource",
-        description="Logical token matching [a-z0-9_]+; empty only for group")
-    display_name: bpy.props.StringProperty(
-        name="Display Name",
-        description="Optional non-identity label written to the composite")
-
-    @staticmethod
-    def _active(context):
-        obj = context.active_object
-        if obj is None:
-            raise ValueError("Select an active composite placement object")
-        return obj
-
-    def invoke(self, context, _event):
-        try:
-            obj = self._active(context)
-        except ValueError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
-        instance = getattr(obj, "instance_collection", None)
-        inherited_kind = instance.get("mh_resource_kind") if instance else None
-        inherited_resource = instance.get("mh_resource_name") if instance else None
-        current_kind = obj.get(NODE_KIND_KEY) or inherited_kind
-        if current_kind in {"mesh", "actor", "composite", "group"}:
-            self.kind = current_kind
-        elif obj.type == "EMPTY" and instance is None:
-            self.kind = "group"
-        else:
-            self.kind = "mesh"
-        self.resource = str(
-            obj.get(NODE_RESOURCE_KEY) or inherited_resource or "")
-        self.display_name = str(obj.get(NODE_NAME_KEY) or "")
-        return context.window_manager.invoke_props_dialog(self, width=520)
-
-    def draw(self, _context):
-        layout = self.layout
-        layout.prop(self, "kind")
-        resource = layout.row()
-        resource.enabled = self.kind != "group"
-        resource.prop(self, "resource")
-        layout.prop(self, "display_name")
-        layout.label(
-            text="Resource tokens use lowercase a-z, digits and underscore",
-            icon="INFO")
-
-    def execute(self, context):
-        try:
-            obj = self._active(context)
-            token = self.resource.strip()
-            if self.kind == "group":
-                token = ""
-            else:
-                validate_resource_name(token)
-            obj[NODE_KIND_KEY] = self.kind
-            if token:
-                obj[NODE_RESOURCE_KEY] = token
-            elif NODE_RESOURCE_KEY in obj:
-                del obj[NODE_RESOURCE_KEY]
-            display_name = self.display_name.strip()
-            if display_name:
-                obj[NODE_NAME_KEY] = display_name
-            elif NODE_NAME_KEY in obj:
-                del obj[NODE_NAME_KEY]
-        except (TypeError, ValueError) as exc:
-            self.report({"ERROR"}, f"{getattr(context.active_object, 'name', '<none>')}: {exc}")
-            return {"CANCELLED"}
-        self.report(
-            {"INFO"},
-            f"Placement {obj.name!r}: {self.kind}"
-            + (f":{token}" if token else ""))
-        return {"FINISHED"}
-
-
-class MH_OT_clear_composite_placement(bpy.types.Operator):
-    bl_idname = "mh.clear_composite_placement"
-    bl_label = "Clear Active Placement"
-    bl_description = "Remove explicit v4 placement markers from the active object"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        obj = context.active_object
-        if obj is None:
-            self.report({"ERROR"}, "Select an active composite placement object")
-            return {"CANCELLED"}
-        for key in (NODE_KIND_KEY, NODE_RESOURCE_KEY, NODE_NAME_KEY):
-            if key in obj:
-                del obj[key]
-        self.report({"INFO"}, f"Cleared explicit placement markers on {obj.name!r}")
-        return {"FINISHED"}
-
-
 class MH_OT_import_composite(bpy.types.Operator):
     bl_idname = "mh.import_composite"
     bl_label = "Import Composite"
@@ -457,8 +342,6 @@ CLASSES = (
     MH_OT_import_mesh_fbx,
     MH_OT_export_material,
     MH_OT_export_composite,
-    MH_OT_set_composite_placement,
-    MH_OT_clear_composite_placement,
     MH_OT_import_composite,
 )
 

@@ -21,6 +21,12 @@ from ..core.model import Composite, CompositeTransform, Node
 from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.transforms import blender_to_ue_transform
 from ..core.validate import MHValidationError
+from .export_fbx import _dagor_lod_structure
+from .resource_markers import (
+    COLLECTION_KIND_KEY,
+    COLLECTION_RESOURCE_KEY,
+    stamp_resource_collection,
+)
 
 __all__ = [
     "COLLECTION_KIND_KEY",
@@ -33,8 +39,6 @@ __all__ = [
 ]
 
 
-COLLECTION_KIND_KEY = "mh_resource_kind"
-COLLECTION_RESOURCE_KEY = "mh_resource_name"
 NODE_KIND_KEY = "mh_composite_kind"
 NODE_RESOURCE_KEY = "mh_composite_resource"
 NODE_NAME_KEY = "mh_composite_name"
@@ -190,12 +194,51 @@ def _preflight_dependencies(root: Path, candidate: Composite) -> None:
                 root, dependency, ".mesh.fbx", allow_missing=True)
 
 
+def _collection_instance_identity(instance) -> tuple[str, str]:
+    """Infer one resource placement without asking the artist to restate it."""
+    marker_kind = instance.get(COLLECTION_KIND_KEY)
+    marker_resource = instance.get(COLLECTION_RESOURCE_KEY)
+    if marker_kind is not None or marker_resource is not None:
+        if marker_kind not in {"mesh", "composite"}:
+            raise MHValidationError(
+                "MH_E_COMPOSITE_GRAMMAR", [instance.name],
+                f"instance collection has invalid {COLLECTION_KIND_KEY}="
+                f"{marker_kind!r}")
+        if not isinstance(marker_resource, str) or not marker_resource:
+            raise MHValidationError(
+                "MH_E_COMPOSITE_GRAMMAR", [instance.name],
+                f"instance collection is missing {COLLECTION_RESOURCE_KEY}")
+        validate_resource_name(marker_resource)
+        return marker_kind, marker_resource
+
+    if instance.name.endswith(".composite"):
+        resource = instance.name[:-len(".composite")]
+        validate_resource_name(resource)
+        return "composite", resource
+
+    lod_structure = _dagor_lod_structure(instance)
+    if lod_structure is not None:
+        return "mesh", lod_structure["resource_name"]
+
+    if any(obj.type == "MESH" for obj in instance.all_objects):
+        validate_resource_name(instance.name)
+        return "mesh", instance.name
+
+    raise MHValidationError(
+        "MH_E_COMPOSITE_GRAMMAR", [instance.name],
+        "collection instance is not a known mesh/composite definition: "
+        "export or import that resource once so its collection identity is "
+        "established automatically")
+
+
 def _node_kind_and_resource(obj) -> tuple[str, str | None]:
     explicit_kind = obj.get(NODE_KIND_KEY)
     explicit_resource = obj.get(NODE_RESOURCE_KEY)
     instance = getattr(obj, "instance_collection", None)
-    instance_kind = instance.get(COLLECTION_KIND_KEY) if instance else None
-    instance_resource = instance.get(COLLECTION_RESOURCE_KEY) if instance else None
+    instance_kind = None
+    instance_resource = None
+    if instance is not None:
+        instance_kind, instance_resource = _collection_instance_identity(instance)
 
     kind = explicit_kind or instance_kind
     if kind is None and obj.type == "EMPTY" and instance is None:
@@ -207,8 +250,9 @@ def _node_kind_and_resource(obj) -> tuple[str, str | None]:
             f"placement object {obj.name!r} (type={obj.type!r}, "
             f"instance_collection={instance_name!r}) has "
             f"{NODE_KIND_KEY}={explicit_kind!r} and inherited "
-            f"kind={instance_kind!r}; use MH > Composites > Active "
-            "Placement to set mesh, actor, composite or group")
+            f"kind={instance_kind!r}; Composite collections accept collection "
+            "instances as resource placements and plain Empty objects as "
+            "groups")
 
     resource = explicit_resource or instance_resource
     if kind == "group":
@@ -311,6 +355,7 @@ def export_composite_collection(collection, output_dir, *, source_root) -> dict:
         source_root=root,
         read_back_validator=validate_read_back,
     )
+    stamp_resource_collection(collection, "composite", resource.name)
     return {
         "ok": True,
         "filepath": str(target),

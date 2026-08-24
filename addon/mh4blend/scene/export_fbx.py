@@ -18,6 +18,7 @@ from ..core.canonical import validate_resource_name
 from ..core.mesh_nodes import validate_node_markers
 from ..core.payload_publish_v2 import payload_lock
 from ..core.validate import MHValidationError
+from .resource_markers import stamp_resource_collection
 
 __all__ = [
     "FBX_EXPORT_KWARGS",
@@ -742,6 +743,7 @@ def export_fbx_collection(
                     prepared, source_root=resolved_source_root)
                 for prepared in prepared_materials
             ]
+        stamp_resource_collection(collection, "mesh", resource_name)
 
     return {
         "ok": True,
