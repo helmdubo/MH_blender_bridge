@@ -113,7 +113,7 @@ FString TransportError(const FString& Detail)
     return FString::Printf(TEXT("MH_E_FBX_TRANSPORT_FAILED: %s"), *Detail);
 }
 
-FVector3f ToUnrealPosition(const FbxVector4& Position)
+FVector3f FbxSceneToUnrealPosition(const FbxVector4& Position)
 {
     return FVector3f(
         static_cast<float>(Position[0]),
@@ -123,7 +123,7 @@ FVector3f ToUnrealPosition(const FbxVector4& Position)
 
 FVector3f ToUnrealNormal(const FbxVector4& Normal)
 {
-    return ToUnrealPosition(Normal).GetSafeNormal();
+    return FbxSceneToUnrealPosition(Normal).GetSafeNormal();
 }
 
 FbxAMatrix GeometryTransform(const FbxNode& Node)
@@ -138,11 +138,11 @@ FbxAMatrix GeometryTransform(const FbxNode& Node)
 FTransform ToUnrealTransform(const FbxAMatrix& Matrix, bool& bOutRepresentableAsTRS)
 {
     const FbxVector4 OriginFbx = Matrix.MultT(FbxVector4(0.0, 0.0, 0.0, 1.0));
-    const FVector3f Origin = ToUnrealPosition(OriginFbx);
-    const FVector3f X = ToUnrealPosition(Matrix.MultT(FbxVector4(1.0, 0.0, 0.0, 1.0))) - Origin;
+    const FVector3f Origin = FbxSceneToUnrealPosition(OriginFbx);
+    const FVector3f X = FbxSceneToUnrealPosition(Matrix.MultT(FbxVector4(1.0, 0.0, 0.0, 1.0))) - Origin;
     // UE local +Y corresponds to FBX local -Y at the pinned reflection seam.
-    const FVector3f Y = ToUnrealPosition(Matrix.MultT(FbxVector4(0.0, -1.0, 0.0, 1.0))) - Origin;
-    const FVector3f Z = ToUnrealPosition(Matrix.MultT(FbxVector4(0.0, 0.0, 1.0, 1.0))) - Origin;
+    const FVector3f Y = FbxSceneToUnrealPosition(Matrix.MultT(FbxVector4(0.0, -1.0, 0.0, 1.0))) - Origin;
+    const FVector3f Z = FbxSceneToUnrealPosition(Matrix.MultT(FbxVector4(0.0, 0.0, 1.0, 1.0))) - Origin;
     bOutRepresentableAsTRS = !Origin.ContainsNaN() && !X.ContainsNaN() && !Y.ContainsNaN() && !Z.ContainsNaN() &&
         !X.IsNearlyZero() && !Y.IsNearlyZero() && !Z.IsNearlyZero();
     if (bOutRepresentableAsTRS)
@@ -218,7 +218,7 @@ bool ReadGeometry(
     Geometry.Positions.Reserve(Mesh->GetControlPointsCount());
     for (int32 PointIndex = 0; PointIndex < Mesh->GetControlPointsCount(); ++PointIndex)
     {
-        Geometry.Positions.Add(ToUnrealPosition(
+        Geometry.Positions.Add(FbxSceneToUnrealPosition(
             GlobalGeometry.MultT(Mesh->GetControlPointAt(PointIndex))));
     }
 

@@ -22,7 +22,7 @@ THIRD_PARTY_INCLUDES_END
 
 namespace
 {
-FVector3f ToUnrealPosition(const FbxVector4& Position)
+FVector3f AxisProbeToUnrealPosition(const FbxVector4& Position)
 {
     return FVector3f(
         static_cast<float>(Position[0]),
@@ -32,7 +32,7 @@ FVector3f ToUnrealPosition(const FbxVector4& Position)
 
 FVector3f ToUnrealDirection(const FbxVector4& Direction)
 {
-    return ToUnrealPosition(Direction).GetSafeNormal();
+    return AxisProbeToUnrealPosition(Direction).GetSafeNormal();
 }
 
 void CaptureMeshResult(UStaticMesh& StaticMesh, FMHGeometryProbeResult& OutResult)
@@ -153,7 +153,7 @@ bool BuildProbeMeshDescription(FbxMesh& Mesh, FMeshDescription& OutMeshDescripti
     {
         const FVertexID VertexId = OutMeshDescription.CreateVertex();
         VertexIds.Add(VertexId);
-        Positions[VertexId] = ToUnrealPosition(Mesh.GetControlPointAt(ControlPointIndex));
+        Positions[VertexId] = AxisProbeToUnrealPosition(Mesh.GetControlPointAt(ControlPointIndex));
     }
 
     FbxStringList UVSetNames;

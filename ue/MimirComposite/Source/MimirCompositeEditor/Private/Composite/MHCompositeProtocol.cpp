@@ -533,7 +533,7 @@ void AppendQuoted(const FString& Value, FString& Out)
     Out.AppendChar(TEXT('"'));
 }
 
-const TCHAR* KindLabel(const EMHCompositeNodeKind Kind)
+const TCHAR* CompositeNodeKindLabel(const EMHCompositeNodeKind Kind)
 {
     switch (Kind)
     {
@@ -623,7 +623,7 @@ void AppendVector(const FVector& Value, const int32 FieldLevel, FString& Out)
 
 bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FString& OutError)
 {
-    const TCHAR* Label = KindLabel(Node.Kind);
+    const TCHAR* Label = CompositeNodeKindLabel(Node.Kind);
     if (Label == nullptr) return CompositeGrammarError(OutError, TEXT("writer received unsupported node kind"));
     if (Node.Kind == EMHCompositeNodeKind::Group)
     {

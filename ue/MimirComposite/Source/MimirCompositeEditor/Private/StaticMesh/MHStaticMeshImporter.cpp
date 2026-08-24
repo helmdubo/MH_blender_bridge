@@ -32,9 +32,9 @@ namespace UE::MimirComposite
 namespace
 {
 
-constexpr TCHAR GeneratedMeshRoot[] = TEXT("/Game/MH/Generated/Meshes");
+constexpr TCHAR StaticMeshGeneratedRoot[] = TEXT("/Game/MH/Generated/Meshes");
 
-bool Fail(FString& OutError, const TCHAR* Code, const FString& Message)
+bool FailStaticMeshImport(FString& OutError, const TCHAR* Code, const FString& Message)
 {
     OutError = FString::Printf(TEXT("%s: %s"), Code, *Message);
     return false;
@@ -45,7 +45,7 @@ bool LoadSourceBytes(const FString& Filename, TArray<uint8>& OutBytes, FString& 
     OutBytes.Reset();
     if (!FFileHelper::LoadFileToArray(OutBytes, *Filename))
     {
-        return Fail(
+        return FailStaticMeshImport(
             OutError,
             TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED"),
             FString::Printf(TEXT("cannot read indexed FBX payload '%s'"), *Filename));
@@ -58,7 +58,7 @@ bool SaveStaticMeshPackage(UStaticMesh& StaticMesh, FString& OutError)
     UPackage* Package = StaticMesh.GetOutermost();
     if (Package == nullptr)
     {
-        return Fail(OutError, TEXT("MH_E_IMPORT_FAILED"), TEXT("static mesh has no package"));
+        return FailStaticMeshImport(OutError, TEXT("MH_E_IMPORT_FAILED"), TEXT("static mesh has no package"));
     }
     const FString Filename = FPackageName::LongPackageNameToFilename(
         Package->GetName(),
@@ -69,7 +69,7 @@ bool SaveStaticMeshPackage(UStaticMesh& StaticMesh, FString& OutError)
     Args.Error = GError;
     if (!UPackage::SavePackage(Package, &StaticMesh, *Filename, Args))
     {
-        return Fail(
+        return FailStaticMeshImport(
             OutError,
             TEXT("MH_E_IMPORT_FAILED"),
             FString::Printf(TEXT("failed to save package '%s'"), *Package->GetName()));
@@ -176,20 +176,20 @@ bool ValidateBuildPlan(const FMHStaticMeshBuildPlan& Plan, FString& OutError)
 {
     if (!Plan.IsValid() || Plan.Scene->LODLevels.IsEmpty())
     {
-        return Fail(OutError, TEXT("MH_E_INVALID_RESOURCE_SOURCE"), TEXT("static-mesh build plan has no dense LOD inventory"));
+        return FailStaticMeshImport(OutError, TEXT("MH_E_INVALID_RESOURCE_SOURCE"), TEXT("static-mesh build plan has no dense LOD inventory"));
     }
     for (int32 Expected = 0; Expected < Plan.Scene->LODLevels.Num(); ++Expected)
     {
         if (Plan.Scene->LODLevels[Expected] != Expected)
         {
-            return Fail(OutError, TEXT("MH_E_LOD_LEVELS_SPARSE"), TEXT("static-mesh build plan has sparse LOD levels"));
+            return FailStaticMeshImport(OutError, TEXT("MH_E_LOD_LEVELS_SPARSE"), TEXT("static-mesh build plan has sparse LOD levels"));
         }
     }
     for (const FString& MaterialName : Plan.Scene->MaterialNames)
     {
         if (!Plan.Materials.Contains(MaterialName) || Plan.Materials.FindRef(MaterialName) == nullptr)
         {
-            return Fail(
+            return FailStaticMeshImport(
                 OutError,
                 TEXT("MH_E_UNRESOLVED_MATERIAL_REFERENCE"),
                 FString::Printf(TEXT("material slot '%s' is not resolved to a managed MI"), *MaterialName));
@@ -199,14 +199,14 @@ bool ValidateBuildPlan(const FMHStaticMeshBuildPlan& Plan, FString& OutError)
     {
         if ((Node.Kind == EMHSceneNodeKind::Render || Node.Kind == EMHSceneNodeKind::Collision) && !Node.Geometry.IsSet())
         {
-            return Fail(
+            return FailStaticMeshImport(
                 OutError,
                 TEXT("MH_E_INVALID_RESOURCE_SOURCE"),
                 FString::Printf(TEXT("classified mesh node '%s' has no geometry"), *Node.Name));
         }
         if (Node.Kind == EMHSceneNodeKind::Collision && !HasNonCoplanarHull(Node.Geometry->Positions))
         {
-            return Fail(
+            return FailStaticMeshImport(
                 OutError,
                 TEXT("MH_E_INVALID_RESOURCE_SOURCE"),
                 FString::Printf(TEXT("collision node '%s' has fewer than four non-coplanar points"), *Node.Name));
@@ -257,7 +257,7 @@ bool BuildMeshDescriptionForLOD(
         {
             if (Position.ContainsNaN())
             {
-                return Fail(OutError, TEXT("MH_E_INVALID_RESOURCE_SOURCE"), FString::Printf(TEXT("node '%s' contains a non-finite vertex"), *Node.Name));
+                return FailStaticMeshImport(OutError, TEXT("MH_E_INVALID_RESOURCE_SOURCE"), FString::Printf(TEXT("node '%s' contains a non-finite vertex"), *Node.Name));
             }
             const FVertexID VertexId = OutDescription.CreateVertex();
             Positions[VertexId] = Position;
@@ -271,7 +271,7 @@ bool BuildMeshDescriptionForLOD(
             {
                 if (!Node.MaterialSlots.IsValidIndex(Triangle.MaterialSlotIndex))
                 {
-                    return Fail(
+                    return FailStaticMeshImport(
                         OutError,
                         TEXT("MH_E_FBX_TRANSPORT_FAILED"),
                         FString::Printf(TEXT("node '%s' triangle references slot %d outside its material table"), *Node.Name, Triangle.MaterialSlotIndex));
@@ -294,7 +294,7 @@ bool BuildMeshDescriptionForLOD(
                 const int32 PositionIndex = Triangle.PositionIndices[SourceCorner];
                 if (!VertexIds.IsValidIndex(PositionIndex))
                 {
-                    return Fail(
+                    return FailStaticMeshImport(
                         OutError,
                         TEXT("MH_E_FBX_TRANSPORT_FAILED"),
                         FString::Printf(TEXT("node '%s' triangle references vertex %d outside its geometry"), *Node.Name, PositionIndex));
@@ -309,7 +309,7 @@ bool BuildMeshDescriptionForLOD(
     }
     if (!bAddedRenderGeometry || OutDescription.Polygons().Num() == 0)
     {
-        return Fail(
+        return FailStaticMeshImport(
             OutError,
             TEXT("MH_E_EMPTY_RESOURCE_COLLECTION"),
             FString::Printf(TEXT("LOD%d has no render triangles"), LODLevel));
@@ -337,7 +337,7 @@ bool ResolveMaterials(
         const FMHResolveOutcome Outcome = Resolver.Resolve(Key);
         if (Outcome.Status != EMHResolveStatus::Resolved)
         {
-            return Fail(
+            return FailStaticMeshImport(
                 OutError,
                 TEXT("MH_E_UNRESOLVED_MATERIAL_REFERENCE"),
                 FString::Printf(TEXT("slot '%s' does not resolve to exactly one material source"), *MaterialName));
@@ -348,7 +348,7 @@ bool ResolveMaterials(
         UMaterialInstanceConstant* Material = LoadObject<UMaterialInstanceConstant>(nullptr, *ObjectPath);
         if (Material == nullptr)
         {
-            return Fail(
+            return FailStaticMeshImport(
                 OutError,
                 TEXT("MH_E_UNRESOLVED_MATERIAL_REFERENCE"),
                 FString::Printf(TEXT("slot '%s' has source but no applied managed MI at '%s'"), *MaterialName, *ObjectPath));
@@ -359,7 +359,7 @@ bool ResolveMaterials(
             Receipt->SourceHash.IsEmpty() || Receipt->AppliedHash.IsEmpty() ||
             Receipt->SourceHash != Outcome.RawHash)
         {
-            return Fail(
+            return FailStaticMeshImport(
                 OutError,
                 TEXT("MH_E_UNRESOLVED_MATERIAL_REFERENCE"),
                 FString::Printf(TEXT("slot '%s' does not have an applied managed material receipt"), *MaterialName));
@@ -474,7 +474,7 @@ bool FMHStaticMeshBuilder::Rebuild(
     FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
     if (!BuildErrors.IsEmpty())
     {
-        return Fail(
+        return FailStaticMeshImport(
             OutError,
             TEXT("MH_E_IMPORT_FAILED"),
             FString::Printf(TEXT("UStaticMesh build failed: %s"), *BuildErrors[0].ToString()));
@@ -535,7 +535,7 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
         return Result;
     }
 
-    const FString PackageName = FString(GeneratedMeshRoot) + TEXT("/") + Entry.Key.LogicalName;
+    const FString PackageName = FString(StaticMeshGeneratedRoot) + TEXT("/") + Entry.Key.LogicalName;
     const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;
     UObject* ExistingObject = StaticLoadObject(UObject::StaticClass(), nullptr, *ObjectPath);
     UStaticMesh* StaticMesh = Cast<UStaticMesh>(ExistingObject);

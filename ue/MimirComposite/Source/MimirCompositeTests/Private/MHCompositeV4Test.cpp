@@ -111,7 +111,7 @@ private:
     int32 ResolveCount = 0;
 };
 
-FMHResourceKey Key(const EMHResourceKind Kind, const FString& Name)
+FMHResourceKey CompositeTestKey(const EMHResourceKind Kind, const FString& Name)
 {
     FMHResourceKey Result;
     Result.Kind = Kind;
@@ -280,7 +280,7 @@ bool FMHCompositeClosureTest::RunTest(const FString& Parameters)
         Root,
         Error);
     FCompositeTestResolver Resolver;
-    Resolver.AddResolved(Key(EMHResourceKind::Composite, TEXT("nested")), NestedPath, MHRawPayloadHash(NestedBytes));
+    Resolver.AddResolved(CompositeTestKey(EMHResourceKind::Composite, TEXT("nested")), NestedPath, MHRawPayloadHash(NestedBytes));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     bool bPassed = TestFalse(TEXT("ancestor cycle rejected"),
         MHValidateCompositeClosureV4(TEXT("root"), Root, Resolver, *Settings, Error));
@@ -313,7 +313,7 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
     FFileHelper::SaveArrayToFile(RawBytes, *SourcePath);
 
     FMHSourceAnalysisEntry Entry;
-    Entry.Key = Key(EMHResourceKind::Composite, TEXT("ue_s3_roundtrip"));
+    Entry.Key = CompositeTestKey(EMHResourceKind::Composite, TEXT("ue_s3_roundtrip"));
     Entry.PayloadPath = SourcePath;
     Entry.SourcePath = TEXT("ue_s3_roundtrip.composite");
     Entry.RawHash = MHRawPayloadHash(RawBytes);
@@ -404,7 +404,7 @@ bool FMHCompositeSourceRaceNoGhostTest::RunTest(const FString& Parameters)
     const TArray<uint8> Initial = Utf8Composite(TEXT("{\"nodes\":[]}"));
     FFileHelper::SaveArrayToFile(Initial, *SourcePath);
     FMHSourceAnalysisEntry Entry;
-    Entry.Key = Key(EMHResourceKind::Composite, Token);
+    Entry.Key = CompositeTestKey(EMHResourceKind::Composite, Token);
     Entry.PayloadPath = SourcePath;
     Entry.SourcePath = Token + TEXT(".composite");
     Entry.RawHash = MHRawPayloadHash(Initial);
@@ -447,7 +447,7 @@ bool FMHCompositeCompilerWorldTransformTest::RunTest(const FString& Parameters)
         Mesh = NewObject<UStaticMesh>(MeshPackage, TEXT("world_probe"), RF_Public | RF_Standalone);
     }
     FCompositeTestResolver Resolver;
-    Resolver.AddResolved(Key(EMHResourceKind::StaticMesh, TEXT("world_probe")));
+    Resolver.AddResolved(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("world_probe")));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     FMHCompositeDocument Document;
     FString Error;
@@ -511,7 +511,7 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
         Mesh = NewObject<UStaticMesh>(MeshPackage, TEXT("top_level_probe"), RF_Public | RF_Standalone);
     }
     FCompositeTestResolver Resolver;
-    Resolver.AddResolved(Key(EMHResourceKind::StaticMesh, TEXT("top_level_probe")));
+    Resolver.AddResolved(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("top_level_probe")));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     FMHCompositeDocument Document;
     FString Error;
@@ -566,7 +566,7 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
         AddError(TEXT("cannot spawn failed-compile target"));
         return false;
     }
-    FFailOnSecondResolve FlakyResolver(Key(EMHResourceKind::StaticMesh, TEXT("top_level_probe")));
+    FFailOnSecondResolve FlakyResolver(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("top_level_probe")));
     FMHCompositeDocument OneNode;
     OneNode.Nodes.Add(Document.Nodes[0]);
     const FMHCompositeCompileResult Failed = MHCompileCompositeV4(
@@ -622,7 +622,7 @@ bool FMHCompositeFbxPlacementParityTest::RunTest(const FString& Parameters)
         Mesh = NewObject<UStaticMesh>(MeshPackage, TEXT("axis_probe_parity"), RF_Public | RF_Standalone);
     }
     FCompositeTestResolver Resolver;
-    Resolver.AddResolved(Key(EMHResourceKind::StaticMesh, TEXT("axis_probe_parity")));
+    Resolver.AddResolved(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("axis_probe_parity")));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     FMHCompositeDocument Document;
     if (!MHParseCompositeV4(Utf8Composite(

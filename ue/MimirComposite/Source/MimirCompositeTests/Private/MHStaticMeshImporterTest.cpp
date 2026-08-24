@@ -130,7 +130,7 @@ private:
     }
 };
 
-bool WriteUtf8(const FString& Path, const FString& Contents)
+bool WriteStaticMeshImporterUtf8(const FString& Path, const FString& Contents)
 {
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     return FFileHelper::SaveStringToFile(
@@ -463,7 +463,7 @@ bool FMHStaticMeshImporterEndToEndTest::RunTest(const FString& Parameters)
         MaterialName + TEXT(".material"));
     bool bPassed = TestTrue(
         TEXT("write resolved material source"),
-        WriteUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n")));
+        WriteStaticMeshImporterUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n")));
     FString MaterialHash;
     bPassed &= TestTrue(TEXT("hash resolved material source"), ReadSourceHash(MaterialPath, MaterialHash));
     UMHMaterialSourceData* MaterialReceipt = NewObject<UMHMaterialSourceData>(Material);

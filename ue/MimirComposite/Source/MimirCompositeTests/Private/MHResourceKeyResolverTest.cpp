@@ -29,7 +29,7 @@ bool WriteBytes(const FString& Path, const FString& Contents)
         FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }
 
-FMHResourceKey Key(const EMHResourceKind Kind, const TCHAR* LogicalName)
+FMHResourceKey ResolverTestKey(const EMHResourceKind Kind, const TCHAR* LogicalName)
 {
     FMHResourceKey Result;
     Result.Kind = Kind;
@@ -112,9 +112,9 @@ bool FMHResourceKeyClassifierTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(TEXT("unknown resource kind is not canonical"), Parsed.IsCanonical());
 
     TSet<FMHResourceKey> DistinctKeys;
-    DistinctKeys.Add(Key(EMHResourceKind::StaticMesh, TEXT("shared")));
-    DistinctKeys.Add(Key(EMHResourceKind::Material, TEXT("shared")));
-    DistinctKeys.Add(Key(EMHResourceKind::StaticMesh, TEXT("shared")));
+    DistinctKeys.Add(ResolverTestKey(EMHResourceKind::StaticMesh, TEXT("shared")));
+    DistinctKeys.Add(ResolverTestKey(EMHResourceKind::Material, TEXT("shared")));
+    DistinctKeys.Add(ResolverTestKey(EMHResourceKind::StaticMesh, TEXT("shared")));
     bPassed &= TestEqual(TEXT("kind participates in equality and hashing"), DistinctKeys.Num(), 2);
     return bPassed;
 }
@@ -152,13 +152,13 @@ bool FMHResourceKeyResolverTest::RunTest(const FString& Parameters)
 
     bPassed &= TestEqual(
         TEXT("cross-kind mesh resolves"),
-        Resolver.Resolve(Key(EMHResourceKind::StaticMesh, TEXT("shared"))).Status,
+        Resolver.Resolve(ResolverTestKey(EMHResourceKind::StaticMesh, TEXT("shared"))).Status,
         EMHResolveStatus::Resolved);
     bPassed &= TestEqual(
         TEXT("cross-kind material resolves"),
-        Resolver.Resolve(Key(EMHResourceKind::Material, TEXT("shared"))).Status,
+        Resolver.Resolve(ResolverTestKey(EMHResourceKind::Material, TEXT("shared"))).Status,
         EMHResolveStatus::Resolved);
-    const FMHResolveOutcome Texture = Resolver.Resolve(Key(EMHResourceKind::Texture, TEXT("brick_d")));
+    const FMHResolveOutcome Texture = Resolver.Resolve(ResolverTestKey(EMHResourceKind::Texture, TEXT("brick_d")));
     bPassed &= TestEqual(
         TEXT("same texture stem across extensions is ambiguous"),
         Texture.Status,
@@ -174,11 +174,11 @@ bool FMHResourceKeyResolverTest::RunTest(const FString& Parameters)
         }));
 
     const FMHResolveOutcome Missing = Resolver.Resolve(
-        Key(EMHResourceKind::Composite, TEXT("missing")));
+        ResolverTestKey(EMHResourceKind::Composite, TEXT("missing")));
     bPassed &= TestEqual(TEXT("missing key is unresolved"), Missing.Status, EMHResolveStatus::Unresolved);
     bPassed &= TestTrue(TEXT("missing diagnostic"), Missing.Diagnostic.StartsWith(TEXT("MH_E_RESOURCE_NOT_FOUND")));
     const FMHResolveOutcome Invalid = Resolver.Resolve(
-        Key(EMHResourceKind::Composite, TEXT("Not_Canonical")));
+        ResolverTestKey(EMHResourceKind::Composite, TEXT("Not_Canonical")));
     bPassed &= TestEqual(TEXT("invalid key is rejected"), Invalid.Status, EMHResolveStatus::Invalid);
 
     WriteBytes(FPaths::Combine(Root, TEXT("c/identical.mesh.fbx")), TEXT("same"));
@@ -187,7 +187,7 @@ bool FMHResourceKeyResolverTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("rescan with identical duplicates"), IdenticalResolver.Initialize(Error));
     bPassed &= TestEqual(
         TEXT("byte-identical same-kind duplicates remain ambiguous"),
-        IdenticalResolver.Resolve(Key(EMHResourceKind::StaticMesh, TEXT("identical"))).Status,
+        IdenticalResolver.Resolve(ResolverTestKey(EMHResourceKind::StaticMesh, TEXT("identical"))).Status,
         EMHResolveStatus::Ambiguous);
 
     IFileManager::Get().DeleteDirectory(*Root, false, true);
@@ -216,7 +216,7 @@ bool FMHResourceKeyBlockedTest::RunTest(const FString& Parameters)
         return Value.Contains(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"));
     }));
     const FMHResolveOutcome Duplicate = Resolver.Resolve(
-        Key(EMHResourceKind::StaticMesh, TEXT("duplicate")));
+        ResolverTestKey(EMHResourceKind::StaticMesh, TEXT("duplicate")));
     bPassed &= TestEqual(
         TEXT("ambiguous resource is blocked by resolver"),
         Duplicate.Status,
