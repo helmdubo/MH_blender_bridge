@@ -69,6 +69,11 @@ FString ParentPackageName(const FString& Root, const FString& Token)
     return NormalizePackageRoot(Root) + TEXT("/") + Token;
 }
 
+FString AppliedParentReceipt(const FMHMaterialDocument& Document)
+{
+    return FString(Document.Mode == EMHMaterialMode::Class ? TEXT("class:") : TEXT("library:")) + Document.Parent;
+}
+
 UMaterialInterface* LoadParent(const FString& Root, const FString& Token, FString& OutError)
 {
     const FString PackageName = ParentPackageName(Root, Token);
@@ -673,11 +678,6 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
     const FString InitialSourceHash = MHRawPayloadHash(SourceBytes);
-    if (Document.Mode == EMHMaterialMode::Library)
-    {
-        Result.Error = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: OPEN-V4-9 must define ParentClass for library applied state");
-        return Result;
-    }
     TArray<uint8> CanonicalSource;
     if (!MHWriteCanonicalMaterialV4(Document, CanonicalSource, Result.Error))
     {
@@ -792,7 +792,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
     Data->SourceRelativePath = Entry.SourcePath;
     Data->SourceHash = InitialSourceHash;
     Data->AppliedHash = MHRawPayloadHash(AppliedBytes);
-    Data->ParentClass = Document.Parent;
+    Data->AppliedParent = AppliedParentReceipt(Document);
     Material->PostEditChange();
     if (!SaveMaterialPackage(*Material, Result.Error))
     {
@@ -816,12 +816,6 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     {
         return Result;
     }
-    if (Document.Mode == EMHMaterialMode::Library)
-    {
-        Result.Error = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: OPEN-V4-9 must define ParentClass for library applied state");
-        return Result;
-    }
-
     FString LogicalName;
     FString TargetPath;
     const UMHMaterialSourceData* ExistingData = GetSourceData(Material);
@@ -872,7 +866,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     Data->SourceRelativePath = RelativePath;
     Data->SourceHash = MHRawPayloadHash(Bytes);
     Data->AppliedHash = MHRawPayloadHash(Bytes);
-    Data->ParentClass = Document.Parent;
+    Data->AppliedParent = AppliedParentReceipt(Document);
     Material.PostEditChange();
     if (!SaveMaterialPackage(Material, Result.Error))
     {

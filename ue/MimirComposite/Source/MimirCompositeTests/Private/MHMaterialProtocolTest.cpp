@@ -335,6 +335,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHMaterialAppliedParentReceiptsTest,
+    "Mimir.V4.Material.AppliedParentReceipts",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHMaterialTextureResolutionGatesTest,
     "Mimir.V4.Material.TextureResolutionGates",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -810,6 +815,17 @@ bool FMHMaterialManagedRoundTripTest::RunTest(const FString& Parameters)
         AddError(Imported.Error);
         return false;
     }
+    UMHMaterialSourceData* ImportedData = Cast<UMHMaterialSourceData>(
+        Imported.Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+    bPassed &= TestNotNull(TEXT("class receipt exists"), ImportedData);
+    if (ImportedData == nullptr)
+    {
+        return false;
+    }
+    bPassed &= TestEqual(
+        TEXT("class receipt uses tagged applied parent"),
+        ImportedData->AppliedParent,
+        FString(TEXT("class:simple")));
 
     const FAssetData AssetData = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
         .Get()
@@ -832,6 +848,21 @@ bool FMHMaterialManagedRoundTripTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("managed registry tag"),
         AssetData.GetTagValue(FName(TEXT("MH.Managed")), TagValue) && TagValue == TEXT("True"));
+    TSet<FName> MHTags;
+    AssetData.TagsAndValues.ForEach([&MHTags](const TPair<FName, FAssetTagValueRef>& Pair)
+    {
+        if (Pair.Key.ToString().StartsWith(TEXT("MH."), ESearchCase::CaseSensitive))
+        {
+            MHTags.Add(Pair.Key);
+        }
+    });
+    bPassed &= TestEqual(TEXT("asset registry exposes exactly five MH tags"), MHTags.Num(), 5);
+    bPassed &= TestTrue(TEXT("tag set contains kind"), MHTags.Contains(FName(TEXT("MH.Kind"))));
+    bPassed &= TestTrue(TEXT("tag set contains logical name"), MHTags.Contains(FName(TEXT("MH.LogicalName"))));
+    bPassed &= TestTrue(TEXT("tag set contains source path"), MHTags.Contains(FName(TEXT("MH.SourcePath"))));
+    bPassed &= TestTrue(TEXT("tag set contains applied hash"), MHTags.Contains(FName(TEXT("MH.AppliedHash"))));
+    bPassed &= TestTrue(TEXT("tag set contains managed"), MHTags.Contains(FName(TEXT("MH.Managed"))));
+    bPassed &= TestFalse(TEXT("AppliedParent is receipt-only, not a tag"), MHTags.Contains(FName(TEXT("MH.AppliedParent"))));
 
     Imported.Material->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(TEXT("roughness")), 0.75f);
     FMHMaterialOperationResult Published = MHPublishMaterialV4(*Imported.Material, SourceRoot, *Settings);
@@ -862,6 +893,200 @@ bool FMHMaterialManagedRoundTripTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("final extract"), MHExtractMaterialV4(*Reimported.Material, *Settings, FinalExtract, Error));
     bPassed &= TestTrue(TEXT("final canonical"), MHWriteCanonicalMaterialV4(FinalExtract, FinalBytes, Error));
     bPassed &= TestTrue(TEXT("publish reimport is NO_CHANGE exact"), FinalBytes == PublishedBytes);
+    return bPassed;
+}
+
+bool FMHMaterialAppliedParentReceiptsTest::RunTest(const FString& Parameters)
+{
+    const FString SourceRoot = FPaths::ConvertRelativePathToFull(
+        FPaths::ProjectSavedDir(),
+        TEXT("Mimir/MaterialAppliedParentReceipts"));
+    IFileManager::Get().MakeDirectory(*SourceRoot, true);
+    const FString ManagedSourcePath = FPaths::Combine(SourceRoot, TEXT("s2_open9_library_managed.material"));
+    FMHMaterialDocument LibrarySource;
+    LibrarySource.Mode = EMHMaterialMode::Library;
+    LibrarySource.Parent = TEXT("open9_library_parent");
+    TArray<uint8> LibraryBytes;
+    FString Error;
+    bool bPassed = TestTrue(
+        TEXT("library source canonicalizes"),
+        MHWriteCanonicalMaterialV4(LibrarySource, LibraryBytes, Error));
+    bPassed &= TestTrue(
+        TEXT("library source written"),
+        FFileHelper::SaveArrayToFile(LibraryBytes, *ManagedSourcePath));
+
+    UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
+    Settings->MasterRoot = TEXT("/Game/Mimir/MasterMaterials");
+    Settings->LibraryRoot = TEXT("/Game/Mimir/MaterialLibrary");
+    UMaterial* ClassParent = MakeParent(Settings->MasterRoot, TEXT("open9_class_parent"));
+    UMaterial* LibraryParent = MakeParent(Settings->LibraryRoot, TEXT("open9_library_parent"));
+
+    const FString ManagedPackageName = TEXT("/Game/MH/Generated/Materials/s2_open9_library_managed");
+    const FString ManagedObjectPath = ManagedPackageName + TEXT(".s2_open9_library_managed");
+    UMaterialInstanceConstant* ExistingMaterial = LoadObject<UMaterialInstanceConstant>(nullptr, *ManagedObjectPath);
+    if (ExistingMaterial == nullptr)
+    {
+        UPackage* ManagedPackage = CreatePackage(*ManagedPackageName);
+        ExistingMaterial = NewObject<UMaterialInstanceConstant>(
+            ManagedPackage,
+            TEXT("s2_open9_library_managed"),
+            RF_Public | RF_Standalone | RF_Transactional);
+    }
+    ExistingMaterial->RemoveUserDataOfClass(UMHMaterialSourceData::StaticClass());
+    ExistingMaterial->SetParentEditorOnly(ClassParent);
+    ExistingMaterial->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(TEXT("scalar")), 1.0f);
+    ExistingMaterial->SetVectorParameterValueEditorOnly(FMaterialParameterInfo(TEXT("vector")), FLinearColor::White);
+    ExistingMaterial->SetTextureParameterValueEditorOnly(
+        FMaterialParameterInfo(TEXT("tex0")),
+        MakeTexture(TEXT("open9_texture")));
+    FMaterialInstanceBasePropertyOverrides Overrides;
+    Overrides.bOverride_TwoSided = true;
+    Overrides.TwoSided = true;
+    ExistingMaterial->BasePropertyOverrides = Overrides;
+
+    FMHPayloadScanResolver Resolver(SourceRoot);
+    bPassed &= TestTrue(TEXT("library source scans"), Resolver.Initialize(Error));
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::Material;
+    Key.LogicalName = TEXT("s2_open9_library_managed");
+    const FMHResolveOutcome Resolved = Resolver.Resolve(Key);
+    const FMHMaterialOperationResult Imported = MHImportMaterialV4(
+        MaterialEntry(Key.LogicalName, TEXT("s2_open9_library_managed.material"), Resolved),
+        Resolver,
+        SourceRoot,
+        *Settings);
+    bPassed &= TestTrue(TEXT("library material imports over an existing class MI"), Imported.Succeeded());
+    if (!Imported.Succeeded())
+    {
+        AddError(Imported.Error);
+        return false;
+    }
+    bPassed &= TestEqual(TEXT("library import is in-place"), Imported.Material, ExistingMaterial);
+    bPassed &= TestEqual(
+        TEXT("library import reparents from current settings root"),
+        Imported.Material->Parent.Get(),
+        static_cast<UMaterialInterface*>(LibraryParent));
+    bPassed &= TestTrue(TEXT("library import clears scalar overrides"), Imported.Material->ScalarParameterValues.IsEmpty());
+    bPassed &= TestTrue(TEXT("library import clears vector overrides"), Imported.Material->VectorParameterValues.IsEmpty());
+    bPassed &= TestTrue(TEXT("library import clears texture overrides"), Imported.Material->TextureParameterValues.IsEmpty());
+    bPassed &= TestFalse(TEXT("library import clears base overrides"), Imported.Material->HasOverridenBaseProperties());
+    bPassed &= TestFalse(TEXT("library import clears static overrides"), Imported.Material->HasStaticParameters());
+
+    UMHMaterialSourceData* LibraryData = Cast<UMHMaterialSourceData>(
+        Imported.Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+    bPassed &= TestNotNull(TEXT("library import receipt exists"), LibraryData);
+    if (LibraryData == nullptr)
+    {
+        return false;
+    }
+    bPassed &= TestEqual(
+        TEXT("library import persists tagged applied parent"),
+        LibraryData->AppliedParent,
+        FString(TEXT("library:open9_library_parent")));
+    bPassed &= TestFalse(TEXT("library import package is persisted"), Imported.Material->GetOutermost()->IsDirty());
+
+    LibraryData->AppliedParent = TEXT("class:stale_receipt");
+    const FMHMaterialOperationResult Published = MHPublishMaterialV4(*Imported.Material, SourceRoot, *Settings);
+    bPassed &= TestTrue(TEXT("library publish ignores stale AppliedParent"), Published.Succeeded());
+    if (!Published.Succeeded())
+    {
+        AddError(Published.Error);
+        return false;
+    }
+    bPassed &= TestEqual(
+        TEXT("library publish refreshes tagged applied parent from live parent"),
+        LibraryData->AppliedParent,
+        FString(TEXT("library:open9_library_parent")));
+    TArray<uint8> PublishedBytes;
+    bPassed &= TestTrue(TEXT("library publish source readable"), FFileHelper::LoadFileToArray(PublishedBytes, *ManagedSourcePath));
+    bPassed &= TestTrue(TEXT("library publish source remains canonical"), PublishedBytes == LibraryBytes);
+
+    const FString PublishedSourceHash = LibraryData->SourceHash;
+    const FString PublishedAppliedHash = LibraryData->AppliedHash;
+    const FString PublishedAppliedParent = LibraryData->AppliedParent;
+    Imported.Material->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(TEXT("local_scalar")), 0.5f);
+    const FMHMaterialOperationResult RejectedPublish = MHPublishMaterialV4(*Imported.Material, SourceRoot, *Settings);
+    bPassed &= TestFalse(TEXT("library publish rejects local scalar override"), RejectedPublish.Succeeded());
+    bPassed &= TestTrue(
+        TEXT("library override publish exact diagnostic"),
+        ErrorStartsWith(RejectedPublish.Error, TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE")));
+    TArray<uint8> BytesAfterRejection;
+    bPassed &= TestTrue(
+        TEXT("library source remains readable after rejected publish"),
+        FFileHelper::LoadFileToArray(BytesAfterRejection, *ManagedSourcePath));
+    bPassed &= TestTrue(
+        TEXT("rejected library publish does not write source"),
+        BytesAfterRejection == PublishedBytes);
+    bPassed &= TestEqual(
+        TEXT("rejected library publish does not advance SourceHash"),
+        LibraryData->SourceHash,
+        PublishedSourceHash);
+    bPassed &= TestEqual(
+        TEXT("rejected library publish does not advance AppliedHash"),
+        LibraryData->AppliedHash,
+        PublishedAppliedHash);
+    bPassed &= TestEqual(
+        TEXT("rejected library publish does not advance AppliedParent"),
+        LibraryData->AppliedParent,
+        PublishedAppliedParent);
+    bPassed &= TestTrue(
+        TEXT("library fixture restores clean full-applied state"),
+        MHApplyMaterialV4(*Imported.Material, *LibraryParent, LibrarySource, {}, Error));
+
+    auto AdoptMaterial = [&](const FString& AssetName, UMaterialInterface* Parent, const FString& LogicalName, const FString& ExpectedReceipt)
+    {
+        const FString PackageName = TEXT("/Game/MH/Generated/Materials/") + AssetName;
+        const FString ObjectPath = PackageName + TEXT(".") + AssetName;
+        UMaterialInstanceConstant* Material = LoadObject<UMaterialInstanceConstant>(nullptr, *ObjectPath);
+        if (Material == nullptr)
+        {
+            UPackage* NewPackage = CreatePackage(*PackageName);
+            Material = NewObject<UMaterialInstanceConstant>(
+                NewPackage,
+                FName(*AssetName),
+                RF_Public | RF_Standalone | RF_Transactional);
+        }
+        Material->RemoveUserDataOfClass(UMHMaterialSourceData::StaticClass());
+        Material->ClearParameterValuesEditorOnly();
+        Material->SetParentEditorOnly(Parent);
+        FStaticParameterSet EmptyStaticParameters;
+        FMaterialInstanceBasePropertyOverrides EmptyBaseOverrides;
+        Material->UpdateStaticPermutation(EmptyStaticParameters, EmptyBaseOverrides);
+
+        FMHMaterialAdoptTarget Target;
+        Target.Folder = FPaths::Combine(SourceRoot, TEXT("adopted"));
+        Target.LogicalName = LogicalName;
+        const FMHMaterialOperationResult Adopted = MHPublishMaterialV4(*Material, SourceRoot, *Settings, &Target);
+        bPassed &= TestTrue(*FString::Printf(TEXT("%s adopts"), *LogicalName), Adopted.Succeeded());
+        if (!Adopted.Succeeded())
+        {
+            AddError(Adopted.Error);
+            return;
+        }
+        const UMHMaterialSourceData* Data = Cast<UMHMaterialSourceData>(
+            Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+        bPassed &= TestNotNull(*FString::Printf(TEXT("%s receipt exists"), *LogicalName), Data);
+        if (Data != nullptr)
+        {
+            bPassed &= TestEqual(
+                *FString::Printf(TEXT("%s tagged applied parent"), *LogicalName),
+                Data->AppliedParent,
+                ExpectedReceipt);
+        }
+        bPassed &= TestFalse(
+            *FString::Printf(TEXT("%s package is persisted"), *LogicalName),
+            Material->GetOutermost()->IsDirty());
+    };
+    AdoptMaterial(
+        TEXT("s2_open9_class_adopt_asset"),
+        ClassParent,
+        TEXT("s2_open9_class_adopt"),
+        TEXT("class:open9_class_parent"));
+    AdoptMaterial(
+        TEXT("s2_open9_library_adopt_asset"),
+        LibraryParent,
+        TEXT("s2_open9_library_adopt"),
+        TEXT("library:open9_library_parent"));
     return bPassed;
 }
 

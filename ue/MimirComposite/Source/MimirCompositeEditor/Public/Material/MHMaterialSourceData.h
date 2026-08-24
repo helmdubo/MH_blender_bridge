@@ -28,9 +28,9 @@ public:
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FString AppliedHash;
 
-    /** Class registry token. Library-form persistence is blocked by OPEN-V4-9. */
+    /** Receipt-only tagged logical token: class:<token> or library:<name>. */
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
-    FString ParentClass;
+    FString AppliedParent;
 
 #if WITH_EDITOR
     virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
