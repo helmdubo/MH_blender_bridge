@@ -64,7 +64,6 @@ void MHFilterAnalysisToScope(
         FMHSourceAnalysisEntry& Missing = InOutAnalysis.Entries.AddDefaulted_GetRef();
         Missing.Key = Key;
         Missing.Change = EMHSourceChange::Blocked;
-        Missing.bLedgerAdvanceAllowed = false;
         Missing.Errors.Add(FString::Printf(
             TEXT("MH_E_RESOURCE_NOT_FOUND: requested scope key %s was not found in the source snapshot or applied state"),
             *Key.ToString()));
@@ -74,7 +73,6 @@ void MHFilterAnalysisToScope(
         FMHSourceAnalysisEntry& Rejected = InOutAnalysis.Entries.AddDefaulted_GetRef();
         Rejected.Key = Key;
         Rejected.Change = EMHSourceChange::Blocked;
-        Rejected.bLedgerAdvanceAllowed = false;
         Rejected.Errors.Add(FString::Printf(
             TEXT("MH_E_SOURCE_INDEX_INVALID: requested scope key is not canonical: %s"),
             *Key.ToString()));
@@ -245,7 +243,6 @@ bool UMHSourceImporter::ImportSources(
         if (!MaterialResult.Succeeded())
         {
             Entry.Change = EMHSourceChange::Blocked;
-            Entry.bLedgerAdvanceAllowed = false;
             Entry.Errors.Add(MaterialResult.Error);
         }
         else
@@ -273,7 +270,6 @@ bool UMHSourceImporter::ImportSources(
         if (!CompositeResult.Succeeded())
         {
             Entry.Change = EMHSourceChange::Blocked;
-            Entry.bLedgerAdvanceAllowed = false;
             Entry.Errors.Add(CompositeResult.Error);
         }
         else
