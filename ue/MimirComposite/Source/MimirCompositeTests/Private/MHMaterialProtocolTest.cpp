@@ -23,8 +23,16 @@
 #include "Source/MHPayloadScanResolver.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "StaticParameterSet.h"
+#include "Texture/MHTextureSourceData.h"
 #include "UObject/Package.h"
 #include "UObject/PackageReload.h"
+
+namespace UE::MimirComposite
+{
+#if WITH_DEV_AUTOMATION_TESTS
+MIMIRCOMPOSITEEDITOR_API void MHSetFailNextMaterialPackageSaveForTests(bool bFail);
+#endif
+}
 
 namespace UE::MimirComposite::Tests
 {
@@ -98,6 +106,67 @@ FMHSourceAnalysisEntry MaterialEntry(
 }
 
 } // namespace
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHTextureSourceDataTagsTest,
+    "Mimir.V4.Material.TextureSourceDataTags",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHTextureSourceDataTagsTest::RunTest(const FString& Parameters)
+{
+    const FString AssetName = TEXT("s4_texture_receipt_") +
+        FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    const FString PackageName = TEXT("/Game/MH/Generated/Textures/") + AssetName;
+    UPackage* Package = CreatePackage(*PackageName);
+    UTexture2D* Texture = NewObject<UTexture2D>(
+        Package,
+        FName(*AssetName),
+        RF_Public | RF_Standalone | RF_Transactional);
+    UMHTextureSourceData* Data = NewObject<UMHTextureSourceData>(
+        Texture,
+        NAME_None,
+        RF_Transactional);
+    Data->LogicalName = TEXT("s4_texture_receipt");
+    Data->SourceRelativePath = TEXT("textures/s4_texture_receipt.png");
+    Data->SourceHash = TEXT("blake3-160:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9");
+    Texture->AddAssetUserData(Data);
+
+    bool bPassed = TestTrue(TEXT("texture receipt is editor-only"), Data->IsEditorOnly());
+    const FAssetData AssetData(Texture, FAssetData::ECreationFlags::None);
+    TSet<FName> MHTags;
+    AssetData.TagsAndValues.ForEach([&MHTags](const TPair<FName, FAssetTagValueRef>& Pair)
+    {
+        if (Pair.Key.ToString().StartsWith(TEXT("MH."), ESearchCase::CaseSensitive))
+        {
+            MHTags.Add(Pair.Key);
+        }
+    });
+    bPassed &= TestEqual(TEXT("texture exposes exactly six MH tags"), MHTags.Num(), 6);
+
+    FString TagValue;
+    bPassed &= TestTrue(
+        TEXT("texture kind tag"),
+        AssetData.GetTagValue(FName(TEXT("MH.Kind")), TagValue) && TagValue == TEXT("texture"));
+    bPassed &= TestTrue(
+        TEXT("texture logical-name tag"),
+        AssetData.GetTagValue(FName(TEXT("MH.LogicalName")), TagValue) && TagValue == Data->LogicalName);
+    bPassed &= TestTrue(
+        TEXT("texture source-path tag"),
+        AssetData.GetTagValue(FName(TEXT("MH.SourcePath")), TagValue) && TagValue == Data->SourceRelativePath);
+    bPassed &= TestTrue(
+        TEXT("texture source-hash tag"),
+        AssetData.GetTagValue(FName(TEXT("MH.SourceHash")), TagValue) && TagValue == Data->SourceHash);
+    bPassed &= TestTrue(
+        TEXT("binary applied hash equals source hash"),
+        AssetData.GetTagValue(FName(TEXT("MH.AppliedHash")), TagValue) && TagValue == Data->SourceHash);
+    bPassed &= TestTrue(
+        TEXT("texture managed tag"),
+        AssetData.GetTagValue(FName(TEXT("MH.Managed")), TagValue) && TagValue == TEXT("True"));
+
+    Texture->RemoveUserDataOfClass(UMHTextureSourceData::StaticClass());
+    Texture->ClearFlags(RF_Public | RF_Standalone);
+    return bPassed;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHMaterialGoldenVectorsTest,
@@ -500,9 +569,58 @@ bool FMHMaterialTextureImportPersistenceTest::RunTest(const FString& Parameters)
     {
         return false;
     }
+    FMHResourceKey TextureKey;
+    TextureKey.Kind = EMHResourceKind::Texture;
+    TextureKey.LogicalName = TEXT("s2_persist_texture");
+    const FMHResolveOutcome ResolvedTexture = Resolver.Resolve(TextureKey);
+    const UMHTextureSourceData* TextureData = Cast<UMHTextureSourceData>(
+        Texture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass()));
+    bPassed &= TestNotNull(TEXT("imported texture has managed receipt"), TextureData);
+    if (TextureData == nullptr)
+    {
+        return false;
+    }
+    bPassed &= TestEqual(TEXT("texture receipt logical name"), TextureData->LogicalName, TextureKey.LogicalName);
+    bPassed &= TestEqual(
+        TEXT("texture receipt source path"),
+        TextureData->SourceRelativePath,
+        FString(TEXT("s2_persist_texture.png")));
+    bPassed &= TestEqual(TEXT("texture receipt source hash"), TextureData->SourceHash, ResolvedTexture.RawHash);
+    const FAssetData TextureAssetData = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
+        .Get()
+        .GetAssetByObjectPath(FSoftObjectPath::ConstructFromObject(Texture));
+    TSet<FName> TextureMHTags;
+    TextureAssetData.TagsAndValues.ForEach([&TextureMHTags](const TPair<FName, FAssetTagValueRef>& Pair)
+    {
+        if (Pair.Key.ToString().StartsWith(TEXT("MH."), ESearchCase::CaseSensitive))
+        {
+            TextureMHTags.Add(Pair.Key);
+        }
+    });
+    bPassed &= TestEqual(TEXT("imported texture exposes exactly six MH tags"), TextureMHTags.Num(), 6);
+    FString TextureTagValue;
+    bPassed &= TestTrue(
+        TEXT("imported texture source hash tag"),
+        TextureAssetData.GetTagValue(FName(TEXT("MH.SourceHash")), TextureTagValue) &&
+            TextureTagValue == ResolvedTexture.RawHash);
+    bPassed &= TestTrue(
+        TEXT("imported texture binary applied hash tag"),
+        TextureAssetData.GetTagValue(FName(TEXT("MH.AppliedHash")), TextureTagValue) &&
+            TextureTagValue == ResolvedTexture.RawHash);
     UPackage* ReloadedPackage = ReloadPackage(Texture->GetOutermost(), LOAD_None);
     bPassed &= TestNotNull(TEXT("persisted texture package reloads"), ReloadedPackage);
-    bPassed &= TestNotNull(TEXT("exact texture reloads"), LoadObject<UTexture>(nullptr, *TextureObjectPath));
+    UTexture* ReloadedTexture = LoadObject<UTexture>(nullptr, *TextureObjectPath);
+    bPassed &= TestNotNull(TEXT("exact texture reloads"), ReloadedTexture);
+    if (ReloadedTexture != nullptr)
+    {
+        const UMHTextureSourceData* ReloadedData = Cast<UMHTextureSourceData>(
+            ReloadedTexture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass()));
+        bPassed &= TestNotNull(TEXT("texture receipt reloads"), ReloadedData);
+        if (ReloadedData != nullptr)
+        {
+            bPassed &= TestEqual(TEXT("reloaded texture source hash"), ReloadedData->SourceHash, ResolvedTexture.RawHash);
+        }
+    }
     return bPassed;
 }
 
@@ -565,9 +683,9 @@ bool FMHMaterialTextureStaleFailureTest::RunTest(const FString& Parameters)
     FMHResourceKey InvalidKey;
     InvalidKey.Kind = EMHResourceKind::Material;
     InvalidKey.LogicalName = TEXT("s2_stale_invalid");
-    // The invalid replacement is intentional: AssetTools emits one Error log
-    // while the protocol converts the failure into its exact fail-closed code.
-    AddExpectedErrorPlain(TEXT("Texture import failed"));
+    // The invalid replacement is intentional. Interchange may either log its
+    // decoder failure or return the pre-existing object silently; the protocol
+    // must reject both outcomes by validating the exact imported source bytes.
     const FMHMaterialOperationResult InvalidImport = MHImportMaterialV4(
         MaterialEntry(
             TEXT("s2_stale_invalid"),
@@ -845,6 +963,10 @@ bool FMHMaterialManagedRoundTripTest::RunTest(const FString& Parameters)
         TEXT("source-path registry tag"),
         AssetData.GetTagValue(FName(TEXT("MH.SourcePath")), TagValue) && TagValue == TEXT("round_trip.material"));
     bPassed &= TestTrue(
+        TEXT("source-hash registry tag"),
+        AssetData.GetTagValue(FName(TEXT("MH.SourceHash")), TagValue) &&
+            TagValue == MHRawPayloadHash(InitialBytes));
+    bPassed &= TestTrue(
         TEXT("applied-hash registry tag"),
         AssetData.GetTagValue(FName(TEXT("MH.AppliedHash")), TagValue) &&
             TagValue == MHRawPayloadHash(InitialBytes));
@@ -859,10 +981,11 @@ bool FMHMaterialManagedRoundTripTest::RunTest(const FString& Parameters)
             MHTags.Add(Pair.Key);
         }
     });
-    bPassed &= TestEqual(TEXT("asset registry exposes exactly five MH tags"), MHTags.Num(), 5);
+    bPassed &= TestEqual(TEXT("asset registry exposes exactly six MH tags"), MHTags.Num(), 6);
     bPassed &= TestTrue(TEXT("tag set contains kind"), MHTags.Contains(FName(TEXT("MH.Kind"))));
     bPassed &= TestTrue(TEXT("tag set contains logical name"), MHTags.Contains(FName(TEXT("MH.LogicalName"))));
     bPassed &= TestTrue(TEXT("tag set contains source path"), MHTags.Contains(FName(TEXT("MH.SourcePath"))));
+    bPassed &= TestTrue(TEXT("tag set contains source hash"), MHTags.Contains(FName(TEXT("MH.SourceHash"))));
     bPassed &= TestTrue(TEXT("tag set contains applied hash"), MHTags.Contains(FName(TEXT("MH.AppliedHash"))));
     bPassed &= TestTrue(TEXT("tag set contains managed"), MHTags.Contains(FName(TEXT("MH.Managed"))));
     bPassed &= TestFalse(TEXT("AppliedParent is receipt-only, not a tag"), MHTags.Contains(FName(TEXT("MH.AppliedParent"))));
@@ -896,6 +1019,66 @@ bool FMHMaterialManagedRoundTripTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("final extract"), MHExtractMaterialV4(*Reimported.Material, *Settings, FinalExtract, Error));
     bPassed &= TestTrue(TEXT("final canonical"), MHWriteCanonicalMaterialV4(FinalExtract, FinalBytes, Error));
     bPassed &= TestTrue(TEXT("publish reimport is NO_CHANGE exact"), FinalBytes == PublishedBytes);
+
+    UMHMaterialSourceData* ReimportedData = Cast<UMHMaterialSourceData>(
+        Reimported.Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+    bPassed &= TestNotNull(TEXT("reimported receipt exists before rollback test"), ReimportedData);
+    if (ReimportedData == nullptr)
+    {
+        return false;
+    }
+    const FString ReceiptLogicalName = ReimportedData->LogicalName;
+    const FString ReceiptSourcePath = ReimportedData->SourceRelativePath;
+    const FString ReceiptSourceHash = ReimportedData->SourceHash;
+    const FString ReceiptAppliedHash = ReimportedData->AppliedHash;
+    const FString ReceiptAppliedParent = ReimportedData->AppliedParent;
+    Reimported.Material->SetScalarParameterValueEditorOnly(
+        FMaterialParameterInfo(TEXT("roughness")),
+        0.5f);
+    MHSetFailNextMaterialPackageSaveForTests(true);
+    const FMHMaterialOperationResult FailedManagedPublish = MHPublishMaterialV4(
+        *Reimported.Material,
+        SourceRoot,
+        *Settings);
+    MHSetFailNextMaterialPackageSaveForTests(false);
+    bPassed &= TestFalse(TEXT("injected managed package save fails publish result"), FailedManagedPublish.Succeeded());
+    bPassed &= TestTrue(
+        TEXT("managed save failure exact code"),
+        ErrorStartsWith(FailedManagedPublish.Error, TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE")));
+    TArray<uint8> FailedPublishBytes;
+    bPassed &= TestTrue(
+        TEXT("managed source remains atomically published despite receipt save failure"),
+        FFileHelper::LoadFileToArray(FailedPublishBytes, *SourcePath));
+    bPassed &= TestNotEqual(
+        TEXT("failed receipt save does not roll back published source bytes"),
+        MHRawPayloadHash(FailedPublishBytes),
+        ReceiptSourceHash);
+    bPassed &= TestEqual(TEXT("managed rollback restores logical name"), ReimportedData->LogicalName, ReceiptLogicalName);
+    bPassed &= TestEqual(TEXT("managed rollback restores source path"), ReimportedData->SourceRelativePath, ReceiptSourcePath);
+    bPassed &= TestEqual(TEXT("managed rollback restores source hash"), ReimportedData->SourceHash, ReceiptSourceHash);
+    bPassed &= TestEqual(TEXT("managed rollback restores applied hash"), ReimportedData->AppliedHash, ReceiptAppliedHash);
+    bPassed &= TestEqual(TEXT("managed rollback restores applied parent"), ReimportedData->AppliedParent, ReceiptAppliedParent);
+
+    Reimported.Material->RemoveUserDataOfClass(UMHMaterialSourceData::StaticClass());
+    const FString AdoptLogicalName = TEXT("round_trip_failed_adopt");
+    const FString AdoptSourcePath = FPaths::Combine(
+        SourceRoot,
+        AdoptLogicalName + TEXT(".material"));
+    const FMHMaterialAdoptTarget AdoptTarget{SourceRoot, AdoptLogicalName};
+    MHSetFailNextMaterialPackageSaveForTests(true);
+    const FMHMaterialOperationResult FailedAdoptPublish = MHPublishMaterialV4(
+        *Reimported.Material,
+        SourceRoot,
+        *Settings,
+        &AdoptTarget);
+    MHSetFailNextMaterialPackageSaveForTests(false);
+    bPassed &= TestFalse(TEXT("injected Adopt package save fails publish result"), FailedAdoptPublish.Succeeded());
+    bPassed &= TestTrue(
+        TEXT("Adopt source remains atomically published despite receipt save failure"),
+        IFileManager::Get().FileExists(*AdoptSourcePath));
+    bPassed &= TestNull(
+        TEXT("failed Adopt removes newly-created receipt carrier"),
+        Reimported.Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
     return bPassed;
 }
 

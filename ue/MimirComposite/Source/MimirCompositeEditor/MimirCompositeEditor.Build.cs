@@ -30,6 +30,7 @@ public class MimirCompositeEditor : ModuleRules
                 "Projects",
                 "Slate",
                 "SlateCore",
+                "SQLiteCore",
                 "UnrealEd"
             });
 

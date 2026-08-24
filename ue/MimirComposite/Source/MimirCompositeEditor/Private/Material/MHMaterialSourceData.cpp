@@ -12,6 +12,7 @@ void UMHMaterialSourceData::GetAssetRegistryTags(FAssetRegistryTagsContext Conte
     Context.AddTag(UObject::FAssetRegistryTag(TEXT("MH.Kind"), TEXT("material"), UObject::FAssetRegistryTag::TT_Alphabetical));
     Context.AddTag(UObject::FAssetRegistryTag(TEXT("MH.LogicalName"), LogicalName, UObject::FAssetRegistryTag::TT_Alphabetical));
     Context.AddTag(UObject::FAssetRegistryTag(TEXT("MH.SourcePath"), SourceRelativePath, UObject::FAssetRegistryTag::TT_Alphabetical));
+    Context.AddTag(UObject::FAssetRegistryTag(TEXT("MH.SourceHash"), SourceHash, UObject::FAssetRegistryTag::TT_Alphabetical));
     Context.AddTag(UObject::FAssetRegistryTag(TEXT("MH.AppliedHash"), AppliedHash, UObject::FAssetRegistryTag::TT_Alphabetical));
     Context.AddTag(UObject::FAssetRegistryTag(TEXT("MH.Managed"), TEXT("True"), UObject::FAssetRegistryTag::TT_Alphabetical));
 }

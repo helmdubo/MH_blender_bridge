@@ -209,7 +209,6 @@ bool UMHSourceImporter::ImportSources(
     FString CompositionError;
     if (!MHCreateDefaultSourceAnalysisServices(
             SourceRoot,
-            Settings != nullptr ? Settings->ContentRoot : FString(),
             Services,
             CompositionError))
     {

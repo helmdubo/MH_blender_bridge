@@ -16,11 +16,15 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
+#include "Source/MHSourceComposition.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticParameterSet.h"
+#include "Texture/MHTextureSourceData.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 #include "AssetImportTask.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialPublish, Display, All);
 
 namespace UE::MimirComposite
 {
@@ -32,6 +36,7 @@ constexpr const TCHAR* GeneratedTextureRoot = TEXT("/Game/MH/Generated/Textures"
 
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void()> GBeforeMaterialSourceCommitTestHook;
+bool GFailNextMaterialPackageSaveForTests = false;
 #endif
 
 bool IsGlobal(const FMaterialParameterInfo& Info)
@@ -165,9 +170,12 @@ bool LoadBytes(const FString& Path, TArray<uint8>& OutBytes, FString& OutError)
     return true;
 }
 
+bool RelativeToRoot(const FString& Root, const FString& Path, FString& OutRelative);
+
 UTexture* ImportTexture(
     const FString& LogicalName,
     const FString& SourcePath,
+    const FString& SourceRelativePath,
     const FString& ExpectedRawHash,
     FString& OutError)
 {
@@ -280,12 +288,33 @@ UTexture* ImportTexture(
             *LogicalName);
         return nullptr;
     }
+
+    UMHTextureSourceData* SourceData = Cast<UMHTextureSourceData>(
+        Texture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass()));
+    if (SourceData == nullptr)
+    {
+        SourceData = NewObject<UMHTextureSourceData>(Texture, NAME_None, RF_Transactional);
+        Texture->AddAssetUserData(SourceData);
+    }
+    SourceData->LogicalName = LogicalName;
+    SourceData->SourceRelativePath = SourceRelativePath;
+    SourceData->SourceHash = ExpectedRawHash;
+    Texture->PostEditChange();
+    Package->MarkPackageDirty();
+    if (!UPackage::SavePackage(Package, Texture, *Filename, Args))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: imported texture:%s receipt could not be persisted"),
+            *LogicalName);
+        return nullptr;
+    }
     return Texture;
 }
 
 bool ResolveTextures(
     const FMHMaterialDocument& Document,
     IMHSourceResolver& Resolver,
+    const FString& SourceRoot,
     TMap<FString, UTexture*>& OutTextures,
     FString& OutError)
 {
@@ -315,7 +344,20 @@ bool ResolveTextures(
             OutError = Outcome.Diagnostic;
             return false;
         }
-        UTexture* Texture = ImportTexture(Name, Outcome.PayloadPath, Outcome.RawHash, OutError);
+        FString SourceRelativePath;
+        if (!RelativeToRoot(SourceRoot, Outcome.PayloadPath, SourceRelativePath))
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: texture:%s resolved outside source_root"),
+                *Name);
+            return false;
+        }
+        UTexture* Texture = ImportTexture(
+            Name,
+            Outcome.PayloadPath,
+            SourceRelativePath,
+            Outcome.RawHash,
+            OutError);
         if (Texture == nullptr)
         {
             return false;
@@ -334,6 +376,16 @@ bool SaveMaterialPackage(UMaterialInstanceConstant& Material, FString& OutError)
         OutError = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: material has no persistent package");
         return false;
     }
+#if WITH_DEV_AUTOMATION_TESTS
+    if (GFailNextMaterialPackageSaveForTests)
+    {
+        GFailNextMaterialPackageSaveForTests = false;
+        OutError = FString::Printf(
+            TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: test-injected package save failure for %s"),
+            *PackageName);
+        return false;
+    }
+#endif
     Package->MarkPackageDirty();
     FSavePackageArgs Args;
     Args.TopLevelFlags = RF_Public | RF_Standalone;
@@ -427,6 +479,11 @@ bool AtomicWriteMaterial(const FString& TargetPath, const TArray<uint8>& Bytes, 
 void MHSetBeforeMaterialSourceCommitTestHook(TFunction<void()> Hook)
 {
     GBeforeMaterialSourceCommitTestHook = MoveTemp(Hook);
+}
+
+MIMIRCOMPOSITEEDITOR_API void MHSetFailNextMaterialPackageSaveForTests(const bool bFail)
+{
+    GFailNextMaterialPackageSaveForTests = bFail;
 }
 #endif
 
@@ -692,7 +749,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
     TMap<FString, UTexture*> Textures;
-    if (!ResolveTextures(Document, Resolver, Textures, Result.Error))
+    if (!ResolveTextures(Document, Resolver, SourceRoot, Textures, Result.Error))
     {
         return Result;
     }
@@ -798,6 +855,10 @@ FMHMaterialOperationResult MHImportMaterialV4(
     {
         return Result;
     }
+    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    {
+        return Result;
+    }
     Result.Material = Material;
     return Result;
 }
@@ -856,7 +917,37 @@ FMHMaterialOperationResult MHPublishMaterialV4(
         return Result;
     }
 
+    const FString PublishedHash = MHRawPayloadHash(Bytes);
+    TArray<FString> SessionEvents;
+    if (!MHUpsertPublishedSource(
+            SourceRoot,
+            TargetPath,
+            PublishedHash,
+            SessionEvents,
+            Result.Error))
+    {
+        return Result;
+    }
+    for (const FString& Event : SessionEvents)
+    {
+        UE_LOG(LogMHMaterialPublish, Display, TEXT("%s"), *Event);
+    }
+
     UMHMaterialSourceData* Data = GetSourceData(Material);
+    const bool bCreatedSourceData = Data == nullptr;
+    FString PreviousLogicalName;
+    FString PreviousSourcePath;
+    FString PreviousSourceHash;
+    FString PreviousAppliedHash;
+    FString PreviousAppliedParent;
+    if (Data != nullptr)
+    {
+        PreviousLogicalName = Data->LogicalName;
+        PreviousSourcePath = Data->SourceRelativePath;
+        PreviousSourceHash = Data->SourceHash;
+        PreviousAppliedHash = Data->AppliedHash;
+        PreviousAppliedParent = Data->AppliedParent;
+    }
     if (Data == nullptr)
     {
         Data = NewObject<UMHMaterialSourceData>(&Material, NAME_None, RF_Transactional);
@@ -864,11 +955,28 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     }
     Data->LogicalName = LogicalName;
     Data->SourceRelativePath = RelativePath;
-    Data->SourceHash = MHRawPayloadHash(Bytes);
-    Data->AppliedHash = MHRawPayloadHash(Bytes);
+    Data->SourceHash = PublishedHash;
+    Data->AppliedHash = PublishedHash;
     Data->AppliedParent = AppliedParentReceipt(Document);
     Material.PostEditChange();
     if (!SaveMaterialPackage(Material, Result.Error))
+    {
+        if (bCreatedSourceData)
+        {
+            Material.RemoveUserDataOfClass(UMHMaterialSourceData::StaticClass());
+        }
+        else
+        {
+            Data->LogicalName = PreviousLogicalName;
+            Data->SourceRelativePath = PreviousSourcePath;
+            Data->SourceHash = PreviousSourceHash;
+            Data->AppliedHash = PreviousAppliedHash;
+            Data->AppliedParent = PreviousAppliedParent;
+        }
+        Material.PostEditChange();
+        return Result;
+    }
+    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
     {
         return Result;
     }

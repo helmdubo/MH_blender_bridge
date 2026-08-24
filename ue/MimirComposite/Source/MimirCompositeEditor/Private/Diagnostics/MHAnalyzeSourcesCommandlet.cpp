@@ -57,7 +57,6 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
     FString ScanError;
     if (!MHCreateDefaultSourceAnalysisServices(
             SourceRoot,
-            Settings->ContentRoot,
             Services,
             ScanError))
     {
