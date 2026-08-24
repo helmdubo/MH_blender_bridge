@@ -204,6 +204,27 @@ FBX — односторонний транспорт Blender → UE и **обы
   совпадающее `UCX_*_cls_both`; mesh-узел с префиксом `SOCKET_`;
   null-узел с `UCX_` или `_cls_*`; null-узел с терминальным `_lodNN`;
   `SOCKET_`-узел с детьми. Никакого precedence и никакого repair.
+- **Sockets и collision — наблюдаемый результат (решение OPEN-V4-21).**
+  Имя сокета = имя узла БЕЗ префикса `SOCKET_` (маркер — транспорт, не
+  identity); пустой остаток — `MH_E_INVALID_NODE_MARKERS`; дубликаты
+  имён сокетов внутри ресурса — `MH_E_INVALID_RESOURCE_SOURCE`.
+  Трансформ сокета — global evaluated transform узла в пространстве
+  ресурса. Каждый collision-узел (`UCX_*`/`*_cls_*`) → РОВНО ОДИН
+  convex element = выпуклая оболочка его transformed control points;
+  никакой декомпозиции, V-HACD и примитив-фиттинга — невыпуклое
+  хуллится (стандарт UCX; художник декомпозирует сам); дегенеративная
+  геометрия (<4 некомпланарных точек) — `MH_E_INVALID_RESOURCE_SOURCE`.
+  Несколько узлов одного режима — каждый своим элементом. Per-shape
+  `CollisionEnabled` по таблице выше; `CollisionTraceFlag =
+  CTF_UseDefault`; авто-генерации коллизии при отсутствии узлов НЕТ —
+  BodySetup остаётся пустым.
+- **Transport-level отказы FBX (решение OPEN-V4-22).** Единый код
+  `MH_E_FBX_TRANSPORT_FAILED` (регистрируется в S5; заменяет
+  незарегистрированный probe-код `MH_E_GEOMETRY_SOURCE_MISMATCH` во
+  всех call sites): отказ SDK init/чтения, corrupt scene, несовпадение
+  axis/units после конверсии, неудачная triangulation, невалидные
+  geometry layer indices, отказ axis-probe. Блок ресурса; slot-рёбра из
+  неразобранного FBX не извлекаются (unknown ≠ empty, §3).
 - Полная иерархия (пустышки + меши) транспортируется; замыкание по родителям
   fail-closed `MH_E_PARENT_OUTSIDE_RESOURCE`; кости зарезервированы.
   (Выжившие решения UE-QUESTION-19 / AMENDMENT r2.)
@@ -524,11 +545,18 @@ identity).
 
 ## 7. Applied state в ассетах (поправка №9)
 
-- `UMHStaticMeshImportData : UAssetImportData` на UStaticMesh: SchemaVersion,
-  LogicalName, SourceRelativePath, SourceRawHash, RecipeHash,
-  AppliedAssetHash, LastSuccessfulTransaction. Штатные source-file записи
-  (path/timestamp/MD5) — бесплатно от базового класса. Это receipt, не
-  identity.
+- `UMHStaticMeshImportData : UAssetImportData` на UStaticMesh (решение
+  OPEN-V4-20; поля v3-черновика упразднены): LogicalName,
+  SourceRelativePath, SourceHash (raw, §3), ImporterVersion (int32 —
+  монотонная константа кода импортёра; отличие receipt от текущей →
+  REIMPORT даже при равном raw hash; bump — только owner-подтверждённым
+  изменением build-семантики), bLocallyModified (bool, §9).
+  `SchemaVersion`, `RecipeHash`, `AppliedAssetHash`,
+  `LastSuccessfulTransaction` НЕ существуют: канонического fingerprint'а
+  собранного UStaticMesh нет (binary kind, V4-18), а транзакций нет —
+  сам receipt и есть запись последнего успеха, commit строго после save
+  package (ниже). Штатные source-file записи (path/timestamp/MD5) —
+  бесплатно от базового класса. Это receipt, не identity.
 - `UMHMaterialSourceData : UAssetUserData` на MI: LogicalName,
   SourceRelativePath, SourceHash (raw, §3), AppliedHash (canonical
   extract, §5 / решение OPEN-V4-7), AppliedParent (решение OPEN-V4-9).
@@ -593,9 +621,18 @@ identity).
 
 ## 9. Политика UE-редактирования
 
-StaticMesh — source-generated: правки в Static Mesh Editor не экспортируются,
-перезаписываются следующим reimport, детектятся по `AppliedAssetHash` как
-`MH_W_MANAGED_STATIC_MESH_LOCALLY_MODIFIED` (dev: warning; strict/CI: error).
+StaticMesh — source-generated: правки в Static Mesh Editor не
+экспортируются и перезаписываются следующим reimport. Детект локальной
+правки (решение OPEN-V4-20) — БЕЗ fingerprint'а: editor-hook
+(`OnObjectModified`/`PostEditChange`) на managed-мешах ставит
+persisted-флаг `bLocallyModified` в receipt;
+`MH_W_MANAGED_STATIC_MESH_LOCALLY_MODIFIED` (dev: warning; strict/CI:
+error) выдаётся в точках, где ассет и так загружен: при импорте (перед
+перезаписью; успешный apply + save сбрасывает флаг) и в явных
+Verify-командах S6. Обычный scan мешей не загружает и локальные правки
+не видит — принято by design; правки при выключенном плагине хуком не
+ловятся — тот же best-effort класс, что V4-19. Явный пользовательский
+Reimport всегда пересобирает полностью, игнорируя NO_CHANGE.
 MI и Composite двусторонние только через явный Publish.
 
 ## 10. Архитектура импортёра

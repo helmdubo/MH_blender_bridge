@@ -219,6 +219,15 @@ Acceptance: изменение любого FBX-домена (гео/LOD/кол�
 Mapper-facing FBX dump возвращается в этом срезе commandlet'ом поверх
 `FMHSceneIR` с новым тегом `mh.fbxdump:4` (решение OPEN-V4-5); объём
 задаётся потребностями S5 acceptance, старый v2-формат не наследуется.
+Решения OPEN-V4-20…22 (нормативно в 08 §§4, 7, 9): receipt =
+LogicalName/SourceRelativePath/SourceHash/ImporterVersion/
+bLocallyModified (v3-поля упразднены); детект локальной правки —
+hook-флаг, точки — импорт и Verify; socket-имя без префикса `SOCKET_`;
+collision — один convex hull на узел без декомпозиции, `CTF_UseDefault`,
+без авто-коллизии; коды S5: `MH_E_FBX_TRANSPORT_FAILED` (заменяет
+незарегистрированный `MH_E_GEOMETRY_SOURCE_MISMATCH`) и
+`MH_W_MANAGED_STATIC_MESH_LOCALLY_MODIFIED` — регистрация + golden
+counts.
 
 ## S6 — Watcher, startup, commandlets, UX
 

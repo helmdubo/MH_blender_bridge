@@ -6,11 +6,9 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты четыре вопроса v4: filesystem aliases (`OPEN-V4-1`) и блокеры S5
-(`OPEN-V4-20`–`OPEN-V4-22`). Вопросы `OPEN-V4-2`–`OPEN-V4-19`
-(включая все блокеры Project Resource Index, выявленные аудитами S4)
-решены owner — нормативный текст перенесён в 08 §§2–7 и 09
-(S2/S3/S4/S5/S6).
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-22` (включая блокеры S5) решены owner — нормативный
+текст перенесён в 08 §§2–9 и 09 (S2/S3/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -677,6 +675,18 @@ owner-решения. Импорт ресурса с таким переходо
 
 ## OPEN-V4-20 — applied fingerprint и transaction receipt StaticMesh
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §§7, 9 (этот docs-коммит).**
+Поля v3-черновика упразднены, а не определены: `SchemaVersion`,
+`RecipeHash`, `AppliedAssetHash`, `LastSuccessfulTransaction` не
+существуют. Receipt: LogicalName, SourceRelativePath, SourceHash (raw),
+ImporterVersion (int32-константа кода; отличие → REIMPORT даже при
+равном hash), bLocallyModified. Канонического fingerprint'а собранного
+UStaticMesh нет (binary kind, V4-18); детект локальной правки —
+editor-hook ставит persisted-флаг, предупреждение выдаётся при импорте
+и в Verify (scan мешей не грузит — принято); правки при выключенном
+плагине не ловятся — best-effort класс V4-19. Явный Reimport всегда
+пересобирает, игнорируя NO_CHANGE.
+
 **Контекст.** 08 §7 требует
 `UMHStaticMeshImportData : UAssetImportData` с полями `SchemaVersion`,
 `LogicalName`, `SourceRelativePath`, `SourceRawHash`, `RecipeHash`,
@@ -716,6 +726,15 @@ DDC key, package bytes или произвольной UObject-сериализ�
 
 ## OPEN-V4-21 — observable mapping socket и collision nodes
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §4 (этот docs-коммит).**
+Имя сокета — БЕЗ префикса `SOCKET_` (маркер — транспорт, не identity);
+пустой остаток — `MH_E_INVALID_NODE_MARKERS`, дубликаты имён —
+`MH_E_INVALID_RESOURCE_SOURCE`. Каждый collision-узел → ровно один
+convex element (hull transformed control points); декомпозиции и
+примитив-фиттинга нет, невыпуклое хуллится (стандарт UCX), дегенерат —
+`MH_E_INVALID_RESOURCE_SOURCE`; per-shape `CollisionEnabled` по таблице
+§4, `CTF_UseDefault`, авто-коллизии при отсутствии узлов нет.
+
 **Контекст.** Таблица 08 §4 распознаёт null `SOCKET_*` как
 `UStaticMeshSocket`, а mesh `UCX_*`/`*_cls_phys|trace|both` как BodySetup shape
 с соответствующим `CollisionEnabled`. Не зафиксированы две наблюдаемые части
@@ -738,6 +757,15 @@ DDC key, package bytes или произвольной UObject-сериализ�
 production `UStaticMesh` и не заявлять частичную приёмку S5 до owner-решения.
 
 ## OPEN-V4-22 — machine code transport-level FBX failures
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §4 (этот docs-коммит).**
+Единый код `MH_E_FBX_TRANSPORT_FAILED` (регистрируется в S5 + golden
+counts) для всех transport-отказов: SDK init/чтение, corrupt scene,
+axis/units mismatch, triangulation, невалидные layer indices, отказ
+axis-probe. Имя probe-кода `MH_E_GEOMETRY_SOURCE_MISMATCH` ратифицируется
+НЕ будет — «mismatch» вводит в заблуждение для corrupt-файлов (прецедент
+V4-4); заменить во всех call sites. Блок ресурса; slot-рёбра из
+неразобранного FBX не извлекаются.
 
 **Контекст.** 08 §4 пинует canonical axis/unit transport и закрытый static-mesh
 диалект. Direct FBX SDK обязан fail-closed отклонять как минимум corrupt/
