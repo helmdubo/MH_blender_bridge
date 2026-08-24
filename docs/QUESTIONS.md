@@ -6,7 +6,8 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+Открыты два вопроса v4: filesystem aliases (`OPEN-V4-1`) и граница
+rebuildable-проекции orphan-rebind warning (`OPEN-V4-19`). Вопросы
 `OPEN-V4-2`–`OPEN-V4-18` (включая все блокеры Project Resource Index,
 выявленные аудитами S4) решены owner — нормативный текст перенесён в
 08 §§2–7 и 09 (S2/S3/S4/S5/S6).
@@ -620,6 +621,45 @@ Texture tag является marker без semantic hash, зафиксирова
 
 **Прежний статус. ОТКРЫТ; блокировал `UMHTextureSourceData`, exact-six tags
 и texture GeneratedAssets acceptance S4.**
+
+## OPEN-V4-19 — orphan-rebind warning и чистая rebuildable-проекция
+
+**Статус. ОТКРЫТ; блокирует финальную приёмку S4.**
+
+**Контекст.** 08 §3 одновременно требует, чтобы:
+
+- Project Index и каждая строка `Diagnostics` были чистой проекцией текущих
+  `(source tree + Asset Registry tags)`, а удаление SQLite и полный rebuild
+  давали тот же нормализованный логический dump;
+- `MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED` выдавался только для импорта ранее
+  orphan-ассета, если новый candidate raw hash отличается от сохранённого
+  `SourceHash`, и жил derived-строкой `Diagnostics` до следующего импорта.
+
+После появления source-файла текущая проекция такого ассета совпадает с
+обычным `stale`: один unique candidate, здоровый singleton claim и
+`candidate.raw_hash != receipt.SourceHash`. Факт предшествующего состояния
+`orphan` выводится только из перехода между generations. Persist этого факта
+в `Diagnostics`/отдельном поле превращает кэш в history; после удаления SQLite
+тот же факт не восстанавливается. Если считать любое `stale` orphan-rebind,
+warning становится ложным для обычного редактирования source.
+
+**Вопрос.** Какой инвариант имеет приоритет и где должен жить warning:
+
+1. session-only warning непосредственно в import operation по наблюдённому
+   переходу `orphan -> candidate`, без persisted `Diagnostics` row;
+2. persisted transition-state до следующего импорта как специально
+   ратифицированное исключение из rebuild-identical Project Index;
+3. новый rebuildable marker в authoritative Asset Registry receipt (нужно
+   точно задать поле/tag и lifecycle);
+4. иная owner-форма, сохраняющая различимость без ложного warning.
+
+**Временное fail-closed правило.** Обычный `stale` никогда не маркируется как
+orphan-rebind. Переход `orphan -> candidate` может быть обнаружен и показан
+только в текущей UE-сессии, но не объявляется нормативной persisted
+`Diagnostics` row и не считается прошедшим rebuild-identity acceptance до
+owner-решения. Импорт ресурса с таким переходом не запускается автоматически;
+план остаётся `REIMPORT`, а выполнение требует повторного подтверждения после
+решения вопроса. Новые schema/tag/error-code формы не вводятся.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
