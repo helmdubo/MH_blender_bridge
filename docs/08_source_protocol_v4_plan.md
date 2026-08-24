@@ -238,7 +238,16 @@ Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой акт
   identity.
 - `UMHMaterialSourceData : UAssetUserData` на MI: LogicalName,
   SourceRelativePath, SourceHash (raw, §3), AppliedHash (canonical
-  extract, §5 / решение OPEN-V4-7), ParentClass.
+  extract, §5 / решение OPEN-V4-7), AppliedParent (решение OPEN-V4-9).
+  `AppliedParent` — tagged logical token `class:<токен>` или
+  `library:<имя>` (та же форма `tag:name`, что у
+  `FMHResourceKey::ToString`; алфавит токена `[a-z0-9_]+`). Поле —
+  receipt-only: import/publish/extract никогда не резолвят по нему;
+  резолв — всегда source JSON + текущие registry-настройки, а extract
+  делает live reverse-lookup фактического parent'а MI относительно
+  текущих master/library roots. UE object path в поле не хранится.
+  Список Asset Registry tags ниже не расширяется — `AppliedParent` в
+  теги не выносится.
 - `UMHCompositeAsset` — собственное поле applied state.
 - Asset Registry tags: `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`,
   `MH.AppliedHash`, `MH.Managed` — индекс строит GeneratedAssets из них.
