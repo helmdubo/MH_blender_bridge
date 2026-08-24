@@ -230,11 +230,26 @@ Commandlets: `-run=MHScanSources`, `MHImportSources`, `MHValidateNames`,
 `MHVerifyMaterials`, `MHVerifyComposites` (headless, nonzero exit на E).
 Self-publish loop-тест (08 §3) обязателен.
 
+Обязательная часть среза — UE-модель размещения 08 §6.1:
+`AMHCompositeActor` (derived/transient компоненты, notify-ребилд при
+in-place обновлении ассета, запечатанность, transform-only кастомизация)
+и операции Build/Break/Edit/Rebuild + `Delete resource` с
+placeholder-семантикой (`MH_W_UNRESOLVED_PLACEMENT` — общий код с
+Blender; новый `MH_E_UNREPRESENTABLE_SCENE_OBJECT` регистрируется здесь
+с golden counts). Каждая операция — одна undo-транзакция.
+
 Acceptance: сквозной сценарий на реальном source root: Blender export →
 авто-импорт → правка `.material` → MI обновлён без rebuild меша → Publish
 Composite → нет петли → отчёт в Message Log и JSON под Saved/ с новым
 тегом `mh.analyze_sources:4` (решение OPEN-V4-5; v2-теги `:1` не
-переиспользуются никогда).
+переиспользуются никогда). Модель 08 §6.1: правка композита в Blender →
+Publish → все размещённые `AMHCompositeActor` пересобрались без
+пересохранения уровней; `Build → Break` возвращает эквивалентное
+размещение (world transforms в допуске float32); Edit-commit даёт
+канонический `.composite` и обновляет остальные инстансы; удалённая
+зависимость узла → per-node placeholder + warning, восстановление
+same-name + Rebuild убирает placeholder; правка derived-компонента вне
+Edit не переживает ребилд.
 
 ## S7 — mh_asset_io: нативный FBX-кодек (строго после S6)
 
