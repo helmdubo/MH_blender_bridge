@@ -6,11 +6,12 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-9` (включая выявленные аудитами S2 грамматику
-Material, applied state, library round-trip и persisted-форму
-`AppliedParent`) решены owner — нормативный текст перенесён в
-08 §§2–5, §7 и 09 (S2/S4/S5/S6).
+Открыты три вопроса v4: filesystem aliases (`OPEN-V4-1`), точный Composite
+v4 contract (`OPEN-V4-10`) и конфликтующие collision markers
+(`OPEN-V4-11`). Вопросы `OPEN-V4-2`–`OPEN-V4-9` (включая выявленные
+аудитами S2 грамматику Material, applied state, library round-trip и
+persisted-форму `AppliedParent`) решены owner — нормативный текст перенесён
+в 08 §§2–5, §7 и 09 (S2/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -265,6 +266,66 @@ acceptance до ответа owner.
 
 **Прежний статус.** ОТКРЫТ; блокировал library applied state и готовность
 S2.
+
+## OPEN-V4-10 — закрытая грамматика и transform contract Composite v4
+
+**Контекст.** 08 §6 задаёт пример JSON-дерева и называет kinds
+`mesh|actor|composite|group`, поля transform и optional `name`, но не закрывает
+грамматику так, как это сделано для Material в §5. Одновременно S3 требует
+круговой Blender/UE round-trip, Publish, applied-state hash и компиляцию
+размещений. Действующий `addon/mh4blend/core/transforms.py` ссылается на старый
+schema §11; в активном 08 §11 описана миграция, а прежний schema-документ
+superseded. Использование старого mapping без решения owner означало бы тихое
+возвращение снятого норматива.
+
+Не определены:
+
+- точные required/allowed fields для каждого kind, право владеть `children`,
+  обязательность `transform`, семантика порядка `nodes`/`children`, duplicate
+  keys и unknown-field policy;
+- числовой домен и canonical bytes: порядок полей, spelling чисел, финальный
+  LF, subject `AppliedHash`;
+- Blender ↔ UE mapping осей/handedness, порядок quaternion, normalize/sign
+  canonicalization, precision/quantization и правила scale;
+- должен ли Blender только сохранять actor token (registry существует только
+  в UE), и относится ли source-wins warning только к `UMHCompositeAsset` либо
+  также к рабочей Blender-сцене.
+
+**Вопрос.** Зафиксировать закрытый Composite v4 contract: field set и nesting
+для каждого kind; обязательность и точную форму transform; order semantics;
+unknown/duplicate policy и diagnostic codes; canonical byte/hash форму;
+полный Blender↔UE transform mapping. Отдельно подтвердить, что actor registry
+validation выполняется UE, Blender losslessly хранит token, а applied-state
+warning относится к managed UE asset.
+
+**Временное fail-closed правило.** Composite codec, Blender import/export и UE
+asset/compiler/import/publish остаются заблокированы существующим
+`MH_E_INVALID_COMPOSITE`; старый transform codec не используется как authority.
+Информация о материалах и UID не принимается ни при каких условиях.
+Независимые S3 cleanup и mesh-import §4.1 не интерпретируют Composite bytes и
+могут выполняться, но весь S3 не готов к acceptance до ответа owner.
+
+**Статус. ОТКРЫТ.** Блокирует Composite-часть и готовность S3.
+
+## OPEN-V4-11 — конфликт префикса `UCX_` и collision suffix
+
+**Контекст.** Таблица 08 §4 распознаёт collision по префиксу `UCX_` ИЛИ по
+суффиксу `_cls_phys|trace|both`: `UCX_` означает QueryAndPhysics, а суффиксы
+задают PhysicsOnly/QueryOnly/QueryAndPhysics. Имя вроде
+`UCX_body_cls_phys` одновременно требует двух разных режимов; precedence или
+reject не заданы. Общий classifier S3 должен одинаково обслуживать Blender
+export/import и будущий UE importer S5.
+
+**Вопрос.** Запретить любой двойной marker, разрешить только семантически
+совпадающий `UCX_*_cls_both`, либо задать точный precedence префикса/суффикса?
+
+**Временное fail-closed правило.** Конфликтующий двойной marker блокируется
+зарегистрированным `MH_E_INVALID_RESOURCE_SOURCE`; никакой режим collision не
+выбирается автоматически. Имена без двойного marker и семантически однозначные
+правила таблицы §4 реализуются без repair.
+
+**Статус. ОТКРЫТ.** Блокирует только конфликтующие collision names и финальный
+общий classifier acceptance S3/S5.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
