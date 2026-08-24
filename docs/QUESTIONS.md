@@ -6,9 +6,36 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+Открыты два вопроса v4: filesystem aliases (`OPEN-V4-1`) и семантика
+ручного file-drop внешнего `.composite` (`OPEN-V4-23`). Вопросы
 `OPEN-V4-2`–`OPEN-V4-22` (включая блокеры S5) решены owner — нормативный
 текст перенесён в 08 §§2–9 и 09 (S2/S3/S4/S5/S6).
+
+## OPEN-V4-23 — ручной file-drop `.composite` вне `source_root`
+
+**Контекст.** S6 требует UX импорта и единственную source-authority, но 08/09
+не задают поведение стандартного Content Browser file-drop для файла,
+находящегося вне настроенного `source_root`. Молчаливое создание произвольного
+`UMHCompositeAsset` нарушило бы identity и детерминированный generated path;
+молчаливое копирование файла выбрало бы новую source-папку без явно
+ратифицированной Adopt-семантики.
+
+**Вопрос.** Должен ли drop внешнего `.composite` открывать Adopt-диалог и
+атомарно копировать payload в выбранную папку внутри `source_root`, либо такой
+файл всегда отклоняется и пользователь сначала сам помещает его в source-tree?
+Подтвердить также, что Content Browser target не меняет канонический путь
+`/Game/MH/Generated/Composites/<logical_name>`.
+
+**Временное fail-closed правило.** File-drop принимает только exact
+`.composite`, уже находящийся внутри `source_root`, совпадающий с единственным
+resolved candidate `composite:<logical_name>`, и только в каноническом
+generated package. Outside-root, duplicate/ambiguous и произвольный Content
+Browser target отклоняются с абсолютным путём и `MH_E_*`; копирование и repair
+не выполняются. Это не блокирует ручной импорт канонического project-source
+файла и размещение уже импортированного `UMHCompositeAsset` в уровне.
+
+**Статус.** ОТКРЫТ; блокирует только Adopt/copy внешнего файла, но не
+fail-closed ручной импорт внутри source-tree.
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
