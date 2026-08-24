@@ -6,12 +6,11 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты два вопроса v4: filesystem aliases (`OPEN-V4-1`) и точная
-семантика `ParentClass` для library-form (`OPEN-V4-9`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-5`, а также выявленные предварительным аудитом S2
-`OPEN-V4-6` (грамматика Material), `OPEN-V4-7` (applied state) и
-`OPEN-V4-8` (library round-trip) решены owner — нормативный текст
-перенесён в 08 §§2–5, §7 и 09 (S2/S4/S5/S6).
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-9` (включая выявленные аудитами S2 грамматику
+Material, applied state, library round-trip и persisted-форму
+`AppliedParent`) решены owner — нормативный текст перенесён в
+08 §§2–5, §7 и 09 (S2/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -237,6 +236,15 @@ acceptance.
 
 ## OPEN-V4-9 — `UMHMaterialSourceData.ParentClass` для library-form
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §7 (этот docs-коммит).**
+Поле переименовывается в `AppliedParent`; persisted-значение — tagged
+logical token `class:<токен>` | `library:<имя>` (форма `tag:name`, как у
+`FMHResourceKey::ToString`; алфавит `[a-z0-9_]+`). UE object path не
+хранится. Поле receipt-only: import/publish/extract по нему не резолвят
+(резолв — source JSON + текущие настройки, extract — live reverse-lookup
+фактического parent'а). Asset Registry tags не расширяются. Library
+applied state разблокирован.
+
 **Контекст.** 08 §7 требует хранить в `UMHMaterialSourceData` поле
 `ParentClass`. Для class-form 08 §5 задаёт logical token `class`, но для
 library-form parent резолвится из отдельного token `library` и не
@@ -255,7 +263,8 @@ library-form: logical token, UE object path или другая tagged форм�
 реализована и протестирована, но S2 в целом не готов к
 acceptance до ответа owner.
 
-**Статус.** ОТКРЫТ; блокирует library applied state и готовност S2.
+**Прежний статус.** ОТКРЫТ; блокировал library applied state и готовность
+S2.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
