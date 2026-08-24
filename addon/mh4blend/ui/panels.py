@@ -22,7 +22,10 @@ class MH_PT_source_tools(bpy.types.Panel):
         project.prop(preferences, "source_root", text="Source Root")
 
         fbx = layout.box()
-        fbx.label(text="FBX Export", icon="MESH_CUBE")
+        fbx.label(text="Mesh FBX", icon="MESH_CUBE")
+        fbx.prop(scene, "mh_fbx_import_path", text="Import File")
+        fbx.operator("mh.import_mesh_fbx", icon="IMPORT")
+        fbx.separator()
         fbx.prop(scene, "mh_fbx_collection", text="Collection")
         fbx.prop(scene, "mh_fbx_directory", text="Folder")
         fbx.prop(scene, "mh_fbx_export_materials", text="Export Materials")
@@ -34,14 +37,12 @@ class MH_PT_source_tools(bpy.types.Panel):
         if scene.mh_composite_mode == "IMPORT":
             box.prop(scene, "mh_composite_import_path", text="File")
             box.operator("mh.import_composite", icon="IMPORT")
-            box.label(text="v4 implementation arrives in S3")
         else:
             box.prop(
                 scene, "mh_composite_export_collection", text="Collection")
             box.prop(
                 scene, "mh_composite_export_directory", text="Folder")
             box.operator("mh.export_composite", icon="EXPORT")
-            box.label(text="v4 implementation arrives in S3")
 
         materials = layout.box()
         materials.label(text="Materials", icon="MATERIAL")

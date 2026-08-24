@@ -26,6 +26,7 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_AMBIGUOUS_RESOURCE_NAME",
         "MH_E_AMBIGUOUS_RESOURCE_OWNER",
         "MH_E_COMPOSITE_CYCLE",
+        "MH_E_COMPOSITE_GRAMMAR",
         "MH_E_DANGLING_PARENT",
         "MH_E_DEPRECATED_LOD_ROWS",
         "MH_E_DIVERGENT_REVISIONS",
@@ -33,7 +34,7 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_EMPTY_RESOURCE_COLLECTION",
         "MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED",
         "MH_E_INVALID_COLLECTION_OFFSET",
-        "MH_E_INVALID_COMPOSITE",
+        "MH_E_INVALID_NODE_MARKERS",
         "MH_E_INVALID_EXPORT_MANIFEST",
         "MH_E_IMPORT_TARGET_OCCUPIED",
         "MH_E_INVALID_LOD_HIERARCHY",
@@ -62,10 +63,10 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_TEXTURE_OUTSIDE_ROOT",
         "MH_E_UNKNOWN_SCHEMA_VERSION",
         "MH_E_UNRESOLVED_EXTERNAL",
+        "MH_E_UNRESOLVED_COMPOSITE_REFERENCE",
         "MH_E_UNRESOLVED_MATERIAL_REFERENCE",
         "MH_E_UNRESOLVED_TEXTURE_REFERENCE",
         "MH_E_UNSUPPORTED_NODE_KIND",
-        "MH_W_COMPOSITE_CYCLE",
         "MH_W_DUPLICATE_RESOURCE_NAME",
         "MH_W_LOD_AUX_NODE_IGNORED",
         "MH_W_MANAGED_ASSET_LOCALLY_MODIFIED",
@@ -76,10 +77,9 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
-        "MH_W_UNRESOLVED_RESOURCE",
     })
-    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 42
-    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 12
+    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 44
+    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 10
     assert all(re.fullmatch(r"MH_[EW]_[A-Z0-9_]+", code)
                for code in ERROR_CODES)
 

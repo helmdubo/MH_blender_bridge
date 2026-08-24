@@ -565,6 +565,9 @@ bool FMHMaterialTextureStaleFailureTest::RunTest(const FString& Parameters)
     FMHResourceKey InvalidKey;
     InvalidKey.Kind = EMHResourceKind::Material;
     InvalidKey.LogicalName = TEXT("s2_stale_invalid");
+    // The invalid replacement is intentional: AssetTools emits one Error log
+    // while the protocol converts the failure into its exact fail-closed code.
+    AddExpectedErrorPlain(TEXT("Texture import failed"));
     const FMHMaterialOperationResult InvalidImport = MHImportMaterialV4(
         MaterialEntry(
             TEXT("s2_stale_invalid"),

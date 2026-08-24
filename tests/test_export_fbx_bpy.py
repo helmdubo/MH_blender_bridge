@@ -12,6 +12,7 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh4blend.core.validate import MHValidationError  # noqa: E402
 from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
+from mh4blend.scene.import_fbx import parse_mesh_fbx  # noqa: E402
 
 export_fbx_module = importlib.import_module("mh4blend.scene.export_fbx")
 
@@ -75,6 +76,29 @@ def _build_lods(base="garage"):
         "socket": socket,
         "ignored": (ignored_collision, ignored_socket),
     }
+
+
+def test_collision_material_slots_are_writer_validated_and_reader_compatible(
+        tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("vehicle")
+    _mesh_object("body", collection)
+    collision = _mesh_object("UCX_body", collection)
+    invalid = _material("Wall")
+    _assign_material(collision, invalid)
+
+    with pytest.raises(
+            MHValidationError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert not (tmp_path / "vehicle.mesh.fbx").exists()
+
+    invalid.name = "wall"
+    report = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path)
+    plan = parse_mesh_fbx(report["filepath"])
+    collision_node = next(
+        node for node in plan.nodes if node.name == "UCX_body")
+    assert collision_node.material_slots == ("wall",)
 
 
 def _fbx_models(path):
@@ -287,3 +311,55 @@ def test_shift_d_duplicate_exports_without_identity_warnings(tmp_path):
     assert result["validation"]["warnings"] == []
     assert len([name for name in _fbx_models(result["filepath"])
                 if name.startswith("Direct")]) == 2
+
+
+def test_linked_duplicate_geometry_is_rejected_before_fbx_write(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, direct, _nested = _build_joined("linked_duplicate")
+    linked = direct.copy()
+    linked.name = "DirectLinked"
+    collection.objects.link(linked)
+
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_UNSUPPORTED_NODE_KIND"
+    assert not (tmp_path / "linked_duplicate.mesh.fbx").exists()
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["UCX_body_cls_both", "UCX_body_lod00", "SOCKET_render"],
+)
+def test_export_rejects_conflicting_mesh_node_markers(tmp_path, name):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("invalid_markers")
+    _mesh_object(name, collection)
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_INVALID_NODE_MARKERS"
+    assert not (tmp_path / "invalid_markers.mesh.fbx").exists()
+
+
+def test_export_rejects_socket_with_children(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("invalid_socket")
+    socket = _empty("SOCKET_root", collection)
+    mesh = _mesh_object("body", collection)
+    mesh.parent = socket
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_INVALID_NODE_MARKERS"
+
+
+def test_export_rejects_socket_with_child_outside_resource(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("invalid_external_socket_child")
+    _mesh_object("body", collection)
+    socket = _empty("SOCKET_root", collection)
+    external = _collection("external")
+    child = _mesh_object("external_child", external)
+    child.parent = socket
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_INVALID_NODE_MARKERS"
+    assert not (tmp_path / "invalid_external_socket_child.mesh.fbx").exists()

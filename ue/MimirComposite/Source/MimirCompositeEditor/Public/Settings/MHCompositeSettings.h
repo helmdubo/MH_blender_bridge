@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
 #include "Engine/EngineTypes.h"
+#include "UObject/SoftObjectPath.h"
 #include "MHCompositeSettings.generated.h"
 
 /** docs/07 section 10: startup scan behaviour. */
@@ -67,6 +68,10 @@ public:
 
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     FString CompositeAssetPrefix;
+
+    /** Source Protocol v4 actor token -> exact actor class. Blender never validates this registry. */
+    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Actors")
+    TMap<FString, FSoftClassPath> ActorClassRegistry;
 
     /** Lumen Mesh Cards budget applied by the finalize stage. */
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite", meta = (ClampMin = "1"))

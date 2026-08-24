@@ -1,70 +1,141 @@
-"""Blender -> UE transform conversion (schema §11).
+"""Blender/UE placement conversion at the pinned FBX parity seam.
 
-Formula status: hypothesis until the R1 golden axis test passes in UE
-(docs/RISK_RESULTS.md); the schema fixes the data format, this module fixes
-the math. Pure Python — no bpy/mathutils: quaternions are plain (x, y, z, w)
-sequences (NOTE: mathutils.Quaternion stores (w, x, y, z) — callers convert).
+The protocol stores unquantized binary32 values in UE centimeters, UE axes,
+and ``FQuat`` order ``[x, y, z, w]``.  The mapping below is the R1 UE 5.7
+result for the pinned FBX export path (Forward=X, Up=Z, centimeters).  S3's
+repeated UE parity gate remains the external arbiter for this pure-math seam.
 
-    pos_UE   = ( x * 100,  -y * 100,  z * 100 )     # meters -> centimeters
-    quat_UE  = ( -qx,  qy,  -qz,  qw )
-    scale_UE = ( sx,  sy,  sz )
-
-Outputs are quantized integers (§8.2) — the canonical currency of the
-pipeline; the .composite writer renders them as decimals q / 10^p.
+No ``bpy`` or ``mathutils`` dependency is allowed here.  Callers convert a
+``mathutils.Quaternion`` from ``(w, x, y, z)`` before entering this module.
 """
 
-import math
+from __future__ import annotations
 
-from .canonical import (
-    P_SCALE,
-    P_TRANSLATION_CM,
-    canonicalize_quat,
-    quantize,
-)
+import math
+from typing import Iterable
+
+from .canonical_json import narrow_float32
+from .model import CompositeTransform
 
 __all__ = [
-    "translation_to_ue",
+    "blender_to_ue_transform",
+    "quat_from_ue",
     "quat_to_ue",
+    "scale_from_ue",
     "scale_to_ue",
+    "translation_from_ue",
+    "translation_to_ue",
+    "ue_to_blender_transform",
     "validate_scale",
 ]
 
 
+def _vector(value: Iterable[float], length: int, label: str) -> tuple[float, ...]:
+    try:
+        result = tuple(value)
+    except TypeError as exc:
+        raise ValueError(f"MH_E_COMPOSITE_GRAMMAR: {label} must be a vector") from exc
+    if len(result) != length:
+        raise ValueError(
+            f"MH_E_COMPOSITE_GRAMMAR: {label} must contain {length} numbers")
+    out = []
+    for component in result:
+        if isinstance(component, bool) or not isinstance(component, (int, float)):
+            raise ValueError(
+                f"MH_E_COMPOSITE_GRAMMAR: {label} contains a non-number")
+        if not math.isfinite(component):
+            raise ValueError(f"MH_E_NAN_INF_VALUE: non-finite {label}")
+        try:
+            out.append(narrow_float32(component))
+        except ValueError as exc:
+            raise ValueError(
+                f"MH_E_COMPOSITE_GRAMMAR: {label} exceeds float32") from exc
+    return tuple(out)
+
+
+def _canonical_quaternion(quat_xyzw) -> tuple[float, float, float, float]:
+    quat = _vector(quat_xyzw, 4, "rotation_quat")
+    norm = math.sqrt(sum(component * component for component in quat))
+    if norm == 0.0:
+        raise ValueError("MH_E_COMPOSITE_GRAMMAR: zero quaternion")
+    result = tuple(narrow_float32(component / norm) for component in quat)
+    negate = result[3] < 0.0
+    if result[3] == 0.0:
+        first_nonzero = next(
+            (component for component in result[:3] if component != 0.0), 0.0)
+        negate = first_nonzero < 0.0
+    if negate:
+        result = tuple(narrow_float32(-component) for component in result)
+    return result
+
+
 def translation_to_ue(translation_m):
-    """Blender world/local translation (meters, (x, y, z)) -> quantized UE cm."""
-    x, y, z = translation_m
-    return (
-        quantize(x * 100.0, P_TRANSLATION_CM),
-        quantize(-y * 100.0, P_TRANSLATION_CM),
-        quantize(z * 100.0, P_TRANSLATION_CM),
-    )
+    """Blender world translation in meters -> UE centimeters.
+
+    This is the placement observed through the pinned Blender -> UE FBX path.
+    """
+    x, y, z = _vector(translation_m, 3, "translation")
+    return tuple(narrow_float32(component) for component in (
+        x * 100.0, -y * 100.0, z * 100.0))
+
+
+def translation_from_ue(translation_cm):
+    """UE centimeters -> Blender meters (inverse of :func:`translation_to_ue`)."""
+    x, y, z = _vector(translation_cm, 3, "translation_cm")
+    return tuple(narrow_float32(component) for component in (
+        x / 100.0, -y / 100.0, z / 100.0))
 
 
 def quat_to_ue(quat_xyzw):
-    """Blender rotation quaternion (x, y, z, w) -> canonical quantized UE quat.
+    """Blender quaternion -> canonical-sign UE ``FQuat``.
 
-    Applies the §11 component mapping, then the full §11 pipeline
-    (normalize -> quantize p=6 -> sign-canonicalize on quantized ints).
+    The R1 parity mapping changes the signs of X and Z while preserving Y/W.
     """
-    x, y, z, w = quat_xyzw
-    return canonicalize_quat((-x, y, -z, w))
+    x, y, z, w = _canonical_quaternion(quat_xyzw)
+    return _canonical_quaternion((-x, y, -z, w))
+
+
+def quat_from_ue(quat_xyzw):
+    """UE ``FQuat`` -> Blender quaternion; the basis map is an involution."""
+    x, y, z, w = _canonical_quaternion(quat_xyzw)
+    return _canonical_quaternion((-x, y, -z, w))
 
 
 def validate_scale(scale):
-    """§11: scale <= 0 on any axis is a validation error (MH_E_INVALID_SCALE)."""
-    for component in scale:
-        if isinstance(component, bool) or not isinstance(component, (int, float)):
-            raise ValueError(f"MH_E_INVALID_SCALE: non-numeric scale {scale!r}")
-        f = float(component)
-        if math.isnan(f) or math.isinf(f):
-            raise ValueError(f"MH_E_NAN_INF_VALUE: scale {scale!r}")
-        if f <= 0.0:
-            raise ValueError(
-                "MH_E_INVALID_SCALE: mirror the geometry, not the placement "
-                f"(scale {scale!r})")
+    """Reject non-finite, zero, and mirrored placement scales."""
+    components = _vector(scale, 3, "scale")
+    if any(component <= 0.0 for component in components):
+        raise ValueError(
+            "MH_E_INVALID_SCALE: mirror geometry, not composite placement")
+    return components
 
 
 def scale_to_ue(scale):
-    """Blender scale (sx, sy, sz) -> quantized UE scale (validated)."""
-    validate_scale(scale)
-    return tuple(quantize(float(c), P_SCALE) for c in scale)
+    """Blender local scale -> UE local scale (R1 passthrough)."""
+    return validate_scale(scale)
+
+
+def scale_from_ue(scale):
+    """UE local scale -> Blender local scale."""
+    return validate_scale(scale)
+
+
+def blender_to_ue_transform(
+        translation_m, rotation_xyzw, scale) -> CompositeTransform:
+    """Build one canonical protocol transform from Blender world components."""
+    return CompositeTransform(
+        translation_cm=translation_to_ue(translation_m),
+        rotation_quat=quat_to_ue(rotation_xyzw),
+        scale=scale_to_ue(scale),
+    )
+
+
+def ue_to_blender_transform(transform: CompositeTransform):
+    """Return Blender ``(translation_m, rotation_xyzw, scale)`` components."""
+    if not isinstance(transform, CompositeTransform):
+        raise TypeError("transform must be CompositeTransform")
+    return (
+        translation_from_ue(transform.translation_cm),
+        quat_from_ue(transform.rotation_quat),
+        scale_from_ue(transform.scale),
+    )

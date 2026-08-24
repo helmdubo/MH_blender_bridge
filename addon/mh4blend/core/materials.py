@@ -7,15 +7,21 @@ serializes the closed grammar from docs/08 section 5.
 
 from __future__ import annotations
 
-import json
 import math
 import os
 from pathlib import Path
 import re
-import struct
 from typing import Any
 
 from .model import MaterialResource
+from .canonical_json import (
+    CanonicalJSONDuplicateKey,
+    CanonicalJSONNonFinite,
+    CanonicalJSONSyntaxError,
+    canonical_json_bytes,
+    narrow_float32,
+    parse_json,
+)
 
 __all__ = [
     "MATERIAL_TEXTURE_EXTENSIONS",
@@ -72,13 +78,10 @@ def _number(value: Any, path: str) -> float:
         raise MaterialValueError(
             "MH_E_NAN_INF_VALUE", path, "NaN/Inf is not a material value")
     try:
-        narrowed = struct.unpack("!f", struct.pack("!f", float(value)))[0]
-    except (OverflowError, struct.error, ValueError) as exc:
+        narrowed = narrow_float32(value)
+    except (TypeError, ValueError) as exc:
         raise _error(path, "must be representable as finite IEEE float32") from exc
-    if not math.isfinite(narrowed):
-        raise _error(path, "must be representable as finite IEEE float32")
-    # Signed zero is not a material distinction and has one canonical spelling.
-    return 0.0 if narrowed == 0.0 else narrowed
+    return narrowed
 
 
 def _textures(value: Any) -> dict[str, str]:
@@ -147,77 +150,18 @@ def material_json_bytes(material: MaterialResource | dict[str, Any]) -> bytes:
     if isinstance(material, dict):
         material = parse_material(material)
     document = material_document(material)
-    return (_render_json(document, 0) + "\n").encode("utf-8")
-
-
-def _float_chars(value: float) -> str:
-    """Spell one already-narrowed float32 as shortest round-trip text."""
-    def as_float32(candidate: str) -> float:
-        return struct.unpack("!f", struct.pack("!f", float(candidate)))[0]
-
-    # IEEE binary32 needs at most 9 significant decimal digits for round-trip.
-    for precision in range(1, 10):
-        candidate = format(value, f".{precision}g")
-        if as_float32(candidate) == value:
-            return candidate
-    raise AssertionError("finite float32 did not round-trip in 9 digits")
-
-
-def _render_json(value: Any, depth: int) -> str:
-    indent = "  " * depth
-    child_indent = "  " * (depth + 1)
-    if value is None:
-        return "null"
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return _float_chars(value)
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, list):
-        if not value:
-            return "[]"
-        rows = [
-            f"{child_indent}{_render_json(item, depth + 1)}"
-            for item in value
-        ]
-        return "[\n" + ",\n".join(rows) + f"\n{indent}]"
-    if isinstance(value, dict):
-        if not value:
-            return "{}"
-        rows = [
-            f"{child_indent}{json.dumps(key, ensure_ascii=False)}: "
-            f"{_render_json(item, depth + 1)}"
-            for key, item in value.items()
-        ]
-        return "{\n" + ",\n".join(rows) + f"\n{indent}}}"
-    raise TypeError(f"unsupported canonical JSON value {type(value).__name__}")
-
-
-def _reject_duplicate_pairs(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise _error(key, "duplicate JSON field")
-        result[key] = value
-    return result
+    return canonical_json_bytes(document)
 
 
 def _parse_json(value: str | bytes) -> Any:
     try:
-        return json.loads(
-            value, object_pairs_hook=_reject_duplicate_pairs,
-            parse_constant=lambda token: (_ for _ in ()).throw(
-                MaterialValueError(
-                    "MH_E_NAN_INF_VALUE", "$", f"invalid number {token}")),
-        )
-    except MaterialValueError:
-        raise
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return parse_json(value)
+    except CanonicalJSONDuplicateKey as exc:
+        raise _error(exc.key, "duplicate JSON field") from exc
+    except CanonicalJSONNonFinite as exc:
+        raise MaterialValueError(
+            "MH_E_NAN_INF_VALUE", "$", f"invalid number {exc.token}") from exc
+    except CanonicalJSONSyntaxError as exc:
         raise _error("$", f"invalid JSON: {exc}") from exc
 
 
