@@ -6,10 +6,11 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-16` (включая пять блокеров Project Resource Index,
-выявленных аудитом S4) решены owner — нормативный текст перенесён в
-08 §§2–7 и 09 (S2/S3/S4/S5/S6).
+Открыты вопросы v4: filesystem aliases (`OPEN-V4-1`) и две неполные ветви
+проекции GeneratedAssets (`OPEN-V4-17`, `OPEN-V4-18`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-16` (включая пять первоначальных блокеров Project
+Resource Index, выявленных аудитом S4) решены owner — нормативный текст
+перенесён в 08 §§2–7 и 09 (S2/S3/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -540,6 +541,61 @@ warning без owner-пинованной метрики не выдаётся.
 
 **Прежний статус. ОТКРЫТ; блокировал rebound и регистрацию/call-site warning
 S4.**
+
+## OPEN-V4-17 — GeneratedAssets status при ambiguous/invalid source key
+
+**Контекст.** После решения OPEN-V4-12 словарь
+`GeneratedAssets.status ∈ {applied, stale, orphan, invalid_receipt,
+duplicate_claim}` закрыт, но функция в 08 §3 определена не на всём входном
+домене. Для единственного managed-ассета с валидными шестью тегами:
+
+- `applied`/`stale` определены только при `ResourceKeys = unique`;
+- `orphan` определён при отсутствии source-кандидата;
+- `invalid_receipt` относится к malformed/incomplete tags или kind без
+  carrier;
+- `duplicate_claim` требует двух заявителей одного ключа.
+
+Если source key имеет один `invalid_payload` candidate (`invalid`) либо два и
+более candidates (`ambiguous`), receipt валиден и source существует, но ни
+одно значение `GeneratedAssets.status` буквальному контракту не соответствует.
+Resolver/import при этом однозначно blocked, однако нормализованный dump и
+delete-and-rebuild acceptance требуют детерминированной строки GeneratedAssets.
+
+**Вопрос.** Какой `GeneratedAssets.status` присваивать валидному единственному
+managed claim при `ResourceKeys.resolution_status = ambiguous` и при
+`invalid`? Зафиксировать обе ветви и, если это одно из существующих значений,
+уточнить его расширённый смысл; новый status исполнитель не вводит.
+
+**Временное fail-closed правило.** Оба key остаются import-blocked. Project
+Index не записывает предположительный GeneratedAssets status и не объявляет
+rebuild/dump acceptance до owner-решения.
+
+**Статус. ОТКРЫТ; блокирует total GeneratedAssets projection и S4 rebuild
+acceptance.**
+
+## OPEN-V4-18 — значение `MH.AppliedHash` у managed Texture
+
+**Контекст.** 08 §7 требует у `UMHTextureSourceData` только поля
+`LogicalName`, `SourceRelativePath`, `SourceHash` (raw), но одновременно
+требует у managed Texture те же ровно шесть Asset Registry tags, включая
+`MH.AppliedHash`. Semantic domain и persisted source этого шестого значения
+для Texture не определены. Приравнять `AppliedHash` к raw `SourceHash`,
+оставить tag пустым или добавить отсутствующее receipt-поле — три разные
+нормативные модели. Пустой tag дополнительно может не попасть в Asset Registry
+как заявленный tag и превратить валидную Texture в `invalid_receipt`.
+
+**Вопрос.** Зафиксировать значение и hash-domain Texture `MH.AppliedHash`:
+добавляется ли `AppliedHash` в `UMHTextureSourceData`, чему равен при успешном
+импорте и какой live extract/validator (если есть) его вычисляет? Если для
+Texture tag является marker без semantic hash, зафиксировать точную непустую
+строковую форму и соответствующую валидацию GeneratedAssets.
+
+**Временное fail-closed правило.** Не приравнивать semantic/raw hashes, не
+добавлять скрытое receipt-поле и не публиковать неполный six-tag claim.
+Существующий texture import не объявляется managed S4 carrier до решения.
+
+**Статус. ОТКРЫТ; блокирует `UMHTextureSourceData`, exact-six tags и texture
+GeneratedAssets acceptance S4.**
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
