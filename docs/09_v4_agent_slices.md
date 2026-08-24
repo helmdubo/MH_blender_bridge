@@ -19,7 +19,12 @@
 4. Никаких UUID нигде. Никакого dual-read старых форматов.
 5. Python: существующий стиль addon/ (bpy-free core, `_bpy`-тесты гейтятся
    `pytest.importorskip("bpy")`). UE: editor-only модули, engine не форкается,
-   стиль существующего `ue/MimirComposite`.
+   стиль существующего `ue/MimirComposite`. Обязательный UE-гейт каждого
+   среза с C++: обе конфигурации сборки — `BuildPlugin -StrictIncludes`
+   без unity/PCH И force-unity сборка с ОТКЛЮЧЁННЫМ adaptive unity
+   (адаптивный unity исключает недавно правленные файлы из unity-блобов и
+   скрывает коллизии имён file-scope helper'ов — урок PR #15); новые
+   file-scope helper'ы получают уникальные имена или анонимный namespace.
 6. Каждый срез: код + тесты + правка затронутых доков + короткая квитанция в
    `docs/receipts/<slice>.md` (что сделано, что прогнано, что осталось).
 7. Не трогай `reference/`, `golden/` вне явных указаний среза.
