@@ -9,6 +9,12 @@
   "CanContainContent": false,
   "IsBetaVersion": true,
   "EnabledByDefault": false,
+  "Plugins": [
+    {
+      "Name": "SQLiteCore",
+      "Enabled": true
+    }
+  ],
   "Modules": [
     {
       "Name": "MimirCompositeRuntime",

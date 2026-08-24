@@ -344,12 +344,18 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
     {
         if (Pair.Key.ToString().StartsWith(TEXT("MH."), ESearchCase::CaseSensitive)) MHTags.Add(Pair.Key);
     });
-    bPassed &= TestEqual(TEXT("exactly five MH registry tags"), MHTags.Num(), 5);
+    bPassed &= TestEqual(TEXT("exactly six MH registry tags"), MHTags.Num(), 6);
     bPassed &= TestTrue(TEXT("kind tag"), MHTags.Contains(FName(TEXT("MH.Kind"))));
     bPassed &= TestTrue(TEXT("logical tag"), MHTags.Contains(FName(TEXT("MH.LogicalName"))));
     bPassed &= TestTrue(TEXT("source tag"), MHTags.Contains(FName(TEXT("MH.SourcePath"))));
+    bPassed &= TestTrue(TEXT("source hash tag"), MHTags.Contains(FName(TEXT("MH.SourceHash"))));
     bPassed &= TestTrue(TEXT("applied tag"), MHTags.Contains(FName(TEXT("MH.AppliedHash"))));
     bPassed &= TestTrue(TEXT("managed tag"), MHTags.Contains(FName(TEXT("MH.Managed"))));
+    FString SourceHashTag;
+    bPassed &= TestTrue(
+        TEXT("source hash tag projects the raw receipt"),
+        AssetData.GetTagValue(FName(TEXT("MH.SourceHash")), SourceHashTag) &&
+            SourceHashTag == Imported.Asset->SourceHash);
 
     FMHCompositeDocument Edited;
     FString Error;

@@ -1,7 +1,5 @@
 #include "Diagnostics/MHAnalyzeSourcesCommandlet.h"
 
-#include "Ledger/MHImportLedger.h"
-#include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceAnalyzer.h"
@@ -26,89 +24,61 @@ UMHAnalyzeSourcesCommandlet::UMHAnalyzeSourcesCommandlet(const FObjectInitialize
 
 int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
 {
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     FString SourceRoot;
     FParse::Value(*Params, TEXT("root="), SourceRoot);
     if (SourceRoot.IsEmpty())
     {
-        SourceRoot = GetDefault<UMHCompositeSettings>()->GetSourceRootPath();
+        SourceRoot = Settings->GetSourceRootPath();
     }
     if (SourceRoot.IsEmpty())
     {
         UE_LOG(
             LogMHAnalyzeSources,
             Error,
-            TEXT("Usage: -run=MHAnalyzeSources -root=<source_root> [-ledger=<snapshot.json>] ")
-            TEXT("[-report=<disabled-until-owner-schema-decision>]"));
+            TEXT("Usage: -run=MHAnalyzeSources -root=<source_root> ")
+            TEXT("[-report=<disabled-until-S6>]"));
         return 2;
     }
 
-    FString LedgerPath;
-    FParse::Value(*Params, TEXT("ledger="), LedgerPath);
-    FString WriteLedgerPath;
-    const bool bWriteLedgerRequested =
-        FParse::Value(*Params, TEXT("writeledger="), WriteLedgerPath) ||
-        FParse::Param(*Params, TEXT("writeledger"));
     FString ReportPath;
     FParse::Value(*Params, TEXT("report="), ReportPath);
-
-    if (bWriteLedgerRequested)
-    {
-        UE_LOG(
-            LogMHAnalyzeSources,
-            Error,
-            TEXT("MH_E_SOURCE_INDEX_INVALID: -writeledger is disabled in C1 Analyze/Plan-only; ")
-            TEXT("Ledger advances only after a successful Execute operation"));
-        return 2;
-    }
 
     if (!ReportPath.IsEmpty())
     {
         UE_LOG(
             LogMHAnalyzeSources,
             Error,
-            TEXT("MH_E_SOURCE_INDEX_INVALID: -report is disabled until the owner ratifies a v4 diagnostic schema; no legacy tag is reused"));
+            TEXT("MH_E_SOURCE_INDEX_INVALID: -report is disabled until the S6 mh.analyze_sources:4 implementation"));
         return 2;
     }
 
-    TMap<FString, FMHLedgerRow> Ledger;
-    if (!LedgerPath.IsEmpty())
-    {
-        FString LedgerJson;
-        if (!FFileHelper::LoadFileToString(LedgerJson, *LedgerPath))
-        {
-            UE_LOG(LogMHAnalyzeSources, Error, TEXT("cannot read ledger snapshot %s"), *LedgerPath);
-            return 1;
-        }
-        FString LedgerError;
-        if (!MHLedgerSnapshotFromJson(LedgerJson, Ledger, LedgerError))
-        {
-            UE_LOG(LogMHAnalyzeSources, Error, TEXT("%s"), *LedgerError);
-            return 1;
-        }
-    }
-
-    TUniquePtr<IMHSourceResolver> Resolver;
+    FMHSourceAnalysisServices Services;
     FString ScanError;
-    if (!MHCreateDefaultSourceResolver(SourceRoot, Resolver, ScanError))
+    if (!MHCreateDefaultSourceAnalysisServices(
+            SourceRoot,
+            Services,
+            ScanError))
     {
         UE_LOG(LogMHAnalyzeSources, Error, TEXT("%s"), *ScanError);
         return 1;
     }
 
     FMHSourceAnalysis Analysis;
-    TUniquePtr<IMHChangeDetector> ChangeDetector =
-        MHCreateSnapshotChangeDetector(Ledger);
-    MHAnalyzeSources(*ChangeDetector, *Resolver, SourceRoot, Analysis);
+    MHAnalyzeSources(
+        *Services.ChangeDetector,
+        *Services.Resolver,
+        SourceRoot,
+        Analysis);
 
-    const FMHSourceSnapshot Snapshot = Resolver->GetSnapshot();
+    const FMHSourceSnapshot Snapshot = Services.Resolver->GetSnapshot();
 
     UE_LOG(
         LogMHAnalyzeSources,
         Display,
-        TEXT("scanned %s: %d resource keys, %d deprecated Ledger rows, %d classified resources"),
+        TEXT("scanned %s: %d resource keys, %d classified resources"),
         *SourceRoot,
         Snapshot.ResourceKeys.Num(),
-        Ledger.Num(),
         Analysis.Entries.Num());
 
     for (const FMHSourceAnalysisEntry& Entry : Analysis.Entries)

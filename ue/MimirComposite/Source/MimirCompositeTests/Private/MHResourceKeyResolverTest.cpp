@@ -1,12 +1,10 @@
 #include "Source/MHPayloadScanResolver.h"
 
 #include "HAL/FileManager.h"
-#include "Ledger/MHImportLedger.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
-#include "Source/MHSourceAnalyzer.h"
 #include "Source/MHPayloadHashes.h"
 
 namespace UE::MimirComposite::Tests
@@ -197,11 +195,11 @@ bool FMHResourceKeyResolverTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHResourceKeyBlockedAndRemoveTest,
-    "Mimir.V4.ResourceKey.BlockedAndRemove",
+    FMHResourceKeyBlockedTest,
+    "Mimir.V4.ResourceKey.Blocked",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHResourceKeyBlockedAndRemoveTest::RunTest(const FString& Parameters)
+bool FMHResourceKeyBlockedTest::RunTest(const FString& Parameters)
 {
     const FString Root = MakeTempRoot();
     WriteBytes(FPaths::Combine(Root, TEXT("invalid/Bad.material")), TEXT("{}"));
@@ -217,43 +215,26 @@ bool FMHResourceKeyBlockedAndRemoveTest::RunTest(const FString& Parameters)
     {
         return Value.Contains(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"));
     }));
-
-    FMHLedgerChangeDetector EmptyDetector({});
-    FMHSourceAnalysis Blocked;
-    EmptyDetector.DetectChanges(Resolver, Root, Blocked);
-    bPassed &= TestEqual(TEXT("ambiguous resource is blocked"), Blocked.CountOf(EMHSourceChange::Blocked), 1);
-    bPassed &= TestTrue(TEXT("quarantine propagates to analysis errors"), Blocked.HasErrors());
-
-    const FString EmptyRoot = MakeTempRoot();
-    IFileManager::Get().MakeDirectory(*EmptyRoot, true);
-    FMHPayloadScanResolver EmptyResolver(EmptyRoot);
-    bPassed &= TestTrue(TEXT("empty scan initializes"), EmptyResolver.Initialize(Error));
-    FMHLedgerRow MissingRow;
-    MissingRow.Kind = EMHResourceKind::StaticMesh;
-    MissingRow.LogicalName = TEXT("removed");
-    MissingRow.SourcePath = TEXT("old/removed.mesh.fbx");
-    const TArray<uint8> EmptyBytes;
-    MissingRow.AppliedRawHash = MHRawPayloadHash(EmptyBytes);
-    MissingRow.ImportedAt = FDateTime::UtcNow();
-    MissingRow.ImportStatus = TEXT("NO_CHANGE");
-    TMap<FString, FMHLedgerRow> State;
-    State.Add(TEXT("static_mesh:removed"), MissingRow);
-    FMHLedgerChangeDetector RemoveDetector(State);
-    FMHSourceAnalysis Removed;
-    RemoveDetector.DetectChanges(EmptyResolver, EmptyRoot, Removed);
-    bPassed &= TestEqual(TEXT("missing applied key is remove"), Removed.CountOf(EMHSourceChange::Remove), 1);
+    const FMHResolveOutcome Duplicate = Resolver.Resolve(
+        Key(EMHResourceKind::StaticMesh, TEXT("duplicate")));
+    bPassed &= TestEqual(
+        TEXT("ambiguous resource is blocked by resolver"),
+        Duplicate.Status,
+        EMHResolveStatus::Ambiguous);
+    bPassed &= TestTrue(
+        TEXT("ambiguity has the stable diagnostic"),
+        Duplicate.Diagnostic.StartsWith(TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME")));
 
     IFileManager::Get().DeleteDirectory(*Root, false, true);
-    IFileManager::Get().DeleteDirectory(*EmptyRoot, false, true);
     return bPassed;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHRawHashAndLedgerValidationTest,
-    "Mimir.V4.ResourceKey.RawHashAndLedger",
+    FMHRawHashValidationTest,
+    "Mimir.V4.ResourceKey.RawHash",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHRawHashAndLedgerValidationTest::RunTest(const FString& Parameters)
+bool FMHRawHashValidationTest::RunTest(const FString& Parameters)
 {
     bool bPassed = true;
     const TArray<uint8> EmptyBytes;
@@ -266,96 +247,6 @@ bool FMHRawHashAndLedgerValidationTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(
         TEXT("uppercase digest is not canonical"),
         MHIsCanonicalRawPayloadHash(TEXT("blake3-160:AF1349B9F5F9A1A6A0404DEA36DCC9499BCB25C9")));
-
-    FMHLedgerRow Row;
-    Row.Kind = EMHResourceKind::StaticMesh;
-    Row.LogicalName = TEXT("garage");
-    Row.SourcePath = TEXT("models..old/garage.mesh.fbx");
-    Row.AppliedRawHash = EmptyHash;
-    Row.ImportedAt = FDateTime::UtcNow();
-    Row.ImportStatus = TEXT("NO_CHANGE");
-    TMap<FString, FMHLedgerRow> Rows;
-    Rows.Add(TEXT("static_mesh:garage"), Row);
-    FString Json;
-    bPassed &= TestTrue(TEXT("legal dotted directory round-trips"), MHLedgerSnapshotToJson(Rows, Json));
-    TMap<FString, FMHLedgerRow> Parsed;
-    FString Error;
-    bPassed &= TestTrue(TEXT("ledger snapshot parses"), MHLedgerSnapshotFromJson(Json, Parsed, Error));
-    bPassed &= TestEqual(TEXT("ledger row count"), Parsed.Num(), 1);
-
-    const FString InvalidAssetJson = Json.Replace(
-        TEXT("\"asset\": \"\""),
-        TEXT("\"asset\": \"not a valid object path\""));
-    bPassed &= TestNotEqual(TEXT("negative asset fixture changed"), InvalidAssetJson, Json);
-    bPassed &= TestFalse(
-        TEXT("invalid nonempty asset path is rejected on parse"),
-        MHLedgerSnapshotFromJson(InvalidAssetJson, Parsed, Error));
-
-    for (const FString& InvalidPath : {
-        FString(TEXT("/outside/garage.mesh.fbx")),
-        FString(TEXT("C:/outside/garage.mesh.fbx")),
-        FString(TEXT("folder/../garage.mesh.fbx")),
-        FString(TEXT("folder\\garage.mesh.fbx"))})
-    {
-        Rows[TEXT("static_mesh:garage")].SourcePath = InvalidPath;
-        bPassed &= TestFalse(*FString::Printf(TEXT("reject path %s"), *InvalidPath), MHLedgerSnapshotToJson(Rows, Json));
-    }
-    return bPassed;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHResourceKeyAnalyzerTest,
-    "Mimir.V4.ResourceKey.Analyzer",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FMHResourceKeyAnalyzerTest::RunTest(const FString& Parameters)
-{
-    const FString Root = MakeTempRoot();
-    const FString InitialPath = FPaths::Combine(Root, TEXT("a/garage.mesh.fbx"));
-    WriteBytes(InitialPath, TEXT("first"));
-
-    FMHPayloadScanResolver FirstResolver(Root);
-    FString Error;
-    if (!FirstResolver.Initialize(Error))
-    {
-        AddError(Error);
-        return false;
-    }
-    FMHLedgerChangeDetector EmptyDetector({});
-    FMHSourceAnalysis First;
-    EmptyDetector.DetectChanges(FirstResolver, Root, First);
-    bool bPassed = TestEqual(TEXT("first scan creates"), First.CountOf(EMHSourceChange::Create), 1);
-    bPassed &= TestEqual(TEXT("source path is root-relative"), First.Entries[0].SourcePath, TEXT("a/garage.mesh.fbx"));
-
-    FMHLedgerRow Row;
-    bPassed &= TestTrue(TEXT("create produces deprecated Ledger row"), MHLedgerRowFromAnalysis(First.Entries[0], Row));
-    TMap<FString, FMHLedgerRow> ReaderState;
-    ReaderState.Add(First.Entries[0].Key.ToString(), Row);
-
-    FMHLedgerChangeDetector NoChangeDetector(ReaderState);
-    FMHSourceAnalysis NoChange;
-    NoChangeDetector.DetectChanges(FirstResolver, Root, NoChange);
-    bPassed &= TestEqual(TEXT("same path and bytes"), NoChange.CountOf(EMHSourceChange::NoChange), 1);
-
-    const FString MovedPath = FPaths::Combine(Root, TEXT("b/garage.mesh.fbx"));
-    IFileManager::Get().MakeDirectory(*FPaths::GetPath(MovedPath), true);
-    IFileManager::Get().Move(*MovedPath, *InitialPath);
-    FMHPayloadScanResolver MovedResolver(Root);
-    bPassed &= TestTrue(TEXT("moved scan initializes"), MovedResolver.Initialize(Error));
-    FMHLedgerChangeDetector MoveDetector(ReaderState);
-    FMHSourceAnalysis Moved;
-    MoveDetector.DetectChanges(MovedResolver, Root, Moved);
-    bPassed &= TestEqual(TEXT("move preserves identity"), Moved.CountOf(EMHSourceChange::Move), 1);
-
-    WriteBytes(MovedPath, TEXT("second"));
-    FMHPayloadScanResolver ChangedResolver(Root);
-    bPassed &= TestTrue(TEXT("changed scan initializes"), ChangedResolver.Initialize(Error));
-    FMHLedgerChangeDetector ChangedDetector(ReaderState);
-    FMHSourceAnalysis Changed;
-    ChangedDetector.DetectChanges(ChangedResolver, Root, Changed);
-    bPassed &= TestEqual(TEXT("raw byte change reimports"), Changed.CountOf(EMHSourceChange::Reimport), 1);
-
-    IFileManager::Get().DeleteDirectory(*Root, false, true);
     return bPassed;
 }
 

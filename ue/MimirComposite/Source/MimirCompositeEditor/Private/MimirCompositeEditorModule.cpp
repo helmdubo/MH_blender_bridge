@@ -1,27 +1,39 @@
 #include "MimirCompositeEditorModule.h"
 
 #include "CoreGlobals.h"
+#include "Engine/Texture.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MessageLogModule.h"
 #include "Modules/ModuleManager.h"
+#include "Source/MHSourceComposition.h"
+#include "Texture/MHTextureSourceData.h"
 #include "UObject/AssetRegistryTagsContext.h"
 
 namespace
 {
 
-void AddMimirMaterialAssetRegistryTags(FAssetRegistryTagsContext Context)
+void AddMimirAssetRegistryTags(FAssetRegistryTagsContext Context)
 {
-    const UMaterialInstanceConstant* Material = Cast<UMaterialInstanceConstant>(Context.GetObject());
-    if (Material == nullptr)
+    if (const UMaterialInstanceConstant* Material = Cast<UMaterialInstanceConstant>(Context.GetObject()))
     {
+        const UMHMaterialSourceData* Data = Cast<UMHMaterialSourceData>(
+            const_cast<UMaterialInstanceConstant*>(Material)->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+        if (Data != nullptr)
+        {
+            Data->GetAssetRegistryTags(Context);
+        }
         return;
     }
-    const UMHMaterialSourceData* Data = Cast<UMHMaterialSourceData>(
-        const_cast<UMaterialInstanceConstant*>(Material)->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
-    if (Data != nullptr)
+
+    if (const UTexture* Texture = Cast<UTexture>(Context.GetObject()))
     {
-        Data->GetAssetRegistryTags(Context);
+        const UMHTextureSourceData* Data = Cast<UMHTextureSourceData>(
+            const_cast<UTexture*>(Texture)->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass()));
+        if (Data != nullptr)
+        {
+            Data->GetAssetRegistryTags(Context);
+        }
     }
 }
 
@@ -30,7 +42,7 @@ void AddMimirMaterialAssetRegistryTags(FAssetRegistryTagsContext Context)
 void FMimirCompositeEditorModule::StartupModule()
 {
     AssetRegistryTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(
-        &AddMimirMaterialAssetRegistryTags);
+        &AddMimirAssetRegistryTags);
     if (IsRunningCommandlet())
     {
         return;
@@ -45,6 +57,7 @@ void FMimirCompositeEditorModule::StartupModule()
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
+    UE::MimirComposite::MHShutdownProjectIndex();
     if (AssetRegistryTagsHandle.IsValid())
     {
         UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.Remove(AssetRegistryTagsHandle);

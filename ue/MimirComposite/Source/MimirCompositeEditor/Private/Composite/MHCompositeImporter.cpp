@@ -9,9 +9,13 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
+#include "Source/MHSourceComposition.h"
 #include "Source/MHSourceResolver.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogMHCompositePublish, Display, All);
+DEFINE_LOG_CATEGORY_STATIC(LogMHCompositeImport, Display, All);
 
 namespace UE::MimirComposite
 {
@@ -293,6 +297,16 @@ FMHCompositeOperationResult MHImportCompositeV4(
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
         return Result;
     }
+    FString RebindEvent;
+    if (MHConsumeOrphanRebindEvent(SourceRoot, Entry.Key, RebindEvent))
+    {
+        Result.Warnings.Add(RebindEvent);
+        UE_LOG(LogMHCompositeImport, Warning, TEXT("%s"), *RebindEvent);
+    }
+    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    {
+        return Result;
+    }
     Result.Asset = Asset;
     return Result;
 }
@@ -346,14 +360,30 @@ FMHCompositeOperationResult MHPublishCompositeV4(
     if (!SaveAssetPackage(Asset, Result.Error)) return Result;
     if (!AtomicWriteComposite(TargetPath, Bytes, Result.Error)) return Result;
 
+    const FString PublishedHash = MHRawPayloadHash(Bytes);
+    TArray<FString> SessionEvents;
+    if (!MHUpsertPublishedSource(
+            SourceRoot,
+            TargetPath,
+            PublishedHash,
+            SessionEvents,
+            Result.Error))
+    {
+        return Result;
+    }
+    for (const FString& Event : SessionEvents)
+    {
+        UE_LOG(LogMHCompositePublish, Display, TEXT("%s"), *Event);
+    }
+
     const FString PreviousLogicalName = Asset.LogicalName;
     const FString PreviousSourcePath = Asset.SourceRelativePath;
     const FString PreviousSourceHash = Asset.SourceHash;
     const FString PreviousAppliedHash = Asset.AppliedHash;
     Asset.LogicalName = LogicalName;
     Asset.SourceRelativePath = RelativePath;
-    Asset.SourceHash = MHRawPayloadHash(Bytes);
-    Asset.AppliedHash = MHRawPayloadHash(Bytes);
+    Asset.SourceHash = PublishedHash;
+    Asset.AppliedHash = PublishedHash;
     Asset.PostEditChange();
     if (!SaveAssetPackage(Asset, Result.Error))
     {
@@ -362,6 +392,10 @@ FMHCompositeOperationResult MHPublishCompositeV4(
         Asset.SourceHash = PreviousSourceHash;
         Asset.AppliedHash = PreviousAppliedHash;
         Asset.PostEditChange();
+        return Result;
+    }
+    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    {
         return Result;
     }
     Result.Asset = &Asset;

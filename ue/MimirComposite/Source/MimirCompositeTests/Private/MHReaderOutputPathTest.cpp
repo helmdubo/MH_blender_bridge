@@ -69,7 +69,7 @@ bool FMHReaderOutputPathTest::RunTest(const FString& Parameters)
         TEXT("absolute output under Saved/Mimir and outside source_root is accepted"),
         MHResolveReaderOutputPath(
             SourceRoot,
-            FPaths::Combine(AbsoluteOutsideRoot, TEXT("ledger.json")),
+            FPaths::Combine(AbsoluteOutsideRoot, TEXT("report.json")),
             ResolvedPath,
             Error));
 

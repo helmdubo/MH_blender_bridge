@@ -28,7 +28,7 @@ MIMIRCOMPOSITEEDITOR_API void MHFilterAnalysisToScope(
     const FMHImportSourcesScope& Scope,
     FMHSourceAnalysis& InOutAnalysis);
 
-/** Pure C1 coordinator core: analyze/filter only, with no asset or Ledger write. */
+/** Pure coordinator core: analyze/filter only, with no asset mutation. */
 MIMIRCOMPOSITEEDITOR_API bool MHBuildSourceImportPlan(
     IMHChangeDetector& ChangeDetector,
     IMHSourceResolver& Resolver,
@@ -42,9 +42,8 @@ MIMIRCOMPOSITEEDITOR_API bool MHBuildSourceImportPlan(
 /**
  * Public import coordinator seam from docs/07 section 2.
  *
- * Gate C1 implements Scan -> Resolve -> Analyze -> Plan presentation only.
- * ImportSources never mutates assets or advances the Ledger until the C2
- * builders exist; bOutExecuted makes that boundary explicit to callers.
+ * ImportSources executes the available v4 builders and leaves unsupported
+ * resource kinds in the plan; bOutExecuted makes execution explicit to callers.
  */
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHSourceImporter final : public UEditorSubsystem
