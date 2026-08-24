@@ -95,6 +95,14 @@ FBX — односторонний транспорт Blender → UE и **обы
   `wheel_lod00` внутри `.lod01`) — ПОСТОЯННЫЙ fail-closed reject
   `MH_E_INVALID_LOD_HIERARCHY`: exporter никогда не переписывает и не
   «чинит» авторские имена (решение OPEN-V4-3).
+- **Маркеры имён взаимоисключающи (решение OPEN-V4-11).** Узел несёт не
+  более ОДНОГО маркера классификации, согласованного с типом узла.
+  Fail-closed `MH_E_INVALID_NODE_MARKERS` (регистрируется в S3; проверяют
+  Blender export и импорт §4.1, зеркалирует UE-импортёр S5): сочетание
+  префикса `UCX_` с любым суффиксом `_cls_*` — включая семантически
+  совпадающее `UCX_*_cls_both`; mesh-узел с префиксом `SOCKET_`;
+  null-узел с `UCX_` или `_cls_*`; null-узел с терминальным `_lodNN`;
+  `SOCKET_`-узел с детьми. Никакого precedence и никакого repair.
 - Полная иерархия (пустышки + меши) транспортируется; замыкание по родителям
   fail-closed `MH_E_PARENT_OUTSIDE_RESOURCE`; кости зарезервированы.
   (Выжившие решения UE-QUESTION-19 / AMENDMENT r2.)
@@ -287,6 +295,56 @@ Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой акт
 - Publish Composite — та же семантика, что материал (№11): полная
   перезапись source, read-back, atomic replace; импорт — source побеждает с
   warning при локальной правке. Node-level merge не существует.
+- **Закрытая грамматика (решение OPEN-V4-10).** Корень — объект ровно с
+  одним полем `nodes` (массив, может быть пустым). Узел: `kind`
+  обязателен (`mesh|actor|composite|group`); `resource` обязателен для
+  mesh/actor/composite (canonical `[a-z0-9_]+`) и ЗАПРЕЩЁН для group;
+  `name` опционален (непустая строка, display-only, identity не несёт);
+  `transform` опционален — объект с опциональными `translation_cm`
+  (ровно 3 числа), `rotation_quat` (ровно 4 числа `[x,y,z,w]`), `scale`
+  (ровно 3 числа), дефолты — identity `[0,0,0] / [0,0,0,1] / [1,1,1]`;
+  `children` опционален у ЛЮБОГО kind (массив узлов). Порядок
+  `nodes`/`children` ЗНАЧИМ и сохраняется (это порядок компиляции);
+  никакой сортировки узлов. Числа конечны (`MH_E_NAN_INF_VALUE`);
+  компонента `scale` ≤ 0 — `MH_E_INVALID_SCALE` (правило v2 переносится);
+  неизвестный `kind` — `MH_E_UNSUPPORTED_NODE_KIND`; duplicate JSON key
+  (парсер обязан детектировать), неизвестное поле, неверный тип/арность,
+  `resource` у group или его отсутствие у прочих —
+  `MH_E_COMPOSITE_GRAMMAR` (регистрируется в S3). Reader ничего не
+  игнорирует. Самовключение/предок — `MH_E_COMPOSITE_CYCLE`;
+  нерезолвящийся `resource` (mesh/composite — ресурсы по §2, actor — имя
+  в `ActorClassRegistry`) — `MH_E_UNRESOLVED_COMPOSITE_REFERENCE`; все
+  блокируют ресурс и dependents.
+- **Кватернион**: writer пишет нормализованный (float32) в каноническом
+  знаке (`w > 0`; при `w == 0` — первый ненулевой компонент > 0); reader
+  принимает любой знак, но `|‖q‖ − 1| > 1e-3` — `MH_E_COMPOSITE_GRAMMAR`.
+  Publish каноникализирует норму и знак.
+- **Канонические байты — режим §5**: UTF-8, LF, финальный LF, отступ 2;
+  порядок полей узла `kind → resource → name → transform → children`,
+  внутри transform — `translation_cm → rotation_quat → scale`; float —
+  float32 shortest round-trip, целые без дробной части; identity-дефолты,
+  пустые `transform`/`children` и отсутствующий `name` ОПУСКАЮТСЯ.
+  Общее canonical-ядро с материалами; golden-векторы — общие файлы для
+  pytest и UE Automation.
+- **Transform contract (решение OPEN-V4-10).** Каноническое пространство
+  хранения — конвенция UE: сантиметры, оси и handedness UE, кватернион
+  `[x,y,z,w]` в смысле `FQuat`. Определяющее свойство вместо прозы о
+  матрицах: composite-transform Blender-объекта ОБЯЗАН равняться мировому
+  трансформу, который UE вычисляет для того же объекта, пришедшего через
+  mesh-FBX транспорт §4 (cm, `axis_forward=X`, `axis_up=Z`).
+  UE-компилятор потребляет значения без конверсии; Blender writer/reader
+  выполняют зеркальную конверсию (Blender → JSON → Blender = identity в
+  пределах float32). Обязательный parity-гейт: одно и то же размещение
+  через FBX-узел и через composite даёт совпадающий мировой трансформ в
+  UE (допуск float32). Прежний `core/transforms.py` authority НЕ является
+  и переписывается под это свойство. Квантования нет: детерминизм — из
+  float32 + shortest-записи.
+- **Blender и actor tokens**: реестра акторов в Blender нет — Blender
+  хранит и пишет `resource` актора lossless, не валидируя; валидация —
+  только UE через `ActorClassRegistry`. Source-wins warning
+  (`MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`) относится ТОЛЬКО к managed
+  `UMHCompositeAsset`; Blender-сцена — рабочая копия без state и без
+  warnings.
 
 ## 7. Applied state в ассетах (поправка №9)
 
@@ -307,7 +365,12 @@ Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой акт
   текущих master/library roots. UE object path в поле не хранится.
   Список Asset Registry tags ниже не расширяется — `AppliedParent` в
   теги не выносится.
-- `UMHCompositeAsset` — собственное поле applied state.
+- `UMHCompositeAsset` — applied state зеркалом §5 (решение OPEN-V4-10):
+  `SourceHash` (raw, §3) и `AppliedHash` — hash канонического JSON,
+  извлечённого из применённого ассета тем же extractor'ом, что Publish
+  Composite; детект локальной правки — как у материалов (re-extract vs
+  `AppliedHash`; non-roundtrippable extract = локальная правка, warning).
+  Аналога `AppliedParent` у композитов нет.
 - Asset Registry tags: `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`,
   `MH.AppliedHash`, `MH.Managed` — индекс строит GeneratedAssets из них.
 - Commit applied state только после: build успешен → async compilation

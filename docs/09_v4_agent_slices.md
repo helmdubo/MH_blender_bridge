@@ -138,9 +138,19 @@ SoftClassPath), unresolved actor/mesh/composite — блок ресурса; з�
 counts; перевести
 `MH_E_*`-raises в `_dagor_lod_structure` на `MHValidationError`.
 
+Коды S3 (решения OPEN-V4-10/11): `MH_E_COMPOSITE_GRAMMAR`,
+`MH_E_COMPOSITE_CYCLE`, `MH_E_UNRESOLVED_COMPOSITE_REFERENCE`,
+`MH_E_INVALID_NODE_MARKERS`. Legacy `MH_W_COMPOSITE_CYCLE`,
+`MH_W_UNRESOLVED_RESOURCE` и `MH_E_INVALID_COMPOSITE` удаляются, если
+после реализации не остаётся call sites (обновить golden counts).
+`core/transforms.py` переписывается под transform contract 08 §6.
+
 Acceptance: пример из 08 §6 круговой (`.composite → UE → publish →
-реимпорт` эквивалентен); цикл/предок — fail-closed; композит НЕ содержит и
-НЕ принимает информации о материалах. Mesh-импорт: `export → Import Mesh
+реимпорт` эквивалентен); composite golden-векторы канонических байтов —
+общие файлы для pytest и UE Automation; parity-гейт transform: одно и то
+же размещение через FBX-узел и через composite даёт совпадающий мировой
+трансформ в UE (допуск float32); цикл/предок — fail-closed; композит НЕ
+содержит и НЕ принимает информации о материалах. Mesh-импорт: `export → Import Mesh
 FBX → export` даёт FBX с той же классификацией узлов и теми же слотами
 (байт-идентичность FBX не требуется); импорт в сцену с уже существующими
 материалами не создаёт ни одного дубликата `*.001` (bpy-гейт); отказ на

@@ -6,12 +6,11 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты три вопроса v4: filesystem aliases (`OPEN-V4-1`), точный Composite
-v4 contract (`OPEN-V4-10`) и конфликтующие collision markers
-(`OPEN-V4-11`). Вопросы `OPEN-V4-2`–`OPEN-V4-9` (включая выявленные
-аудитами S2 грамматику Material, applied state, library round-trip и
-persisted-форму `AppliedParent`) решены owner — нормативный текст перенесён
-в 08 §§2–5, §7 и 09 (S2/S4/S5/S6).
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-11` (включая выявленные аудитами S2/S3 грамматики
+Material и Composite, applied state, library round-trip, `AppliedParent`,
+transform contract и правило маркеров имён) решены owner — нормативный
+текст перенесён в 08 §§2–7 и 09 (S2/S3/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -269,6 +268,22 @@ S2.
 
 ## OPEN-V4-10 — закрытая грамматика и transform contract Composite v4
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §§6, 7 (этот docs-коммит).**
+Грамматика закрыта по фактической форме §6 (`nodes`/`resource`/вложенный
+`transform`): точные field sets по kind, `children` у любого kind,
+identity-дефолты, значимый порядок узлов, duplicate-key detection,
+unknown → `MH_E_COMPOSITE_GRAMMAR`; reuse pre-registered
+`MH_E_NAN_INF_VALUE`/`MH_E_INVALID_SCALE`/`MH_E_UNSUPPORTED_NODE_KIND`.
+Канонические байты — режим §5 (общее ядро, float32 shortest, опускание
+дефолтов, общие golden-векторы). `AppliedHash` — зеркало материального:
+hash канонического extract применённого `UMHCompositeAsset` (08 §7).
+Transform: каноническое пространство — конвенция UE (cm, оси UE,
+`[x,y,z,w]` FQuat); определяющее свойство — равенство мировому трансформу
+FBX-пути §4, с обязательным parity-гейтом; `core/transforms.py` не
+authority. Подтверждено: actor token в Blender хранится lossless без
+валидации (валидирует только UE), source-wins warning относится только к
+managed UE asset.
+
 **Контекст.** 08 §6 задаёт пример JSON-дерева и называет kinds
 `mesh|actor|composite|group`, поля transform и optional `name`, но не закрывает
 грамматику так, как это сделано для Material в §5. Одновременно S3 требует
@@ -305,9 +320,17 @@ asset/compiler/import/publish остаются заблокированы сущ
 Независимые S3 cleanup и mesh-import §4.1 не интерпретируют Composite bytes и
 могут выполняться, но весь S3 не готов к acceptance до ответа owner.
 
-**Статус. ОТКРЫТ.** Блокирует Composite-часть и готовность S3.
+**Прежний статус. ОТКРЫТ.** Блокировал Composite-часть и готовность S3.
 
 ## OPEN-V4-11 — конфликт префикса `UCX_` и collision suffix
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §4 (этот docs-коммит).**
+Никакого precedence: любой двойной маркер запрещён, включая семантически
+совпадающий `UCX_*_cls_both` (закрытое правило без спец-случаев). Заодно
+закрыты соседние ловушки того же семейства: mesh с `SOCKET_`, null с
+`UCX_`/`_cls_*`, null с терминальным `_lodNN`, `SOCKET_`-узел с детьми.
+Единый код `MH_E_INVALID_NODE_MARKERS` (регистрируется в S3; Blender
+export/§4.1-импорт, зеркалирует S5). Repair не существует.
 
 **Контекст.** Таблица 08 §4 распознаёт collision по префиксу `UCX_` ИЛИ по
 суффиксу `_cls_phys|trace|both`: `UCX_` означает QueryAndPhysics, а суффиксы
@@ -324,8 +347,8 @@ export/import и будущий UE importer S5.
 выбирается автоматически. Имена без двойного marker и семантически однозначные
 правила таблицы §4 реализуются без repair.
 
-**Статус. ОТКРЫТ.** Блокирует только конфликтующие collision names и финальный
-общий classifier acceptance S3/S5.
+**Прежний статус. ОТКРЫТ.** Блокировал только конфликтующие collision names
+и финальный общий classifier acceptance S3/S5.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
