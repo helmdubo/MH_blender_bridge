@@ -100,15 +100,21 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   побеждает invalid, победитель не выбирается); ровно 1 и не-ok →
   `invalid`; ровно 1 ok → `unique`; 0 кандидатов при живом референсе →
   `missing` (строка живёт ровно пока жив референс); 0 и без референсов
-  → строки нет. `GeneratedAssets.status ∈ {applied, stale, orphan,
-  invalid_receipt, duplicate_claim}` — derived: unique-источник и
-  receipt `SourceHash` == candidate raw_hash → `applied`; unique и
-  hash отличается → `stale`; источника нет → `orphan`; malformed/
-  неполные MH-теги или kind без carrier → `invalid_receipt`; два UE
-  ассета заявляют один ключ → оба `duplicate_claim`, import/plan этого
-  ключа fail-closed новым `MH_E_AMBIGUOUS_GENERATED_ASSET`
-  (регистрируется в S4). Плохие managed-строки НИКОГДА не блокируют
-  rebuild целиком — только свой ключ.
+  → строки нет. `GeneratedAssets.status ∈ {applied, stale, orphan, source_blocked,
+  invalid_receipt, duplicate_claim}` — derived, функция ТОТАЛЬНА
+  (решение OPEN-V4-17), прецеденс: `duplicate_claim` (два UE ассета
+  заявляют один ключ — оба; import/plan ключа fail-closed новым
+  `MH_E_AMBIGUOUS_GENERATED_ASSET`, регистрируется в S4) →
+  `invalid_receipt` (malformed/неполные MH-теги или kind без carrier)
+  → source-состояние, взаимоисключающее по ключу: кандидатов нет →
+  `orphan`; ключ `ambiguous` ИЛИ `invalid` → `source_blocked` (ассет и
+  receipt здоровы, источник нездоров; hash-сравнение НЕ выполняется —
+  авторитетного кандидата нет; импорт заблокирован source-диагностикой
+  ключа; при выздоровлении источника строка перевычисляется в
+  applied/stale обычным образом); ключ `unique` и receipt `SourceHash`
+  == candidate raw_hash → `applied`; `unique` и hash отличается →
+  `stale`. Плохие managed-строки НИКОГДА не блокируют rebuild целиком —
+  только свой ключ.
 - **Dependencies (решение OPEN-V4-14).** Только ResourceKey →
   ResourceKey рёбра; закрытые роли: `material→texture: "texture"`,
   `composite→static_mesh: "placement_mesh"`,
@@ -479,8 +485,22 @@ Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой акт
   `invalid_receipt` диагностика (§3).
 - `UMHTextureSourceData : UAssetUserData` на managed UTexture (вводится в
   S4, решение OPEN-V4-13): LogicalName, SourceRelativePath, SourceHash
-  (raw) + те же шесть тегов. StaticMesh-receipts появляются только в S5;
-  до этого mesh-строк в GeneratedAssets нет.
+  (raw) + те же шесть тегов; прикрепляется существующим texture-import
+  путём — с S4 текстуры managed. StaticMesh-receipts появляются только в
+  S5; до этого mesh-строк в GeneratedAssets нет.
+- **`AppliedHash` по kind (решение OPEN-V4-18).** Для kinds с
+  канонической текстовой формой (material, composite) `AppliedHash` —
+  hash канонического extract (V4-7/V4-10), домен отличен от raw. Для
+  БИНАРНЫХ kinds (texture; static_mesh с S5) канонического extract не
+  существует: applied state бинарного kind — это применённые
+  source-байты, поэтому `MH.AppliedHash == MH.SourceHash` ПО
+  ОПРЕДЕЛЕНИЮ (нормативное тождество, не эвристика; отдельное
+  receipt-поле не добавляется — тег публикуется из `SourceHash`, тег
+  никогда не пуст). Валидатор GeneratedAssets для бинарных kinds
+  проверяет это тождество; расхождение — `invalid_receipt`. Запрет
+  V4-16 «AppliedHash не сравнивается с raw» остаётся для канонических
+  kinds, где домены разные; у бинарных домен один и тождество
+  тривиально.
 - Commit applied state только после: build успешен → async compilation
   завершена → package сохранён.
 
