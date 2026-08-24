@@ -14,6 +14,10 @@ from ..scene.export_material import (
 )
 from ..scene.import_composite import import_composite_file
 from ..scene.import_fbx import import_mesh_fbx
+from ..scene.project_textures import (
+    copy_all_dagor_textures_to_project,
+    remap_all_dagor_textures_to_project,
+)
 
 LOG_TEXT_NAME = "mh_export_log"
 
@@ -276,6 +280,54 @@ class MH_OT_export_material(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class MH_OT_copy_all_textures_to_project(bpy.types.Operator):
+    bl_idname = "mh.copy_all_textures_to_project"
+    bl_label = "Copy All Textures to Project"
+    bl_description = (
+        "Copy every Dagor texture used by this blend into Project Source "
+        "Root while preserving the folder tree below assets")
+
+    def execute(self, context):
+        try:
+            preferences = prefs_mod.get_prefs(context)
+            report = copy_all_dagor_textures_to_project(
+                source_root=_directory(preferences.source_root))
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("copy_all_textures_to_project", {
+                "ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("copy_all_textures_to_project", report)
+        self.report(
+            {"INFO"},
+            f"Textures copied: {report['copied']}; "
+            f"already in project: {report['skipped']}")
+        return {"FINISHED"}
+
+
+class MH_OT_remap_all_textures_to_project(bpy.types.Operator):
+    bl_idname = "mh.remap_all_textures_to_project"
+    bl_label = "Remap All Texture Paths"
+    bl_description = (
+        "Point every Dagor texture used by this blend at its copied file "
+        "inside Project Source Root")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            preferences = prefs_mod.get_prefs(context)
+            report = remap_all_dagor_textures_to_project(
+                source_root=_directory(preferences.source_root))
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("remap_all_textures_to_project", {
+                "ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("remap_all_textures_to_project", report)
+        self.report({"INFO"}, f"Texture paths remapped: {report['remapped']}")
+        return {"FINISHED"}
+
+
 class MH_OT_export_composite(bpy.types.Operator):
     bl_idname = "mh.export_composite"
     bl_label = "Export Composite"
@@ -341,6 +393,8 @@ CLASSES = (
     MH_OT_export_fbx,
     MH_OT_import_mesh_fbx,
     MH_OT_export_material,
+    MH_OT_copy_all_textures_to_project,
+    MH_OT_remap_all_textures_to_project,
     MH_OT_export_composite,
     MH_OT_import_composite,
 )

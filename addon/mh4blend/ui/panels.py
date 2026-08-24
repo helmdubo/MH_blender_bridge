@@ -119,6 +119,13 @@ class MH_PT_source_tools(bpy.types.Panel):
                         "mh.material_param_remove", text="", icon="REMOVE")
                     remove.index = index
         materials.operator("mh.export_material", icon="EXPORT")
+
+        misc = layout.box()
+        misc.label(text="Misc", icon="TOOL_SETTINGS")
+        misc.operator("mh.copy_all_textures_to_project", icon="DUPLICATE")
+        misc.operator("mh.remap_all_textures_to_project", icon="FILE_REFRESH")
+        misc.label(text="Copy first, then remap paths", icon="INFO")
+
         layout.label(text="Log: Text Editor > mh_export_log", icon="TEXT")
 
 
