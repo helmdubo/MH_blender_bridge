@@ -6,11 +6,10 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты вопросы v4: filesystem aliases (`OPEN-V4-1`) и две неполные ветви
-проекции GeneratedAssets (`OPEN-V4-17`, `OPEN-V4-18`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-16` (включая пять первоначальных блокеров Project
-Resource Index, выявленных аудитом S4) решены owner — нормативный текст
-перенесён в 08 §§2–7 и 09 (S2/S3/S4/S5/S6).
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-18` (включая все блокеры Project Resource Index,
+выявленные аудитами S4) решены owner — нормативный текст перенесён в
+08 §§2–7 и 09 (S2/S3/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -544,6 +543,19 @@ S4.**
 
 ## OPEN-V4-17 — GeneratedAssets status при ambiguous/invalid source key
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §3 (этот docs-коммит).**
+Вводится ШЕСТОЙ status `source_blocked`: единственный валидный managed
+claim при `resolution_status ∈ {ambiguous, invalid}` — ассет и receipt
+здоровы, источник нездоров; hash-сравнение не выполняется
+(авторитетного кандидата нет), импорт заблокирован source-диагностикой
+ключа; при выздоровлении источника строка перевычисляется в
+applied/stale. Обе ветви (ambiguous и invalid) — одно значение:
+различие уже хранится в `ResourceKeys.resolution_status`, дублировать
+его в GeneratedAssets незачем. Прецеденс закреплён:
+`duplicate_claim → invalid_receipt → {orphan | source_blocked |
+stale | applied}` (source-состояния взаимоисключающи). Функция стала
+тотальной — rebuild/dump acceptance определён на всём домене.
+
 **Контекст.** После решения OPEN-V4-12 словарь
 `GeneratedAssets.status ∈ {applied, stale, orphan, invalid_receipt,
 duplicate_claim}` закрыт, но функция в 08 §3 определена не на всём входном
@@ -570,10 +582,22 @@ managed claim при `ResourceKeys.resolution_status = ambiguous` и при
 Index не записывает предположительный GeneratedAssets status и не объявляет
 rebuild/dump acceptance до owner-решения.
 
-**Статус. ОТКРЫТ; блокирует total GeneratedAssets projection и S4 rebuild
-acceptance.**
+**Прежний статус. ОТКРЫТ; блокировал total GeneratedAssets projection и S4
+rebuild acceptance.**
 
 ## OPEN-V4-18 — значение `MH.AppliedHash` у managed Texture
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §7 (этот docs-коммит).**
+Для БИНАРНЫХ kinds (texture; static_mesh с S5) канонического extract не
+существует: applied state = применённые source-байты, поэтому
+`MH.AppliedHash == MH.SourceHash` ПО ОПРЕДЕЛЕНИЮ — это нормативное
+тождество одного домена, не «приравнивание догадкой». Отдельное
+receipt-поле в `UMHTextureSourceData` не добавляется; тег публикуется
+из `SourceHash` и никогда не пуст. Валидатор GeneratedAssets проверяет
+тождество; расхождение — `invalid_receipt`. Запрет сравнения
+AppliedHash с raw (V4-16) остаётся только для канонических kinds
+(material/composite), где домены действительно разные. Существующий
+texture-import путь с S4 прикрепляет receipt — текстуры managed.
 
 **Контекст.** 08 §7 требует у `UMHTextureSourceData` только поля
 `LogicalName`, `SourceRelativePath`, `SourceHash` (raw), но одновременно
@@ -594,8 +618,8 @@ Texture tag является marker без semantic hash, зафиксирова
 добавлять скрытое receipt-поле и не публиковать неполный six-tag claim.
 Существующий texture import не объявляется managed S4 carrier до решения.
 
-**Статус. ОТКРЫТ; блокирует `UMHTextureSourceData`, exact-six tags и texture
-GeneratedAssets acceptance S4.**
+**Прежний статус. ОТКРЫТ; блокировал `UMHTextureSourceData`, exact-six tags
+и texture GeneratedAssets acceptance S4.**
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
