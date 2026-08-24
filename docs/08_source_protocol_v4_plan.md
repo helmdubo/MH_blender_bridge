@@ -375,12 +375,20 @@ keys, node trees материалов (восстанавливается тол
   переводит материал в class-форму; молчаливый discard запрещён. Импорт
   library-формы — полный apply: reparent на `<library_root>/<name>` и
   очистка локальных overrides (source побеждает; до перезаписи
-  срабатывает детект локальной правки). Blender-модель v4 — собственная
-  property group mh4blend (`class|library` + поля грамматики); dag4blend
-  `is_proxy`/`proxy_path` НЕ читаются и не конвертируются автоматически
-  (proxymat-концепция superseded library-формой), `sides` не
-  сериализуется: двусторонность выражается только полем `twosided`,
-  «real two sided» — дело конкретного класса/params.
+  срабатывает детект локальной правки). Blender-модель v4 использует
+  property group mh4blend (`class|library` + поля грамматики) для явных
+  authoring-overrides. Для class-формы writer автоматически читает уже
+  заполненное семантическое содержимое `dagormat`: `shader_class`,
+  `textures.tex0`–`tex15`, `optional` и `sides`; точечные значения mh4blend
+  имеют приоритет. `sides=0|1` выводится явным `twosided=false|true`, потому
+  что отсутствие поля означает default мастера; `sides=2` и любой optional
+  тип вне number/vector4 блокируются
+  `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` без потери данных. Из texture path
+  writer берёт только extensionless logical stem и
+  резолвит его по общему texture ResourceKey. Синтетический
+  `tex16support`, dag4blend `is_proxy`/`proxy_path`, legacy-поля и UI-state
+  не являются содержимым v4 и не сериализуются; proxymat-концепция
+  superseded library-формой.
 - **Publish Material = полная перезапись source-файла без сравнения** (№11):
   extract MI → canonical JSON → sibling tmp → read-back → atomic replace →
   index upsert. Материал без source: диалог «папка + имя» (Adopt). Blender
