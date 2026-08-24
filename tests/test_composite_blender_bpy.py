@@ -21,7 +21,10 @@ from mh4blend.scene.export_composite import (  # noqa: E402
     export_composite_collection,
 )
 from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
-from mh4blend.scene.import_composite import import_composite_file  # noqa: E402
+from mh4blend.scene.import_composite import (  # noqa: E402
+    UNRESOLVED_PLACEMENT_KEY,
+    import_composite_file,
+)
 from mh4blend.ui import ops  # noqa: E402
 
 
@@ -108,7 +111,7 @@ def test_direct_writer_uses_explicit_actor_token_without_registry(tmp_path):
     ("mesh", "missing_mesh"),
     ("composite", "missing_composite"),
 ])
-def test_writer_rejects_unresolved_source_dependency_before_publish(
+def test_writer_preserves_unresolved_source_dependency(
         tmp_path, kind, resource):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = bpy.data.collections.new("unresolved")
@@ -118,10 +121,132 @@ def test_writer_rejects_unresolved_source_dependency_before_publish(
     placement[NODE_KIND_KEY] = kind
     placement[NODE_RESOURCE_KEY] = resource
 
-    with pytest.raises(
-            ValueError, match="MH_E_UNRESOLVED_COMPOSITE_REFERENCE"):
-        export_composite_collection(collection, tmp_path, source_root=tmp_path)
-    assert not (tmp_path / "unresolved.composite").exists()
+    report = export_composite_collection(
+        collection, tmp_path, source_root=tmp_path)
+    decoded = parse_composite(Path(report["filepath"]).read_bytes())
+    assert [(node.kind, node.resource) for node in decoded.nodes] == [
+        (kind, resource),
+    ]
+
+
+@pytest.mark.parametrize("kind,resource", [
+    ("mesh", "missing_mesh"),
+    ("composite", "missing_composite"),
+])
+def test_missing_resource_imports_placeholder_and_fresh_import_resolves(
+        tmp_path, kind, resource):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    source = Composite("unresolved_authoring", [Node(
+        kind,
+        resource=resource,
+        name="missing_placement",
+        transform=CompositeTransform(
+            translation_cm=(-63530.69140625, -200.0, 300.0),
+            rotation_quat=(0.0, 0.0, 0.70710677, 0.70710677),
+            scale=(1.25, 0.75, 2.0),
+        ),
+        children=[Node(
+            "actor",
+            resource="lossless_actor_token",
+            transform=CompositeTransform(
+                translation_cm=(-211.1234588623047, 25.0, -50.0),
+                rotation_quat=(0.0, 0.70710677, 0.0, 0.70710677),
+                scale=(1.25, 0.75, 2.0),
+            ),
+        )],
+    )])
+    source_path = _write(
+        tmp_path / "unresolved_authoring.composite", source)
+    expected = source_path.read_bytes()
+
+    report = import_composite_file(source_path, source_root=tmp_path)
+    assert [warning["code"] for warning in report["warnings"]] == [
+        "MH_W_UNRESOLVED_PLACEMENT",
+    ]
+    assert f"{kind}:{resource}" in report["warnings"][0]["subjects"]
+    placeholder = next(
+        obj for obj in report["collection"].objects
+        if obj[NODE_KIND_KEY] == kind)
+    assert placeholder.type == "EMPTY"
+    assert placeholder.data is None
+    assert placeholder.instance_collection is None
+    assert placeholder.instance_type == "NONE"
+    assert placeholder.empty_display_type == "CUBE"
+    assert tuple(placeholder.color) == pytest.approx((1.0, 0.0, 0.0, 1.0))
+    assert placeholder[NODE_KIND_KEY] == kind
+    assert placeholder[NODE_RESOURCE_KEY] == resource
+    assert placeholder[UNRESOLVED_PLACEMENT_KEY] is True
+
+    exported = export_composite_collection(
+        report["collection"], tmp_path, source_root=tmp_path)
+    assert Path(exported["filepath"]).read_bytes() == expected
+
+    child = next(obj for obj in report["collection"].objects
+                 if obj.parent is placeholder)
+    edited_matrix = child.matrix_world.copy()
+    edited_matrix.translation.x += 1.0
+    child.matrix_world = edited_matrix
+    edited = export_composite_collection(
+        report["collection"], tmp_path, source_root=tmp_path)
+    assert Path(edited["filepath"]).read_bytes() != expected
+    source_path.write_bytes(expected)
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    if kind == "mesh":
+        authored = bpy.data.collections.new(resource)
+        bpy.context.scene.collection.children.link(authored)
+        mesh = bpy.data.meshes.new("BodyGeometry")
+        mesh.from_pydata(
+            [(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+        authored.objects.link(bpy.data.objects.new("body", mesh))
+        export_fbx_collection(authored, tmp_path, source_root=tmp_path)
+    else:
+        _write(tmp_path / f"{resource}.composite", Composite(resource))
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    resolved = import_composite_file(source_path, source_root=tmp_path)
+    placement = next(
+        obj for obj in resolved["collection"].objects
+        if obj[NODE_KIND_KEY] == kind)
+    assert resolved["warnings"] == []
+    assert placement.instance_collection is not None
+    assert UNRESOLVED_PLACEMENT_KEY not in placement
+
+
+@pytest.mark.parametrize("kind,extension", [
+    ("mesh", ".mesh.fbx"),
+    ("composite", ".composite"),
+])
+def test_ambiguous_same_kind_dependency_remains_fail_closed(
+        tmp_path, kind, extension):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    source_path = _write(
+        tmp_path / "ambiguous_root.composite",
+        Composite("ambiguous_root", [Node(kind, resource="duplicate")]),
+    )
+    for directory in (tmp_path / "a", tmp_path / "b"):
+        directory.mkdir()
+        (directory / f"duplicate{extension}").write_bytes(b"duplicate")
+
+    before = _counts()
+    with pytest.raises(ValueError, match="MH_E_AMBIGUOUS_RESOURCE_NAME"):
+        import_composite_file(source_path, source_root=tmp_path)
+    assert _counts() == before
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = bpy.data.collections.new("writer_ambiguous")
+    bpy.context.scene.collection.children.link(collection)
+    placement = bpy.data.objects.new("placement", None)
+    collection.objects.link(placement)
+    placement[NODE_KIND_KEY] = kind
+    placement[NODE_RESOURCE_KEY] = "duplicate"
+    preserved = composite_json_bytes(Composite("writer_ambiguous"))
+    target = tmp_path / "writer_ambiguous.composite"
+    target.write_bytes(preserved)
+    with pytest.raises(ValueError, match="MH_E_AMBIGUOUS_RESOURCE_NAME"):
+        export_composite_collection(
+            collection, tmp_path, source_root=tmp_path)
+    assert target.read_bytes() == preserved
 
 
 def test_writer_rejects_self_and_ancestor_cycles_before_replace(tmp_path):
@@ -223,7 +348,7 @@ def test_failure_during_placement_rolls_back_entire_delta(tmp_path, monkeypatch)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     path = _write(
         tmp_path / "rollback.composite",
-        Composite("rollback", [Node("group")]),
+        Composite("rollback", [Node("mesh", resource="missing_mesh")]),
     )
     before = _counts()
     original = import_module._build_definition

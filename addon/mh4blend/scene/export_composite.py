@@ -9,6 +9,7 @@ import bpy
 from mathutils import Matrix
 
 from ..core.canonical import validate_resource_name
+from ..core.canonical_json import canonical_json_bytes, parse_json
 from ..core.composites import (
     composite_json_bytes,
     iter_resource_references,
@@ -16,7 +17,7 @@ from ..core.composites import (
     read_composite_file,
     validate_composite_cycles,
 )
-from ..core.model import Composite, Node
+from ..core.model import Composite, CompositeTransform, Node
 from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.transforms import blender_to_ue_transform
 from ..core.validate import MHValidationError
@@ -27,6 +28,7 @@ __all__ = [
     "NODE_KIND_KEY",
     "NODE_NAME_KEY",
     "NODE_RESOURCE_KEY",
+    "UNRESOLVED_PLACEMENT_KEY",
     "export_composite_collection",
 ]
 
@@ -36,6 +38,44 @@ COLLECTION_RESOURCE_KEY = "mh_resource_name"
 NODE_KIND_KEY = "mh_composite_kind"
 NODE_RESOURCE_KEY = "mh_composite_resource"
 NODE_NAME_KEY = "mh_composite_name"
+UNRESOLVED_PLACEMENT_KEY = "mh_unresolved_placement"
+_IMPORTED_TRANSFORM_KEY = "mh_imported_source_transform"
+_IMPORTED_MATRIX_KEY = "mh_imported_matrix"
+
+
+def _matrix_signature(matrix) -> str:
+    return "|".join(
+        float(matrix[row][column]).hex()
+        for row in range(4)
+        for column in range(4)
+    )
+
+
+def _stamp_imported_transform(obj, transform: CompositeTransform) -> None:
+    obj[_IMPORTED_TRANSFORM_KEY] = canonical_json_bytes(
+        transform.disk_dict()).decode("utf-8")
+    obj[_IMPORTED_MATRIX_KEY] = _matrix_signature(obj.matrix_world)
+
+
+def _stored_imported_transform(obj) -> CompositeTransform | None:
+    encoded = obj.get(_IMPORTED_TRANSFORM_KEY)
+    snapshot = obj.get(_IMPORTED_MATRIX_KEY)
+    if (not isinstance(encoded, str) or not isinstance(snapshot, str)
+            or snapshot != _matrix_signature(obj.matrix_world)):
+        return None
+    try:
+        document = parse_json(encoded)
+        if (not isinstance(document, dict)
+                or set(document) != {
+                    "translation_cm", "rotation_quat", "scale"}):
+            return None
+        return CompositeTransform(
+            tuple(document["translation_cm"]),
+            tuple(document["rotation_quat"]),
+            tuple(document["scale"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _resolved_root(source_root) -> Path:
@@ -89,7 +129,9 @@ def _resolve_target(root: Path, output: Path, name: str) -> Path:
     return matches[0] if matches else output / f"{name}.composite"
 
 
-def _resolve_dependency(root: Path, name: str, extension: str) -> Path:
+def _resolve_dependency(
+        root: Path, name: str, extension: str, *, allow_missing=False
+) -> Path | None:
     """Resolve one source ResourceKey by exact filename identity."""
     validate_resource_name(name)
     expected = f"{name}{extension}"
@@ -109,6 +151,8 @@ def _resolve_dependency(root: Path, name: str, extension: str) -> Path:
             [name, *(str(row) for row in matches)],
             f"multiple resources resolve as '{expected}'")
     if not matches:
+        if allow_missing:
+            return None
         raise MHValidationError(
             "MH_E_UNRESOLVED_COMPOSITE_REFERENCE", [name],
             f"required source resource '{expected}' was not found")
@@ -122,7 +166,11 @@ def _preflight_dependencies(root: Path, candidate: Composite) -> None:
     def load_composite(name: str) -> None:
         if name in documents:
             return
-        source = _resolve_dependency(root, name, ".composite")
+        source = _resolve_dependency(
+            root, name, ".composite", allow_missing=True)
+        if source is None:
+            documents[name] = Composite(name)
+            return
         document = read_composite_file(source)
         documents[name] = document
         for dependency in iter_resource_references(
@@ -134,10 +182,12 @@ def _preflight_dependencies(root: Path, candidate: Composite) -> None:
     validate_composite_cycles(candidate.name, documents)
 
     # Actor tokens are intentionally lossless in Blender and resolve only in
-    # UE.  Mesh dependencies, however, must exist before source publication.
+    # UE.  Missing mesh/composite placements are also valid authoring state;
+    # ambiguous same-kind identities remain fail-closed above.
     for document in documents.values():
         for dependency in iter_resource_references(document, kind="mesh"):
-            _resolve_dependency(root, dependency, ".mesh.fbx")
+            _resolve_dependency(
+                root, dependency, ".mesh.fbx", allow_missing=True)
 
 
 def _node_kind_and_resource(obj) -> tuple[str, str | None]:
@@ -170,6 +220,9 @@ def _node_kind_and_resource(obj) -> tuple[str, str | None]:
 
 
 def _object_transform(obj):
+    stored = _stored_imported_transform(obj)
+    if stored is not None:
+        return stored
     translation, rotation, scale = obj.matrix_world.decompose()
     recomposed = Matrix.LocRotScale(translation, rotation, scale)
     if max(abs(obj.matrix_world[row][column] - recomposed[row][column])

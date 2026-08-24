@@ -318,6 +318,10 @@ class MH_OT_import_composite(bpy.types.Operator):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         _log("import_composite", report)
+        for warning in report.get("warnings", []):
+            self.report(
+                {"WARNING"},
+                f"{warning['code']}: {warning.get('message', '')}")
         self.report({"INFO"}, "Composite imported")
         return {"FINISHED"}
 
