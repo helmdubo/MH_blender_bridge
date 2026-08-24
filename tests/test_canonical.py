@@ -23,6 +23,7 @@ from mh4blend.core.canonical import (
 
 def test_error_codes_registry_matches_golden_list():
     assert ERROR_CODES == frozenset({
+        "MH_E_AMBIGUOUS_GENERATED_ASSET",
         "MH_E_AMBIGUOUS_RESOURCE_NAME",
         "MH_E_AMBIGUOUS_RESOURCE_OWNER",
         "MH_E_COMPOSITE_CYCLE",
@@ -73,14 +74,16 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
         "MH_W_MATERIAL_SLOT_UNMAPPED",
+        "MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED",
         "MH_W_PAYLOAD_EXTERNAL_MODIFIED",
+        "MH_W_PROBABLE_RESOURCE_RENAME",
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
         "MH_W_UNRESOLVED_PLACEMENT",
     })
-    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 44
-    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 11
+    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 45
+    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 13
     assert all(re.fullmatch(r"MH_[EW]_[A-Z0-9_]+", code)
                for code in ERROR_CODES)
 
