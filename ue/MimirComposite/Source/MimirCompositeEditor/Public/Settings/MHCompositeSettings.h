@@ -45,10 +45,6 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     FDirectoryPath SourceRoot;
 
-    /** Deprecated pre-v4 setting retained until all builders move to §8 paths. */
-    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
-    FString ContentRoot;
-
     /** Package root containing class parents named exactly by class token. */
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     FString MasterRoot;

@@ -4,7 +4,6 @@
 
 UMHCompositeSettings::UMHCompositeSettings()
 {
-    ContentRoot = TEXT("/Game/MH/Generated");
     MasterRoot = TEXT("/Game/Mimir/MasterMaterials");
     LibraryRoot = TEXT("/Game/Mimir/MaterialLibrary");
     StaticMeshPrefix = TEXT("SM_");
