@@ -111,19 +111,41 @@ source-дерева (08 §5, решение OPEN-V4-2; Project Index как кэ
 `MH_E_UNRESOLVED_TEXTURE_REFERENCE` зарегистрированы в реестре и
 golden-списке.
 
-## S3 — Composite format v4
+## S3 — Composite format v4 + Blender mesh-импорт
 
-По 08 §6. Кодек JSON-дерева (kinds mesh/actor/composite/group, transform
-translation_cm/rotation_quat/scale, `name` опционален, БЕЗ материалов и
-uid); Blender writer/importer; UE `UMHCompositeAsset` + компилятор в
-components/actor; `ActorClassRegistry` в настройках (name → SoftClassPath),
-unresolved actor/mesh/composite — блок ресурса; запрет самовключения и
-включения предков; Publish Composite — семантика S2 (полная перезапись,
-read-back); импорт — source побеждает + warning.
+Ядро среза — общий модуль «импорт mesh-ресурса» по 08 §4.1 (стадии 0–4:
+parse/preflight собственным ридером, материализация зависимостей через
+reader S2, штатный импортёр пиноваными настройками в staging, резолв
+слотов по индексам из парса, реструктуризация `.lods`/aux, полный откат
+дельты при сбое) и оператор `Import Mesh FBX`. Композитный
+Blender-импортёр строит размещения ПОВЕРХ этого модуля. Новые коды:
+`MH_E_IMPORT_TARGET_OCCUPIED`, `MH_E_UNRESOLVED_MATERIAL_REFERENCE`
+(общий с S5).
+
+Композиты — по 08 §6. Кодек JSON-дерева (kinds mesh/actor/composite/group,
+transform translation_cm/rotation_quat/scale, `name` опционален, БЕЗ
+материалов и uid); Blender writer/importer; UE `UMHCompositeAsset` +
+компилятор в components/actor; `ActorClassRegistry` в настройках (name →
+SoftClassPath), unresolved actor/mesh/composite — блок ресурса; запрет
+самовключения и включения предков; Publish Composite — семантика S2
+(полная перезапись, read-back); импорт — source побеждает + warning.
+
+Попутный cleanup из ревью S2: удалить мёртвые коды
+`MH_W_TEXTURE_BASENAME_AMBIGUOUS`, `MH_W_TEXTURE_NOT_FOUND`,
+`MH_W_TEXTURE_OUTSIDE_ROOT`, `MH_W_UNKNOWN_SHADER_CLASS`,
+`MH_W_MATERIAL_NOT_FOUND` (использований
+нет ни в Python, ни в UE; семантика отменена v4) с обновлением golden
+counts; перевести
+`MH_E_*`-raises в `_dagor_lod_structure` на `MHValidationError`.
 
 Acceptance: пример из 08 §6 круговой (`.composite → UE → publish →
 реимпорт` эквивалентен); цикл/предок — fail-closed; композит НЕ содержит и
-НЕ принимает информации о материалах.
+НЕ принимает информации о материалах. Mesh-импорт: `export → Import Mesh
+FBX → export` даёт FBX с той же классификацией узлов и теми же слотами
+(байт-идентичность FBX не требуется); импорт в сцену с уже существующими
+материалами не создаёт ни одного дубликата `*.001` (bpy-гейт); отказ на
+любом preflight-предусловии оставляет дельту датаблоков пустой; non-goals
+08 §4.1 не тестируются.
 
 ## S4 — Project Resource Index
 
@@ -148,7 +170,8 @@ Acceptance: удаление .sqlite → рестарт → идентичный
 структура) → `FMHSceneIR` → полный in-place rebuild UStaticMesh: все LOD
 (dense, из `_lodNN`), BodySetup (режимы по `_cls_*`/UCX), сокеты, слоты.
 Привязка материалов ДО сборки: slot name == material logical name → индекс →
-MI; отсутствие — блок ресурса. `UMHStaticMeshImportData` receipt + Asset
+MI; отсутствие — `MH_E_UNRESOLVED_MATERIAL_REFERENCE` (введён в S3), блок
+ресурса. `UMHStaticMeshImportData` receipt + Asset
 Registry tags; commit applied state только после сохранения package. Diff:
 raw hash равен → NO_CHANGE, иначе полный reimport. Путь ассета:
 `/Game/MH/Generated/Meshes/<name>` (без префикса).
