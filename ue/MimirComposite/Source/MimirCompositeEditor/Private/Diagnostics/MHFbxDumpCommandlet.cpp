@@ -35,7 +35,7 @@ const TCHAR* AttributeLabel(const EMHSceneNodeAttribute Attribute)
     }
 }
 
-const TCHAR* KindLabel(const EMHSceneNodeKind Kind)
+const TCHAR* FbxDumpNodeKindLabel(const EMHSceneNodeKind Kind)
 {
     switch (Kind)
     {
@@ -124,7 +124,7 @@ bool BuildDump(const FMHSceneIR& Scene, const bool bFull, FString& OutJson)
         JsonNode->SetNumberField(TEXT("index"), NodeIndex);
         JsonNode->SetStringField(TEXT("name"), Node.Name);
         JsonNode->SetStringField(TEXT("attribute"), AttributeLabel(Node.Attribute));
-        JsonNode->SetStringField(TEXT("kind"), KindLabel(Node.Kind));
+        JsonNode->SetStringField(TEXT("kind"), FbxDumpNodeKindLabel(Node.Kind));
         JsonNode->SetNumberField(TEXT("parent"), Node.ParentIndex);
         JsonNode->SetObjectField(TEXT("global_transform"), TransformObject(Node.GlobalTransform));
         if (Node.Attribute == EMHSceneNodeAttribute::Mesh)

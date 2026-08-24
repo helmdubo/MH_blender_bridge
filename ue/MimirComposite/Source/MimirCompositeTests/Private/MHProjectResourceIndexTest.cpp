@@ -46,7 +46,7 @@ struct FIndexFixture
     }
 };
 
-bool WriteUtf8(const FString& Path, const FString& Contents)
+bool WriteProjectIndexUtf8(const FString& Path, const FString& Contents)
 {
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     return FFileHelper::SaveStringToFile(
@@ -63,7 +63,7 @@ FString FileHash(const FString& Path)
         : FString();
 }
 
-FMHResourceKey Key(const EMHResourceKind Kind, const FString& Name)
+FMHResourceKey ProjectIndexTestKey(const EMHResourceKind Kind, const FString& Name)
 {
     FMHResourceKey Result;
     Result.Kind = Kind;
@@ -241,8 +241,8 @@ bool FMHProjectIndexRebuildTest::RunTest(const FString& Parameters)
     FIndexFixture Fixture;
     const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("textures/brick_d.png"));
     const FString MaterialPath = FPaths::Combine(Fixture.Root, TEXT("materials/wall.material"));
-    bool bPassed = WriteUtf8(TexturePath, TEXT("texture-bytes"));
-    bPassed &= WriteUtf8(
+    bool bPassed = WriteProjectIndexUtf8(TexturePath, TEXT("texture-bytes"));
+    bPassed &= WriteProjectIndexUtf8(
         MaterialPath,
         TEXT("{\n  \"class\": \"simple\",\n  \"textures\": {\n    \"tex0\": \"brick_d\"\n  }\n}\n"));
 
@@ -253,8 +253,8 @@ bool FMHProjectIndexRebuildTest::RunTest(const FString& Parameters)
         FileHash(MaterialPath),
         FileHash(MaterialPath));
     const TArray<FMHResourceKey> ExpectedKeys = {
-        Key(EMHResourceKind::Material, TEXT("wall")),
-        Key(EMHResourceKind::Texture, TEXT("brick_d"))};
+        ProjectIndexTestKey(EMHResourceKind::Material, TEXT("wall")),
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("brick_d"))};
     TArray<FMHResolveOutcome> FirstOutcomes;
     FString FirstDump;
     {
@@ -269,7 +269,7 @@ bool FMHProjectIndexRebuildTest::RunTest(const FString& Parameters)
         bPassed &= TestEqual(TEXT("generation one"), Update.Generation, static_cast<int64>(1));
         bPassed &= TestEqual(
             TEXT("material resolves through present texture dependency"),
-            Index.Resolve(Key(EMHResourceKind::Material, TEXT("wall"))).Status,
+            Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Material, TEXT("wall"))).Status,
             EMHResolveStatus::Resolved);
         for (const FMHResourceKey& ResourceKey : ExpectedKeys)
         {
@@ -335,9 +335,9 @@ bool FMHProjectIndexStaticMeshSlotDependencyTest::RunTest(const FString& Paramet
         TEXT("create FBX with one material slot"),
         CopyFbxWithMaterialSlot(SourceFbx, MeshPath, TEXT("crate_surface"), Error));
     if (!Error.IsEmpty()) AddError(Error);
-    bPassed &= WriteUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n"));
+    bPassed &= WriteProjectIndexUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n"));
 
-    const FMHResourceKey MeshKey = Key(EMHResourceKind::StaticMesh, TEXT("crate"));
+    const FMHResourceKey MeshKey = ProjectIndexTestKey(EMHResourceKind::StaticMesh, TEXT("crate"));
     FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
     if (!OpenIndex(Index, *this)) return false;
     FMHProjectIndexUpdateResult Update;
@@ -395,9 +395,9 @@ bool FMHProjectIndexStatusTest::RunTest(const FString& Parameters)
     const FString TextureA = FPaths::Combine(Fixture.Root, TEXT("a/shared_d.png"));
     const FString TextureB = FPaths::Combine(Fixture.Root, TEXT("b/shared_d.tga"));
     const FString Material = FPaths::Combine(Fixture.Root, TEXT("uses_shared.material"));
-    bool bPassed = WriteUtf8(TextureA, TEXT("one"));
-    bPassed &= WriteUtf8(TextureB, TEXT("two"));
-    bPassed &= WriteUtf8(
+    bool bPassed = WriteProjectIndexUtf8(TextureA, TEXT("one"));
+    bPassed &= WriteProjectIndexUtf8(TextureB, TEXT("two"));
+    bPassed &= WriteProjectIndexUtf8(
         Material,
         TEXT("{\n  \"class\": \"simple\",\n  \"textures\": {\n    \"tex0\": \"shared_d\"\n  }\n}\n"));
 
@@ -414,18 +414,18 @@ bool FMHProjectIndexStatusTest::RunTest(const FString& Parameters)
     if (!Error.IsEmpty()) AddError(Error);
     bPassed &= TestEqual(
         TEXT("duplicate texture is ambiguous"),
-        Index.Resolve(Key(EMHResourceKind::Texture, TEXT("shared_d"))).Status,
+        Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("shared_d"))).Status,
         EMHResolveStatus::Ambiguous);
     bPassed &= TestEqual(
         TEXT("dependent material is blocked"),
-        Index.Resolve(Key(EMHResourceKind::Material, TEXT("uses_shared"))).Status,
+        Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Material, TEXT("uses_shared"))).Status,
         EMHResolveStatus::Invalid);
 
     TArray<FMHProjectIndexGeneratedAssetState> Assets;
     bPassed &= TestTrue(
         TEXT("read source-blocked generated state"),
         Index.GetGeneratedAssets(
-            Key(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error));
+            ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error));
     bPassed &= TestEqual(TEXT("one claim"), Assets.Num(), 1);
     if (Assets.Num() == 1)
     {
@@ -442,7 +442,7 @@ bool FMHProjectIndexStatusTest::RunTest(const FString& Parameters)
         Index.ReplaceGeneratedAssets({InvalidBinary}, Update, Error));
     Assets.Reset();
     bPassed &= Index.GetGeneratedAssets(
-        Key(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error);
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error);
     if (Assets.Num() == 1)
     {
         bPassed &= TestEqual(
@@ -458,7 +458,7 @@ bool FMHProjectIndexStatusTest::RunTest(const FString& Parameters)
         Index.ReplaceGeneratedAssets({ExtraTag}, Update, Error));
     Assets.Reset();
     bPassed &= Index.GetGeneratedAssets(
-        Key(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error);
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error);
     if (Assets.Num() == 1)
     {
         bPassed &= TestEqual(
@@ -474,7 +474,7 @@ bool FMHProjectIndexStatusTest::RunTest(const FString& Parameters)
         Index.ReplaceGeneratedAssets({InvalidBinary, DuplicateClaim}, Update, Error));
     Assets.Reset();
     bPassed &= Index.GetGeneratedAssets(
-        Key(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error);
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("shared_d")), Assets, Error);
     bPassed &= TestEqual(TEXT("two claims"), Assets.Num(), 2);
     for (const FMHProjectIndexGeneratedAssetState& Asset : Assets)
     {
@@ -495,7 +495,7 @@ bool FMHProjectIndexIncrementalTest::RunTest(const FString& Parameters)
 {
     FIndexFixture Fixture;
     const FString OldPath = FPaths::Combine(Fixture.Root, TEXT("old/brick_d.png"));
-    bool bPassed = WriteUtf8(OldPath, TEXT("same-binary-content"));
+    bool bPassed = WriteProjectIndexUtf8(OldPath, TEXT("same-binary-content"));
     const FString Hash = FileHash(OldPath);
     FMHGeneratedAssetTagClaim TextureClaim = Claim(
         EMHResourceKind::Texture,
@@ -534,7 +534,7 @@ bool FMHProjectIndexIncrementalTest::RunTest(const FString& Parameters)
     FMHSourceAnalysis Analysis;
     Detector.DetectChanges(Resolver, Fixture.Root, Analysis);
     const FMHSourceAnalysisEntry* Entry = Analysis.Find(
-        Key(EMHResourceKind::Texture, TEXT("brick_d")));
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("brick_d")));
     bPassed &= TestNotNull(TEXT("move analysis entry"), Entry);
     if (Entry != nullptr)
     {
@@ -554,8 +554,8 @@ bool FMHProjectIndexIncrementalTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("bijective same-hash rename diagnostic"),
         Dump.Contains(TEXT("MH_W_PROBABLE_RESOURCE_RENAME")));
-    const FMHResourceKey OldKey = Key(EMHResourceKind::Texture, TEXT("brick_d"));
-    const FMHResourceKey NewKey = Key(EMHResourceKind::Texture, TEXT("brick_new"));
+    const FMHResourceKey OldKey = ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("brick_d"));
+    const FMHResourceKey NewKey = ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("brick_new"));
     bPassed &= TestEqual(
         TEXT("renamed old key has no source candidate"),
         Index.Resolve(OldKey).Status,
@@ -589,8 +589,8 @@ bool FMHProjectIndexClaimedRenameEndpointTest::RunTest(const FString& Parameters
     FIndexFixture Fixture;
     const FString PathA = FPaths::Combine(Fixture.Root, TEXT("asset_a.png"));
     const FString PathB = FPaths::Combine(Fixture.Root, TEXT("asset_b.png"));
-    bool bPassed = WriteUtf8(PathA, TEXT("shared-binary-content"));
-    bPassed &= WriteUtf8(PathB, TEXT("shared-binary-content"));
+    bool bPassed = WriteProjectIndexUtf8(PathA, TEXT("shared-binary-content"));
+    bPassed &= WriteProjectIndexUtf8(PathB, TEXT("shared-binary-content"));
     const FString Hash = FileHash(PathA);
     const FMHGeneratedAssetTagClaim ClaimA = Claim(
         EMHResourceKind::Texture, TEXT("asset_a"), TEXT("asset_a.png"), Hash);
@@ -624,8 +624,8 @@ bool FMHProjectIndexPreexistingUnmanagedRenameEndpointTest::RunTest(const FStrin
     FIndexFixture Fixture;
     const FString PathA = FPaths::Combine(Fixture.Root, TEXT("old_managed.png"));
     const FString PathB = FPaths::Combine(Fixture.Root, TEXT("preexisting_unmanaged.png"));
-    bool bPassed = WriteUtf8(PathA, TEXT("shared-binary-content"));
-    bPassed &= WriteUtf8(PathB, TEXT("shared-binary-content"));
+    bool bPassed = WriteProjectIndexUtf8(PathA, TEXT("shared-binary-content"));
+    bPassed &= WriteProjectIndexUtf8(PathB, TEXT("shared-binary-content"));
     const FMHGeneratedAssetTagClaim ClaimA = Claim(
         EMHResourceKind::Texture,
         TEXT("old_managed"),
@@ -658,8 +658,8 @@ bool FMHProjectIndexInvalidDictionaryRebuildTest::RunTest(const FString& Paramet
 {
     FIndexFixture Fixture;
     const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("semantic_probe.png"));
-    bool bPassed = WriteUtf8(TexturePath, TEXT("semantic-probe"));
-    const FMHResourceKey ProbeKey = Key(EMHResourceKind::Texture, TEXT("semantic_probe"));
+    bool bPassed = WriteProjectIndexUtf8(TexturePath, TEXT("semantic-probe"));
+    const FMHResourceKey ProbeKey = ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("semantic_probe"));
     {
         FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
         if (!OpenIndex(Index, *this)) return false;
@@ -744,7 +744,7 @@ bool FMHProjectIndexOrdinaryStaleWarningTest::RunTest(const FString& Parameters)
 {
     FIndexFixture Fixture;
     const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("ordinary_edit.png"));
-    bool bPassed = WriteUtf8(TexturePath, TEXT("before-edit"));
+    bool bPassed = WriteProjectIndexUtf8(TexturePath, TEXT("before-edit"));
     const FMHGeneratedAssetTagClaim TextureClaim = Claim(
         EMHResourceKind::Texture,
         TEXT("ordinary_edit"),
@@ -756,7 +756,7 @@ bool FMHProjectIndexOrdinaryStaleWarningTest::RunTest(const FString& Parameters)
     FMHProjectIndexUpdateResult Update;
     FString Error;
     bPassed &= TestTrue(TEXT("initial scan"), Index.FullScan({TextureClaim}, Update, Error));
-    bPassed &= WriteUtf8(TexturePath, TEXT("ordinary-source-edit"));
+    bPassed &= WriteProjectIndexUtf8(TexturePath, TEXT("ordinary-source-edit"));
     bPassed &= TestTrue(TEXT("edited source upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
 
     FMHProjectIndexResolver Resolver(Index);
@@ -764,7 +764,7 @@ bool FMHProjectIndexOrdinaryStaleWarningTest::RunTest(const FString& Parameters)
     FMHSourceAnalysis Analysis;
     Detector.DetectChanges(Resolver, Fixture.Root, Analysis);
     const FMHSourceAnalysisEntry* Entry = Analysis.Find(
-        Key(EMHResourceKind::Texture, TEXT("ordinary_edit")));
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("ordinary_edit")));
     bPassed &= TestNotNull(TEXT("ordinary stale entry"), Entry);
     if (Entry != nullptr)
     {
@@ -788,7 +788,7 @@ bool FMHProjectIndexOrdinaryStaleWarningTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(
         TEXT("ordinary stale has no consumable orphan-rebind event"),
         Index.ConsumeOrphanRebindEvent(
-            Key(EMHResourceKind::Texture, TEXT("ordinary_edit")), Event));
+            ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("ordinary_edit")), Event));
     bPassed &= TestTrue(TEXT("ordinary stale event is empty"), Event.IsEmpty());
     return bPassed;
 }
@@ -802,7 +802,7 @@ bool FMHProjectIndexOrphanRebindWarningTest::RunTest(const FString& Parameters)
 {
     FIndexFixture Fixture;
     const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("orphan_rebind.png"));
-    bool bPassed = WriteUtf8(TexturePath, TEXT("original-content"));
+    bool bPassed = WriteProjectIndexUtf8(TexturePath, TEXT("original-content"));
     const FString OriginalHash = FileHash(TexturePath);
     FMHGeneratedAssetTagClaim TextureClaim = Claim(
         EMHResourceKind::Texture,
@@ -824,7 +824,7 @@ bool FMHProjectIndexOrphanRebindWarningTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("read orphan state"),
         Index.GetGeneratedAssets(
-            Key(EMHResourceKind::Texture, TEXT("orphan_rebind")), Assets, Error));
+            ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("orphan_rebind")), Assets, Error));
     bPassed &= TestEqual(TEXT("one orphan claim"), Assets.Num(), 1);
     if (Assets.Num() == 1)
     {
@@ -834,7 +834,7 @@ bool FMHProjectIndexOrphanRebindWarningTest::RunTest(const FString& Parameters)
             EMHGeneratedAssetStatus::Orphan);
     }
 
-    bPassed &= WriteUtf8(TexturePath, TEXT("divergent-rebound-content"));
+    bPassed &= WriteProjectIndexUtf8(TexturePath, TEXT("divergent-rebound-content"));
     const FString ReboundHash = FileHash(TexturePath);
     bPassed &= TestTrue(TEXT("rebound source upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
 
@@ -845,7 +845,7 @@ bool FMHProjectIndexOrphanRebindWarningTest::RunTest(const FString& Parameters)
         Dump.Contains(TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED")));
 
     const FMHResourceKey ReboundKey =
-        Key(EMHResourceKind::Texture, TEXT("orphan_rebind"));
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("orphan_rebind"));
     FString Event;
     bPassed &= TestTrue(
         TEXT("divergent orphan rebound produces one consumable event"),
@@ -881,14 +881,14 @@ bool FMHProjectIndexOrphanRebindSessionLossTest::RunTest(const FString& Paramete
 {
     FIndexFixture Fixture;
     const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("session_rebind.png"));
-    bool bPassed = WriteUtf8(TexturePath, TEXT("original-content"));
+    bool bPassed = WriteProjectIndexUtf8(TexturePath, TEXT("original-content"));
     const FMHGeneratedAssetTagClaim TextureClaim = Claim(
         EMHResourceKind::Texture,
         TEXT("session_rebind"),
         TEXT("session_rebind.png"),
         FileHash(TexturePath));
     const FMHResourceKey RebindKey =
-        Key(EMHResourceKind::Texture, TEXT("session_rebind"));
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("session_rebind"));
 
     FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
     if (!OpenIndex(Index, *this)) return false;
@@ -897,7 +897,7 @@ bool FMHProjectIndexOrphanRebindSessionLossTest::RunTest(const FString& Paramete
     bPassed &= TestTrue(TEXT("initial scan"), Index.FullScan({TextureClaim}, Update, Error));
     bPassed &= TestTrue(TEXT("remove source"), IFileManager::Get().Delete(*TexturePath));
     bPassed &= TestTrue(TEXT("orphan upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
-    bPassed &= WriteUtf8(TexturePath, TEXT("first-divergent-rebound"));
+    bPassed &= WriteProjectIndexUtf8(TexturePath, TEXT("first-divergent-rebound"));
     bPassed &= TestTrue(TEXT("first rebound upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
     Index.Close();
 
@@ -911,7 +911,7 @@ bool FMHProjectIndexOrphanRebindSessionLossTest::RunTest(const FString& Paramete
 
     bPassed &= TestTrue(TEXT("remove source again"), IFileManager::Get().Delete(*TexturePath));
     bPassed &= TestTrue(TEXT("second orphan upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
-    bPassed &= WriteUtf8(TexturePath, TEXT("second-divergent-rebound"));
+    bPassed &= WriteProjectIndexUtf8(TexturePath, TEXT("second-divergent-rebound"));
     bPassed &= TestTrue(TEXT("second rebound upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
     Index.Close();
     bPassed &= TestTrue(
@@ -947,7 +947,7 @@ bool FMHProjectIndexTenThousandResolveTest::RunTest(const FString& Parameters)
     for (int32 Index = 0; Index < ResourceCount; ++Index)
     {
         const FString Name = FString::Printf(TEXT("texture_%05d"), Index);
-        bPassed &= WriteUtf8(FPaths::Combine(Fixture.Root, Name + TEXT(".png")), Name);
+        bPassed &= WriteProjectIndexUtf8(FPaths::Combine(Fixture.Root, Name + TEXT(".png")), Name);
     }
     FMHProjectResourceIndex ProjectIndex(Fixture.Root, Fixture.DatabasePath);
     if (!OpenIndex(ProjectIndex, *this)) return false;
@@ -960,7 +960,7 @@ bool FMHProjectIndexTenThousandResolveTest::RunTest(const FString& Parameters)
     for (int32 Index = 0; Index < ResourceCount; ++Index)
     {
         const FString Name = FString::Printf(TEXT("texture_%05d"), Index);
-        if (Resolver.Resolve(Key(EMHResourceKind::Texture, Name)).Status != EMHResolveStatus::Resolved)
+        if (Resolver.Resolve(ProjectIndexTestKey(EMHResourceKind::Texture, Name)).Status != EMHResolveStatus::Resolved)
         {
             AddError(FString::Printf(TEXT("indexed resolve failed for %s"), *Name));
             bPassed = false;

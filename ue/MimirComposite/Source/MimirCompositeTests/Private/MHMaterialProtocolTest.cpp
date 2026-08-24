@@ -686,6 +686,10 @@ bool FMHMaterialTextureStaleFailureTest::RunTest(const FString& Parameters)
     // The invalid replacement is intentional. Interchange may either log its
     // decoder failure or return the pre-existing object silently; the protocol
     // must reject both outcomes by validating the exact imported source bytes.
+    AddExpectedError(
+        TEXT("Texture import failed"),
+        EAutomationExpectedErrorFlags::Contains,
+        -1);
     const FMHMaterialOperationResult InvalidImport = MHImportMaterialV4(
         MaterialEntry(
             TEXT("s2_stale_invalid"),

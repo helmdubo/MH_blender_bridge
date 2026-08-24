@@ -52,7 +52,7 @@ bool ReadStablePayload(
     return true;
 }
 
-bool ValidateNoNestedFilesystemAlias(
+bool ValidatePayloadResolverNoNestedFilesystemAlias(
     const FString& SourceRoot,
     const FString& PayloadPath,
     FString& OutError)
@@ -107,7 +107,7 @@ bool IsTextureExtension(const FString& Extension)
     return Extensions.Contains(Extension);
 }
 
-bool ResourceKeyLess(const FMHResourceKey& A, const FMHResourceKey& B)
+bool PayloadResolverResourceKeyLess(const FMHResourceKey& A, const FMHResourceKey& B)
 {
     if (A.Kind != B.Kind)
     {
@@ -299,7 +299,7 @@ bool FMHPayloadScanResolver::DiscoverPayloadPaths(
             const bool bRecognized = MHResourceKeyFromSourceFile(File, IgnoredKey, ClassificationError);
             if (bRecognized || !ClassificationError.IsEmpty())
             {
-                if (!ValidateNoNestedFilesystemAlias(SourceRoot, File, OutError))
+                if (!ValidatePayloadResolverNoNestedFilesystemAlias(SourceRoot, File, OutError))
                 {
                     return false;
                 }
@@ -413,7 +413,7 @@ FMHSourceSnapshot FMHPayloadScanResolver::GetSnapshot() const
 {
     FMHSourceSnapshot Snapshot;
     CandidatesByKey.GenerateKeyArray(Snapshot.ResourceKeys);
-    Snapshot.ResourceKeys.Sort(ResourceKeyLess);
+    Snapshot.ResourceKeys.Sort(PayloadResolverResourceKeyLess);
     Snapshot.Quarantined = QuarantineEntries;
     for (const FMHSourceQuarantine& Entry : QuarantineEntries)
     {
