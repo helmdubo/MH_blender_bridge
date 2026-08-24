@@ -157,6 +157,19 @@ FBX → export` даёт FBX с той же классификацией узл�
 любом preflight-предусловии оставляет дельту датаблоков пустой; non-goals
 08 §4.1 не тестируются.
 
+## S3.1 — Unresolved placement в авторинге (микро-срез)
+
+По поправке 08 §6: Blender composite import при отсутствующем
+mesh/composite ресурсе узла строит красный placeholder-Empty вместо
+блока, выдаёт `MH_W_UNRESOLVED_PLACEMENT` (зарегистрировать в реестре и
+golden counts), `resource`-token сохраняется lossless, Export пишет узел
+без изменений. Ambiguous same-kind duplicates и UE-сторона не меняются;
+mesh-импорт §4.1 не меняется.
+
+Acceptance (bpy): импорт композита с отсутствующим ресурсом → placeholder
++ warning, последующий экспорт даёт байт-идентичный узел; после появления
+ресурса свежий импорт в чистую сцену даёт полноценный инстанс.
+
 ## S4 — Project Resource Index
 
 По 08 §3. SQLite в `Saved/MimirBridge/ProjectIndex.sqlite`; писатель —

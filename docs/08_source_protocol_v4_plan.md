@@ -343,8 +343,20 @@ Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой акт
   хранит и пишет `resource` актора lossless, не валидируя; валидация —
   только UE через `ActorClassRegistry`. Source-wins warning
   (`MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`) относится ТОЛЬКО к managed
-  `UMHCompositeAsset`; Blender-сцена — рабочая копия без state и без
-  warnings.
+  `UMHCompositeAsset`; Blender-сцена — рабочая копия без applied state и
+  без source-wins warnings.
+- **Unresolved placement в Blender-авторинге (поправка owner).** При
+  импорте композита в Blender ОТСУТСТВУЮЩИЙ mesh/composite ресурс узла —
+  не блок, а `MH_W_UNRESOLVED_PLACEMENT` (регистрируется в S3.1) плюс
+  видимый placeholder: Empty display-cube, красный object color, без
+  контента; `resource`-token сохраняется lossless (custom property
+  placement'а), Export пишет узел без изменений. Художник чинит
+  остальное, не будучи заложником битого узла; строгость остаётся у
+  потребителя — UE-сторона по-прежнему блокирует
+  (`MH_E_UNRESOLVED_COMPOSITE_REFERENCE`). Послабление касается ТОЛЬКО
+  отсутствующего ресурса: ambiguous same-kind duplicates остаются жёстким
+  блоком по §2 и в Blender; mesh-FBX импорт §4.1 не меняется (unresolved
+  material — по-прежнему E).
 
 ## 7. Applied state в ассетах (поправка №9)
 
