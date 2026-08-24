@@ -3,6 +3,7 @@
 #include "Async/Async.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Composite/MHCompositeImporter.h"
 #include "Logging/MessageLog.h"
 #include "MessageLogModule.h"
 #include "Material/MHMaterialImporter.h"
@@ -252,6 +253,34 @@ bool UMHSourceImporter::ImportSources(
             bOutExecuted = true;
         }
     }
+    // Composite closure is resolved only after material execution. Mesh
+    // endpoints intentionally remain fail-closed until their S5 builder exists.
+    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    {
+        if (Entry.Key.Kind != EMHResourceKind::Composite || !Entry.Errors.IsEmpty() ||
+            !(Entry.Change == EMHSourceChange::Create ||
+              Entry.Change == EMHSourceChange::Reimport ||
+              Entry.Change == EMHSourceChange::Move))
+        {
+            continue;
+        }
+        FMHCompositeOperationResult CompositeResult = MHImportCompositeV4(
+            Entry,
+            *Services.Resolver,
+            SourceRoot,
+            *Settings);
+        Entry.Warnings.Append(CompositeResult.Warnings);
+        if (!CompositeResult.Succeeded())
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.bLedgerAdvanceAllowed = false;
+            Entry.Errors.Add(CompositeResult.Error);
+        }
+        else
+        {
+            bOutExecuted = true;
+        }
+    }
     PresentPlan(OutAnalysis);
     return !OutAnalysis.HasErrors();
 }
@@ -322,6 +351,41 @@ bool UMHSourceImporter::PublishMaterialInteractive(
     return Result.Succeeded();
 }
 
+bool UMHSourceImporter::PublishComposite(
+    UMHCompositeAsset* Asset,
+    const FString& AdoptFolder,
+    const FString& AdoptLogicalName,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || Asset == nullptr)
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: PublishComposite requires an asset on the game thread");
+        return false;
+    }
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (Settings == nullptr || Settings->GetSourceRootPath().IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+    FMHCompositeAdoptTarget Adopt;
+    const FMHCompositeAdoptTarget* AdoptPtr = nullptr;
+    if (!AdoptFolder.IsEmpty() || !AdoptLogicalName.IsEmpty())
+    {
+        Adopt.Folder = AdoptFolder;
+        Adopt.LogicalName = AdoptLogicalName;
+        AdoptPtr = &Adopt;
+    }
+    FMHCompositeOperationResult Result = MHPublishCompositeV4(
+        *Asset, Settings->GetSourceRootPath(), AdoptPtr);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    return Result.Succeeded();
+}
+
 void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
 {
     FMessageLog Log(TEXT("Mimir"));
@@ -361,7 +425,7 @@ void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
     }
 
     const FString Summary = FString::Printf(
-        TEXT("Mimir source pass: %d resources, %d blocked. S2 executes material entries; later kinds remain plan-only."),
+        TEXT("Mimir source pass: %d resources, %d blocked. S3 executes material and composite entries; mesh remains plan-only."),
         Analysis.Entries.Num(),
         Analysis.CountOf(EMHSourceChange::Blocked));
     Log.Info(FText::FromString(Summary));

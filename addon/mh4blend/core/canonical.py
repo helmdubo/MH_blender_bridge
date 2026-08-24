@@ -59,6 +59,7 @@ ERROR_CODES = frozenset(
     {
         # Blender export and/or UE import
         "MH_E_COMPOSITE_CYCLE",
+        "MH_E_COMPOSITE_GRAMMAR",
         "MH_E_AMBIGUOUS_RESOURCE_NAME",
         "MH_E_AMBIGUOUS_RESOURCE_OWNER",
         "MH_E_UNRESOLVED_EXTERNAL",
@@ -80,8 +81,9 @@ ERROR_CODES = frozenset(
         "MH_E_SOURCE_INDEX_INVALID",
         "MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT",
         "MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED",
-        # Standalone composite import preflight
-        "MH_E_INVALID_COMPOSITE",
+        # Composite and mesh-source import preflight
+        "MH_E_INVALID_NODE_MARKERS",
+        "MH_E_UNRESOLVED_COMPOSITE_REFERENCE",
         "MH_E_UNSUPPORTED_NODE_KIND",
         "MH_E_INVALID_RESOURCE_SOURCE",
         "MH_E_INVALID_EXPORT_MANIFEST",
@@ -108,8 +110,6 @@ ERROR_CODES = frozenset(
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",
         "MH_W_DUPLICATE_RESOURCE_NAME",
-        "MH_W_COMPOSITE_CYCLE",
-        "MH_W_UNRESOLVED_RESOURCE",
         "MH_W_LOD_AUX_NODE_IGNORED",
         "MH_W_MANAGED_ASSET_LOCALLY_MODIFIED",
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",

@@ -2,40 +2,29 @@
 
 from dataclasses import dataclass, field
 
-from .canonical import P_ROTATION_QUAT, P_SCALE, P_TRANSLATION_CM
-
-
-def _dec(value: int, precision: int) -> float:
-    return value / 10 ** precision
-
-
 @dataclass(frozen=True)
-class QuantizedTransform:
-    translation: tuple
-    rotation: tuple
-    scale: tuple
+class CompositeTransform:
+    """One v4 placement in canonical UE units and axis convention."""
+
+    translation_cm: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation_quat: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
 
     def disk_dict(self) -> dict:
         return {
-            "translation_cm": [
-                _dec(value, P_TRANSLATION_CM) for value in self.translation],
-            "rotation_quat": [
-                _dec(value, P_ROTATION_QUAT) for value in self.rotation],
-            "scale": [_dec(value, P_SCALE) for value in self.scale],
+            "translation_cm": list(self.translation_cm),
+            "rotation_quat": list(self.rotation_quat),
+            "scale": list(self.scale),
         }
 
 
-IDENTITY_TRANSFORM = QuantizedTransform(
-    translation=(0, 0, 0),
-    rotation=(0, 0, 0, 10 ** P_ROTATION_QUAT),
-    scale=(10 ** P_SCALE,) * 3,
-)
+IDENTITY_TRANSFORM = CompositeTransform()
 
 
 @dataclass
 class Node:
     kind: str
-    local_transform: QuantizedTransform = IDENTITY_TRANSFORM
+    transform: CompositeTransform = IDENTITY_TRANSFORM
     name: str | None = None
     resource: str | None = None
     children: list = field(default_factory=list)
@@ -70,10 +59,10 @@ class MaterialResource:
 
 __all__ = [
     "Composite",
+    "CompositeTransform",
     "IDENTITY_TRANSFORM",
     "MaterialResource",
     "MaterialSlot",
     "MeshResource",
     "Node",
-    "QuantizedTransform",
 ]

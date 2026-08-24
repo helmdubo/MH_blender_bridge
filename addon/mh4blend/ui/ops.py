@@ -13,6 +13,7 @@ from ..scene.export_material import (
     write_prepared_material,
 )
 from ..scene.import_composite import import_composite_file
+from ..scene.import_fbx import import_mesh_fbx
 
 LOG_TEXT_NAME = "mh_export_log"
 
@@ -36,7 +37,7 @@ def _directory(value):
     return os.path.abspath(bpy.path.abspath(value))
 
 
-def _filepath(value):
+def _composite_filepath(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Choose a .composite file")
     path = os.path.abspath(bpy.path.abspath(value))
@@ -46,6 +47,27 @@ def _filepath(value):
             "lowercase .composite file")
     if not os.path.isfile(path):
         raise ValueError(f"Composite file does not exist: {path}")
+    return path
+
+
+# Kept as a compatibility seam for the existing UI gate; new code should use
+# the workflow-specific validators so compound extensions remain explicit.
+_filepath = _composite_filepath
+
+
+def _mesh_filepath(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Choose a .mesh.fbx file")
+    path = os.path.abspath(bpy.path.abspath(value))
+    if not path.endswith(".mesh.fbx"):
+        raise ValueError(
+            "MH_E_NONCANONICAL_RESOURCE_NAME: import path must point to a "
+            "lowercase .mesh.fbx file")
+    stem = os.path.basename(path)[:-len(".mesh.fbx")]
+    from ..core.canonical import validate_resource_name
+    validate_resource_name(stem)
+    if not os.path.isfile(path):
+        raise ValueError(f"Mesh FBX file does not exist: {path}")
     return path
 
 
@@ -75,6 +97,30 @@ class MH_OT_export_fbx(bpy.types.Operator):
             return {"CANCELLED"}
         _log("export_fbx", report)
         self.report({"INFO"}, f"FBX exported: {report['filepath']}")
+        return {"FINISHED"}
+
+
+class MH_OT_import_mesh_fbx(bpy.types.Operator):
+    bl_idname = "mh.import_mesh_fbx"
+    bl_label = "Import Mesh FBX"
+    bl_description = (
+        "Import one Source Protocol v4 mesh FBX as an editable Blender "
+        "resource")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            preferences = prefs_mod.get_prefs(context)
+            report = import_mesh_fbx(
+                _mesh_filepath(context.scene.mh_fbx_import_path),
+                source_root=_directory(preferences.source_root),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("import_mesh_fbx", {"ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("import_mesh_fbx", report)
+        self.report({"INFO"}, "Mesh FBX imported")
         return {"FINISHED"}
 
 
@@ -265,7 +311,7 @@ class MH_OT_import_composite(bpy.types.Operator):
         try:
             preferences = prefs_mod.get_prefs(context)
             report = import_composite_file(
-                _filepath(context.scene.mh_composite_import_path),
+                _composite_filepath(context.scene.mh_composite_import_path),
                 source_root=_directory(preferences.source_root))
         except (OSError, RuntimeError, ValueError) as exc:
             _log("import_composite", {"ok": False, "error": str(exc)})
@@ -289,6 +335,7 @@ CLASSES = (
     MH_OT_material_param_add,
     MH_OT_material_param_remove,
     MH_OT_export_fbx,
+    MH_OT_import_mesh_fbx,
     MH_OT_export_material,
     MH_OT_export_composite,
     MH_OT_import_composite,
@@ -304,6 +351,8 @@ def register():
         name="Collection", type=bpy.types.Collection)
     bpy.types.Scene.mh_fbx_directory = bpy.props.StringProperty(
         name="Output Folder", subtype="DIR_PATH", default="")
+    bpy.types.Scene.mh_fbx_import_path = bpy.props.StringProperty(
+        name="Mesh FBX", subtype="FILE_PATH", default="")
     bpy.types.Scene.mh_fbx_export_materials = bpy.props.BoolProperty(
         name="Export Materials",
         description="Write every material used by the exported mesh resource",
@@ -332,7 +381,8 @@ def unregister():
     for name in (
         "mh_composite_export_directory", "mh_composite_export_collection",
         "mh_composite_import_path", "mh_composite_mode",
-        "mh_fbx_export_materials", "mh_fbx_directory", "mh_fbx_collection",
+        "mh_fbx_export_materials", "mh_fbx_import_path",
+        "mh_fbx_directory", "mh_fbx_collection",
         "mh_material_directory", "mh_material",
     ):
         if hasattr(bpy.types.Scene, name):

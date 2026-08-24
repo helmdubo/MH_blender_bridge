@@ -961,7 +961,7 @@ FMHCanonicalResult MHCanonicalizeQuaternion(
 {
 	if (Quaternion.Num() != 4)
 	{
-		return FMHCanonicalResult::Failure(TEXT("MH_E_INVALID_COMPOSITE: quaternion must have four components"));
+		return FMHCanonicalResult::Failure(TEXT("MH_E_COMPOSITE_GRAMMAR: quaternion must have four components"));
 	}
 	double SquaredNorm = 0.0;
 	for (const double Component : Quaternion)
@@ -975,7 +975,7 @@ FMHCanonicalResult MHCanonicalizeQuaternion(
 	const double Norm = FMath::Sqrt(SquaredNorm);
 	if (!FMath::IsFinite(Norm) || Norm == 0.0)
 	{
-		return FMHCanonicalResult::Failure(TEXT("MH_E_INVALID_COMPOSITE: degenerate quaternion"));
+		return FMHCanonicalResult::Failure(TEXT("MH_E_COMPOSITE_GRAMMAR: degenerate quaternion"));
 	}
 	OutQuaternion.Reset(4);
 	for (const double Component : Quaternion)

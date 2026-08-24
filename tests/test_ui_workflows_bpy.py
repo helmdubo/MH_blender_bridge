@@ -20,7 +20,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
     try:
         scene_type = bpy.types.Scene
         for name in (
-            "mh_fbx_collection", "mh_fbx_directory", "mh_fbx_export_materials",
+            "mh_fbx_collection", "mh_fbx_directory", "mh_fbx_import_path",
+            "mh_fbx_export_materials",
             "mh_material", "mh_material_directory", "mh_composite_mode",
             "mh_composite_import_path", "mh_composite_export_collection",
             "mh_composite_export_directory",
@@ -29,7 +30,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
         assert hasattr(bpy.types.Material, "mh4blend")
         assert bpy.context.scene.mh_fbx_export_materials is False
         assert {cls.bl_idname for cls in ops.CLASSES} == {
-            "mh.export_fbx", "mh.export_material", "mh.export_composite",
+            "mh.export_fbx", "mh.import_mesh_fbx", "mh.export_material",
+            "mh.export_composite",
             "mh.import_composite", "mh.material_texture_add",
             "mh.material_texture_remove", "mh.material_param_add",
             "mh.material_param_remove",
@@ -39,7 +41,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
         mh4blend.unregister()
 
     for name in (
-        "mh_fbx_collection", "mh_fbx_directory", "mh_fbx_export_materials",
+        "mh_fbx_collection", "mh_fbx_directory", "mh_fbx_import_path",
+        "mh_fbx_export_materials",
         "mh_material", "mh_material_directory", "mh_composite_mode",
         "mh_composite_import_path", "mh_composite_export_collection",
         "mh_composite_export_directory",
@@ -75,6 +78,33 @@ def test_material_export_option_is_forwarded_to_fbx_workflow(tmp_path, monkeypat
         assert bpy.ops.mh.export_fbx() == {"FINISHED"}
         assert len(calls) == 1
         assert calls[0]["export_materials"] is True
+    finally:
+        mh4blend.unregister()
+
+
+def test_mesh_import_operator_forwards_exact_source_path(tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        source = tmp_path / "vehicle.mesh.fbx"
+        source.write_bytes(b"test seam")
+        bpy.context.scene.mh_fbx_import_path = str(source)
+        monkeypatch.setattr(
+            ops.prefs_mod,
+            "get_prefs",
+            lambda _context: SimpleNamespace(source_root=str(tmp_path)),
+        )
+        calls = []
+        monkeypatch.setattr(
+            ops,
+            "import_mesh_fbx",
+            lambda path, **kwargs: (
+                calls.append((path, kwargs)),
+                {"ok": True, "resource_name": "vehicle"},
+            )[1],
+        )
+        assert bpy.ops.mh.import_mesh_fbx() == {"FINISHED"}
+        assert calls == [(str(source), {"source_root": str(tmp_path)})]
     finally:
         mh4blend.unregister()
 

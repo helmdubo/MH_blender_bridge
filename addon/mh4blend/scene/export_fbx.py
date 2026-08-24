@@ -15,6 +15,7 @@ import bpy
 from mathutils import Matrix
 
 from ..core.canonical import validate_resource_name
+from ..core.mesh_nodes import validate_node_markers
 from ..core.payload_publish_v2 import payload_lock
 from ..core.validate import MHValidationError
 
@@ -486,6 +487,46 @@ def _material_slot_names(objects):
     return names
 
 
+def _validate_export_node_markers(export_objects, payload_levels):
+    """Mirror the v4 FBX classifier before Blender writes any bytes."""
+    transported_ids = {obj.as_pointer() for obj in export_objects}
+    authored_levels = {
+        obj.as_pointer(): level
+        for level, _collection, objects in payload_levels
+        for obj in objects
+    }
+    for obj in export_objects:
+        # OPEN-V4-11 forbids any child below a SOCKET_, including a child
+        # outside the selected resource.  Parent closure remains a separate
+        # transport gate below.
+        has_children = bool(obj.children)
+        authored_lod = (
+            authored_levels.get(obj.as_pointer())
+            if obj.type == "MESH" else None)
+        validate_node_markers(
+            obj.name,
+            obj.type,
+            has_children=has_children,
+            authored_lod=authored_lod,
+        )
+
+
+def _validate_unique_mesh_payloads(export_objects):
+    """The v4 FBX dialect transports no shared/instanced Geometry."""
+    owners = {}
+    for obj in export_objects:
+        if obj.type != "MESH" or obj.data is None:
+            continue
+        identity = obj.data.as_pointer()
+        previous = owners.get(identity)
+        if previous is not None:
+            raise MHValidationError(
+                "MH_E_UNSUPPORTED_NODE_KIND", [previous.name, obj.name],
+                "linked duplicate mesh Geometry is outside the v4 FBX "
+                "dialect; use separate mesh datablocks or Composite instances")
+        owners[identity] = obj
+
+
 def _export_selected_fbx(filepath):
     """Operator seam kept separate for crash-protocol integration tests."""
     bpy.ops.export_scene.fbx(filepath=filepath, **FBX_EXPORT_KWARGS)
@@ -584,6 +625,8 @@ def export_fbx_collection(
     payload_levels = (
         lod_structure["levels"] if lod_structure is not None
         else [(0, collection, objects)])
+    _validate_export_node_markers(export_objects, payload_levels)
+    _validate_unique_mesh_payloads(export_objects)
     if not objects:
         raise ValueError(
             f"MH_E_EMPTY_RESOURCE_COLLECTION: '{collection.name}' has no "
@@ -612,9 +655,14 @@ def export_fbx_collection(
                 f"part of resource collection '{collection.name}'; move the "
                 "parent into the collection or clear the parenting")
 
+    # Every transported MESH is material-bearing FBX payload.  Collision
+    # geometry is not render geometry, but Blender still serializes its slots;
+    # validate and publish those dependencies too so the writer cannot create
+    # a file that our own reader rejects.
+    transport_meshes = [obj for obj in export_objects if obj.type == "MESH"]
     used_materials = []
     seen_materials = set()
-    for obj in objects:
+    for obj in transport_meshes:
         for slot in obj.material_slots:
             material = slot.material
             if material is None or material.as_pointer() in seen_materials:
@@ -623,9 +671,8 @@ def export_fbx_collection(
             used_materials.append(material)
 
     materials = used_materials
-    if lod_structure is None:
-        _material_slot_names(objects)
-    else:
+    _material_slot_names(transport_meshes)
+    if lod_structure is not None:
         _level0, _collection0, level0_objects = payload_levels[0]
         base_slots = _material_slot_names(level0_objects)
         for level, _child, level_objects in payload_levels[1:]:
