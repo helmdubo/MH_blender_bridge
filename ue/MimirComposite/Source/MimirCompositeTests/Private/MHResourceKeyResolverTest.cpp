@@ -90,7 +90,7 @@ bool FMHResourceKeyClassifierTest::RunTest(const FString& Parameters)
         MHResourceKeyFromSourceFile(TEXT("C:/source/foo.bar.material"), Parsed, Error));
     bPassed &= TestTrue(
         TEXT("logical-name diagnostic is registered code"),
-        Error.StartsWith(TEXT("MH_E_NON_ASCII_RESOURCE_NAME")));
+        Error.StartsWith(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME")));
 
     Error.Reset();
     bPassed &= TestFalse(
@@ -102,12 +102,12 @@ bool FMHResourceKeyClassifierTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(
         TEXT("mixed-case logical name is rejected"),
         MHResourceKeyFromSourceFile(TEXT("C:/source/Garage.material"), Parsed, Error));
-    bPassed &= TestTrue(TEXT("mixed-case name diagnostic"), Error.StartsWith(TEXT("MH_E_NON_ASCII_RESOURCE_NAME")));
+    bPassed &= TestTrue(TEXT("mixed-case name diagnostic"), Error.StartsWith(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME")));
     Error.Reset();
     bPassed &= TestFalse(
         TEXT("mixed-case extension is rejected"),
         MHResourceKeyFromSourceFile(TEXT("C:/source/garage.Material"), Parsed, Error));
-    bPassed &= TestTrue(TEXT("mixed-case extension diagnostic"), Error.StartsWith(TEXT("MH_E_SOURCE_INDEX_INVALID")));
+    bPassed &= TestTrue(TEXT("mixed-case extension diagnostic"), Error.StartsWith(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME")));
 
     Parsed.Kind = static_cast<EMHResourceKind>(255);
     Parsed.LogicalName = TEXT("valid_name");
@@ -215,7 +215,7 @@ bool FMHResourceKeyBlockedAndRemoveTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("invalid known payload is quarantined"), Snapshot.Quarantined.Num(), 1);
     bPassed &= TestTrue(TEXT("quarantine is blocking"), Snapshot.Errors.ContainsByPredicate([](const FString& Value)
     {
-        return Value.Contains(TEXT("MH_E_NON_ASCII_RESOURCE_NAME"));
+        return Value.Contains(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"));
     }));
 
     FMHLedgerChangeDetector EmptyDetector({});

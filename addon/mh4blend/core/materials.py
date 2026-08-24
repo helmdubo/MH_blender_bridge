@@ -1,41 +1,44 @@
-"""Pure material fingerprinting and optional shader-registry parsing.
+"""Pure Source Protocol v4 material codec.
 
-Material identity (kind + logical name) is deliberately outside the fingerprint. The
-content hash answers only whether the UE material payload changed:
-``shader_class + params + textures``.  Numeric material parameters use the
-same p=6 generic/property quantization as the canonical JSON contract, so an
-integer and the equivalent float cannot create a phantom diff.
-
-The registry is optional.  Callers represent an absent registry as ``None``;
-that disables shader-class checking rather than treating absence as invalid.
+The disk payload has no identity, schema, version, or compatibility fields.
+Identity comes from the ``.material`` filename; this module only validates and
+serializes the closed grammar from docs/08 section 5.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import math
+import os
+from pathlib import Path
+import re
+import struct
 from typing import Any
 
-from .canonical import P_PROPERTIES, canonical_json_bytes, hash_hex, nfc, quantize
+from .model import MaterialResource
 
 __all__ = [
-    "MaterialRegistry",
+    "MATERIAL_TEXTURE_EXTENSIONS",
     "MaterialValueError",
-    "RegistryValidationError",
-    "material_canonical_form",
-    "material_content_hash",
-    "material_disk_payload",
-    "parse_registry",
+    "material_document",
+    "material_json_bytes",
+    "parse_material",
+    "resolve_texture_reference",
 ]
 
 
-class RegistryValidationError(ValueError):
-    """Configured registry content is not the supported ``mh.registry`` v1."""
+MATERIAL_TEXTURE_EXTENSIONS = frozenset({
+    ".png", ".tga", ".tif", ".tiff", ".exr", ".jpg", ".jpeg", ".dds",
+    ".hdr",
+})
+
+_TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
+_TEXTURE_SLOT_RE = re.compile(r"^tex(?:[0-9]|1[0-5])$")
+_CLASS_FIELDS = frozenset({"class", "twosided", "textures", "params"})
 
 
 class MaterialValueError(ValueError):
-    """Material payload cannot be represented by the manifest contract."""
+    """A material cannot be represented without losing v4 semantics."""
 
     def __init__(self, code: str, path: str, message: str):
         self.code = code
@@ -43,164 +46,243 @@ class MaterialValueError(ValueError):
         super().__init__(f"{code}: {path}: {message}")
 
 
-@dataclass(frozen=True)
-class MaterialRegistry:
-    """Validated registry subset needed by the Blender material exporter."""
-
-    shader_classes: frozenset[str]
-
-    def contains(self, shader_class: str) -> bool:
-        return nfc(shader_class) in self.shader_classes
+def _error(path: str, message: str) -> MaterialValueError:
+    return MaterialValueError("MH_E_MATERIAL_GRAMMAR", path, message)
 
 
-def _disk_number(q: int) -> int | float:
-    """Render one p=6 integer in the human-facing manifest representation."""
-    scale = 10 ** P_PROPERTIES
-    if q % scale == 0:
-        return q // scale
-    return q / scale
+def _token(value: Any, path: str, *, texture: bool = False) -> str:
+    if not isinstance(value, str) or _TOKEN_RE.fullmatch(value) is None:
+        code = (
+            "MH_E_NONCANONICAL_TEXTURE_REFERENCE"
+            if texture else "MH_E_MATERIAL_GRAMMAR"
+        )
+        raise MaterialValueError(
+            code, path, "must match [a-z0-9_]+ exactly; no repair is performed")
+    return value
 
 
-def _material_value(value: Any, path: str) -> tuple[Any, Any]:
-    """Return ``(normalized_disk_value, canonical_value)`` for one value."""
-    if value is None or isinstance(value, bool):
-        return value, value
+def _number(value: Any, path: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _error(path, "must be a number")
+    try:
+        finite = math.isfinite(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise _error(path, str(exc)) from exc
+    if not finite:
+        raise MaterialValueError(
+            "MH_E_NAN_INF_VALUE", path, "NaN/Inf is not a material value")
+    try:
+        narrowed = struct.unpack("!f", struct.pack("!f", float(value)))[0]
+    except (OverflowError, struct.error, ValueError) as exc:
+        raise _error(path, "must be representable as finite IEEE float32") from exc
+    if not math.isfinite(narrowed):
+        raise _error(path, "must be representable as finite IEEE float32")
+    # Signed zero is not a material distinction and has one canonical spelling.
+    return 0.0 if narrowed == 0.0 else narrowed
+
+
+def _textures(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise _error("textures", "must be an object")
+    out: dict[str, str] = {}
+    for key, reference in value.items():
+        if not isinstance(key, str) or _TEXTURE_SLOT_RE.fullmatch(key) is None:
+            raise _error(
+                "textures", "keys must be tex0 through tex15 without leading zeroes")
+        out[key] = _token(reference, f"textures.{key}", texture=True)
+    return dict(sorted(out.items(), key=lambda item: int(item[0][3:])))
+
+
+def _params(value: Any) -> dict[str, float | list[float]]:
+    if not isinstance(value, dict):
+        raise _error("params", "must be an object")
+    out: dict[str, float | list[float]] = {}
+    for key, parameter in value.items():
+        _token(key, "params key")
+        path = f"params.{key}"
+        if isinstance(parameter, (list, tuple)):
+            if len(parameter) != 4:
+                raise _error(path, "vector parameters must contain exactly 4 numbers")
+            out[key] = [
+                _number(component, f"{path}[{index}]")
+                for index, component in enumerate(parameter)
+            ]
+        else:
+            out[key] = _number(parameter, path)
+    return dict(sorted(out.items()))
+
+
+def material_document(material: MaterialResource) -> dict[str, Any]:
+    """Validate one DTO and return its canonical insertion-ordered document."""
+    if not isinstance(material, MaterialResource):
+        raise TypeError("material must be MaterialResource")
+    has_class = material.material_class is not None
+    has_library = material.library is not None
+    if has_class == has_library:
+        raise _error("$", "exactly one of class or library is required")
+
+    if has_library:
+        library = _token(material.library, "library")
+        if material.twosided is not None or material.textures or material.params:
+            raise _error(
+                "$", "library form contains exactly one field and no overrides")
+        return {"library": library}
+
+    document: dict[str, Any] = {
+        "class": _token(material.material_class, "class"),
+    }
+    if material.twosided is not None:
+        if not isinstance(material.twosided, bool):
+            raise _error("twosided", "must be a bool")
+        document["twosided"] = material.twosided
+    if material.textures:
+        document["textures"] = _textures(material.textures)
+    if material.params:
+        document["params"] = _params(material.params)
+    return document
+
+
+def material_json_bytes(material: MaterialResource | dict[str, Any]) -> bytes:
+    """Return the canonical UTF-8/LF byte form required by docs/08 section 5."""
+    if isinstance(material, dict):
+        material = parse_material(material)
+    document = material_document(material)
+    return (_render_json(document, 0) + "\n").encode("utf-8")
+
+
+def _float_chars(value: float) -> str:
+    """Spell one already-narrowed float32 as shortest round-trip text."""
+    def as_float32(candidate: str) -> float:
+        return struct.unpack("!f", struct.pack("!f", float(candidate)))[0]
+
+    # IEEE binary32 needs at most 9 significant decimal digits for round-trip.
+    for precision in range(1, 10):
+        candidate = format(value, f".{precision}g")
+        if as_float32(candidate) == value:
+            return candidate
+    raise AssertionError("finite float32 did not round-trip in 9 digits")
+
+
+def _render_json(value: Any, depth: int) -> str:
+    indent = "  " * depth
+    child_indent = "  " * (depth + 1)
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return _float_chars(value)
     if isinstance(value, str):
-        normalized = nfc(value)
-        return normalized, normalized
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        try:
-            finite = math.isfinite(float(value))
-        except (OverflowError, TypeError, ValueError) as exc:
-            raise MaterialValueError(
-                "MH_E_INVALID_MATERIAL_VALUE", path, str(exc)) from exc
-        if not finite:
-            raise MaterialValueError(
-                "MH_E_NAN_INF_VALUE", path, "NaN/Inf is not a valid material value")
-        try:
-            q = quantize(value, P_PROPERTIES)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise MaterialValueError(
-                "MH_E_INVALID_MATERIAL_VALUE", path, str(exc)) from exc
-        return _disk_number(q), q
-    if isinstance(value, (list, tuple)):
-        disk_items = []
-        canonical_items = []
-        for index, item in enumerate(value):
-            disk_item, canonical_item = _material_value(
-                item, f"{path}[{index}]")
-            disk_items.append(disk_item)
-            canonical_items.append(canonical_item)
-        return disk_items, canonical_items
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        rows = [
+            f"{child_indent}{_render_json(item, depth + 1)}"
+            for item in value
+        ]
+        return "[\n" + ",\n".join(rows) + f"\n{indent}]"
     if isinstance(value, dict):
-        disk_out: dict[str, Any] = {}
-        canonical_out: dict[str, Any] = {}
-        source_keys: dict[str, str] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise MaterialValueError(
-                    "MH_E_INVALID_MATERIAL_VALUE", path,
-                    f"object keys must be strings, got {type(key).__name__}"
-                )
-            normalized = nfc(key)
-            if normalized in disk_out:
-                raise MaterialValueError(
-                    "MH_E_INVALID_MATERIAL_VALUE", path,
-                    "keys collide after NFC normalization: "
-                    f"{source_keys[normalized]!r} and {key!r}",
-                )
-            source_keys[normalized] = key
-            disk_item, canonical_item = _material_value(
-                item, f"{path}.{normalized}")
-            disk_out[normalized] = disk_item
-            canonical_out[normalized] = canonical_item
-        return disk_out, canonical_out
-    raise MaterialValueError(
-        "MH_E_INVALID_MATERIAL_VALUE", path,
-        f"value of type {type(value).__name__} is not JSON-compatible",
-    )
+        if not value:
+            return "{}"
+        rows = [
+            f"{child_indent}{json.dumps(key, ensure_ascii=False)}: "
+            f"{_render_json(item, depth + 1)}"
+            for key, item in value.items()
+        ]
+        return "{\n" + ",\n".join(rows) + f"\n{indent}}}"
+    raise TypeError(f"unsupported canonical JSON value {type(value).__name__}")
 
 
-def _normalized_material(
-    shader_class: str, params: dict, textures: dict,
-) -> tuple[dict, dict]:
-    if not isinstance(shader_class, str):
-        raise MaterialValueError(
-            "MH_E_INVALID_MATERIAL_VALUE", "shader_class", "must be a string")
-    if not isinstance(params, dict):
-        raise MaterialValueError(
-            "MH_E_INVALID_MATERIAL_VALUE", "params", "must be an object")
-    if not isinstance(textures, dict):
-        raise MaterialValueError(
-            "MH_E_INVALID_MATERIAL_VALUE", "textures", "must be an object")
-
-    normalized_shader = nfc(shader_class)
-    disk_params, canonical_params = _material_value(params, "params")
-    disk_textures, canonical_textures = _material_value(textures, "textures")
-    disk = {
-        "shader_class": normalized_shader,
-        "params": disk_params,
-        "textures": disk_textures,
-    }
-    canonical = {
-        "shader_class": normalized_shader,
-        "params": canonical_params,
-        "textures": canonical_textures,
-    }
-    return disk, canonical
+def _reject_duplicate_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise _error(key, "duplicate JSON field")
+        result[key] = value
+    return result
 
 
-def material_disk_payload(shader_class: str, params: dict, textures: dict) -> dict:
-    """Return normalized material semantics for the self-contained payload."""
-    disk, _canonical = _normalized_material(shader_class, params, textures)
-    return disk
+def _parse_json(value: str | bytes) -> Any:
+    try:
+        return json.loads(
+            value, object_pairs_hook=_reject_duplicate_pairs,
+            parse_constant=lambda token: (_ for _ in ()).throw(
+                MaterialValueError(
+                    "MH_E_NAN_INF_VALUE", "$", f"invalid number {token}")),
+        )
+    except MaterialValueError:
+        raise
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise _error("$", f"invalid JSON: {exc}") from exc
 
 
-def material_canonical_form(shader_class: str, params: dict, textures: dict) -> dict:
-    """Return the canonical value tree used for a material content hash."""
-    _disk, canonical = _normalized_material(shader_class, params, textures)
-    return canonical
-
-
-def material_content_hash(shader_class: str, params: dict, textures: dict) -> str:
-    """XXH3-64 fingerprint of ``shader_class + params + textures``."""
-    canonical = material_canonical_form(shader_class, params, textures)
-    return hash_hex(canonical_json_bytes(canonical))
-
-
-def parse_registry(value: MaterialRegistry | dict | str | bytes) -> MaterialRegistry:
-    """Parse and validate the supported subset of ``mh.registry`` v1.
-
-    Extra top-level fields are tolerated because the UE-generated registry may
-    grow sections unrelated to Blender material validation.  The three fields
-    in the minimal contract are required and validated strictly.
-    """
-    if isinstance(value, MaterialRegistry):
-        return value
-
-    document: Any = value
-    if isinstance(value, (str, bytes)):
-        try:
-            document = json.loads(value)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise RegistryValidationError(f"invalid registry JSON: {exc}") from exc
-
+def parse_material(
+        value: dict[str, Any] | str | bytes, *, name: str = "") -> MaterialResource:
+    """Parse the closed disk grammar without normalization or legacy fallback."""
+    document = _parse_json(value) if isinstance(value, (str, bytes)) else value
     if not isinstance(document, dict):
-        raise RegistryValidationError("registry must be a JSON object")
-    if document.get("schema") != "mh.registry":
-        raise RegistryValidationError("registry schema must be 'mh.registry'")
-    version = document.get("schema_version")
-    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
-        raise RegistryValidationError("registry schema_version must be integer 1")
-    shader_classes = document.get("shader_classes")
-    if not isinstance(shader_classes, list):
-        raise RegistryValidationError("registry shader_classes must be an array")
+        raise _error("$", "material payload must be an object")
 
-    normalized: set[str] = set()
-    for index, shader_class in enumerate(shader_classes):
-        if not isinstance(shader_class, str):
-            raise RegistryValidationError(
-                f"registry shader_classes[{index}] must be a string"
-            )
-        normalized.add(nfc(shader_class))
-    return MaterialRegistry(frozenset(normalized))
+    fields = set(document)
+    if fields == {"library"}:
+        material = MaterialResource(name=name, library=document["library"])
+        # Run through the writer validator so reader and writer share one truth.
+        material_document(material)
+        return material
+
+    unknown = fields - _CLASS_FIELDS
+    if unknown:
+        raise _error("$", f"unknown field(s): {', '.join(sorted(unknown))}")
+    if "class" not in document:
+        raise _error("$", "class form requires field 'class'")
+
+    twosided = document.get("twosided")
+    if "twosided" in document and not isinstance(twosided, bool):
+        raise _error("twosided", "must be a bool")
+    material = MaterialResource(
+        name=name,
+        material_class=document["class"],
+        twosided=twosided if "twosided" in document else None,
+        textures=_textures(document["textures"]) if "textures" in document else {},
+        params=_params(document["params"]) if "params" in document else {},
+    )
+    material_document(material)
+    return material
+
+
+def resolve_texture_reference(
+        source_root: str | os.PathLike, token: str) -> Path:
+    """Resolve one extensionless texture ResourceKey by direct source scan."""
+    _token(token, "texture", texture=True)
+    root = Path(source_root).resolve(strict=False)
+    if not root.is_dir():
+        raise ValueError(f"Project Source Root does not exist: {root}")
+    matches = []
+    for path in root.rglob("*"):
+        if not path.is_file() or path.stem.casefold() != token:
+            continue
+        suffix = path.suffix
+        if suffix.lower() not in MATERIAL_TEXTURE_EXTENSIONS:
+            continue
+        if path.stem != token or suffix not in MATERIAL_TEXTURE_EXTENSIONS:
+            raise MaterialValueError(
+                "MH_E_NONCANONICAL_RESOURCE_NAME", str(path),
+                "texture filename must use the exact lowercase logical name "
+                "and extension")
+        matches.append(path)
+    matches.sort(key=lambda path: str(path).replace("\\", "/"))
+    if not matches:
+        raise MaterialValueError(
+            "MH_E_UNRESOLVED_TEXTURE_REFERENCE", token,
+            "no texture resource with this logical name exists in source_root")
+    if len(matches) != 1:
+        rendered = ", ".join(str(path) for path in matches)
+        raise MaterialValueError(
+            "MH_E_AMBIGUOUS_RESOURCE_NAME", token,
+            f"multiple texture resources share this logical name: {rendered}")
+    return matches[0]

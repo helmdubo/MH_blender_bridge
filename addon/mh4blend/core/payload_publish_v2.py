@@ -164,6 +164,7 @@ def atomic_publish_bytes(
         lock_root: str | os.PathLike | None = None,
         source_root: str | os.PathLike | None = None,
         timeout_seconds: float = 10.0,
+        read_back_validator=None,
         pre_replace_guard=None,
         _crash_at: str | None = None,
         _hold_lock_seconds: float = 0.0) -> dict:
@@ -175,6 +176,8 @@ def atomic_publish_bytes(
     """
     if not isinstance(payload, bytes):
         raise TypeError("payload must be bytes")
+    if read_back_validator is not None and not callable(read_back_validator):
+        raise TypeError("read_back_validator must be callable")
     if pre_replace_guard is not None and not callable(pre_replace_guard):
         raise TypeError("pre_replace_guard must be callable")
     if _crash_at not in {None, "before_replace", "after_replace"}:
@@ -209,6 +212,11 @@ def atomic_publish_bytes(
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
+            read_back = temp.read_bytes()
+            if read_back != payload:
+                raise OSError("staged payload read-back differs from written bytes")
+            if read_back_validator is not None:
+                read_back_validator(read_back)
             if _crash_at == "before_replace":
                 os._exit(91)
             if pre_replace_guard is not None:

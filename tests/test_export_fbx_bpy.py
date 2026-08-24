@@ -148,9 +148,19 @@ def test_existing_file_is_replaced_but_directory_is_blocked(tmp_path):
 def test_export_rejects_noncanonical_logical_name(tmp_path, name):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection, _direct, _nested = _build_joined(name)
-    with pytest.raises(ValueError, match="MH_E_NON_ASCII_RESOURCE_NAME"):
+    with pytest.raises(ValueError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
         export_fbx_collection(collection, tmp_path, source_root=tmp_path)
     assert not list(tmp_path.glob("*.mesh.fbx"))
+
+
+def test_noncanonical_material_slot_preserves_resource_name_code(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, direct, _nested = _build_joined("canonical_mesh")
+    _assign_material(direct, _material("Wall"))
+    with pytest.raises(MHValidationError) as excinfo:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert excinfo.value.code == "MH_E_NONCANONICAL_RESOURCE_NAME"
+    assert not (tmp_path / "canonical_mesh.mesh.fbx").exists()
 
 
 def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):
@@ -173,8 +183,9 @@ def test_mismatched_existing_lod_suffix_fails_closed(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     built = _build_lods("mismatch")
     built["render"][0].name = "Body_lod01"
-    with pytest.raises(ValueError, match="MH_E_INVALID_LOD_HIERARCHY"):
+    with pytest.raises(MHValidationError) as excinfo:
         export_fbx_collection(built["root"], tmp_path, source_root=tmp_path)
+    assert excinfo.value.code == "MH_E_INVALID_LOD_HIERARCHY"
 
 
 def test_lod_names_restore_when_exporter_raises(tmp_path, monkeypatch):

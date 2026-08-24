@@ -207,7 +207,7 @@ bool MHResourceKeyFromSourceFile(
     if (!Filename.EndsWith(CanonicalSuffix, ESearchCase::CaseSensitive))
     {
         OutError = FString::Printf(
-            TEXT("MH_E_SOURCE_INDEX_INVALID: source filename extension is not canonical: %s"),
+            TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: source filename extension is not canonical: %s"),
             *Filename);
         return false;
     }
@@ -216,7 +216,7 @@ bool MHResourceKeyFromSourceFile(
     if (!IsCanonicalLogicalName(LogicalName))
     {
         OutError = FString::Printf(
-            TEXT("MH_E_NON_ASCII_RESOURCE_NAME: source logical name must match [a-z0-9_]+: %s"),
+            TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: source logical name must match [a-z0-9_]+: %s"),
             *Filename);
         return false;
     }

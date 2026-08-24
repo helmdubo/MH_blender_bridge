@@ -11,6 +11,7 @@ public class MimirCompositeTests : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new[]
             {
+                "AssetRegistry",
                 "Core",
                 "CoreUObject",
                 "Engine",

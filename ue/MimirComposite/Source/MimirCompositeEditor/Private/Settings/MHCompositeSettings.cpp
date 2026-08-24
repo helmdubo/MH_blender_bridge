@@ -4,10 +4,10 @@
 
 UMHCompositeSettings::UMHCompositeSettings()
 {
-    ContentRoot = TEXT("/Game/MH");
-    MasterRoot = TEXT("/Game/MH/Masters");
+    ContentRoot = TEXT("/Game/MH/Generated");
+    MasterRoot = TEXT("/Game/Mimir/MasterMaterials");
+    LibraryRoot = TEXT("/Game/Mimir/MaterialLibrary");
     StaticMeshPrefix = TEXT("SM_");
-    MaterialInstancePrefix = TEXT("MI_");
     TexturePrefix = TEXT("T_");
     CompositeAssetPrefix = TEXT("CA_");
 }
@@ -27,11 +27,4 @@ FString UMHCompositeSettings::GetSourceRootPath() const
     FString Path = SourceRoot.Path;
     Path.TrimStartAndEndInline();
     return Path;
-}
-
-FString UMHCompositeSettings::GetEffectiveTextureRootPath() const
-{
-    FString Path = TextureRoot.Path;
-    Path.TrimStartAndEndInline();
-    return Path.IsEmpty() ? GetSourceRootPath() : Path;
 }

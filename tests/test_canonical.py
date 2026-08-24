@@ -41,11 +41,14 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_INVALID_SCALE",
         "MH_E_LOD_LEVELS_SPARSE",
         "MH_E_LOD_SLOT_NOT_IN_BASE",
+        "MH_E_MATERIAL_GRAMMAR",
+        "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE",
         "MH_E_MATERIAL_SLOT_CONFLICT",
         "MH_E_NAME_MISMATCH",
         "MH_E_NAN_INF_VALUE",
         "MH_E_NESTED_COMPOSITE_COLLECTION",
-        "MH_E_NON_ASCII_RESOURCE_NAME",
+        "MH_E_NONCANONICAL_RESOURCE_NAME",
+        "MH_E_NONCANONICAL_TEXTURE_REFERENCE",
         "MH_E_PARENT_CYCLE",
         "MH_E_PARENT_OUTSIDE_RESOURCE",
         "MH_E_PAYLOAD_LOCK_TIMEOUT",
@@ -58,10 +61,12 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_TEXTURE_OUTSIDE_ROOT",
         "MH_E_UNKNOWN_SCHEMA_VERSION",
         "MH_E_UNRESOLVED_EXTERNAL",
+        "MH_E_UNRESOLVED_TEXTURE_REFERENCE",
         "MH_E_UNSUPPORTED_NODE_KIND",
         "MH_W_COMPOSITE_CYCLE",
         "MH_W_DUPLICATE_RESOURCE_NAME",
         "MH_W_LOD_AUX_NODE_IGNORED",
+        "MH_W_MANAGED_ASSET_LOCALLY_MODIFIED",
         "MH_W_MATERIAL_NOT_FOUND",
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
@@ -76,8 +81,8 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_UNKNOWN_SHADER_CLASS",
         "MH_W_UNRESOLVED_RESOURCE",
     })
-    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 36
-    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 16
+    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 40
+    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 17
     assert all(re.fullmatch(r"MH_[EW]_[A-Z0-9_]+", code)
                for code in ERROR_CODES)
 
@@ -124,9 +129,9 @@ def test_logical_name_accepts_exact_v4_alphabet(name):
 @pytest.mark.parametrize(
     "name", ["", "Garage", "garage a", "garage-a", "foo.bar", "гараж"])
 def test_logical_name_rejects_without_normalization(name):
-    with pytest.raises(ValueError, match="MH_E_NON_ASCII_RESOURCE_NAME"):
+    with pytest.raises(ValueError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
         validate_resource_name(name)
-    with pytest.raises(ValueError, match="MH_E_NON_ASCII_RESOURCE_NAME"):
+    with pytest.raises(ValueError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
         resource_filename(name, ".mesh.fbx")
 
 
