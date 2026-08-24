@@ -82,7 +82,7 @@ class MH_PT_source_tools(bpy.types.Panel):
                         icon="ERROR")
                 elif not settings.material_class:
                     materials.label(
-                        text=f"Auto from Dagor: {effective_class}",
+                        text=f"Auto from Dagor: {effective_class} + fields",
                         icon="CHECKMARK")
                 row = materials.row(align=True)
                 row.prop(settings, "twosided_override")
@@ -92,7 +92,7 @@ class MH_PT_source_tools(bpy.types.Panel):
 
                 textures = materials.box()
                 header = textures.row()
-                header.label(text="Textures", icon="TEXTURE")
+                header.label(text="Texture Overrides", icon="TEXTURE")
                 header.operator(
                     "mh.material_texture_add", text="", icon="ADD")
                 for index, texture in enumerate(settings.textures):
@@ -105,7 +105,7 @@ class MH_PT_source_tools(bpy.types.Panel):
 
                 params = materials.box()
                 header = params.row()
-                header.label(text="Parameters", icon="PROPERTIES")
+                header.label(text="Parameter Overrides", icon="PROPERTIES")
                 header.operator("mh.material_param_add", text="", icon="ADD")
                 for index, parameter in enumerate(settings.params):
                     row = params.row(align=True)
