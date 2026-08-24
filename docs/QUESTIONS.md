@@ -6,13 +6,11 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты четыре вопроса v4: filesystem aliases (`OPEN-V4-1`) и выявленные
-предварительным аудитом S2 вопросы точной material-грамматики
-(`OPEN-V4-6`), applied-state (`OPEN-V4-7`) и library round-trip
-(`OPEN-V4-8`). Вопросы `OPEN-V4-2` (texture reference, аудит S0),
-`OPEN-V4-3` (mismatched LOD suffix), `OPEN-V4-4` (код noncanonical logical
-name) и `OPEN-V4-5` (версии diagnostic JSON) решены owner — нормативный текст
-перенесён в 08 §§2–5 и 09 (S4/S5/S6).
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-5`, а также выявленные предварительным аудитом S2
+`OPEN-V4-6` (грамматика Material), `OPEN-V4-7` (applied state) и
+`OPEN-V4-8` (library round-trip) решены owner — нормативный текст
+перенесён в 08 §§2–5, §7 и 09 (S2/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -138,6 +136,16 @@ scan/resolve/analyze/plan и FBX transport S1, но блокировал
 
 ## OPEN-V4-6 — top-level bool и точная грамматика Material v4
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §5 (этот docs-коммит).**
+Грамматика закрыта: class-форма = `class` + опциональные `twosided`,
+`textures` (`tex0`–`tex15`), `params` (число или массив ровно из 4);
+library-форма = ровно одно поле `library`. `tex16support` — артефакт
+черновика, удалён из примера; `twosided` — единственный top-level флаг
+(MI Base Property Override, не static switch), пишется только при
+override. Любое неизвестное поле/тип/ключ — новый `MH_E_MATERIAL_GRAMMAR`
+(регистрируется в S2), reader ничего не игнорирует. Static bools
+по-прежнему не сериализуются (№7).
+
 **Контекст.** Первый пример 08 §5 содержит top-level поля
 `"tex16support": true` и `"twosided": false`. Ниже тот же §5 утверждает,
 что статические bool-переключатели в JSON не сериализуются, а 09 S2 ещё раз
@@ -155,9 +163,20 @@ library-mode, включая правило unknown fields.
 не публикует `.material`, пока exact grammar не ратифицирована. Сохраняется
 S1-заглушка; старый v2 codec не возвращается и dual-read не вводится.
 
-**Статус.** ОТКРЫТ; блокирует material codec, golden-векторы и весь S2.
+**Прежний статус.** ОТКРЫТ; блокировал material codec, golden-векторы и
+весь S2.
 
 ## OPEN-V4-7 — семантика `UMHMaterialSourceData.AppliedHash`
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §§5, 7 (этот docs-коммит).**
+Хранятся ОБА хэша (`blake3-160:<40 hex>`, §3): `SourceHash` — raw bytes
+применённого `.material`; `AppliedHash` — hash канонического JSON,
+извлечённого из MI сразу после apply тем же extractor'ом, что использует
+Publish — одна канонизация на импорт, publish и детект. Локальная правка:
+re-extract сейчас → hash ≠ `AppliedHash` (или extract не-roundtrippable) →
+`MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`. Каноническая байт-форма
+(UTF-8/LF/отступ 2/порядок полей/float shortest round-trip) закреплена в
+08 §5 и фиксируется общими golden-векторами pytest + UE Automation.
 
 **Контекст.** 08 §5 требует перед source-wins overwrite обнаруживать локально
 изменённый managed MI и выдавать `MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`. 08 §7
@@ -178,9 +197,20 @@ asset-state hash, какие домены MI входят в него, как о
 reader-only; ложный warning или молчаливое затирание локальной правки
 запрещены.
 
-**Статус.** ОТКРЫТ; блокирует `UMHMaterialSourceData`, MI import и Publish.
+**Прежний статус.** ОТКРЫТ; блокировал `UMHMaterialSourceData`, MI import и
+Publish.
 
 ## OPEN-V4-8 — library-mode round-trip и Blender authoring mapping
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §5 (этот docs-коммит).**
+Подтверждено: любой локальный override у MI c library-parent делает Publish
+`MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`; молчаливый discard и расширение JSON
+запрещены. Импорт library-формы — полный apply (reparent + очистка
+overrides, source побеждает, детект локальной правки до перезаписи).
+Blender: v4-модель — собственная property group mh4blend; dag4blend
+`is_proxy`/`proxy_path` не читаются и не конвертируются (proxymat
+superseded library-формой), `sides` не сериализуется — двусторонность
+выражается только `twosided`.
 
 **Контекст.** Library payload по 08 §5 содержит только `{ "library":
 "<name>" }`. При этом S2 требует Publish существующего MI и Blender
@@ -201,7 +231,8 @@ writer/reader. Активный норматив не определяет:
 Publish не угадывают mapping и остаются недоступны. Никакие proxy paths или
 parent asset names не преобразуются в logical name автоматически.
 
-**Статус.** ОТКРЫТ; блокирует library-mode часть S2 и круговой acceptance.
+**Прежний статус.** ОТКРЫТ; блокировал library-mode часть S2 и круговой
+acceptance.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 

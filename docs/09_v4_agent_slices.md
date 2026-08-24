@@ -100,7 +100,11 @@ replace (`ничего не сравнивая`), Adopt-диалог (папка
 `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` на publish.
 
 Acceptance: `.material → MI → правка → Publish → повторный импорт` даёт
-NO_CHANGE; golden-векторы канонического JSON; текстуры резолвятся как
+NO_CHANGE; golden-векторы канонического JSON — ОБЩИЕ файлы-фикстуры для
+pytest и UE Automation (байт-идентичность Blender- и UE-writer'ов, 08 §5);
+закрытая грамматика с `MH_E_MATERIAL_GRAMMAR`; overrides у library-parent
+на Publish дают `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` (решения
+OPEN-V4-6/7/8); текстуры резолвятся как
 extensionless logical names по ResourceKey `texture:<name>` сканом
 source-дерева (08 §5, решение OPEN-V4-2; Project Index как кэш появляется
 в S4); коды `MH_E_NONCANONICAL_TEXTURE_REFERENCE` и

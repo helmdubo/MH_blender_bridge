@@ -113,8 +113,6 @@ FBX — односторонний транспорт Blender → UE и **обы
 
 ```json
 { "class": "rendinst_perlin_layered",
-  "tex16support": true,
-  "twosided": false,
   "textures": { "tex0": "marble_a_grey_tex_d", "tex2": "marble_a_tex_n" },
   "params": {
     "invert_heights": [0.0, 1.0, 1.0, 1.0],
@@ -149,8 +147,51 @@ FBX — односторонний транспорт Blender → UE и **обы
   export, UE Publish) выводят token из stem имени файла/ассета сами и
   fail-closed падают на неканоничном stem; reader ничего не нормализует —
   legacy-нормализация абсолютных путей удалена из scope (миграции нет, §11).
-- Статические bool-переключатели в JSON НЕ сериализуются; в мастерах они
-  включены по умолчанию (№7). Params: скаляры и векторы (массивы) как выше.
+- **Точная грамматика — закрытый набор полей (решение OPEN-V4-6).**
+  Class-форма: `class` (обязателен), опционально `twosided`, `textures`,
+  `params`. Library-форма: РОВНО одно поле `library`. Ключи `textures` —
+  только `tex0`–`tex15` (без ведущих нулей), ключи `params` — `[a-z0-9_]+`.
+  Значение `params`: число (UE scalar parameter) или массив РОВНО из 4
+  чисел (vector parameter); других форм нет. `twosided` (bool) —
+  единственный top-level флаг: это НЕ static switch, а MI Base Property
+  Override (TwoSided); writer пишет его только при override, отсутствие =
+  значение мастера. Любое неизвестное поле, неверный тип или недопустимый
+  ключ — `MH_E_MATERIAL_GRAMMAR` (регистрируется в S2), блок материала и
+  dependents; reader никогда не игнорирует неизвестное (ignore = тихая
+  потеря данных на Publish). Статические bool-переключатели по-прежнему НЕ
+  сериализуются и живут включёнными в мастерах (№7); `tex16support` из
+  раннего примера — артефакт черновика, такого поля не существует.
+- **Каноническая байт-форма JSON и applied state (решение OPEN-V4-7).**
+  Blender writer и UE Publish обязаны выдавать байт-идентичный canonical
+  JSON: UTF-8, LF, завершающий перевод строки, 2-пробельный отступ,
+  порядок полей `class|library → twosided → textures → params`, ключи
+  `textures` по номеру слота, ключи `params` лексикографически; float —
+  кратчайшая round-trip десятичная запись (семантика C++
+  `std::to_chars`), целые значения без дробной части. Точные байты
+  фиксируются ОБЩИМИ golden-векторами, которые читают и pytest, и UE
+  Automation. `UMHMaterialSourceData` хранит два хэша (формат — §3):
+  `SourceHash` — raw hash применённого `.material`; `AppliedHash` — hash
+  канонического JSON, извлечённого из MI сразу после apply тем же
+  extractor'ом, что использует Publish (одна канонизация — одна истина).
+  Детект локальной правки managed MI: extract сейчас → hash ≠
+  `AppliedHash` → `MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`; extract,
+  падающий на non-roundtrippable локальном состоянии, тоже считается
+  локальной правкой (warning, не блок). Здоровый apply обязан давать
+  `extract(MI) == canonical(source)` байт-в-байт — это и есть NO_CHANGE
+  acceptance S2.
+- **Library-форма строгая (решение OPEN-V4-8).** `{"library": "<name>"}`
+  без других полей и без overrides. Publish MI с library-parent и любым
+  локальным override (scalar/vector/texture/base property) —
+  `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`: художник очищает overrides или
+  переводит материал в class-форму; молчаливый discard запрещён. Импорт
+  library-формы — полный apply: reparent на `<library_root>/<name>` и
+  очистка локальных overrides (source побеждает; до перезаписи
+  срабатывает детект локальной правки). Blender-модель v4 — собственная
+  property group mh4blend (`class|library` + поля грамматики); dag4blend
+  `is_proxy`/`proxy_path` НЕ читаются и не конвертируются автоматически
+  (proxymat-концепция superseded library-формой), `sides` не
+  сериализуется: двусторонность выражается только полем `twosided`,
+  «real two sided» — дело конкретного класса/params.
 - **Publish Material = полная перезапись source-файла без сравнения** (№11):
   extract MI → canonical JSON → sibling tmp → read-back → atomic replace →
   index upsert. Материал без source: диалог «папка + имя» (Adopt). Blender
@@ -195,8 +236,9 @@ Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой акт
   AppliedAssetHash, LastSuccessfulTransaction. Штатные source-file записи
   (path/timestamp/MD5) — бесплатно от базового класса. Это receipt, не
   identity.
-- `UMHMaterialSourceData : UAssetUserData` на MI: LogicalName, path,
-  applied hash, parent class.
+- `UMHMaterialSourceData : UAssetUserData` на MI: LogicalName,
+  SourceRelativePath, SourceHash (raw, §3), AppliedHash (canonical
+  extract, §5 / решение OPEN-V4-7), ParentClass.
 - `UMHCompositeAsset` — собственное поле applied state.
 - Asset Registry tags: `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`,
   `MH.AppliedHash`, `MH.Managed` — индекс строит GeneratedAssets из них.
