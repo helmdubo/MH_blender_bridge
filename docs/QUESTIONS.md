@@ -6,7 +6,8 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+Открыты два вопроса v4: filesystem aliases (`OPEN-V4-1`) и точная
+семантика `ParentClass` для library-form (`OPEN-V4-9`). Вопросы
 `OPEN-V4-2`–`OPEN-V4-5`, а также выявленные предварительным аудитом S2
 `OPEN-V4-6` (грамматика Material), `OPEN-V4-7` (applied state) и
 `OPEN-V4-8` (library round-trip) решены owner — нормативный текст
@@ -233,6 +234,28 @@ parent asset names не преобразуются в logical name автома�
 
 **Прежний статус.** ОТКРЫТ; блокировал library-mode часть S2 и круговой
 acceptance.
+
+## OPEN-V4-9 — `UMHMaterialSourceData.ParentClass` для library-form
+
+**Контекст.** 08 §7 требует хранить в `UMHMaterialSourceData` поле
+`ParentClass`. Для class-form 08 §5 задаёт logical token `class`, но для
+library-form parent резолвится из отдельного token `library` и не
+является material class. Активный норматив не определяет, должно ли
+поле хранить library token, object path, пустое значение или иметь
+иное имя/форму. Любой выбор меняет persisted applied-state и Asset
+Registry tags.
+
+**Вопрос.** Что точно записывается в `ParentClass` для class-form и
+library-form: logical token, UE object path или другая tagged форма? Нужно
+ли переименовать поле, чтобы library-parent не маскировался под class?
+
+**Временное fail-closed правило.** UE не коммитит applied state и не
+сохраняет managed MI для library-form; Publish/Adopt library-mode не
+предполагает форму persisted metadata. Class-form может быть
+реализована и протестирована, но S2 в целом не готов к
+acceptance до ответа owner.
+
+**Статус.** ОТКРЫТ; блокирует library applied state и готовност S2.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
