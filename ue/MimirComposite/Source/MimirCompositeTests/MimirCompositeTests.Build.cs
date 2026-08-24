@@ -23,5 +23,9 @@ public class MimirCompositeTests : ModuleRules
                 "StaticMeshDescription",
                 "UnrealEd"
             });
+
+        // S5 index acceptance generates one real material-bound FBX fixture
+        // through the same pinned Autodesk SDK used by the editor translator.
+        AddEngineThirdPartyPrivateStaticDependencies(Target, "FBX");
     }
 }

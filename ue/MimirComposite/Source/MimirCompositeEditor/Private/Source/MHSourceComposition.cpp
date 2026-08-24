@@ -4,6 +4,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Modules/ModuleManager.h"
@@ -43,12 +44,16 @@ void SetCarrierKind(
         OutClaim.bHasCarrierKind = true;
         OutClaim.CarrierKind = EMHResourceKind::Composite;
     }
+    else if (Asset.AssetClassPath == UStaticMesh::StaticClass()->GetClassPathName())
+    {
+        OutClaim.bHasCarrierKind = true;
+        OutClaim.CarrierKind = EMHResourceKind::StaticMesh;
+    }
     else if (TextureClassPaths.Contains(Asset.AssetClassPath))
     {
         OutClaim.bHasCarrierKind = true;
         OutClaim.CarrierKind = EMHResourceKind::Texture;
     }
-    // StaticMesh deliberately has no S4 carrier. Its receipt lands in S5.
 }
 
 void GatherGeneratedAssetClaims(

@@ -291,7 +291,7 @@ bool FMHFbxBackend::ImportAxisProbe(
     if (!bExpectedAxis || !bExpectedUnits)
     {
         OutError = FString::Printf(
-            TEXT("MH_E_GEOMETRY_SOURCE_MISMATCH: axis or units differ from the canonical FBX export "
+            TEXT("MH_E_FBX_TRANSPORT_FAILED: axis or units differ from the canonical FBX export "
                  "(up=%d, up_sign=%d, front=%d, front_sign=%d, handedness=%d, "
                  "unit_scale=%.17g, unit_multiplier=%.17g, expected_unit_scale=%.17g, expected_unit_multiplier=%.17g)"),
             static_cast<int32>(UpVector),

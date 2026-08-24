@@ -4,6 +4,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeImporter.h"
+#include "Engine/StaticMesh.h"
 #include "Logging/MessageLog.h"
 #include "MessageLogModule.h"
 #include "Material/MHMaterialImporter.h"
@@ -11,9 +12,13 @@
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/MessageDialog.h"
+#include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
+#include "StaticMesh/MHStaticMeshImportData.h"
+#include "StaticMesh/MHStaticMeshImporter.h"
+#include "UObject/UObjectGlobals.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHSourceImporter)
 
@@ -249,8 +254,50 @@ bool UMHSourceImporter::ImportSources(
             bOutExecuted = true;
         }
     }
-    // Composite closure is resolved only after material execution. Mesh
-    // endpoints intentionally remain fail-closed until their S5 builder exists.
+    // ImporterVersion is persisted in the receipt rather than the exact-six
+    // registry projection, so the coordinator promotes equal-hash meshes here,
+    // outside the no-UObject-load project-index scan.
+    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    {
+        if (Entry.Key.Kind != EMHResourceKind::StaticMesh || !Entry.Errors.IsEmpty())
+        {
+            continue;
+        }
+        if (Entry.Change == EMHSourceChange::NoChange)
+        {
+            const FString PackageName = FString(TEXT("/Game/MH/Generated/Meshes/")) + Entry.Key.LogicalName;
+            const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;
+            if (const UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *ObjectPath))
+            {
+                const UMHStaticMeshImportData* Data = Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData());
+                if (Data != nullptr && Data->ImporterVersion != MHStaticMeshImporterVersion)
+                {
+                    Entry.Change = EMHSourceChange::Reimport;
+                }
+            }
+        }
+        if (!(Entry.Change == EMHSourceChange::Create ||
+              Entry.Change == EMHSourceChange::Reimport ||
+              Entry.Change == EMHSourceChange::Move))
+        {
+            continue;
+        }
+        FMHStaticMeshOperationResult MeshResult = MHImportStaticMeshV4(
+            Entry,
+            *Services.Resolver,
+            SourceRoot);
+        Entry.Warnings.Append(MeshResult.Warnings);
+        if (!MeshResult.Succeeded())
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.Errors.Add(MeshResult.Error);
+        }
+        else
+        {
+            bOutExecuted |= MeshResult.bRebuilt || MeshResult.bReceiptUpdated;
+        }
+    }
+    // Composite closure is resolved only after material and mesh execution.
     for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
     {
         if (Entry.Key.Kind != EMHResourceKind::Composite || !Entry.Errors.IsEmpty() ||
@@ -278,6 +325,95 @@ bool UMHSourceImporter::ImportSources(
     }
     PresentPlan(OutAnalysis);
     return !OutAnalysis.HasErrors();
+}
+
+bool UMHSourceImporter::ReimportStaticMesh(
+    UStaticMesh* StaticMesh,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || StaticMesh == nullptr)
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: ReimportStaticMesh requires a mesh on the game thread");
+        return false;
+    }
+    const UMHStaticMeshImportData* Data = Cast<UMHStaticMeshImportData>(StaticMesh->GetAssetImportData());
+    if (Data == nullptr || Data->LogicalName.IsEmpty() || Data->SourceRelativePath.IsEmpty())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: static mesh has no v4 source receipt");
+        return false;
+    }
+    FMHResourceKey MeshKey;
+    MeshKey.Kind = EMHResourceKind::StaticMesh;
+    MeshKey.LogicalName = Data->LogicalName;
+    if (!MeshKey.IsCanonical())
+    {
+        OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: managed mesh receipt has a noncanonical logical name");
+        return false;
+    }
+    const FString ExpectedPackageName = FString(TEXT("/Game/MH/Generated/Meshes/")) + MeshKey.LogicalName;
+    const FString ExpectedObjectPath = ExpectedPackageName + TEXT(".") + MeshKey.LogicalName;
+    if (StaticMesh->GetPathName() != ExpectedObjectPath ||
+        StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *ExpectedObjectPath) != StaticMesh)
+    {
+        OutError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: explicit reimport target is not the canonical managed mesh UObject");
+        return false;
+    }
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    {
+        return false;
+    }
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key = MoveTemp(MeshKey);
+    const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Entry.Key);
+    if (Outcome.Status != EMHResolveStatus::Resolved)
+    {
+        OutError = Outcome.Diagnostic.IsEmpty()
+            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: managed mesh source does not resolve")
+            : Outcome.Diagnostic;
+        return false;
+    }
+    Entry.PayloadPath = Outcome.PayloadPath;
+    FString RelativeBase = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(RelativeBase);
+    RelativeBase += TEXT("/");
+    Entry.SourcePath = Outcome.PayloadPath;
+    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive the current mesh source path");
+        return false;
+    }
+    FPaths::NormalizeFilename(Entry.SourcePath);
+    Entry.RawHash = Outcome.RawHash;
+    Entry.Change = EMHSourceChange::Reimport;
+    FMHStaticMeshOperationResult Result = MHImportStaticMeshV4(
+        Entry,
+        *Services.Resolver,
+        SourceRoot,
+        true);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    if (!Result.Succeeded())
+    {
+        return false;
+    }
+    if (Result.StaticMesh != StaticMesh)
+    {
+        OutError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: explicit reimport resolved a different managed UObject");
+        return false;
+    }
+    return Result.bRebuilt;
 }
 
 bool UMHSourceImporter::PublishMaterial(

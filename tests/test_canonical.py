@@ -34,6 +34,7 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_EMPTY_MATERIAL_SLOT",
         "MH_E_EMPTY_RESOURCE_COLLECTION",
         "MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED",
+        "MH_E_FBX_TRANSPORT_FAILED",
         "MH_E_INVALID_COLLECTION_OFFSET",
         "MH_E_INVALID_NODE_MARKERS",
         "MH_E_INVALID_EXPORT_MANIFEST",
@@ -71,6 +72,7 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_DUPLICATE_RESOURCE_NAME",
         "MH_W_LOD_AUX_NODE_IGNORED",
         "MH_W_MANAGED_ASSET_LOCALLY_MODIFIED",
+        "MH_W_MANAGED_STATIC_MESH_LOCALLY_MODIFIED",
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
         "MH_W_MATERIAL_SLOT_UNMAPPED",
@@ -82,8 +84,8 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
         "MH_W_UNRESOLVED_PLACEMENT",
     })
-    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 45
-    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 13
+    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 46
+    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 14
     assert all(re.fullmatch(r"MH_[EW]_[A-Z0-9_]+", code)
                for code in ERROR_CODES)
 
