@@ -18,14 +18,13 @@ from ..core.model import Composite
 from ..core.transforms import ue_to_blender_transform
 from ..core.validate import MHValidationError
 from .export_composite import (
-    COLLECTION_KIND_KEY,
-    COLLECTION_RESOURCE_KEY,
     NODE_KIND_KEY,
     NODE_NAME_KEY,
     NODE_RESOURCE_KEY,
     UNRESOLVED_PLACEMENT_KEY,
     _stamp_imported_transform,
 )
+from .resource_markers import stamp_resource_collection
 from .import_fbx import (
     MeshImportTransaction,
     import_mesh_fbx,
@@ -208,11 +207,6 @@ def _matrix_world(transform):
     return Matrix.Translation(translation) @ rotation @ scale_matrix
 
 
-def _stamp_collection(collection, kind: str, name: str) -> None:
-    collection[COLLECTION_KIND_KEY] = kind
-    collection[COLLECTION_RESOURCE_KEY] = name
-
-
 def _build_definition(document, collection, resources, warnings) -> int:
     count = 0
 
@@ -286,7 +280,7 @@ def import_composite_file(filepath, *, source_root) -> dict:
             report = import_mesh_fbx(
                 mesh_path, source_root=root, transaction=transaction)
             collection = report["collection"]
-            _stamp_collection(collection, "mesh", name)
+            stamp_resource_collection(collection, "mesh", name)
             # Definitions remain datablocks and are instanced by placements;
             # unlinking avoids an extra visible copy at the scene origin.
             if collection.name in bpy.context.scene.collection.children:
@@ -298,7 +292,7 @@ def import_composite_file(filepath, *, source_root) -> dict:
         composite_collections = {}
         for name in documents:
             collection = bpy.data.collections.new(f"{name}.composite")
-            _stamp_collection(collection, "composite", name)
+            stamp_resource_collection(collection, "composite", name)
             composite_collections[name] = collection
             resources[("composite", name)] = collection
 

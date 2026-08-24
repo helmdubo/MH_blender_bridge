@@ -14,8 +14,19 @@ class MHValidationError(ValueError):
     def __init__(self, code, subjects, message=""):
         assert code in ERROR_CODES, f"unknown error code {code}"
         self.code = code
-        self.subjects = sorted(subjects)
-        super().__init__(f"{code}: {message}")
+        self.subjects = sorted(str(subject) for subject in subjects)
+        self.message = message
+        if len(self.subjects) == 1:
+            context = f"subject {self.subjects[0]!r}"
+        elif self.subjects:
+            context = "subjects [" + ", ".join(
+                repr(subject) for subject in self.subjects) + "]"
+        else:
+            context = "no subject"
+        rendered = f"{code}: {context}"
+        if message:
+            rendered += f": {message}"
+        super().__init__(rendered)
 
     def as_row(self):
         return ValidationError(self.code, self.subjects, str(self))

@@ -2,7 +2,9 @@
 
 from pathlib import Path
 import importlib
+import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,9 +12,13 @@ bpy = pytest.importorskip("bpy")
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "addon"))
 
-from mh4blend.core.materials import MaterialValueError  # noqa: E402
+from mh4blend.core.materials import (  # noqa: E402
+    MaterialValueError,
+    material_json_bytes,
+)
 from mh4blend.scene.export_material import (  # noqa: E402
     apply_material_resource,
+    material_class_for_export,
     prepare_blender_material_export,
     read_material_file,
     write_prepared_material,
@@ -22,6 +28,7 @@ from mh4blend.core.model import MaterialResource  # noqa: E402
 from mh4blend.ui import ops  # noqa: E402
 
 export_fbx_module = importlib.import_module("mh4blend.scene.export_fbx")
+export_material_module = importlib.import_module("mh4blend.scene.export_material")
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +58,222 @@ def _mesh(name, collection, material):
     obj = bpy.data.objects.new(name, mesh)
     collection.objects.link(obj)
     return obj
+
+
+class _FakeDagorArray:
+    def __init__(self, values):
+        self._values = values
+
+    def to_list(self):
+        return list(self._values)
+
+
+def _dagor_material(
+        name="wall", *, shader_class="rendinst_simple", sides=0,
+        textures=None, params=None):
+    dagor_textures = {f"tex{index}": "" for index in range(16)}
+    dagor_textures.update(textures or {})
+    return SimpleNamespace(
+        name=name,
+        mh4blend=SimpleNamespace(
+            mode="CLASS",
+            material_class="",
+            twosided_override=False,
+            twosided=False,
+            textures=[],
+            params=[],
+        ),
+        dagormat=SimpleNamespace(
+            shader_class=shader_class,
+            sides=sides,
+            textures=SimpleNamespace(**dagor_textures),
+            optional=params or {},
+        ),
+    )
+
+
+def test_material_class_uses_dagor_shader_when_v4_override_is_empty():
+    material = SimpleNamespace(
+        mh4blend=SimpleNamespace(material_class=""),
+        dagormat=SimpleNamespace(shader_class="rendinst_simple_glass"),
+    )
+    assert material_class_for_export(material) == "rendinst_simple_glass"
+
+
+def test_material_class_explicit_v4_override_wins_over_dagor_shader():
+    material = SimpleNamespace(
+        mh4blend=SimpleNamespace(material_class="rendinst_layered"),
+        dagormat=SimpleNamespace(shader_class="rendinst_simple_glass"),
+    )
+    assert material_class_for_export(material) == "rendinst_layered"
+
+
+@pytest.mark.parametrize("dagor_value", [None, "", "None"])
+def test_material_class_treats_dagor_unset_sentinels_as_missing(dagor_value):
+    material = SimpleNamespace(
+        mh4blend=SimpleNamespace(material_class=""),
+        dagormat=SimpleNamespace(shader_class=dagor_value),
+    )
+    assert material_class_for_export(material) == ""
+
+
+def test_dagormat_extract_preserves_reference_proxymat_fields(tmp_path):
+    texture = tmp_path / "decal_leaks_b_tex_m.tif"
+    texture.write_bytes(b"source texture")
+    material = _dagor_material(
+        "decal_wall_leaks",
+        shader_class="rendinst_deferred_modulate2x_decal",
+        sides=0,
+        textures={
+            "tex0": (
+                r"A:\Enlisted_AM\EnlistedCDK\develop\assets\gameproj"
+                r"\manmade_common\textures\decals\decal_leaks_b_tex_m.tif"),
+        },
+        params={
+            "smoothness_metalness": _FakeDagorArray((-1.0, 0.0, 0.0, 0.0)),
+            "intensity": _FakeDagorArray((0.9, 0.0, 1.0, 0.0)),
+        },
+    )
+
+    prepared = prepare_blender_material_export(
+        material, tmp_path, source_root=tmp_path)
+    document = json.loads(prepared.payload)
+
+    assert prepared.payload == (
+        b'{\n'
+        b'  "class": "rendinst_deferred_modulate2x_decal",\n'
+        b'  "twosided": false,\n'
+        b'  "textures": {\n'
+        b'    "tex0": "decal_leaks_b_tex_m"\n'
+        b'  },\n'
+        b'  "params": {\n'
+        b'    "intensity": [\n'
+        b'      0.9,\n'
+        b'      0,\n'
+        b'      1,\n'
+        b'      0\n'
+        b'    ],\n'
+        b'    "smoothness_metalness": [\n'
+        b'      -1,\n'
+        b'      0,\n'
+        b'      0,\n'
+        b'      0\n'
+        b'    ]\n'
+        b'  }\n'
+        b'}\n')
+
+    assert document["class"] == "rendinst_deferred_modulate2x_decal"
+    assert document["twosided"] is False
+    assert document["textures"] == {"tex0": "decal_leaks_b_tex_m"}
+    assert document["params"]["smoothness_metalness"] == [-1, 0, 0, 0]
+    assert document["params"]["intensity"] == pytest.approx([0.9, 0, 1, 0])
+
+
+def test_explicit_v4_rows_override_matching_dagormat_fields():
+    material = _dagor_material(
+        textures={"tex0": r"C:\old\wall_old.tex.blk"},
+        params={"paint_details": "not representable"},
+    )
+    material.mh4blend.material_class = "rendinst_layered"
+    material.mh4blend.twosided_override = True
+    material.mh4blend.twosided = True
+    material.mh4blend.textures = [SimpleNamespace(
+        slot=0,
+        image=SimpleNamespace(filepath=r"C:\new\wall_new.tif", name="wall_new"),
+    )]
+    material.mh4blend.params = [SimpleNamespace(
+        name="paint_details", kind="SCALAR", scalar=0.75, vector=(),
+    )]
+
+    resource = export_material_module._extract_resource(material)
+
+    assert resource.material_class == "rendinst_layered"
+    assert resource.twosided is True
+    assert resource.textures == {"tex0": "wall_new"}
+    assert resource.params == {"paint_details": 0.75}
+
+
+def test_dagormat_extracts_scalar_params_and_sparse_texture_slots():
+    material = _dagor_material(
+        "windows_aluminium",
+        shader_class="rendinst_simple_painted",
+        sides=0,
+        textures={
+            "tex0": r"D:\textures\frames_aluminium_tex_d.tif*?q0-0-1",
+            "tex2": r"D:/textures/frames_aluminium_tex_n.tif",
+        },
+        params={
+            "paint_details": 0.85,
+            "palette_index": 0,
+            "micro_detail_layer": 6,
+            "micro_detail_layer_swap_uv": 1,
+        },
+    )
+
+    resource = export_material_module._extract_resource(material)
+
+    assert resource.twosided is False
+    assert resource.textures == {
+        "tex0": "frames_aluminium_tex_d",
+        "tex2": "frames_aluminium_tex_n",
+    }
+    assert resource.params == {
+        "paint_details": 0.85,
+        "palette_index": 0,
+        "micro_detail_layer": 6,
+        "micro_detail_layer_swap_uv": 1,
+    }
+
+
+def test_dagormat_real_two_sided_fails_instead_of_losing_semantics():
+    with pytest.raises(MaterialValueError) as excinfo:
+        export_material_module._extract_resource(_dagor_material(sides=2))
+    assert excinfo.value.code == "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE"
+    assert excinfo.value.path == "dagormat.sides"
+
+
+@pytest.mark.parametrize("value", [False, 0.0, "0", None])
+def test_dagormat_sides_requires_exact_integer(value):
+    with pytest.raises(MaterialValueError) as excinfo:
+        export_material_module._extract_resource(
+            _dagor_material(sides=value))
+    assert excinfo.value.code == "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE"
+    assert excinfo.value.path == "dagormat.sides"
+
+
+def test_dagormat_texture_rejects_non_image_extension_with_exact_slot_path():
+    with pytest.raises(MaterialValueError) as excinfo:
+        export_material_module._extract_resource(_dagor_material(
+            textures={"tex2": r"D:\textures\wall_n.tex.blk"}))
+    assert excinfo.value.code == "MH_E_NONCANONICAL_TEXTURE_REFERENCE"
+    assert excinfo.value.path == "dagormat.textures.tex2"
+
+
+@pytest.mark.parametrize("value", [True, "opaque", [1, 2, 3]])
+def test_unrepresentable_dagormat_param_fails_closed(value):
+    with pytest.raises(MaterialValueError) as excinfo:
+        export_material_module._extract_resource(
+            _dagor_material(params={"unsupported": value}))
+    assert excinfo.value.code == "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE"
+    assert excinfo.value.path == "dagormat.optional.unsupported"
+
+
+def test_loaded_proxy_flag_does_not_hide_resolved_dagormat_content():
+    material = _dagor_material(params={"roughness": 0.25})
+    material.dagormat.is_proxy = True
+    material.dagormat.proxy_path = r"D:\proxymats"
+    resource = export_material_module._extract_resource(material)
+    assert resource.material_class == "rendinst_simple"
+    assert resource.params == {"roughness": 0.25}
+
+
+def test_unresolved_proxy_shader_reference_fails_class_validation():
+    resource = export_material_module._extract_resource(
+        _dagor_material(shader_class="wall:proxymat"))
+    with pytest.raises(MaterialValueError) as excinfo:
+        material_json_bytes(resource)
+    assert excinfo.value.code == "MH_E_MATERIAL_GRAMMAR"
+    assert excinfo.value.path == "class"
 
 
 def test_class_material_extracts_texture_stem_and_publishes_canonical_bytes(
@@ -216,8 +439,11 @@ def test_material_rejection_happens_before_fbx_publish(tmp_path, monkeypatch):
         export_fbx_module, "_export_selected_fbx",
         lambda path: calls.append(path))
 
-    with pytest.raises(MaterialValueError, match="MH_E_MATERIAL_GRAMMAR"):
+    with pytest.raises(MaterialValueError, match="MH_E_MATERIAL_GRAMMAR") as excinfo:
         export_fbx_collection(
             collection, tmp_path, source_root=tmp_path, export_materials=True)
+    rendered = str(excinfo.value)
+    assert "material 'wall' / class" in rendered
+    assert "value 'NotCanonical'" in rendered
     assert calls == []
     assert not (tmp_path / "building.mesh.fbx").exists()

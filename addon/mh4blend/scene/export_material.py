@@ -10,6 +10,7 @@ import bpy
 
 from ..core.canonical import validate_resource_name
 from ..core.materials import (
+    MATERIAL_TEXTURE_EXTENSIONS,
     MaterialValueError,
     material_json_bytes,
     parse_material,
@@ -21,6 +22,7 @@ from ..core.payload_publish_v2 import atomic_publish_bytes
 __all__ = [
     "PreparedMaterialExport",
     "apply_material_resource",
+    "material_class_for_export",
     "prepare_blender_material_export",
     "read_material_file",
     "write_prepared_material",
@@ -80,11 +82,135 @@ def _texture_token(image, path: str) -> str:
             "MH_E_UNRESOLVED_TEXTURE_REFERENCE", path,
             "texture slot has no Blender image")
     authored_path = str(getattr(image, "filepath", "") or "").strip()
-    source = Path(bpy.path.abspath(authored_path)) if authored_path else Path(image.name)
-    token = source.stem
-    # The codec performs the exact fail-closed token validation.
-    parse_material({"class": "probe", "textures": {"tex0": token}})
+    source = bpy.path.abspath(authored_path) if authored_path else image.name
+    token = _texture_token_from_path(source, path)
     return token
+
+
+def _texture_token_from_path(authored_path, path: str) -> str:
+    if not isinstance(authored_path, str) or not authored_path:
+        raise MaterialValueError(
+            "MH_E_NONCANONICAL_TEXTURE_REFERENCE", path,
+            "texture path must identify an extensionless logical name")
+    filename = authored_path.replace("\\", "/").rsplit("/", 1)[-1]
+    # Dagor permits transport suffixes such as ``*?q0-0-1``.  They are not
+    # part of resource identity; the filename stem remains the v4 token.
+    filename = filename.split("*?", 1)[0]
+    source_name = Path(filename)
+    if (source_name.suffix
+            and source_name.suffix.lower() not in MATERIAL_TEXTURE_EXTENSIONS):
+        raise MaterialValueError(
+            "MH_E_NONCANONICAL_TEXTURE_REFERENCE", path,
+            f"texture path uses unsupported extension {source_name.suffix!r}")
+    token = source_name.stem if source_name.suffix else source_name.name
+    # The codec performs the exact fail-closed token validation.
+    try:
+        parse_material({"class": "probe", "textures": {"tex0": token}})
+    except MaterialValueError as exc:
+        raise MaterialValueError(exc.code, path, exc.message) from exc
+    return token
+
+
+def _authored_dagormat(material):
+    dagormat = getattr(material, "dagormat", None)
+    shader_class = getattr(dagormat, "shader_class", "")
+    if shader_class in (None, "", "None"):
+        return None
+    return dagormat
+
+
+def _dagor_texture_paths(dagormat) -> dict[str, str]:
+    textures = getattr(dagormat, "textures", None)
+    if textures is None:
+        return {}
+    out = {}
+    for index in range(16):
+        slot = f"tex{index}"
+        authored_path = getattr(textures, slot, "")
+        if authored_path in (None, ""):
+            continue
+        out[slot] = authored_path
+    return out
+
+
+def _not_roundtrippable(path: str, message: str) -> MaterialValueError:
+    return MaterialValueError(
+        "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE", path, message)
+
+
+def _dagor_parameter_value(value, path: str):
+    to_list = getattr(value, "to_list", None)
+    if callable(to_list):
+        value = list(to_list())
+    elif isinstance(value, tuple):
+        value = list(value)
+
+    if isinstance(value, bool):
+        raise _not_roundtrippable(
+            path, "Dagor bool parameters are not Source Protocol v4 scalars")
+    if isinstance(value, (int, float)):
+        return value
+    if not isinstance(value, list):
+        raise _not_roundtrippable(
+            path, f"Dagor parameter type {type(value).__name__} is unsupported")
+    if len(value) != 4:
+        raise _not_roundtrippable(
+            path, "Dagor vector parameter must contain exactly four numbers")
+    if any(isinstance(component, bool)
+           or not isinstance(component, (int, float)) for component in value):
+        raise _not_roundtrippable(
+            path, "Dagor vector parameter contains a non-numeric component")
+    return value
+
+
+def _dagor_params(dagormat) -> dict:
+    optional = getattr(dagormat, "optional", None)
+    if optional is None:
+        return {}
+    try:
+        names = list(optional.keys())
+    except (AttributeError, TypeError) as exc:
+        raise MaterialValueError(
+            "MH_E_MATERIAL_GRAMMAR", "dagormat.optional",
+            "optional parameters must be a named property mapping") from exc
+    return {name: optional[name] for name in names}
+
+
+def _dagor_twosided(dagormat) -> bool:
+    sides = getattr(dagormat, "sides", None)
+    if type(sides) is not int:
+        raise _not_roundtrippable(
+            "dagormat.sides",
+            f"Dagor sides must be an integer, got {sides!r}")
+    if sides == 0:
+        return False
+    if sides == 1:
+        return True
+    if sides == 2:
+        raise _not_roundtrippable(
+            "dagormat.sides",
+            "real_two_sided cannot be represented by Source Protocol v4")
+    raise _not_roundtrippable(
+        "dagormat.sides",
+        f"unsupported Dagor sides value {sides!r}")
+
+
+def material_class_for_export(material) -> str:
+    """Return the authored class token without guessing or repairing it.
+
+    The dedicated v4 override remains authoritative.  When it is empty,
+    reuse dag4blend's semantic shader class so artists do not have to enter
+    the same token twice.  Dagor's ``None`` sentinel means "not authored";
+    every other value is returned verbatim and is still checked by the
+    strict v4 codec.
+    """
+    settings = getattr(material, "mh4blend", None)
+    explicit = getattr(settings, "material_class", "")
+    if explicit != "":
+        return explicit
+
+    dagormat = _authored_dagormat(material)
+    return "" if dagormat is None else dagormat.shader_class
 
 
 def _extract_resource(material) -> MaterialResource:
@@ -107,28 +233,49 @@ def _extract_resource(material) -> MaterialResource:
         raise MaterialValueError(
             "MH_E_MATERIAL_GRAMMAR", "mode", "must be CLASS or LIBRARY")
 
+    dagormat = _authored_dagormat(material)
+    dagor_texture_paths = (
+        _dagor_texture_paths(dagormat) if dagormat is not None else {})
     textures = {}
+    explicit_texture_slots = set()
     for row in settings.textures:
         slot = f"tex{row.slot}"
-        if slot in textures:
+        if slot in explicit_texture_slots:
             raise MaterialValueError(
                 "MH_E_MATERIAL_GRAMMAR", f"textures.{slot}",
                 "duplicate texture slot")
+        explicit_texture_slots.add(slot)
         textures[slot] = _texture_token(row.image, f"textures.{slot}")
+    for slot, authored_path in dagor_texture_paths.items():
+        if slot in explicit_texture_slots:
+            continue
+        textures[slot] = _texture_token_from_path(
+            authored_path, f"dagormat.textures.{slot}")
 
-    params = {}
+    params = _dagor_params(dagormat) if dagormat is not None else {}
+    explicit_param_names = set()
     for row in settings.params:
-        if row.name in params:
+        if row.name in explicit_param_names:
             raise MaterialValueError(
                 "MH_E_MATERIAL_GRAMMAR", f"params.{row.name}",
                 "duplicate parameter")
+        explicit_param_names.add(row.name)
         params[row.name] = (
             row.scalar if row.kind == "SCALAR" else list(row.vector))
+    for name in params.keys() - explicit_param_names:
+        params[name] = _dagor_parameter_value(
+            params[name], f"dagormat.optional.{name}")
+
+    twosided = None
+    if settings.twosided_override:
+        twosided = settings.twosided
+    elif dagormat is not None:
+        twosided = _dagor_twosided(dagormat)
 
     return MaterialResource(
         name=material.name,
-        material_class=settings.material_class,
-        twosided=settings.twosided if settings.twosided_override else None,
+        material_class=material_class_for_export(material),
+        twosided=twosided,
         textures=textures,
         params=params,
     )
@@ -144,10 +291,17 @@ def prepare_blender_material_export(
     if not _inside(root, output):
         raise ValueError("Material output folder must be inside Project Source Root")
 
-    resource = _extract_resource(material)
-    payload = material_json_bytes(resource)
-    for token in resource.textures.values():
-        resolve_texture_reference(root, token)
+    try:
+        resource = _extract_resource(material)
+        payload = material_json_bytes(resource)
+        for token in resource.textures.values():
+            resolve_texture_reference(root, token)
+    except MaterialValueError as exc:
+        raise MaterialValueError(
+            exc.code,
+            f"material {material.name!r} / {exc.path}",
+            exc.message,
+        ) from exc
 
     target = _resolve_material_target(root, output, resource.name)
     if target.exists() and target.is_dir():

@@ -3,10 +3,8 @@
 > **ACTIVE TARGET: MH SOURCE PROTOCOL V4.** Единственный норматив —
 > [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md).
 > Порядок реализации и definition of done —
-> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). S0 и S1 приняты
-> и смержены. Активный срез S2 реализует Material v4, texture ResourceKey
-> resolution, UE import/Publish/Adopt и applied-state receipt; S3–S6 последовательно
-> добавят Composite, индекс, StaticMesh importer и watcher/commandlets/UX.
+> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). S0–S5 приняты
+> и смержены; S6 добавит startup scan, watcher, массовый импорт и финальный UX.
 
 ## Source Protocol v4 в одном экране
 
@@ -76,6 +74,27 @@ UE — единственный писатель rebuildable индекса
 читает и не пишет. Генерируемые UE paths детерминированы kind и logical name и
 не зависят от source-папки.
 
+### Ручная индексация до S6
+
+После S5 интерактивных кнопок `Scan Project` и автоматического startup watcher
+ещё нет: это scope S6. Для текущего ручного full scan сначала задайте один и
+тот же абсолютный Source Root:
+
+- Blender: `3D Viewport > N > MH > Project > Source Root`;
+- UE: `Project Settings > Plugins > Mimir Composite > Source Root`.
+
+Затем при закрытом Editor запустите:
+
+```powershell
+UnrealEditor-Cmd.exe <Project.uproject> -run=MHAnalyzeSources `
+  -root="<absolute source root>" -unattended -nop4 -nosplash -nullrhi
+```
+
+Параметр `-root` можно опустить, если `Source Root` сохранён в Project
+Settings. Команда перестраивает/обновляет `ProjectIndex.sqlite` и возвращает
+ненулевой exit code при блокирующих `MH_E_*`. Blender ничего дополнительно
+индексировать не должен: он только атомарно публикует source-файлы.
+
 ## Реализация и проверка
 
 Работа идёт последовательно отдельными PR: S0 documentation → S1 purge legacy
@@ -83,17 +102,9 @@ UID/passport → S2 materials → S3 composites → S4 index → S5 StaticMesh i
 → S6 watcher/commandlets/UX. Каждый срез имеет ветку `v4/s<N>-*` и квитанцию
 `docs/receipts/v4_s<N>.md`; исполнитель не мержит PR самостоятельно.
 
-Текущий кандидат S2 сохраняет S1 Combined-LOD FBX и name-keyed
-scan/resolve/analyze/plan. Blender читает и атомарно пишет закрытый Material v4
-JSON; UE импортирует Material Instance in-place, хранит editor-only applied
-state, публикует canonical JSON и поддерживает явный Adopt для unmanaged MI.
-Material textures резолвятся прямым сканом source-дерева до появления индекса
-в S4. Library- и class-родители используют отдельные настраиваемые реестры;
-receipt хранит только tagged logical token `class:<name>|library:<name>`, а
-каждый resolve и reverse lookup выполняется по актуальному source/MI state.
-Composite остаётся fail-closed до S3. Legacy Ledger остаётся deprecated reader
-state до удаления в S4; v4 FBX dump возвращается в S5, структурированный
-AnalyzeSources report — в S6. Кандидат S2 ожидает внешнего review и owner merge.
+Текущий main включает закрытые Material/Composite v4 codecs, Project Resource
+Index и direct-FBX StaticMesh importer S5. До S6 full scan запускается вручную,
+массового `Import Changed`, watcher и финальных UE toolbar-команд ещё нет.
 
 Python-проверка без Blender:
 

@@ -15,6 +15,7 @@ from mh4blend.core.model import Composite, CompositeTransform, Node  # noqa: E40
 from mh4blend.scene import import_composite as import_module  # noqa: E402
 from mh4blend.scene.export_composite import (  # noqa: E402
     COLLECTION_KIND_KEY,
+    COLLECTION_RESOURCE_KEY,
     NODE_KIND_KEY,
     NODE_NAME_KEY,
     NODE_RESOURCE_KEY,
@@ -287,6 +288,46 @@ def test_writer_rejects_non_roundtrippable_shear(tmp_path):
     ))
     with pytest.raises(ValueError, match="MH_E_COMPOSITE_GRAMMAR"):
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
+
+
+def test_writer_identifies_raw_mesh_instead_of_collection_instance(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = bpy.data.collections.new("unmarked")
+    bpy.context.scene.collection.children.link(collection)
+    mesh = bpy.data.meshes.new("UnmarkedGeometry")
+    placement = bpy.data.objects.new("UnmarkedPlacement", mesh)
+    collection.objects.link(placement)
+
+    with pytest.raises(ValueError, match="MH_E_COMPOSITE_GRAMMAR") as excinfo:
+        export_composite_collection(collection, tmp_path, source_root=tmp_path)
+    rendered = str(excinfo.value)
+    assert "UnmarkedPlacement" in rendered
+    assert "mh_composite_kind=None" in rendered
+    assert "collection instances" in rendered
+
+
+def test_writer_infers_mesh_from_unmarked_collection_instance(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mesh_definition = bpy.data.collections.new("garage_shell")
+    mesh = bpy.data.meshes.new("GarageGeometry")
+    definition_object = bpy.data.objects.new("GarageGeometry", mesh)
+    mesh_definition.objects.link(definition_object)
+
+    composite = bpy.data.collections.new("garage_set")
+    bpy.context.scene.collection.children.link(composite)
+    placement = bpy.data.objects.new("GaragePlacement", None)
+    composite.objects.link(placement)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = mesh_definition
+
+    report = export_composite_collection(
+        composite, tmp_path, source_root=tmp_path)
+    assert report["nodes"] == 1
+    payload = (tmp_path / "garage_set.composite").read_text("utf-8")
+    assert '"kind": "mesh"' in payload
+    assert '"resource": "garage_shell"' in payload
+    assert composite[COLLECTION_KIND_KEY] == "composite"
+    assert composite[COLLECTION_RESOURCE_KEY] == "garage_set"
 
 
 def test_composite_import_materializes_mesh_once_and_builds_instance(tmp_path):

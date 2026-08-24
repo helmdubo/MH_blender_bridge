@@ -17,6 +17,10 @@ from mh4blend.scene.import_fbx import (  # noqa: E402
     import_mesh_fbx,
     parse_mesh_fbx,
 )
+from mh4blend.scene.resource_markers import (  # noqa: E402
+    COLLECTION_KIND_KEY,
+    COLLECTION_RESOURCE_KEY,
+)
 from mh4blend.ui import ops  # noqa: E402
 
 import_fbx_module = importlib.import_module("mh4blend.scene.import_fbx")
@@ -135,6 +139,8 @@ def test_import_rebuilds_parse_hierarchy_and_ordered_slots(tmp_path):
     collection = report["collection"]
     assert report["collection_name"] == "vehicle"
     assert collection == bpy.data.collections["vehicle"]
+    assert collection[COLLECTION_KIND_KEY] == "mesh"
+    assert collection[COLLECTION_RESOURCE_KEY] == "vehicle"
     assert report["materials_created"] == ["paint", "glass"]
     assert bpy.data.objects["body"].parent == bpy.data.objects["root"]
     assert bpy.data.objects["SOCKET_grip"].parent == bpy.data.objects["root"]
