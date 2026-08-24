@@ -34,7 +34,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
             "mh.export_composite",
             "mh.import_composite", "mh.material_texture_add",
             "mh.material_texture_remove", "mh.material_param_add",
-            "mh.material_param_remove",
+            "mh.material_param_remove", "mh.copy_all_textures_to_project",
+            "mh.remap_all_textures_to_project",
         }
         assert {cls.bl_category for cls in panels.CLASSES} == {"MH"}
     finally:
@@ -78,6 +79,47 @@ def test_material_export_option_is_forwarded_to_fbx_workflow(tmp_path, monkeypat
         assert bpy.ops.mh.export_fbx() == {"FINISHED"}
         assert len(calls) == 1
         assert calls[0]["export_materials"] is True
+    finally:
+        mh4blend.unregister()
+
+
+def test_misc_texture_operators_share_project_root_and_log_reports(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        monkeypatch.setattr(
+            ops.prefs_mod,
+            "get_prefs",
+            lambda _context: SimpleNamespace(source_root=str(tmp_path)),
+        )
+        calls = []
+        monkeypatch.setattr(
+            ops,
+            "copy_all_dagor_textures_to_project",
+            lambda **kwargs: (
+                calls.append(("copy", kwargs)),
+                {"ok": True, "copied": 3, "skipped": 1},
+            )[1],
+        )
+        monkeypatch.setattr(
+            ops,
+            "remap_all_dagor_textures_to_project",
+            lambda **kwargs: (
+                calls.append(("remap", kwargs)),
+                {"ok": True, "remapped": 4},
+            )[1],
+        )
+
+        assert bpy.ops.mh.copy_all_textures_to_project() == {"FINISHED"}
+        assert bpy.ops.mh.remap_all_textures_to_project() == {"FINISHED"}
+        assert calls == [
+            ("copy", {"source_root": str(tmp_path)}),
+            ("remap", {"source_root": str(tmp_path)}),
+        ]
+        log = bpy.data.texts[ops.LOG_TEXT_NAME].as_string()
+        assert '"operation": "copy_all_textures_to_project"' in log
+        assert '"operation": "remap_all_textures_to_project"' in log
     finally:
         mh4blend.unregister()
 
