@@ -5,6 +5,7 @@ import re
 import bpy
 
 from .. import prefs as prefs_mod
+from ..scene.export_material import material_class_for_export
 
 
 _TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
@@ -69,14 +70,20 @@ class MH_PT_source_tools(bpy.types.Panel):
                 materials.label(
                     text="Library form has no local overrides", icon="INFO")
             else:
+                effective_class = material_class_for_export(material)
                 material_class = materials.row()
                 material_class.alert = (
-                    _TOKEN_RE.fullmatch(settings.material_class) is None)
-                material_class.prop(settings, "material_class")
+                    _TOKEN_RE.fullmatch(effective_class) is None)
+                material_class.prop(
+                    settings, "material_class", text="Class Override")
                 if material_class.alert:
                     materials.label(
                         text="Class must match [a-z0-9_]+",
                         icon="ERROR")
+                elif not settings.material_class:
+                    materials.label(
+                        text=f"Auto from Dagor: {effective_class}",
+                        icon="CHECKMARK")
                 row = materials.row(align=True)
                 row.prop(settings, "twosided_override")
                 value = row.row(align=True)

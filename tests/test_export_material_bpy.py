@@ -3,6 +3,7 @@
 from pathlib import Path
 import importlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 from mh4blend.core.materials import MaterialValueError  # noqa: E402
 from mh4blend.scene.export_material import (  # noqa: E402
     apply_material_resource,
+    material_class_for_export,
     prepare_blender_material_export,
     read_material_file,
     write_prepared_material,
@@ -51,6 +53,31 @@ def _mesh(name, collection, material):
     obj = bpy.data.objects.new(name, mesh)
     collection.objects.link(obj)
     return obj
+
+
+def test_material_class_uses_dagor_shader_when_v4_override_is_empty():
+    material = SimpleNamespace(
+        mh4blend=SimpleNamespace(material_class=""),
+        dagormat=SimpleNamespace(shader_class="rendinst_simple_glass"),
+    )
+    assert material_class_for_export(material) == "rendinst_simple_glass"
+
+
+def test_material_class_explicit_v4_override_wins_over_dagor_shader():
+    material = SimpleNamespace(
+        mh4blend=SimpleNamespace(material_class="rendinst_layered"),
+        dagormat=SimpleNamespace(shader_class="rendinst_simple_glass"),
+    )
+    assert material_class_for_export(material) == "rendinst_layered"
+
+
+@pytest.mark.parametrize("dagor_value", [None, "", "None"])
+def test_material_class_treats_dagor_unset_sentinels_as_missing(dagor_value):
+    material = SimpleNamespace(
+        mh4blend=SimpleNamespace(material_class=""),
+        dagormat=SimpleNamespace(shader_class=dagor_value),
+    )
+    assert material_class_for_export(material) == ""
 
 
 def test_class_material_extracts_texture_stem_and_publishes_canonical_bytes(

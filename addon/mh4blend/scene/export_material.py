@@ -21,6 +21,7 @@ from ..core.payload_publish_v2 import atomic_publish_bytes
 __all__ = [
     "PreparedMaterialExport",
     "apply_material_resource",
+    "material_class_for_export",
     "prepare_blender_material_export",
     "read_material_file",
     "write_prepared_material",
@@ -87,6 +88,25 @@ def _texture_token(image, path: str) -> str:
     return token
 
 
+def material_class_for_export(material) -> str:
+    """Return the authored class token without guessing or repairing it.
+
+    The dedicated v4 override remains authoritative.  When it is empty,
+    reuse dag4blend's semantic shader class so artists do not have to enter
+    the same token twice.  Dagor's ``None`` sentinel means "not authored";
+    every other value is returned verbatim and is still checked by the
+    strict v4 codec.
+    """
+    settings = getattr(material, "mh4blend", None)
+    explicit = getattr(settings, "material_class", "")
+    if explicit != "":
+        return explicit
+
+    dagormat = getattr(material, "dagormat", None)
+    authored = getattr(dagormat, "shader_class", "")
+    return "" if authored in (None, "", "None") else authored
+
+
 def _extract_resource(material) -> MaterialResource:
     # Preserve the canonical name diagnostic verbatim; identity is external to
     # the material grammar and must not be reclassified as a codec failure.
@@ -127,7 +147,7 @@ def _extract_resource(material) -> MaterialResource:
 
     return MaterialResource(
         name=material.name,
-        material_class=settings.material_class,
+        material_class=material_class_for_export(material),
         twosided=settings.twosided if settings.twosided_override else None,
         textures=textures,
         params=params,
