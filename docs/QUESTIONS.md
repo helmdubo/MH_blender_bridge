@@ -6,11 +6,13 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
-`OPEN-V4-2` (texture reference, аудит S0), `OPEN-V4-3` (mismatched LOD
-suffix), `OPEN-V4-4` (код noncanonical logical name) и `OPEN-V4-5`
-(версии diagnostic JSON) решены owner — нормативный текст перенесён в
-08 §§2–5 и 09 (S4/S5/S6).
+Открыты четыре вопроса v4: filesystem aliases (`OPEN-V4-1`) и выявленные
+предварительным аудитом S2 вопросы точной material-грамматики
+(`OPEN-V4-6`), applied-state (`OPEN-V4-7`) и library round-trip
+(`OPEN-V4-8`). Вопросы `OPEN-V4-2` (texture reference, аудит S0),
+`OPEN-V4-3` (mismatched LOD suffix), `OPEN-V4-4` (код noncanonical logical
+name) и `OPEN-V4-5` (версии diagnostic JSON) решены owner — нормативный текст
+перенесён в 08 §§2–5 и 09 (S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -133,6 +135,73 @@ report и mapper-facing FBX dump? Нужен ли FBX dump уже до S5, ли�
 **Прежний статус.** ОТКРЫТ; не блокировал name-keyed
 scan/resolve/analyze/plan и FBX transport S1, но блокировал
 структурированные diagnostic artifacts до решения owner.
+
+## OPEN-V4-6 — top-level bool и точная грамматика Material v4
+
+**Контекст.** Первый пример 08 §5 содержит top-level поля
+`"tex16support": true` и `"twosided": false`. Ниже тот же §5 утверждает,
+что статические bool-переключатели в JSON не сериализуются, а 09 S2 ещё раз
+ограничивает writer/reader полями `class|library`, `textures`, `params` и
+явно говорит «БЕЗ ... static bools». Для обязательного golden codec нельзя
+самостоятельно выбрать между reject, ignore и serialize: все три варианта
+дают разные нормативные bytes и разное Publish-поведение.
+
+**Вопрос.** Являются ли `tex16support`/`twosided` устаревшими полями примера,
+которые reader обязан отклонять как неизвестные, или это отдельные допустимые
+не-static bool-поля? Зафиксировать точный allowed-field set для class-mode и
+library-mode, включая правило unknown fields.
+
+**Временное fail-closed правило.** S2 material reader/writer не принимает и
+не публикует `.material`, пока exact grammar не ратифицирована. Сохраняется
+S1-заглушка; старый v2 codec не возвращается и dual-read не вводится.
+
+**Статус.** ОТКРЫТ; блокирует material codec, golden-векторы и весь S2.
+
+## OPEN-V4-7 — семантика `UMHMaterialSourceData.AppliedHash`
+
+**Контекст.** 08 §5 требует перед source-wins overwrite обнаруживать локально
+изменённый managed MI и выдавать `MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`. 08 §7
+перечисляет у `UMHMaterialSourceData` только `LogicalName`, path, `applied
+hash` и parent class, но не определяет, хэширует ли `AppliedHash` raw source
+bytes или семантическое состояние MI. Для второго варианта не заданы состав
+доменов MI (parent/scalar/vector/texture/static overrides), канонизация и
+алгоритм. Raw source hash сам по себе не позволяет отличить сохранённую
+локальную правку MI от неизменённого applied asset.
+
+**Вопрос.** Что именно означает `UMHMaterialSourceData.AppliedHash`? Если это
+asset-state hash, какие домены MI входят в него, как они канонизируются и какой
+алгоритм/tag используется? Если это source raw hash, где хранится baseline,
+необходимый для детекта локальной правки?
+
+**Временное fail-closed правило.** UE не мутирует и не публикует managed MI и
+не записывает предположительный applied state. Scan/resolve/Analyze остаются
+reader-only; ложный warning или молчаливое затирание локальной правки
+запрещены.
+
+**Статус.** ОТКРЫТ; блокирует `UMHMaterialSourceData`, MI import и Publish.
+
+## OPEN-V4-8 — library-mode round-trip и Blender authoring mapping
+
+**Контекст.** Library payload по 08 §5 содержит только `{ "library":
+"<name>" }`. При этом S2 требует Publish существующего MI и Blender
+writer/reader. Активный норматив не определяет:
+
+- что делать с scalar/vector/texture overrides у MI, parent которого найден
+  под `library_root` (reject, discard или расширение JSON);
+- как Blender представляет library-mode: доступная RNA-поверхность dag4blend
+  имеет `is_proxy`/`proxy_path`, но 08 не связывает её с `library`;
+- участвует ли dag4blend `sides` в v4, тогда как static bool сериализация
+  запрещена.
+
+**Вопрос.** Подтвердить, что любой override у library-parent делает Publish
+`MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`, либо задать другой lossless контракт;
+зафиксировать Blender mapping для `library` и судьбу `sides`.
+
+**Временное fail-closed правило.** Library-mode Blender export/reader и UE
+Publish не угадывают mapping и остаются недоступны. Никакие proxy paths или
+parent asset names не преобразуются в logical name автоматически.
+
+**Статус.** ОТКРЫТ; блокирует library-mode часть S2 и круговой acceptance.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
