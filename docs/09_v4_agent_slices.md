@@ -182,6 +182,19 @@ duplicate policy (`MH_W_DUPLICATE_RESOURCE_NAME` скан /
 Registry tags 08 §7. Deprecated Ledger и его commandlet-флаги
 (`-writeledger`) удаляются вместе с заменой на индекс.
 
+Решения OPEN-V4-12…16 (нормативно в 08 §§2, 3, 7): state machine и
+rebuild-контракт индекса; шестой tag `MH.SourceHash` и
+`UMHTextureSourceData` (S3-тест «exact five tags» обновить на шесть);
+Dependencies только ResourceKey→ResourceKey с ролями
+`texture|placement_mesh|placement_composite` (slot-рёбра — S5) и
+provenance по кандидату; S4 без watcher — full scan + batched
+`UpsertPaths` + Publish-интеграция, self-publish token in-memory;
+probable-rename — биективная пара по raw_hash внутри generation; orphan
+rebind — обычный импорт в generated path, дивергенция — бинарное
+неравенство raw hash. Новые коды S4: `MH_W_PROBABLE_RESOURCE_RENAME`,
+`MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED`, `MH_E_AMBIGUOUS_GENERATED_ASSET`
+(+ golden counts).
+
 Acceptance: удаление .sqlite → рестарт → идентичный индекс; 10k синтетических
 ресурсов — resolve по индексу без полного скана на ссылку; move-без-rename не
 трогает UE asset; rename даёт orphan+новый ресурс.

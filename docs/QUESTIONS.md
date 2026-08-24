@@ -6,12 +6,10 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты вопросы v4: filesystem aliases (`OPEN-V4-1`) и блокеры Project
-Resource Index (`OPEN-V4-12`–`OPEN-V4-16`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-11` (включая выявленные аудитами S2/S3 грамматики
-Material и Composite, applied state, library round-trip, `AppliedParent`,
-transform contract и правило маркеров имён) решены owner — нормативный
-текст перенесён в 08 §§2–7 и 09 (S2/S3/S4/S5/S6).
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-16` (включая пять блокеров Project Resource Index,
+выявленных аудитом S4) решены owner — нормативный текст перенесён в
+08 §§2–7 и 09 (S2/S3/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -353,6 +351,20 @@ export/import и будущий UE importer S5.
 
 ## OPEN-V4-12 — state machine и rebuild-контракт Project Index
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §3 (этот docs-коммит).**
+Индекс — чистая проекция без tombstones/history; meta-tag
+`mh.project_index:4`; любой mismatch/коррупция → удалить файл и полный
+rebuild, миграций кэша нет. Словари: `parse_status ∈ {ok, noncanonical,
+unreadable, invalid_payload}` (mesh до S5 — ok при читаемом каноничном
+файле); `resolution_status` — чистая функция кандидатов и референсов,
+ambiguous ВСЕГДА побеждает invalid; `missing` живёт ровно пока жив
+референс; `GeneratedAssets.status ∈ {applied, stale, orphan,
+invalid_receipt, duplicate_claim}`; двойная заявка ключа ассетами —
+`MH_E_AMBIGUOUS_GENERATED_ASSET` (S4), плохие managed-строки блокируют
+только свой ключ, не rebuild. «Идентичный индекс» = равенство
+нормализованного логического дампа без volatile-полей + resolver
+outcomes, не байты .sqlite; in-memory tokens в дамп не входят.
+
 **Контекст.** 08 §3 перечисляет таблицы и часть полей, а 09 S4 требует
 идентичного восстановления после удаления SQLite. Для детерминированной схемы
 и acceptance не определены:
@@ -381,9 +393,22 @@ managed Asset Registry rows блокировать соответствующи�
 SQLite state machine и Ledger replacement не реализуются. Corrupt cache не
 интерпретируется и не мигрируется.
 
-**Статус. ОТКРЫТ; блокирует S4 schema, rebuild и rename/orphan acceptance.**
+**Прежний статус. ОТКРЫТ; блокировал S4 schema, rebuild и rename/orphan
+acceptance.**
 
 ## OPEN-V4-13 — applied raw state и покрытие GeneratedAssets
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §7 (этот docs-коммит).**
+Вводится ШЕСТОЙ Asset Registry tag `MH.SourceHash` (raw, blake3-160) —
+поправка owner: фиксация «ровно пять» предшествовала удалению Ledger;
+без raw hash в тегах детектор грузил бы каждый ассет на каждом скане.
+Receipts в ассетах — authority, теги — проекция; расхождение →
+`invalid_receipt`. Покрытие S4: material, composite и texture (вводится
+минимальный `UMHTextureSourceData` + теги); StaticMesh-строки — только
+с S5; tagged-ассет без carrier — `invalid_receipt`, rebuild не блокирует.
+Детектор: candidate raw_hash vs `MH.SourceHash` (equal → NO_CHANGE,
+differs → stale/REIMPORT, нет строки → CREATE). S3-тест «exact five
+tags» обновляется в S4 на шесть.
 
 **Контекст.** 08 §7 фиксирует ровно пять Asset Registry tags:
 `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`, `MH.AppliedHash`, `MH.Managed`;
@@ -406,9 +431,20 @@ texture carrier, а mesh-row откладывать до S5? Как обраба
 предположительные Texture/StaticMesh receipts. До решения Ledger/change
 detector не заменяется неполной моделью.
 
-**Статус. ОТКРЫТ; блокирует Ledger purge, GeneratedAssets и change analysis.**
+**Прежний статус. ОТКРЫТ; блокировал Ledger purge, GeneratedAssets и change
+analysis.**
 
 ## OPEN-V4-14 — домен и роли Dependencies в S4
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §3 (этот docs-коммит).**
+Только ResourceKey→ResourceKey рёбра; закрытые роли `texture`,
+`placement_mesh`, `placement_composite`, с S5 — `slot` (до S5 slot-рёбер
+нет: dependents материалов временно не включают меши — принятый
+interim). Registry-tokens (actor/class/library) рёбрами не являются.
+Рёбра — по кандидату с provenance `owner_path`, множество ключа = union;
+unreadable/invalid кандидат рёбер не даёт. Transitive blocking — на этом
+графе: blocked = status ≠ unique ИЛИ ребро на blocked target; циклы
+невозможны.
 
 **Контекст.** 09 S4 требует `Dependencies из payload-ссылок` и блокировку
 dependents, но не определяет exact edge set и `role`. Material v4 даёт
@@ -429,9 +465,23 @@ graph и не объявлять transitive dependents здоровыми. Ре�
 ResourceKey остаётся заблокирован существующим
 `MH_E_AMBIGUOUS_RESOURCE_NAME`; registry tokens не маскируются под source kind.
 
-**Статус. ОТКРЫТ; блокирует Dependencies и dependent-blocking acceptance S4.**
+**Прежний статус. ОТКРЫТ; блокировал Dependencies и dependent-blocking
+acceptance S4.**
 
 ## OPEN-V4-15 — incremental events, self-publish и probable rename
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §3 (этот docs-коммит).**
+S4 НЕ владеет watcher/debounce/PIE (S6); S4 даёт full scan, batched
+`UpsertPaths` API (точка входа S6) и Publish-интеграцию. Token —
+in-memory {path, raw_hash, generation}, регистрируется после atomic
+replace и до собственного upsert, single-shot; persistence нет by
+design — после restart корректность обеспечивают receipts (NO_CHANGE).
+Probable rename: на границе одной generation, пара Disappeared×Appeared
+только при same kind и биективном совпадении raw_hash; many-to-many →
+ни пары, ни warning. `MH_W_PROBABLE_RESOURCE_RENAME` —
+derived-диагностика, пока условие наблюдаемо; в rebuild-identity входят
+только derived-строки, сессионные события (`SELF_PUBLISHED`) в БД не
+пишутся.
 
 **Контекст.** 09 S4 одновременно требует incremental upsert
 `watcher/startup/publish`, self-publish token и probable rename, тогда как
@@ -458,9 +508,19 @@ coalesced event batch.
 Actual watcher/debounce не переносится самовольно из S6. При неоднозначном
 same-hash pairing alias и probable-rename warning не создаются.
 
-**Статус. ОТКРЫТ; блокирует incremental/self-publish/rename часть S4.**
+**Прежний статус. ОТКРЫТ; блокировал incremental/self-publish/rename часть
+S4.**
 
 ## OPEN-V4-16 — метрика orphan rebound divergence
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §§2, 3 (этот docs-коммит).**
+Отдельной rebind-операции нет: импорт ключа в детерминированный путь §8
+переиспользует живущий там managed-ассет — это и есть rebind. Метрика
+бинарная и в одном домене: candidate raw_hash vs receipt-`SourceHash`
+сироты (`AppliedHash` с raw не сравнивается никогда). Равенство —
+молчаливо; любое отличие — `MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED` в
+момент импорта (warning, не блок). Слово «сильно» упразднено; порогов и
+метрик подобия нет. Оба W-кода регистрируются в S4.
 
 **Контекст.** 08 §2 требует
 `MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED` при re-bind сироты с «сильно
@@ -478,7 +538,8 @@ threshold для каждого kind либо заменить «сильно» 
 неподтверждённый rebind запрещён. `AppliedHash` не сравнивается с raw hash,
 warning без owner-пинованной метрики не выдаётся.
 
-**Статус. ОТКРЫТ; блокирует rebound и регистрацию/call-site warning S4.**
+**Прежний статус. ОТКРЫТ; блокировал rebound и регистрацию/call-site warning
+S4.**
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 

@@ -47,8 +47,11 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
 - Перемещение файла = та же identity (обновить path). Переименование =
   DELETE+CREATE; старые ссылки unresolved, UE asset — orphan. Индекс выдаёт
   `MH_W_PROBABLE_RESOURCE_RENAME` при «старый исчез + новый появился с тем же
-  raw hash», но alias не создаёт. Re-bind сироты с сильно разошедшимся
-  содержимым — `MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED` (warning, не блок).
+  raw hash» (точная семантика — §3/OPEN-V4-15), но alias не создаёт.
+  Re-bind сироты — обычный импорт в тот же generated path (§3/OPEN-V4-16);
+  ЛЮБОЕ отличие raw hash кандидата от receipt-`SourceHash` сироты —
+  `MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED` (warning, не блок; равный hash —
+  молчаливо).
 - Структура папок source-дерева ЛЮБАЯ (поправка owner №1). Нормативны только:
   `source_root` (корень) и расположение кэша вне source tree.
 
@@ -68,9 +71,91 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   BLAKE3-160 в self-describing форме `blake3-160:<40 hex lowercase>`
   (ратифицирован фактом S1); смена алгоритма — новый tag-префикс, не
   переинтерпретация старых строк.
-- Self-publish: каждый publish получает token; watcher-событие с hash,
-  совпадающим с опубликованным, классифицируется `SELF_PUBLISHED` — без
-  повторного импорта.
+- **Индекс — чистая проекция (решение OPEN-V4-12).** Каждая строка
+  выводима заново из (скан source tree + Asset Registry tags); никаких
+  tombstones, history и event-логов. Meta-таблица несёт tag
+  `mh.project_index:4`; несовпадение tag, коррупция или любая аномалия
+  при открытии → файл удаляется и индекс перестраивается полностью; кэш
+  никогда не мигрируется и не интерпретируется в подозрительном
+  состоянии. `generation` — монотонный int64 одной завершённой
+  scan/upsert транзакции; строки несут `last_seen_generation`; full scan
+  удаляет строки, не подтверждённые своей generation. Acceptance
+  «удаление .sqlite → идентичный индекс» = равенство НОРМАЛИЗОВАННОГО
+  логического дампа (упорядоченные typed rows пяти таблиц БЕЗ volatile
+  полей: generation, row id, wall-clock) и равенство resolver outcomes
+  по каждому key; байтовое равенство .sqlite НЕ требуется; in-memory
+  состояние (self-publish tokens) в дамп не входит.
+- **Словари состояний (решение OPEN-V4-12).**
+  `ResourceCandidates.parse_status ∈ {ok, noncanonical, unreadable,
+  invalid_payload}`: `noncanonical` — имя файла нарушает §2 (строка
+  ключуется путём, kind/name NULL, в резолв не участвует, видна
+  диагностике); `unreadable` — IO-ошибка (без raw_hash);
+  `invalid_payload` — байты прочитаны, payload не проходит свою
+  грамматику (для static_mesh до S5 парсера нет — читаемый каноничный
+  FBX считается `ok`, что зафиксировано как interim). `ResourceKeys`
+  существуют для union: {ключи с ≥1 кандидатом с выводимым ключом} ∪
+  {dependency targets} ∪ {ключи, заявленные managed-ассетами};
+  `resolution_status` — чистая функция: ≥2 кандидатов у ключа →
+  `ambiguous` (ВСЕГДА, независимо от parse_status — ambiguous
+  побеждает invalid, победитель не выбирается); ровно 1 и не-ok →
+  `invalid`; ровно 1 ok → `unique`; 0 кандидатов при живом референсе →
+  `missing` (строка живёт ровно пока жив референс); 0 и без референсов
+  → строки нет. `GeneratedAssets.status ∈ {applied, stale, orphan,
+  invalid_receipt, duplicate_claim}` — derived: unique-источник и
+  receipt `SourceHash` == candidate raw_hash → `applied`; unique и
+  hash отличается → `stale`; источника нет → `orphan`; malformed/
+  неполные MH-теги или kind без carrier → `invalid_receipt`; два UE
+  ассета заявляют один ключ → оба `duplicate_claim`, import/plan этого
+  ключа fail-closed новым `MH_E_AMBIGUOUS_GENERATED_ASSET`
+  (регистрируется в S4). Плохие managed-строки НИКОГДА не блокируют
+  rebuild целиком — только свой ключ.
+- **Dependencies (решение OPEN-V4-14).** Только ResourceKey →
+  ResourceKey рёбра; закрытые роли: `material→texture: "texture"`,
+  `composite→static_mesh: "placement_mesh"`,
+  `composite→composite: "placement_composite"`, и с S5 —
+  `static_mesh→material: "slot"` (до S5 slot-рёбер нет — принятый
+  interim: dependents материалов не включают меши). Registry-tokens
+  (actor class, material class/library parents) рёбрами НЕ являются.
+  Рёбра извлекаются ПО КАНДИДАТУ и хранятся с provenance
+  (`owner_path`); множество рёбер ключа = union по его кандидатам;
+  unreadable/invalid кандидат рёбер не даёт (unknown ≠ empty).
+  Import-blocked(key) = status ≠ unique ИЛИ существует ребро на
+  import-blocked target — транзитивно; циклы невозможны (композитные
+  отвергнуты грамматикой, межвидовой порядок ацикличен). Diagnostics
+  хранит ТОЛЬКО derived-перевычислимые строки (входят в
+  rebuild-identity); сессионные события (SELF_PUBLISHED, ход скана) —
+  только Message Log/лог, в БД не пишутся.
+- **Граница S4/S6 и self-publish (решение OPEN-V4-15).** S4 НЕ владеет
+  watcher/debounce/PIE-очередью (это S6); S4 даёт: full scan (явный
+  API + перевод `MHAnalyzeSources` на индекс), batched
+  `UpsertPaths(paths)` — будущая точка входа watcher'а S6, и
+  интеграцию Publish (S2/S3 вызывают upsert сразу после atomic
+  replace). Self-publish token = in-memory кортеж {каноничный
+  абсолютный путь, raw_hash, generation}; регистрируется публикатором
+  СТРОГО после успешного atomic replace и до собственного upsert;
+  первое совпадение (path, raw_hash) при upsert/scan классифицируется
+  `SELF_PUBLISHED` и потребляет token (single-shot). Failed publish —
+  токена нет; crash/restart — токены пропадают by design: корректность
+  от них не зависит (после рестарта receipts дают NO_CHANGE), token —
+  лишь подавление внутрисессионного шума. Probable rename считается на
+  границе одной generation: `Disappeared` (ключи, потерявшие всех
+  кандидатов) × `Appeared` (ключи с первым кандидатом), пара — только
+  при same kind И биективном совпадении raw_hash внутри батча;
+  many-to-many по одному hash → пары НЕТ и warning НЕТ.
+  `MH_W_PROBABLE_RESOURCE_RENAME` — derived-диагностика, живёт пока
+  условие наблюдаемо (orphan + появившийся ключ с совпадающим hash),
+  alias не создаёт.
+- **Orphan rebind (решение OPEN-V4-16).** Отдельной rebind-операции не
+  существует: импорт ключа K целится в детерминированный путь §8; если
+  там уже живёт managed-ассет (сирота K) — обычный полный in-place
+  импорт переиспользует этот UObject, это и есть rebind. Метрика
+  дивергенции БИНАРНАЯ и в одном домене: candidate `raw_hash` против
+  receipt-`SourceHash` сироты (`AppliedHash` не сравнивается с raw
+  никогда). Равенство → молчаливый rebind; ЛЮБОЕ отличие →
+  `MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED` в момент импорта (warning, не
+  блок; derived-строка Diagnostics до следующего импорта). Слово
+  «сильно» из прежней формулировки §2 упразднено — порогов и метрик
+  подобия нет.
 
 ## 4. FBX-контракт v4 (поправки №2, №3)
 
@@ -383,8 +468,19 @@ Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой акт
   Composite; детект локальной правки — как у материалов (re-extract vs
   `AppliedHash`; non-roundtrippable extract = локальная правка, warning).
   Аналога `AppliedParent` у композитов нет.
-- Asset Registry tags: `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`,
-  `MH.AppliedHash`, `MH.Managed` — индекс строит GeneratedAssets из них.
+- Asset Registry tags — РОВНО ШЕСТЬ (поправка owner, решение OPEN-V4-13):
+  `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`, `MH.SourceHash` (raw,
+  форма §3), `MH.AppliedHash`, `MH.Managed` — индекс строит
+  GeneratedAssets только из них, не загружая UObject'ы. Прежняя фиксация
+  «ровно пять» предшествовала удалению Ledger: без raw hash в тегах
+  change detector был бы вынужден грузить каждый managed-ассет на каждом
+  скане. Receipts внутри ассетов остаются authority, теги — их проекция;
+  расхождение тега и receipt, обнаруженное при реальной загрузке, —
+  `invalid_receipt` диагностика (§3).
+- `UMHTextureSourceData : UAssetUserData` на managed UTexture (вводится в
+  S4, решение OPEN-V4-13): LogicalName, SourceRelativePath, SourceHash
+  (raw) + те же шесть тегов. StaticMesh-receipts появляются только в S5;
+  до этого mesh-строк в GeneratedAssets нет.
 - Commit applied state только после: build успешен → async compilation
   завершена → package сохранён.
 
