@@ -6,11 +6,11 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты четыре вопроса v4: filesystem aliases (`OPEN-V4-1`), mismatched LOD
-suffix (`OPEN-V4-3`), diagnostic code для общего noncanonical logical name
-(`OPEN-V4-4`) и версии diagnostic JSON (`OPEN-V4-5`). Вопрос `OPEN-V4-2`
-(texture reference), выявленный аудитом S0,
-решён owner — нормативный текст перенесён в 08 §5.
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2` (texture reference, аудит S0), `OPEN-V4-3` (mismatched LOD
+suffix), `OPEN-V4-4` (код noncanonical logical name) и `OPEN-V4-5`
+(версии diagnostic JSON) решены owner — нормативный текст перенесён в
+08 §§2–5 и 09 (S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -50,6 +50,13 @@ owner.
 
 ## OPEN-V4-3 — mismatched `_lodNN` suffix в authored LOD collection
 
+**Статус. РЕШЕНО OWNER — нормативно в 08 §4 (этот docs-коммит).**
+Временное правило S1 ратифицировано как постоянное: mismatched
+terminal-суффикс — fail-closed reject `MH_E_INVALID_LOD_HIERARCHY`,
+exporter никогда не переписывает и не «чинит» авторские имена (имя —
+identity; молчаливый repair запрещён аксиомами v4). Художник исправляет имя
+или membership в Blender сам.
+
 **Контекст.** 08 §4 требует временно добавить `_lodNN` mesh-объекту из
 `.lodNN`-коллекции, если суффикса нет. Не определён случай, когда объект уже
 имеет terminal suffix другого уровня, например `wheel_lod00` внутри `.lod01`.
@@ -65,10 +72,18 @@ export?
 terminal suffix сохраняется, отсутствующий добавляется только в export context
 и всегда восстанавливается в `finally`.
 
-**Статус.** ОТКРЫТ; S1 реализует временный reject и не блокируется для
-каноничных ресурсов.
+**Прежний статус.** ОТКРЫТ; S1 реализует временный reject и не блокируется
+для каноничных ресурсов.
 
 ## OPEN-V4-4 — diagnostic code для noncanonical logical name
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §2 (этот docs-коммит).**
+В S2 вводится `MH_E_NONCANONICAL_RESOURCE_NAME` — единый код любого
+нарушения каноничного имени файла ресурса (stem вне `[a-z0-9_]+` ИЛИ
+не-lowercase каноничный суффикс). Он заменяет legacy
+`MH_E_NON_ASCII_RESOURCE_NAME` во всех call sites (включая suffix-case
+reject S1, использующий `MH_E_SOURCE_INDEX_INVALID`), в реестре и в golden
+counts. До S2 действует временное правило S1.
 
 **Контекст.** 08 §2 требует exact `[a-z0-9_]+` и fail-closed reject без
 lowercase/sanitize repair, но не называет машинный код общего нарушения.
@@ -83,10 +98,19 @@ name либо официально расширить смысл/переиме�
 exact `[a-z0-9_]+`, ничего не нормализуют и для любого нарушения возвращают уже
 зарегистрированный `MH_E_NON_ASCII_RESOURCE_NAME`. Новый код в S1 не вводится.
 
-**Статус.** ОТКРЫТ; diagnostic naming требует owner-решения, strict поведение
-S1 не блокируется.
+**Прежний статус.** ОТКРЫТ; diagnostic naming требовал owner-решения, strict
+поведение S1 не блокировалось.
 
 ## OPEN-V4-5 — версии v4 diagnostic JSON
+
+**Статус. РЕШЕНО OWNER — нормативно в 09 S4/S5/S6 (этот docs-коммит).**
+v2-теги `:1` мертвы навсегда и никогда не переносят v4-байты; временный
+режим S1 (console Analyze/Plan, `-report`/`-writeledger` → exit 2 без
+файла) ратифицирован до соответствующих срезов. Структурированные
+diagnostics возвращаются по срезам: S4 удаляет `-writeledger` вместе с
+Ledger; S5 возвращает mapper-facing FBX dump поверх `FMHSceneIR` с тегом
+`mh.fbxdump:4`; S6 вводит JSON-отчёт с тегом `mh.analyze_sources:4`.
+Точные поля задаются в своих срезах, наследование v2-полей запрещено.
 
 **Контекст.** В S1 `MHAnalyzeSources` перешёл с UID и доменных semantic hashes
 на `ResourceKey` и raw hash, а FBX-контракт — с passport/`mh_lod_level` на
@@ -106,9 +130,9 @@ report и mapper-facing FBX dump? Нужен ли FBX dump уже до S5, ли�
 ошибок для этого временного правила не добавляется: report preflight использует
 зарегистрированный `MH_E_SOURCE_INDEX_INVALID`.
 
-**Статус.** ОТКРЫТ; не блокирует name-keyed scan/resolve/analyze/plan и FBX
-transport S1, но блокирует структурированные diagnostic artifacts до решения
-owner.
+**Прежний статус.** ОТКРЫТ; не блокировал name-keyed
+scan/resolve/analyze/plan и FBX transport S1, но блокировал
+структурированные diagnostic artifacts до решения owner.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 

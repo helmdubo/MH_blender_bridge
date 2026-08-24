@@ -31,7 +31,12 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
 
 - Алфавит logical name: `[a-z0-9_]+`. Неканоничное имя файла (регистр,
   пробелы, точки внутри stem, не-ASCII) — fail-closed reject на скане, без
-  тихого lowercase.
+  тихого lowercase. Каноничный составной суффикс — строго lowercase
+  (case-sensitive). Машинный код любого нарушения каноничного имени файла
+  (stem вне алфавита ИЛИ не-lowercase суффикс) —
+  `MH_E_NONCANONICAL_RESOURCE_NAME`: вводится в S2 и заменяет legacy
+  `MH_E_NON_ASCII_RESOURCE_NAME` во всех call sites, реестре и golden
+  (решение OPEN-V4-4).
 - Stem получается срезанием ПОЛНОГО составного расширения (`.mesh.fbx`,
   `.material`, `.composite`; для текстур — одиночного `<img-ext>` из
   allowlist §5); `foo.bar.mesh.fbx` невалиден.
@@ -59,6 +64,10 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   unique|ambiguous|invalid|missing), Dependencies (owner -> target, role),
   GeneratedAssets (kind, name, ue_object_path, applied_hash, status),
   Diagnostics.
+- Raw hash всюду (index, applied state, probable-rename) — engine-native
+  BLAKE3-160 в self-describing форме `blake3-160:<40 hex lowercase>`
+  (ратифицирован фактом S1); смена алгоритма — новый tag-префикс, не
+  переинтерпретация старых строк.
 - Self-publish: каждый publish получает token; watcher-событие с hash,
   совпадающим с опубликованным, классифицируется `SELF_PUBLISHED` — без
   повторного импорта.
@@ -79,7 +88,11 @@ FBX — односторонний транспорт Blender → UE и **обы
 - Blender exporter гарантирует конвенции имён на выходе: объекты
   `.lodNN`-коллекций получают суффикс `_lodNN` (временный rename в export
   context, если имя без суффикса), `UCX_`/`SOCKET_`/`_cls_*` проходят как
-  есть. Никаких custom properties exporter больше не пишет.
+  есть. Никаких custom properties exporter больше не пишет. Совпадающий
+  terminal-суффикс сохраняется; mismatched terminal-суффикс (например
+  `wheel_lod00` внутри `.lod01`) — ПОСТОЯННЫЙ fail-closed reject
+  `MH_E_INVALID_LOD_HIERARCHY`: exporter никогда не переписывает и не
+  «чинит» авторские имена (решение OPEN-V4-3).
 - Полная иерархия (пустышки + меши) транспортируется; замыкание по родителям
   fail-closed `MH_E_PARENT_OUTSIDE_RESOURCE`; кости зарезервированы.
   (Выжившие решения UE-QUESTION-19 / AMENDMENT r2.)

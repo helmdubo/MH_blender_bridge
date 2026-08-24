@@ -130,7 +130,8 @@ duplicate policy (`MH_W_DUPLICATE_RESOURCE_NAME` скан /
 `MH_W_PROBABLE_RESOURCE_RENAME` (совпадающий raw hash);
 `MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED`; self-publish token →
 `SELF_PUBLISHED`; Dependencies из payload-ссылок; GeneratedAssets из Asset
-Registry tags 08 §7.
+Registry tags 08 §7. Deprecated Ledger и его commandlet-флаги
+(`-writeledger`) удаляются вместе с заменой на индекс.
 
 Acceptance: удаление .sqlite → рестарт → идентичный индекс; 10k синтетических
 ресурсов — resolve по индексу без полного скана на ссылку; move-без-rename не
@@ -152,6 +153,9 @@ Acceptance: изменение любого FBX-домена (гео/LOD/кол�
 ТОТ ЖЕ UObject целиком; правка в Static Mesh Editor детектится
 (`MH_W_MANAGED_STATIC_MESH_LOCALLY_MODIFIED`) и перетирается следующим
 импортом; FBX без каких-либо MH-метаданных импортируется полностью.
+Mapper-facing FBX dump возвращается в этом срезе commandlet'ом поверх
+`FMHSceneIR` с новым тегом `mh.fbxdump:4` (решение OPEN-V4-5); объём
+задаётся потребностями S5 acceptance, старый v2-формат не наследуется.
 
 ## S6 — Watcher, startup, commandlets, UX
 
@@ -165,7 +169,9 @@ Self-publish loop-тест (08 §3) обязателен.
 
 Acceptance: сквозной сценарий на реальном source root: Blender export →
 авто-импорт → правка `.material` → MI обновлён без rebuild меша → Publish
-Composite → нет петли → отчёт в Message Log и JSON под Saved/.
+Composite → нет петли → отчёт в Message Log и JSON под Saved/ с новым
+тегом `mh.analyze_sources:4` (решение OPEN-V4-5; v2-теги `:1` не
+переиспользуются никогда).
 
 ---
 
