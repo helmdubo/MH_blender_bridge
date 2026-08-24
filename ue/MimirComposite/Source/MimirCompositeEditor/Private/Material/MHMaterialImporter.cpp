@@ -25,6 +25,7 @@
 #include "AssetImportTask.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialPublish, Display, All);
+DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialImport, Display, All);
 
 namespace UE::MimirComposite
 {
@@ -316,6 +317,7 @@ bool ResolveTextures(
     IMHSourceResolver& Resolver,
     const FString& SourceRoot,
     TMap<FString, UTexture*>& OutTextures,
+    TArray<FString>& OutWarnings,
     FString& OutError)
 {
     OutTextures.Reset();
@@ -363,6 +365,12 @@ bool ResolveTextures(
             return false;
         }
         OutTextures.Add(Name, Texture);
+        FString RebindEvent;
+        if (MHConsumeOrphanRebindEvent(SourceRoot, Key, RebindEvent))
+        {
+            OutWarnings.Add(RebindEvent);
+            UE_LOG(LogMHMaterialImport, Warning, TEXT("%s"), *RebindEvent);
+        }
     }
     return true;
 }
@@ -749,7 +757,13 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
     TMap<FString, UTexture*> Textures;
-    if (!ResolveTextures(Document, Resolver, SourceRoot, Textures, Result.Error))
+    if (!ResolveTextures(
+            Document,
+            Resolver,
+            SourceRoot,
+            Textures,
+            Result.Warnings,
+            Result.Error))
     {
         return Result;
     }
@@ -854,6 +868,12 @@ FMHMaterialOperationResult MHImportMaterialV4(
     if (!SaveMaterialPackage(*Material, Result.Error))
     {
         return Result;
+    }
+    FString RebindEvent;
+    if (MHConsumeOrphanRebindEvent(SourceRoot, Entry.Key, RebindEvent))
+    {
+        Result.Warnings.Add(RebindEvent);
+        UE_LOG(LogMHMaterialImport, Warning, TEXT("%s"), *RebindEvent);
     }
     if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
     {

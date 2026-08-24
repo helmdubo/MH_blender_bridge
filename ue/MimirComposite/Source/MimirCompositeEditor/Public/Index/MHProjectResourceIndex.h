@@ -107,6 +107,11 @@ public:
         const FString& RawHash,
         FString& OutError);
 
+    /** Consumes one session-only divergent orphan-rebind event for Key. */
+    bool ConsumeOrphanRebindEvent(
+        const FMHResourceKey& Key,
+        FString& OutEvent);
+
     FMHResolveOutcome Resolve(const FMHResourceKey& Key) const;
     FMHSourceSnapshot GetSnapshot() const;
     bool IsImportBlocked(const FMHResourceKey& Key, FString& OutDiagnostic) const;

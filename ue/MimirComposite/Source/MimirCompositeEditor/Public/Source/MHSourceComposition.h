@@ -42,6 +42,12 @@ MIMIRCOMPOSITEEDITOR_API bool MHRefreshGeneratedAssetProjection(
     const FString& SourceRoot,
     FString& OutError);
 
+/** Consumes one live-session orphan-rebind warning after the actual import. */
+MIMIRCOMPOSITEEDITOR_API bool MHConsumeOrphanRebindEvent(
+    const FString& SourceRoot,
+    const FMHResourceKey& Key,
+    FString& OutEvent);
+
 /** Closes the process-shared cache before the editor module unloads. */
 MIMIRCOMPOSITEEDITOR_API void MHShutdownProjectIndex();
 

@@ -635,6 +635,12 @@ bool FMHProjectIndexOrdinaryStaleWarningTest::RunTest(const FString& Parameters)
         TEXT("ordinary stale emits no orphan-rebind warning"),
         HasOrphanRebindWarning(Analysis.Warnings) ||
         (Entry != nullptr && HasOrphanRebindWarning(Entry->Warnings)));
+    FString Event;
+    bPassed &= TestFalse(
+        TEXT("ordinary stale has no consumable orphan-rebind event"),
+        Index.ConsumeOrphanRebindEvent(
+            Key(EMHResourceKind::Texture, TEXT("ordinary_edit")), Event));
+    bPassed &= TestTrue(TEXT("ordinary stale event is empty"), Event.IsEmpty());
     return bPassed;
 }
 
@@ -685,27 +691,24 @@ bool FMHProjectIndexOrphanRebindWarningTest::RunTest(const FString& Parameters)
 
     FString Dump;
     bPassed &= TestTrue(TEXT("dump with pending rebound"), Index.BuildNormalizedDump(Dump, Error));
-    bPassed &= TestTrue(
-        TEXT("proven divergent rebound is materialized in Diagnostics"),
+    bPassed &= TestFalse(
+        TEXT("session-only rebound is absent from normalized dump"),
         Dump.Contains(TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED")));
 
-    FMHProjectIndexResolver Resolver(Index);
-    FMHProjectIndexChangeDetector Detector(Index);
-    FMHSourceAnalysis Analysis;
-    Detector.DetectChanges(Resolver, Fixture.Root, Analysis);
-    const FMHSourceAnalysisEntry* ReboundEntry = Analysis.Find(
-        Key(EMHResourceKind::Texture, TEXT("orphan_rebind")));
+    const FMHResourceKey ReboundKey =
+        Key(EMHResourceKind::Texture, TEXT("orphan_rebind"));
+    FString Event;
     bPassed &= TestTrue(
-        TEXT("import plan reports proven divergent rebound"),
-        Analysis.Warnings.ContainsByPredicate([](const FString& Warning)
-            {
-                return Warning.Contains(TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED"));
-            }) ||
-        (ReboundEntry != nullptr && ReboundEntry->Warnings.ContainsByPredicate(
-            [](const FString& Warning)
-            {
-                return Warning.Contains(TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED"));
-            })));
+        TEXT("divergent orphan rebound produces one consumable event"),
+        Index.ConsumeOrphanRebindEvent(ReboundKey, Event));
+    bPassed &= TestEqual(
+        TEXT("event has canonical category and key"),
+        Event,
+        FString(TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED: texture:orphan_rebind")));
+    bPassed &= TestFalse(
+        TEXT("orphan-rebind event is single-shot"),
+        Index.ConsumeOrphanRebindEvent(ReboundKey, Event));
+    bPassed &= TestTrue(TEXT("consumed event output is reset"), Event.IsEmpty());
 
     TextureClaim.SourceHash = ReboundHash;
     TextureClaim.AppliedHash = ReboundHash;
@@ -715,7 +718,69 @@ bool FMHProjectIndexOrphanRebindWarningTest::RunTest(const FString& Parameters)
     Dump.Reset();
     bPassed &= TestTrue(TEXT("dump after import"), Index.BuildNormalizedDump(Dump, Error));
     bPassed &= TestFalse(
-        TEXT("next successful import clears rebound diagnostic"),
+        TEXT("successful import leaves no persisted rebound event"),
+        Dump.Contains(TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED")));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProjectIndexOrphanRebindSessionLossTest,
+    "Mimir.V4.ProjectIndex.OrphanRebindPendingStateIsSessionOnly",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProjectIndexOrphanRebindSessionLossTest::RunTest(const FString& Parameters)
+{
+    FIndexFixture Fixture;
+    const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("session_rebind.png"));
+    bool bPassed = WriteUtf8(TexturePath, TEXT("original-content"));
+    const FMHGeneratedAssetTagClaim TextureClaim = Claim(
+        EMHResourceKind::Texture,
+        TEXT("session_rebind"),
+        TEXT("session_rebind.png"),
+        FileHash(TexturePath));
+    const FMHResourceKey RebindKey =
+        Key(EMHResourceKind::Texture, TEXT("session_rebind"));
+
+    FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
+    if (!OpenIndex(Index, *this)) return false;
+    FMHProjectIndexUpdateResult Update;
+    FString Error;
+    bPassed &= TestTrue(TEXT("initial scan"), Index.FullScan({TextureClaim}, Update, Error));
+    bPassed &= TestTrue(TEXT("remove source"), IFileManager::Get().Delete(*TexturePath));
+    bPassed &= TestTrue(TEXT("orphan upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
+    bPassed &= WriteUtf8(TexturePath, TEXT("first-divergent-rebound"));
+    bPassed &= TestTrue(TEXT("first rebound upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
+    Index.Close();
+
+    bool bRecreated = false;
+    bPassed &= TestTrue(TEXT("reopen valid cache"), Index.Open(bRecreated, Error));
+    bPassed &= TestFalse(TEXT("ordinary reopen does not rebuild cache"), bRecreated);
+    FString Event;
+    bPassed &= TestFalse(
+        TEXT("restart loses pending rebound event"),
+        Index.ConsumeOrphanRebindEvent(RebindKey, Event));
+
+    bPassed &= TestTrue(TEXT("remove source again"), IFileManager::Get().Delete(*TexturePath));
+    bPassed &= TestTrue(TEXT("second orphan upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
+    bPassed &= WriteUtf8(TexturePath, TEXT("second-divergent-rebound"));
+    bPassed &= TestTrue(TEXT("second rebound upsert"), Index.UpsertPaths({TexturePath}, Update, Error));
+    Index.Close();
+    bPassed &= TestTrue(
+        TEXT("delete cache"),
+        IFileManager::Get().Delete(*Fixture.DatabasePath, false, true, true));
+
+    FMHProjectResourceIndex Rebuilt(Fixture.Root, Fixture.DatabasePath);
+    bRecreated = false;
+    bPassed &= TestTrue(TEXT("open deleted cache"), Rebuilt.Open(bRecreated, Error));
+    bPassed &= TestTrue(TEXT("deleted cache is recreated"), bRecreated);
+    bPassed &= TestTrue(TEXT("rebuild source projection"), Rebuilt.FullScan({TextureClaim}, Update, Error));
+    bPassed &= TestFalse(
+        TEXT("delete and rebuild loses pending rebound event"),
+        Rebuilt.ConsumeOrphanRebindEvent(RebindKey, Event));
+    FString Dump;
+    bPassed &= TestTrue(TEXT("rebuilt dump"), Rebuilt.BuildNormalizedDump(Dump, Error));
+    bPassed &= TestFalse(
+        TEXT("rebuilt dump contains no session event"),
         Dump.Contains(TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED")));
     return bPassed;
 }

@@ -240,6 +240,21 @@ bool MHRefreshGeneratedAssetProjection(
     return Index->ReplaceGeneratedAssets(Claims, Update, OutError);
 }
 
+bool MHConsumeOrphanRebindEvent(
+    const FString& SourceRoot,
+    const FMHResourceKey& Key,
+    FString& OutEvent)
+{
+    OutEvent.Reset();
+    const FString Root = NormalizedRoot(SourceRoot);
+    if (!GProjectIndex.IsValid() || !GProjectIndex->IsOpen() ||
+        !FPaths::IsSamePath(GProjectIndex->GetSourceRoot(), Root))
+    {
+        return false;
+    }
+    return GProjectIndex->ConsumeOrphanRebindEvent(Key, OutEvent);
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 void MHGatherGeneratedAssetClaimsForTests(
     TArray<FMHGeneratedAssetTagClaim>& OutClaims)

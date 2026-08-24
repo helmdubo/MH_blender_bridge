@@ -15,6 +15,7 @@
 #include "UObject/SavePackage.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMHCompositePublish, Display, All);
+DEFINE_LOG_CATEGORY_STATIC(LogMHCompositeImport, Display, All);
 
 namespace UE::MimirComposite
 {
@@ -295,6 +296,12 @@ FMHCompositeOperationResult MHImportCompositeV4(
         Asset->PostEditChange();
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
         return Result;
+    }
+    FString RebindEvent;
+    if (MHConsumeOrphanRebindEvent(SourceRoot, Entry.Key, RebindEvent))
+    {
+        Result.Warnings.Add(RebindEvent);
+        UE_LOG(LogMHCompositeImport, Warning, TEXT("%s"), *RebindEvent);
     }
     if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
     {

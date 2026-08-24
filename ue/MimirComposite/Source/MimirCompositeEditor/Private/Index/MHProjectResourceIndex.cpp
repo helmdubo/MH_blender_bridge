@@ -358,8 +358,7 @@ public:
         {
             Database = MakeUnique<FSQLiteDatabase>();
             if (Database->Open(*DatabasePath, ESQLiteDatabaseOpenMode::ReadWrite) &&
-                ValidateExistingSchema() &&
-                LoadPendingOrphanRebindDiagnostics())
+                ValidateExistingSchema())
             {
                 return true;
             }
@@ -625,6 +624,21 @@ public:
         Token.RawHash = RawHash;
         Token.Generation = Generation;
         SelfPublishTokens.Add(MoveTemp(Token));
+        return true;
+    }
+
+    bool ConsumeOrphanRebindEvent(
+        const FMHResourceKey& Key,
+        FString& OutEvent)
+    {
+        OutEvent.Reset();
+        if (!Key.IsCanonical() || PendingOrphanRebindDivergences.Remove(Key) == 0)
+        {
+            return false;
+        }
+        OutEvent = FString::Printf(
+            TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED: %s"),
+            *Key.ToString());
         return true;
     }
 
@@ -958,37 +972,6 @@ private:
         }
         Generation = ParsedGeneration;
         return true;
-    }
-
-    bool LoadPendingOrphanRebindDiagnostics()
-    {
-        PendingOrphanRebindDivergences.Reset();
-        FSQLitePreparedStatement Statement = Database->PrepareStatement(
-            TEXT("SELECT owner_kind,owner_name FROM Diagnostics WHERE code='MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED' ORDER BY owner_kind,owner_name;"));
-        if (!Statement.IsValid())
-        {
-            return false;
-        }
-        while (true)
-        {
-            const ESQLitePreparedStatementStepResult Step = Statement.Step();
-            if (Step == ESQLitePreparedStatementStepResult::Done)
-            {
-                return true;
-            }
-            FMHResourceKey Key;
-            FString Kind;
-            if (Step != ESQLitePreparedStatementStepResult::Row ||
-                !Statement.GetColumnValueByIndex(0, Kind) ||
-                !Statement.GetColumnValueByIndex(1, Key.LogicalName) ||
-                !MHResourceKindFromLabel(Kind, Key.Kind) ||
-                !Key.IsCanonical())
-            {
-                PendingOrphanRebindDivergences.Reset();
-                return false;
-            }
-            PendingOrphanRebindDivergences.Add(MoveTemp(Key));
-        }
     }
 
     bool CaptureOrphanRebindTransitions(
@@ -1770,28 +1753,6 @@ bool FMHProjectResourceIndex::FImpl::RecomputeDerivedState(
         return bOk;
     };
 
-    TArray<FMHResourceKey> PendingOrphanRebinds =
-        PendingOrphanRebindDivergences.Array();
-    PendingOrphanRebinds.Sort(ResourceKeyLess);
-    for (const FMHResourceKey& Key : PendingOrphanRebinds)
-    {
-        const FString Message = FString::Printf(
-            TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED: source bytes for %s differ from the orphan receipt before in-place import"),
-            *Key.ToString());
-        if (!InsertDiagnostic(
-                TEXT("warning"),
-                TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED"),
-                MHResourceKindLabel(Key.Kind),
-                Key.LogicalName,
-                FString(),
-                FString(),
-                FString(),
-                Message))
-        {
-            return false;
-        }
-    }
-
     FSQLitePreparedStatement CandidateDiagnostics = Database->PrepareStatement(
         TEXT("SELECT COALESCE(kind,''),COALESCE(name,''),path,diagnostic FROM ResourceCandidates WHERE parse_status<>'ok' ORDER BY path;"));
     if (!CandidateDiagnostics.IsValid())
@@ -2532,6 +2493,13 @@ bool FMHProjectResourceIndex::RegisterSelfPublishAfterReplace(
     FString& OutError)
 {
     return Impl->RegisterSelfPublishAfterReplace(Path, RawHash, OutError);
+}
+
+bool FMHProjectResourceIndex::ConsumeOrphanRebindEvent(
+    const FMHResourceKey& Key,
+    FString& OutEvent)
+{
+    return Impl->ConsumeOrphanRebindEvent(Key, OutEvent);
 }
 
 FMHResolveOutcome FMHProjectResourceIndex::Resolve(const FMHResourceKey& Key) const
