@@ -109,6 +109,38 @@ def test_mesh_import_operator_forwards_exact_source_path(tmp_path, monkeypatch):
         mh4blend.unregister()
 
 
+def test_composite_import_operator_reports_unresolved_placement_warning(
+        tmp_path, monkeypatch, capsys):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        source = tmp_path / "unresolved.composite"
+        source.write_bytes(b'{\n  "nodes": []\n}\n')
+        bpy.context.scene.mh_composite_import_path = str(source)
+        monkeypatch.setattr(
+            ops.prefs_mod,
+            "get_prefs",
+            lambda _context: SimpleNamespace(source_root=str(tmp_path)),
+        )
+        monkeypatch.setattr(
+            ops,
+            "import_composite_file",
+            lambda *_args, **_kwargs: {
+                "ok": True,
+                "warnings": [{
+                    "code": "MH_W_UNRESOLVED_PLACEMENT",
+                    "message": "mesh resource 'missing' is unavailable",
+                }],
+            },
+        )
+        assert bpy.ops.mh.import_composite() == {"FINISHED"}
+        output = capsys.readouterr().out
+        assert ("Warning: MH_W_UNRESOLVED_PLACEMENT: mesh resource "
+                "'missing' is unavailable") in output
+    finally:
+        mh4blend.unregister()
+
+
 def test_material_collection_operators_use_deterministic_valid_defaults():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     mh4blend.register()

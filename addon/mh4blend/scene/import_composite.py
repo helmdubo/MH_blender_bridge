@@ -14,6 +14,7 @@ from ..core.composites import (
     read_composite_file,
     validate_composite_cycles,
 )
+from ..core.model import Composite
 from ..core.transforms import ue_to_blender_transform
 from ..core.validate import MHValidationError
 from .export_composite import (
@@ -22,6 +23,8 @@ from .export_composite import (
     NODE_KIND_KEY,
     NODE_NAME_KEY,
     NODE_RESOURCE_KEY,
+    UNRESOLVED_PLACEMENT_KEY,
+    _stamp_imported_transform,
 )
 from .import_fbx import (
     MeshImportTransaction,
@@ -30,7 +33,7 @@ from .import_fbx import (
     preflight_mesh_import_plan,
 )
 
-__all__ = ["import_composite_file"]
+__all__ = ["UNRESOLVED_PLACEMENT_KEY", "import_composite_file"]
 
 
 _BLENDER_ID_NAME_MAX_BYTES = 63
@@ -63,7 +66,9 @@ def _inside(root: Path, path: Path) -> bool:
         return False
 
 
-def _resolve_source(root: Path, name: str, extension: str) -> Path:
+def _resolve_source(
+        root: Path, name: str, extension: str, *, allow_missing=False
+) -> Path | None:
     validate_resource_name(name)
     expected = f"{name}{extension}"
     matches = []
@@ -81,6 +86,8 @@ def _resolve_source(root: Path, name: str, extension: str) -> Path:
             "MH_E_AMBIGUOUS_RESOURCE_NAME", [name, *(str(row) for row in matches)],
             f"multiple resources resolve as '{expected}'")
     if not matches:
+        if allow_missing:
+            return None
         raise MHValidationError(
             "MH_E_UNRESOLVED_COMPOSITE_REFERENCE", [name],
             f"required source resource '{expected}' was not found")
@@ -90,11 +97,16 @@ def _resolve_source(root: Path, name: str, extension: str) -> Path:
 def _load_closure(root_name: str, root_path: Path, source_root: Path):
     documents = {}
     paths = {}
+    missing_composites = set()
 
     def load(name: str, explicit_path: Path | None = None):
-        if name in documents:
+        if name in documents or name in missing_composites:
             return
-        path = explicit_path or _resolve_source(source_root, name, ".composite")
+        path = explicit_path or _resolve_source(
+            source_root, name, ".composite", allow_missing=True)
+        if path is None:
+            missing_composites.add(name)
+            return
         document = read_composite_file(path)
         if document.name != name:
             raise MHValidationError(
@@ -106,7 +118,10 @@ def _load_closure(root_name: str, root_path: Path, source_root: Path):
             load(dependency)
 
     load(root_name, root_path)
-    validate_composite_cycles(root_name, documents)
+    cycle_documents = dict(documents)
+    cycle_documents.update(
+        (name, Composite(name)) for name in missing_composites)
+    validate_composite_cycles(root_name, cycle_documents)
     return documents, paths
 
 
@@ -142,11 +157,16 @@ def _preflight(documents, source_root: Path):
         _validate_blender_id_name(name, "object")
     mesh_paths = {}
     mesh_plans = {}
+    missing_meshes = set()
     for document in documents.values():
         for name in iter_resource_references(document, kind="mesh"):
-            if name in mesh_paths:
+            if name in mesh_paths or name in missing_meshes:
                 continue
-            path = _resolve_source(source_root, name, ".mesh.fbx")
+            path = _resolve_source(
+                source_root, name, ".mesh.fbx", allow_missing=True)
+            if path is None:
+                missing_meshes.add(name)
+                continue
             plan = parse_mesh_fbx(path)
             preflight_mesh_import_plan(plan, source_root)
             mesh_paths[name] = path
@@ -193,7 +213,7 @@ def _stamp_collection(collection, kind: str, name: str) -> None:
     collection[COLLECTION_RESOURCE_KEY] = name
 
 
-def _build_definition(document, collection, resources) -> int:
+def _build_definition(document, collection, resources, warnings) -> int:
     count = 0
 
     def build(nodes, parent=None):
@@ -210,9 +230,23 @@ def _build_definition(document, collection, resources) -> int:
             if node.name is not None:
                 obj[NODE_NAME_KEY] = node.name
             if node.kind in {"mesh", "composite"}:
-                obj.instance_type = "COLLECTION"
-                obj.instance_collection = resources[(node.kind, node.resource)]
-                obj.empty_display_type = "PLAIN_AXES"
+                resource = resources.get((node.kind, node.resource))
+                if resource is None:
+                    obj[UNRESOLVED_PLACEMENT_KEY] = True
+                    obj.empty_display_type = "CUBE"
+                    obj.color = (1.0, 0.0, 0.0, 1.0)
+                    warnings.append({
+                        "code": "MH_W_UNRESOLVED_PLACEMENT",
+                        "subjects": sorted([
+                            f"{node.kind}:{node.resource}", obj.name]),
+                        "message": (
+                            f"{node.kind} resource '{node.resource}' is "
+                            "missing; placement was imported as a placeholder"),
+                    })
+                else:
+                    obj.instance_type = "COLLECTION"
+                    obj.instance_collection = resource
+                    obj.empty_display_type = "PLAIN_AXES"
             elif node.kind == "actor":
                 obj.empty_display_type = "ARROWS"
             else:
@@ -223,6 +257,7 @@ def _build_definition(document, collection, resources) -> int:
             # parenting so Blender derives the local matrix without changing
             # the authored world placement.
             obj.matrix_world = _matrix_world(node.transform)
+            _stamp_imported_transform(obj, node.transform)
             build(node.children, obj)
 
     build(document.nodes)
@@ -268,9 +303,10 @@ def import_composite_file(filepath, *, source_root) -> dict:
             resources[("composite", name)] = collection
 
         node_count = 0
+        warnings = []
         for name, document in documents.items():
             node_count += _build_definition(
-                document, composite_collections[name], resources)
+                document, composite_collections[name], resources, warnings)
 
         root_collection = composite_collections[path.stem]
         bpy.context.scene.collection.children.link(root_collection)
@@ -284,5 +320,5 @@ def import_composite_file(filepath, *, source_root) -> dict:
         "composites": list(documents),
         "meshes": mesh_reports,
         "nodes": node_count,
-        "warnings": [],
+        "warnings": warnings,
     }
