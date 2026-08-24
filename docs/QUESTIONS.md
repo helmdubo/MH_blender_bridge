@@ -6,7 +6,8 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+Открыты вопросы v4: filesystem aliases (`OPEN-V4-1`) и блокеры Project
+Resource Index (`OPEN-V4-12`–`OPEN-V4-16`). Вопросы
 `OPEN-V4-2`–`OPEN-V4-11` (включая выявленные аудитами S2/S3 грамматики
 Material и Composite, applied state, library round-trip, `AppliedParent`,
 transform contract и правило маркеров имён) решены owner — нормативный
@@ -349,6 +350,135 @@ export/import и будущий UE importer S5.
 
 **Прежний статус. ОТКРЫТ.** Блокировал только конфликтующие collision names
 и финальный общий classifier acceptance S3/S5.
+
+## OPEN-V4-12 — state machine и rebuild-контракт Project Index
+
+**Контекст.** 08 §3 перечисляет таблицы и часть полей, а 09 S4 требует
+идентичного восстановления после удаления SQLite. Для детерминированной схемы
+и acceptance не определены:
+
+- множество ключей, для которых хранится `ResourceKeys.missing` (только
+  dependency targets, generated assets, исчезнувшие candidates или их union),
+  срок жизни missing-строки и точный смысл `invalid`;
+- precedence `ambiguous`/`invalid`, если у одного key несколько candidates и
+  один либо несколько payload не парсятся;
+- словари/переходы `ResourceCandidates.parse_status`,
+  `GeneratedAssets.status` и семантика `generation`;
+- представление неканоничного filename, из которого нельзя получить валидные
+  `(kind, name)`, и конфликт нескольких UE assets, заявляющих один ResourceKey;
+- rebuild или блок при corrupt/unsupported schema;
+- означает ли «идентичный индекс» равенство упорядоченных typed rows и resolver
+  outcomes либо физически идентичные SQLite bytes, и входят ли transient event
+  diagnostics/tokens в это равенство.
+
+**Вопрос.** Зафиксировать exact state vocabulary/precedence/retention,
+generation и schema-mismatch policy для пяти таблиц §3, а также точный subject
+acceptance «delete `.sqlite` → identical index». Должны ли malformed/duplicate
+managed Asset Registry rows блокировать соответствующий key либо весь rebuild?
+
+**Временное fail-closed правило.** До решения resolver не считает key
+разрешённым без ровно одного каноничного и валидного candidate; persistent
+SQLite state machine и Ledger replacement не реализуются. Corrupt cache не
+интерпретируется и не мигрируется.
+
+**Статус. ОТКРЫТ; блокирует S4 schema, rebuild и rename/orphan acceptance.**
+
+## OPEN-V4-13 — applied raw state и покрытие GeneratedAssets
+
+**Контекст.** 08 §7 фиксирует ровно пять Asset Registry tags:
+`MH.Kind`, `MH.LogicalName`, `MH.SourcePath`, `MH.AppliedHash`, `MH.Managed`;
+расширять их нельзя. `GeneratedAssets` строится из этих tags, но raw
+`SourceHash`, необходимый после удаления Ledger для честного
+`REIMPORT/NO_CHANGE`, среди них отсутствует. Material/Composite имеют raw
+receipt внутри UObject, StaticMesh carrier появляется только в S5, а для
+генерируемой Texture §7 вообще не задаёт applied-state carrier/tags, хотя
+texture имеет ResourceKey и generated path §§2/8.
+
+**Вопрос.** Откуда S4 change detector получает last-successful raw source hash:
+загружает UObject по `ue_object_path`, читает receipt и пишет отдельную derived
+колонку, либо использует иной owner-пинованный источник без шестого AR tag?
+Какие kinds обязаны входить в `GeneratedAssets` уже в S4; должен ли S4 вводить
+texture carrier, а mesh-row откладывать до S5? Как обрабатывается tagged asset,
+для kind которого carrier ещё не существует?
+
+**Временное fail-closed правило.** Не выводить applied raw state из
+`AppliedHash` другого semantic domain, не добавлять шестой tag и не записывать
+предположительные Texture/StaticMesh receipts. До решения Ledger/change
+detector не заменяется неполной моделью.
+
+**Статус. ОТКРЫТ; блокирует Ledger purge, GeneratedAssets и change analysis.**
+
+## OPEN-V4-14 — домен и роли Dependencies в S4
+
+**Контекст.** 09 S4 требует `Dependencies из payload-ссылок` и блокировку
+dependents, но не определяет exact edge set и `role`. Material v4 даёт
+`material → texture`; Composite — `composite → mesh|composite` и actor token,
+который не является ResourceKey. Class/library parents также являются registry
+tokens, не source ResourceKeys. `mesh → material` требует FBX slot parse из
+S5, которого в UE S4 ещё нет. Для ambiguous/invalid owner с несколькими
+candidates таблица §3 не имеет candidate-path provenance.
+
+**Вопрос.** Хранит ли `Dependencies` только ResourceKey→ResourceKey edges?
+Зафиксировать exact role names, включение/exclusion actor/class/library,
+момент появления mesh-slot edges и политику edges для duplicate/invalid owner
+(union, per-candidate provenance или полное отсутствие). На каком графе S4
+обязан вычислять transitive dependent blocking?
+
+**Временное fail-closed правило.** Не сохранять заведомо неполный dependency
+graph и не объявлять transitive dependents здоровыми. Ресурс с ambiguous
+ResourceKey остаётся заблокирован существующим
+`MH_E_AMBIGUOUS_RESOURCE_NAME`; registry tokens не маскируются под source kind.
+
+**Статус. ОТКРЫТ; блокирует Dependencies и dependent-blocking acceptance S4.**
+
+## OPEN-V4-15 — incremental events, self-publish и probable rename
+
+**Контекст.** 09 S4 одновременно требует incremental upsert
+`watcher/startup/publish`, self-publish token и probable rename, тогда как
+actual `DirectoryWatcher`, debounce/coalescing и PIE queue назначены S6.
+Filesystem event не переносит publish token. Не определены:
+
+- владеет ли S4 реальной watcher-подпиской или только callable batched API для
+  будущего S6;
+- token identity без UUID, регистрация до/после atomic replace, persistence,
+  cancel при failed publish, TTL/consumption/replay и несколько одинаковых
+  publish/event observations;
+- batch/window и same-kind правило probable rename, many-to-many pairing при
+  одинаковом raw hash, а также lifetime transition diagnostic;
+- входит ли transient token/rename diagnostic в rebuild-identical contract
+  `OPEN-V4-12`.
+
+**Вопрос.** Зафиксировать границу S4/S6 и state machine pending publication →
+`SELF_PUBLISHED`, включая match tuple и crash/restart semantics. Зафиксировать
+deterministic probable-rename pairing и diagnostic retention для already
+coalesced event batch.
+
+**Временное fail-closed правило.** Без однозначного pending receipt событие не
+классифицируется `SELF_PUBLISHED`; token не угадывается по одному path/mtime.
+Actual watcher/debounce не переносится самовольно из S6. При неоднозначном
+same-hash pairing alias и probable-rename warning не создаются.
+
+**Статус. ОТКРЫТ; блокирует incremental/self-publish/rename часть S4.**
+
+## OPEN-V4-16 — метрика orphan rebound divergence
+
+**Контекст.** 08 §2 требует
+`MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED` при re-bind сироты с «сильно
+разошедшимся» содержимым, но не задаёт саму rebind-операцию/момент, сравниваемые
+hash domains или threshold. Fixed Asset Registry tags не содержат raw
+SourceHash; `AppliedHash` Material/Composite/StaticMesh описывает разные
+semantic domains и не сравним с raw candidate hash.
+
+**Вопрос.** Что именно инициирует orphan rebind и какие baseline/current
+receipts сравниваются? Зафиксировать детерминированную divergence metric и
+threshold для каждого kind либо заменить «сильно» точным hash-equality
+правилом. В каком S4/S6 API выдаётся warning?
+
+**Временное fail-closed правило.** Orphan остаётся orphan; автоматический или
+неподтверждённый rebind запрещён. `AppliedHash` не сравнивается с raw hash,
+warning без owner-пинованной метрики не выдаётся.
+
+**Статус. ОТКРЫТ; блокирует rebound и регистрацию/call-site warning S4.**
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
