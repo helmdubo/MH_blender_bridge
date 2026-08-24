@@ -6,10 +6,11 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-19` (включая все блокеры Project Resource Index,
-выявленные аудитами S4) решены owner — нормативный текст перенесён в
-08 §§2–7 и 09 (S2/S3/S4/S5/S6).
+Открыты четыре вопроса v4: filesystem aliases (`OPEN-V4-1`) и блокеры S5
+(`OPEN-V4-20`–`OPEN-V4-22`). Вопросы `OPEN-V4-2`–`OPEN-V4-19`
+(включая все блокеры Project Resource Index, выявленные аудитами S4)
+решены owner — нормативный текст перенесён в 08 §§2–7 и 09
+(S2/S3/S4/S5/S6).
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
@@ -673,6 +674,88 @@ orphan-rebind. Переход `orphan -> candidate` может быть обна
 owner-решения. Импорт ресурса с таким переходом не запускается автоматически;
 план остаётся `REIMPORT`, а выполнение требует повторного подтверждения после
 решения вопроса. Новые schema/tag/error-code формы не вводятся.
+
+## OPEN-V4-20 — applied fingerprint и transaction receipt StaticMesh
+
+**Контекст.** 08 §7 требует
+`UMHStaticMeshImportData : UAssetImportData` с полями `SchemaVersion`,
+`LogicalName`, `SourceRelativePath`, `SourceRawHash`, `RecipeHash`,
+`AppliedAssetHash`, `LastSuccessfulTransaction`; 08 §9 и acceptance S5
+требуют детектировать локальную правку managed `UStaticMesh` через
+`AppliedAssetHash` и восстановить source следующим импортом. При этом активные
+08/09 не задают:
+
+- типы и допустимые значения `SchemaVersion`, `RecipeHash` и
+  `LastSuccessfulTransaction` (UUID запрещены инвариантом v4);
+- вход и версию `RecipeHash`;
+- каноническую проекцию/байты `AppliedAssetHash`: какие LOD
+  `MeshDescription` attributes и build settings, material slots/object paths,
+  `BodySetup` shapes/modes и sockets входят; как упорядочиваются элементы и
+  кодируются float; должен ли fingerprint быть тождественен после
+  save/reload;
+- момент проверки локальной правки: только перед source-triggered `REIMPORT`
+  либо также для `NO_CHANGE` при обычном scan (последнее требует загрузить
+  каждый managed mesh); как explicit reimport заставляет source победить при
+  неизменном raw hash;
+- lifecycle `LastSuccessfulTransaction`: что именно он идентифицирует и когда
+  продвигается относительно build → async completion → первого save → save
+  receipt.
+
+Шесть Asset Registry tags вопрос не расширяет: для binary kind нормативно
+`MH.AppliedHash == MH.SourceHash == SourceRawHash`; `AppliedAssetHash` —
+внутренний fingerprint локального состояния, а не седьмой tag.
+
+**Вопрос.** Какова точная типизированная модель этих полей, каноническая
+проекция/алгоритм `AppliedAssetHash`, значение `RecipeHash`, семантика
+`LastSuccessfulTransaction` и cadence local-edit detection/forced reimport?
+
+**Временное fail-closed правило.** Не подменять fingerprint `LightingGuid`,
+DDC key, package bytes или произвольной UObject-сериализацией; не создавать и
+не продвигать managed StaticMesh receipt/claim. S5 остаётся STOP до решения;
+никакие частичные assets не публикуются.
+
+## OPEN-V4-21 — observable mapping socket и collision nodes
+
+**Контекст.** Таблица 08 §4 распознаёт null `SOCKET_*` как
+`UStaticMeshSocket`, а mesh `UCX_*`/`*_cls_phys|trace|both` как BodySetup shape
+с соответствующим `CollisionEnabled`. Не зафиксированы две наблюдаемые части
+результата:
+
+- `UStaticMeshSocket::SocketName`: сохраняется полный FBX token
+  `SOCKET_grip` или marker снимается и публичное имя равно `grip`; допустим ли
+  пустой token `SOCKET_`;
+- каждый collision mesh становится отдельным convex hull из всех transformed
+  control points либо `_cls_*` использует другую форму/cooking; что делать с
+  невыпуклой/дегенеративной геометрией и несколькими nodes одного режима.
+
+Это пользовательски видимое состояние `UStaticMesh` и часть
+`AppliedAssetHash`; silent repair/угадывание запрещено.
+
+**Вопрос.** Какое точное имя получает socket и какая shape/cooking policy
+применяется к `UCX_*` и `_cls_*` collision nodes?
+
+**Временное fail-closed правило.** Не материализовывать sockets/collision в
+production `UStaticMesh` и не заявлять частичную приёмку S5 до owner-решения.
+
+## OPEN-V4-22 — machine code transport-level FBX failures
+
+**Контекст.** 08 §4 пинует canonical axis/unit transport и закрытый static-mesh
+диалект. Direct FBX SDK обязан fail-closed отклонять как минимум corrupt/
+нечитаемый FBX, несовпадающие axis/units, неудачную triangulation и
+невалидные geometry layer indices. Node/LOD/slot нарушения уже имеют
+ратифицированные коды, но общего production-кода transport/geometry failure в
+реестре нет. Существующий R1 axis-probe возвращает
+`MH_E_GEOMETRY_SOURCE_MISMATCH`, однако этот код отсутствует в
+`canonical.py::ERROR_CODES` и golden-списке; переносить его молча нельзя.
+
+**Вопрос.** Ратифицировать `MH_E_GEOMETRY_SOURCE_MISMATCH` как единый S5-код
+transport-level mismatch/invalid geometry (с регистрацией и обновлением
+счётчиков) либо назначить другой существующий/новый набор машинных кодов?
+
+**Временное fail-closed правило.** Неразобранный или неканоничный FBX не
+импортируется и не даёт slot dependencies, но production diagnostic/schema не
+вводятся до owner-решения; старый незарегистрированный probe-код не считается
+контрактом S5.
 
 ## OPEN-V2-1 — Provisioning `project_uid`
 
