@@ -49,6 +49,7 @@ class MaterialValueError(ValueError):
     def __init__(self, code: str, path: str, message: str):
         self.code = code
         self.path = path
+        self.message = message
         super().__init__(f"{code}: {path}: {message}")
 
 
@@ -63,7 +64,9 @@ def _token(value: Any, path: str, *, texture: bool = False) -> str:
             if texture else "MH_E_MATERIAL_GRAMMAR"
         )
         raise MaterialValueError(
-            code, path, "must match [a-z0-9_]+ exactly; no repair is performed")
+            code, path,
+            f"value {value!r} must match [a-z0-9_]+ exactly; "
+            "no repair is performed")
     return value
 
 

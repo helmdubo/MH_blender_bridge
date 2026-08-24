@@ -289,6 +289,22 @@ def test_writer_rejects_non_roundtrippable_shear(tmp_path):
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
 
 
+def test_writer_identifies_unmarked_placement_object(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = bpy.data.collections.new("unmarked")
+    bpy.context.scene.collection.children.link(collection)
+    mesh = bpy.data.meshes.new("UnmarkedGeometry")
+    placement = bpy.data.objects.new("UnmarkedPlacement", mesh)
+    collection.objects.link(placement)
+
+    with pytest.raises(ValueError, match="MH_E_COMPOSITE_GRAMMAR") as excinfo:
+        export_composite_collection(collection, tmp_path, source_root=tmp_path)
+    rendered = str(excinfo.value)
+    assert "UnmarkedPlacement" in rendered
+    assert "mh_composite_kind=None" in rendered
+    assert "Active Placement" in rendered
+
+
 def test_composite_import_materializes_mesh_once_and_builds_instance(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     authored = bpy.data.collections.new("vehicle")

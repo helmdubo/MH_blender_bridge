@@ -1,8 +1,19 @@
 """One MH sidebar tab with separate source-workflow sections."""
 
+import re
+
 import bpy
 
 from .. import prefs as prefs_mod
+from ..scene.export_composite import (
+    COLLECTION_KIND_KEY,
+    COLLECTION_RESOURCE_KEY,
+    NODE_KIND_KEY,
+    NODE_RESOURCE_KEY,
+)
+
+
+_TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
 
 
 class MH_PT_source_tools(bpy.types.Panel):
@@ -42,6 +53,28 @@ class MH_PT_source_tools(bpy.types.Panel):
                 scene, "mh_composite_export_collection", text="Collection")
             box.prop(
                 scene, "mh_composite_export_directory", text="Folder")
+            placement = box.box()
+            placement.label(text="Active Placement", icon="OBJECT_DATA")
+            obj = context.active_object
+            if obj is None:
+                placement.label(text="Select an object to mark", icon="INFO")
+            else:
+                instance = getattr(obj, "instance_collection", None)
+                kind = obj.get(NODE_KIND_KEY)
+                resource = obj.get(NODE_RESOURCE_KEY)
+                origin = "explicit"
+                if kind is None and instance is not None:
+                    kind = instance.get(COLLECTION_KIND_KEY)
+                    resource = resource or instance.get(COLLECTION_RESOURCE_KEY)
+                    origin = f"inherited from {instance.name}"
+                placement.label(text=f"Object: {obj.name}")
+                placement.label(
+                    text=f"Kind: {kind or '<unset>'} ({origin})")
+                placement.label(text=f"Resource: {resource or '<unset>'}")
+                row = placement.row(align=True)
+                row.operator("mh.set_composite_placement", icon="GREASEPENCIL")
+                row.operator(
+                    "mh.clear_composite_placement", text="", icon="X")
             box.operator("mh.export_composite", icon="EXPORT")
 
         materials = layout.box()
@@ -54,11 +87,24 @@ class MH_PT_source_tools(bpy.types.Panel):
             settings = material.mh4blend
             materials.prop(settings, "mode", expand=True)
             if settings.mode == "LIBRARY":
-                materials.prop(settings, "library")
+                library = materials.row()
+                library.alert = _TOKEN_RE.fullmatch(settings.library) is None
+                library.prop(settings, "library")
+                if library.alert:
+                    materials.label(
+                        text="Library must match [a-z0-9_]+",
+                        icon="ERROR")
                 materials.label(
                     text="Library form has no local overrides", icon="INFO")
             else:
-                materials.prop(settings, "material_class")
+                material_class = materials.row()
+                material_class.alert = (
+                    _TOKEN_RE.fullmatch(settings.material_class) is None)
+                material_class.prop(settings, "material_class")
+                if material_class.alert:
+                    materials.label(
+                        text="Class must match [a-z0-9_]+",
+                        icon="ERROR")
                 row = materials.row(align=True)
                 row.prop(settings, "twosided_override")
                 value = row.row(align=True)

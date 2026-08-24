@@ -216,8 +216,11 @@ def test_material_rejection_happens_before_fbx_publish(tmp_path, monkeypatch):
         export_fbx_module, "_export_selected_fbx",
         lambda path: calls.append(path))
 
-    with pytest.raises(MaterialValueError, match="MH_E_MATERIAL_GRAMMAR"):
+    with pytest.raises(MaterialValueError, match="MH_E_MATERIAL_GRAMMAR") as excinfo:
         export_fbx_collection(
             collection, tmp_path, source_root=tmp_path, export_materials=True)
+    rendered = str(excinfo.value)
+    assert "material 'wall' / class" in rendered
+    assert "value 'NotCanonical'" in rendered
     assert calls == []
     assert not (tmp_path / "building.mesh.fbx").exists()

@@ -144,10 +144,17 @@ def prepare_blender_material_export(
     if not _inside(root, output):
         raise ValueError("Material output folder must be inside Project Source Root")
 
-    resource = _extract_resource(material)
-    payload = material_json_bytes(resource)
-    for token in resource.textures.values():
-        resolve_texture_reference(root, token)
+    try:
+        resource = _extract_resource(material)
+        payload = material_json_bytes(resource)
+        for token in resource.textures.values():
+            resolve_texture_reference(root, token)
+    except MaterialValueError as exc:
+        raise MaterialValueError(
+            exc.code,
+            f"material {material.name!r} / {exc.path}",
+            exc.message,
+        ) from exc
 
     target = _resolve_material_target(root, output, resource.name)
     if target.exists() and target.is_dir():

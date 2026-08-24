@@ -34,7 +34,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
             "mh.export_composite",
             "mh.import_composite", "mh.material_texture_add",
             "mh.material_texture_remove", "mh.material_param_add",
-            "mh.material_param_remove",
+            "mh.material_param_remove", "mh.set_composite_placement",
+            "mh.clear_composite_placement",
         }
         assert {cls.bl_category for cls in panels.CLASSES} == {"MH"}
     finally:
@@ -196,3 +197,27 @@ def test_composite_picker_does_not_accept_uppercase_extension(tmp_path):
     path.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
         ops._filepath(str(path))
+
+
+def test_composite_placement_operators_write_explicit_authoring_markers():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        placement = bpy.data.objects.new("GaragePlacement", None)
+        bpy.context.scene.collection.objects.link(placement)
+        placement.select_set(True)
+        bpy.context.view_layer.objects.active = placement
+
+        assert bpy.ops.mh.set_composite_placement(
+            kind="mesh", resource="garage_shell",
+            display_name="Garage shell") == {"FINISHED"}
+        assert placement["mh_composite_kind"] == "mesh"
+        assert placement["mh_composite_resource"] == "garage_shell"
+        assert placement["mh_composite_name"] == "Garage shell"
+
+        assert bpy.ops.mh.clear_composite_placement() == {"FINISHED"}
+        assert "mh_composite_kind" not in placement
+        assert "mh_composite_resource" not in placement
+        assert "mh_composite_name" not in placement
+    finally:
+        mh4blend.unregister()

@@ -201,9 +201,14 @@ def _node_kind_and_resource(obj) -> tuple[str, str | None]:
     if kind is None and obj.type == "EMPTY" and instance is None:
         kind = "group"
     if kind not in {"mesh", "actor", "composite", "group"}:
+        instance_name = getattr(instance, "name", None)
         raise MHValidationError(
             "MH_E_COMPOSITE_GRAMMAR", [obj.name],
-            "placement must declare mesh, actor, composite or group kind")
+            f"placement object {obj.name!r} (type={obj.type!r}, "
+            f"instance_collection={instance_name!r}) has "
+            f"{NODE_KIND_KEY}={explicit_kind!r} and inherited "
+            f"kind={instance_kind!r}; use MH > Composites > Active "
+            "Placement to set mesh, actor, composite or group")
 
     resource = explicit_resource or instance_resource
     if kind == "group":
@@ -215,7 +220,9 @@ def _node_kind_and_resource(obj) -> tuple[str, str | None]:
     if not isinstance(resource, str) or not resource:
         raise MHValidationError(
             "MH_E_COMPOSITE_GRAMMAR", [obj.name],
-            f"{kind} placement requires a logical resource token")
+            f"{kind} placement object {obj.name!r} requires a logical "
+            f"resource token in {NODE_RESOURCE_KEY}; current value is "
+            f"{resource!r}")
     return kind, resource
 
 
