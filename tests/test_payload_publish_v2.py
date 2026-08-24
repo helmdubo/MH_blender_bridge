@@ -190,10 +190,10 @@ def test_pre_replace_guard_runs_under_lock_and_failure_preserves_target(
                     target, lock_root=locks, timeout_seconds=0.02):
                 pass
         observed.append(caught.value.code)
-        raise RuntimeError("UID collision discovered under lock")
+        raise RuntimeError("resource collision discovered under lock")
 
     with pytest.raises(
-            RuntimeError, match="UID collision discovered under lock"):
+            RuntimeError, match="resource collision discovered under lock"):
         atomic_publish_bytes(
             target, b"must not publish", lock_root=locks,
             pre_replace_guard=guarded_failure)

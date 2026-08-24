@@ -3,10 +3,11 @@
 > **ACTIVE TARGET: MH SOURCE PROTOCOL V4.** Единственный норматив —
 > [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md).
 > Порядок реализации и definition of done —
-> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). Реализация в
-> `addon/mh4blend` и `ue/MimirComposite` в начале перехода всё ещё соответствует
-> старому v2; это ожидаемое состояние до завершения S1–S6, а не альтернативный
-> контракт.
+> [`docs/09_v4_agent_slices.md`](docs/09_v4_agent_slices.md). S0 принят и
+> смержен; S1 удаляет из production-кода UID/passport/meshser и переводит FBX
+> export и UE scan/resolve/analyze/plan на name-keyed основу v4. Полные форматы
+> Material/Composite, индекс, builders и watcher вводятся только следующими
+> срезами S2–S6.
 
 ## Source Protocol v4 в одном экране
 
@@ -83,6 +84,17 @@ UID/passport → S2 materials → S3 composites → S4 index → S5 StaticMesh i
 → S6 watcher/commandlets/UX. Каждый срез имеет ветку `v4/s<N>-*` и квитанцию
 `docs/receipts/v4_s<N>.md`; исполнитель не мержит PR самостоятельно.
 
+Текущее состояние S1: Blender пишет обычный Combined-LOD FBX с временными
+`_lodNN`-именами узлов, полной иерархией и parent closure, без MH custom
+properties; UE scanner/resolver и Analyze/Plan используют
+`ResourceKey = Kind + LogicalName`. Legacy Ledger оставлен только как явно
+deprecated reader state до замены индексом в S4. Material/Composite операции,
+чьи v4-форматы появятся в S2/S3, временно блокируются fail-closed.
+Структурированные diagnostic JSON не переиспользуют несовместимые v2-теги:
+до решения [`OPEN-V4-5`](docs/QUESTIONS.md#open-v4-5--версии-v4-diagnostic-json)
+`MHAnalyzeSources -report` отклоняется, а v4 FBX dump отложен как минимум до
+среза импортёра S5; console Analyze/Plan остаётся доступен.
+
 Python-проверка без Blender:
 
 ```bash
@@ -111,7 +123,7 @@ ue/MimirComposite/  # UE editor-only plugin
 ## Архивное README Source Protocol v2
 
 > **SUPERSEDED BY SOURCE PROTOCOL V4.** Весь оставшийся body сохранён без
-> удаления как историческое описание v2 и текущего pre-S1 tooling. Он не
+> удаления как историческое описание v2 и удалённого в S1 tooling. Он не
 > является active contract или implementation input; любые UID/passport/
 > Ledger/UE→FBX утверждения ниже ненормативны.
 

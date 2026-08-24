@@ -43,7 +43,7 @@ enum class EMHGeometryBackend : uint8
 {
     /** Direct FBX SDK backend with mandatory Carrier B; the production backend. */
     MhFbx,
-    /** UFbxFactory comparison backend; test-only, never a passport fallback. */
+    /** UFbxFactory comparison backend; test-only, never a production fallback. */
     Legacy
 };
 

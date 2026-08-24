@@ -3,7 +3,6 @@
 #include "Async/Async.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
-#include "Codec/MHCompositeCodec.h"
 #include "Logging/MessageLog.h"
 #include "MessageLogModule.h"
 #include "Misc/MessageDialog.h"
@@ -20,66 +19,70 @@ void MHFilterAnalysisToScope(
     const FMHImportSourcesScope& Scope,
     FMHSourceAnalysis& InOutAnalysis)
 {
-    if (Scope.ResourceUids.IsEmpty())
+    if (Scope.ResourceKeys.IsEmpty())
     {
         return;
     }
 
-    TSet<FString> Analyzed;
+    TSet<FMHResourceKey> Analyzed;
     for (const FMHSourceAnalysisEntry& Entry : InOutAnalysis.Entries)
     {
-        Analyzed.Add(Entry.ResourceUid);
+        Analyzed.Add(Entry.Key);
     }
 
-    TSet<FString> Included;
-    TSet<FString> Invalid;
-    for (const FString& Uid : Scope.ResourceUids)
+    TSet<FMHResourceKey> Included;
+    TArray<FMHResourceKey> Invalid;
+    for (const FMHResourceKey& Key : Scope.ResourceKeys)
     {
-        if (MHIsCanonicalUuid(Uid))
+        if (Key.IsCanonical())
         {
-            Included.Add(Uid);
+            Included.Add(Key);
         }
         else
         {
-            Invalid.Add(Uid);
+            Invalid.Add(Key);
         }
     }
     InOutAnalysis.Entries.RemoveAll(
         [&Included](const FMHSourceAnalysisEntry& Entry)
         {
-            return !Included.Contains(Entry.ResourceUid);
+            return !Included.Contains(Entry.Key);
         });
 
-    for (const FString& Uid : Included)
+    for (const FMHResourceKey& Key : Included)
     {
-        if (Analyzed.Contains(Uid))
+        if (Analyzed.Contains(Key))
         {
             continue;
         }
 
         FMHSourceAnalysisEntry& Missing = InOutAnalysis.Entries.AddDefaulted_GetRef();
-        Missing.ResourceUid = Uid;
+        Missing.Key = Key;
         Missing.Change = EMHSourceChange::Blocked;
         Missing.bLedgerAdvanceAllowed = false;
         Missing.Errors.Add(FString::Printf(
-            TEXT("MH_E_RESOURCE_NOT_FOUND: requested scope UID %s was not found in the source snapshot or applied state"),
-            *Uid));
+            TEXT("MH_E_RESOURCE_NOT_FOUND: requested scope key %s was not found in the source snapshot or applied state"),
+            *Key.ToString()));
     }
-    for (const FString& Uid : Invalid)
+    for (const FMHResourceKey& Key : Invalid)
     {
         FMHSourceAnalysisEntry& Rejected = InOutAnalysis.Entries.AddDefaulted_GetRef();
-        Rejected.ResourceUid = Uid;
+        Rejected.Key = Key;
         Rejected.Change = EMHSourceChange::Blocked;
         Rejected.bLedgerAdvanceAllowed = false;
         Rejected.Errors.Add(FString::Printf(
-            TEXT("MH_E_SOURCE_INDEX_INVALID: requested scope UID is not canonical: %s"),
-            *Uid));
+            TEXT("MH_E_SOURCE_INDEX_INVALID: requested scope key is not canonical: %s"),
+            *Key.ToString()));
     }
     InOutAnalysis.Entries.Sort([](
         const FMHSourceAnalysisEntry& A,
         const FMHSourceAnalysisEntry& B)
     {
-        return A.ResourceUid < B.ResourceUid;
+        if (A.Key.Kind != B.Key.Kind)
+        {
+            return static_cast<uint8>(A.Key.Kind) < static_cast<uint8>(B.Key.Kind);
+        }
+        return A.Key.LogicalName < B.Key.LogicalName;
     });
 }
 
@@ -244,7 +247,7 @@ void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
         const FString Line = FString::Printf(
             TEXT("%s  %s  %s"),
             MHSourceChangeLabel(Entry.Change),
-            *Entry.ResourceUid,
+            *Entry.Key.ToString(),
             Entry.SourcePath.IsEmpty() ? TEXT("-") : *Entry.SourcePath);
         if (Entry.Errors.IsEmpty())
         {

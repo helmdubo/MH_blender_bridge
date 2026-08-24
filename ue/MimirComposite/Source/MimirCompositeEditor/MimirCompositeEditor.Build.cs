@@ -23,17 +23,14 @@ public class MimirCompositeEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new[]
             {
-                "DesktopPlatform",
                 "AssetRegistry",
                 "Json",
                 "MessageLog",
                 "Projects",
-                "Slate",
-                "SlateCore",
-                "ToolMenus",
                 "UnrealEd"
             });
 
+        // Retained direct Autodesk FBX SDK -> IMHGeometryTranslator seam.
         AddEngineThirdPartyPrivateStaticDependencies(Target, "FBX");
     }
 }

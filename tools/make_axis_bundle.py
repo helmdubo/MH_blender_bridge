@@ -50,8 +50,26 @@ import sys
 import bpy
 from mathutils import Euler, Matrix, Vector
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from make_golden_scene import CONTROL_VERTEX, make_window_mesh  # noqa: E402
+CONTROL_VERTEX = (0.37, 0.11, 1.93)
+
+
+def make_window_mesh(name):
+    """Build the asymmetric axis probe without the retired golden generator."""
+    verts = [
+        (-0.5, -0.05, 0.0), (0.5, -0.05, 0.0),
+        (0.5, 0.05, 0.0), (-0.5, 0.05, 0.0),
+        (-0.5, -0.05, 1.2), (0.5, -0.05, 1.2),
+        (0.5, 0.05, 1.2), (-0.5, 0.05, 1.2),
+        CONTROL_VERTEX,
+    ]
+    faces = [
+        (0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+        (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0), (5, 6, 8),
+    ]
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate()
+    return mesh
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RISK_DOC = os.path.join(REPO_ROOT, "docs", "RISK_RESULTS.md")

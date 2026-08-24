@@ -1,4 +1,4 @@
-"""Crash-safe publication primitives for MH Source Protocol v2.
+"""Crash-safe publication primitives for MH Source Protocol v4.
 
 The source payload is the authority.  This module therefore publishes a whole
 file with a sibling temporary file and ``os.replace`` while holding an
@@ -14,9 +14,9 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 import unicodedata
-import uuid
 
 __all__ = [
     "PayloadPublishV2Error",
@@ -30,7 +30,7 @@ __all__ = [
 
 
 class PayloadPublishV2Error(RuntimeError):
-    """A fail-closed v2 publication error with a stable diagnostic code."""
+    """A fail-closed publication error with a stable diagnostic code."""
 
     def __init__(self, code: str, message: str):
         self.code = code
@@ -171,8 +171,7 @@ def atomic_publish_bytes(
 
     The private ``_crash_at``/``_hold_lock_seconds`` arguments are deterministic
     process-level verification seams.  Product callers must leave them unset.
-    A hard exit before replace may leave a non-authoritative ``.mh-tmp-`` file;
-    v2 scanners ignore that reserved spelling.
+    A hard exit before replace may leave a non-authoritative ``.mh-tmp-`` file.
     """
     if not isinstance(payload, bytes):
         raise TypeError("payload must be bytes")
@@ -185,8 +184,10 @@ def atomic_publish_bytes(
 
     destination = Path(target).resolve(strict=False)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temp = destination.parent / (
-        f".{destination.name}.mh-tmp-{os.getpid()}-{uuid.uuid4().hex}")
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.mh-tmp-", dir=destination.parent)
+    os.close(descriptor)
+    temp = Path(temp_name)
     effective_lock_root = (
         Path(lock_root).resolve(strict=False) if lock_root is not None
         else default_lock_root().resolve(strict=False))
@@ -204,7 +205,7 @@ def atomic_publish_bytes(
         if _hold_lock_seconds:
             time.sleep(_hold_lock_seconds)
         try:
-            with temp.open("xb") as stream:
+            with temp.open("wb") as stream:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())

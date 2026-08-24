@@ -5,15 +5,16 @@
 
 /**
  * -run=MHAnalyzeSources -root=<source_root> [-ledger=<snapshot.json>]
- *                       [-report=<out.json>]
  *
- * Headless reader pass of docs/07 section 4: scans the Clean Sources v2 payload
- * set, compares it with a Ledger snapshot and prints one line per classified
- * ResourceUID. Nothing is imported and the source tree is never written.
+ * Headless Source Protocol v4 reader pass: scans the source payload set,
+ * compares it with the deprecated transitional Ledger snapshot and prints one
+ * line per classified ResourceKey. Nothing is imported and the source tree is
+ * never written.
  * Without -root the commandlet falls back to the project SourceRoot setting.
  * -writeledger is explicitly rejected in C1: Analyze/Plan cannot advance
- * applied state. Exit code 0 when no MH_E_* was raised, 1 otherwise, 2 on
- * usage errors or a forbidden writer option.
+ * applied state. -report is also rejected until OPEN-V4-5 ratifies a v4 JSON
+ * diagnostic schema. Exit code 0 when no MH_E_* was raised, 1 otherwise, 2 on
+ * usage errors or a forbidden output/writer option.
  */
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHAnalyzeSourcesCommandlet final : public UCommandlet
