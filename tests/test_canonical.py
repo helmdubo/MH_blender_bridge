@@ -35,6 +35,7 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_INVALID_COLLECTION_OFFSET",
         "MH_E_INVALID_COMPOSITE",
         "MH_E_INVALID_EXPORT_MANIFEST",
+        "MH_E_IMPORT_TARGET_OCCUPIED",
         "MH_E_INVALID_LOD_HIERARCHY",
         "MH_E_INVALID_MATERIAL_VALUE",
         "MH_E_INVALID_RESOURCE_SOURCE",
@@ -61,13 +62,13 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_TEXTURE_OUTSIDE_ROOT",
         "MH_E_UNKNOWN_SCHEMA_VERSION",
         "MH_E_UNRESOLVED_EXTERNAL",
+        "MH_E_UNRESOLVED_MATERIAL_REFERENCE",
         "MH_E_UNRESOLVED_TEXTURE_REFERENCE",
         "MH_E_UNSUPPORTED_NODE_KIND",
         "MH_W_COMPOSITE_CYCLE",
         "MH_W_DUPLICATE_RESOURCE_NAME",
         "MH_W_LOD_AUX_NODE_IGNORED",
         "MH_W_MANAGED_ASSET_LOCALLY_MODIFIED",
-        "MH_W_MATERIAL_NOT_FOUND",
         "MH_W_MATERIAL_PAYLOAD_FALLBACK",
         "MH_W_MATERIAL_SLOT_NOT_FOUND",
         "MH_W_MATERIAL_SLOT_UNMAPPED",
@@ -75,14 +76,10 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
-        "MH_W_TEXTURE_BASENAME_AMBIGUOUS",
-        "MH_W_TEXTURE_NOT_FOUND",
-        "MH_W_TEXTURE_OUTSIDE_ROOT",
-        "MH_W_UNKNOWN_SHADER_CLASS",
         "MH_W_UNRESOLVED_RESOURCE",
     })
-    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 40
-    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 17
+    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 42
+    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 12
     assert all(re.fullmatch(r"MH_[EW]_[A-Z0-9_]+", code)
                for code in ERROR_CODES)
 

@@ -116,8 +116,10 @@ def _dagor_lod_structure(collection):
         leaf_match = _LOD_LEAF_RE.fullmatch(collection.name)
         if leaf_match is not None:
             root_name = f"{leaf_match.group('base')}.lods"
-            raise ValueError(
-                "MH_E_INVALID_LOD_HIERARCHY: selected collection "
+            raise MHValidationError(
+                "MH_E_INVALID_LOD_HIERARCHY",
+                [collection.name, root_name],
+                "selected collection "
                 f"'{collection.name}' is one LOD level; select its group "
                 f"collection '{root_name}' for FBX export")
         return None
@@ -137,14 +139,24 @@ def _dagor_lod_structure(collection):
             resource_name = custom_name
     # Keep the frozen canonical diagnostic and regex. This adapter only
     # removes the structural suffix from the fallback Blender name.
-    validate_resource_name(resource_name)
+    try:
+        validate_resource_name(resource_name)
+    except (TypeError, ValueError) as exc:
+        message = str(exc).partition(": ")[2] or str(exc)
+        raise MHValidationError(
+            "MH_E_NONCANONICAL_RESOURCE_NAME",
+            [resource_name],
+            message,
+        ) from exc
 
     direct_root_meshes = [
         obj for obj in collection.objects if obj.type == "MESH"]
     if direct_root_meshes:
         names = ", ".join(sorted(obj.name for obj in direct_root_meshes))
-        raise ValueError(
-            "MH_E_INVALID_LOD_HIERARCHY: .lods group contains mesh objects "
+        raise MHValidationError(
+            "MH_E_INVALID_LOD_HIERARCHY",
+            [collection.name, *(obj.name for obj in direct_root_meshes)],
+            ".lods group contains mesh objects "
             f"outside a direct .lodNN collection: {names}")
 
     child_pattern = re.compile(
@@ -153,27 +165,35 @@ def _dagor_lod_structure(collection):
     for child in collection.children:
         match = child_pattern.fullmatch(child.name)
         if match is None:
-            raise ValueError(
-                "MH_E_INVALID_LOD_HIERARCHY: every direct child of "
+            raise MHValidationError(
+                "MH_E_INVALID_LOD_HIERARCHY",
+                [collection.name, child.name],
+                "every direct child of "
                 f"'{collection.name}' must be named '{base}.lodNN' "
                 f"(optional Blender .NNN duplicate suffix); got "
                 f"'{child.name}'")
         level = int(match.group("level"))
         if level in levels:
-            raise ValueError(
-                "MH_E_INVALID_LOD_HIERARCHY: duplicate authored LOD level "
+            raise MHValidationError(
+                "MH_E_INVALID_LOD_HIERARCHY",
+                [levels[level].name, child.name],
+                "duplicate authored LOD level "
                 f"{level}: '{levels[level].name}' and '{child.name}'")
         levels[level] = child
 
     if 0 not in levels:
-        raise ValueError(
-            "MH_E_LOD_LEVELS_SPARSE: .lods group requires one direct "
+        raise MHValidationError(
+            "MH_E_LOD_LEVELS_SPARSE",
+            [collection.name],
+            ".lods group requires one direct "
             f"'{base}.lod00' collection")
     missing_levels = sorted(set(range(max(levels) + 1)) - set(levels))
     if missing_levels:
         missing = ", ".join(f"lod{level:02d}" for level in missing_levels)
-        raise ValueError(
-            "MH_E_LOD_LEVELS_SPARSE: authored LOD levels must be "
+        raise MHValidationError(
+            "MH_E_LOD_LEVELS_SPARSE",
+            [collection.name, missing],
+            "authored LOD levels must be "
             f"contiguous from lod00; missing {missing}")
 
     level_objects = []
@@ -189,15 +209,19 @@ def _dagor_lod_structure(collection):
         elif aux:
             ignored_aux.extend((level, obj.name) for obj in aux)
         if not objects:
-            raise ValueError(
-                "MH_E_INVALID_LOD_HIERARCHY: authored LOD collection "
+            raise MHValidationError(
+                "MH_E_INVALID_LOD_HIERARCHY",
+                [child.name],
+                "authored LOD collection "
                 f"'{child.name}' contains no mesh objects")
         for obj in objects:
             identity = obj.as_pointer()
             previous = object_level.get(identity)
             if previous is not None:
-                raise ValueError(
-                    "MH_E_INVALID_LOD_HIERARCHY: mesh object "
+                raise MHValidationError(
+                    "MH_E_INVALID_LOD_HIERARCHY",
+                    [obj.name],
+                    "mesh object "
                     f"'{obj.name}' belongs to both LOD {previous} and "
                     f"LOD {level}")
             object_level[identity] = level
@@ -213,8 +237,10 @@ def _dagor_lod_structure(collection):
                 continue
             parent_level = object_level.get(parent.as_pointer())
             if parent_level is not None and parent_level != level:
-                raise ValueError(
-                    "MH_E_INVALID_LOD_HIERARCHY: mesh object "
+                raise MHValidationError(
+                    "MH_E_INVALID_LOD_HIERARCHY",
+                    [obj.name, parent.name],
+                    "mesh object "
                     f"'{obj.name}' in LOD {level} is parented to "
                     f"'{parent.name}' in LOD {parent_level}")
 
