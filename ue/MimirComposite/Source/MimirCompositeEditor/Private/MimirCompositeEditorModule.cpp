@@ -215,8 +215,14 @@ void FMimirCompositeEditorModule::ShutdownModule()
         {
             ThumbnailManager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
         }
-        UToolMenus::UnRegisterStartupCallback(this);
-        UToolMenus::UnregisterOwner(this);
+        // ToolMenus may already have shut down when a project plugin unloads
+        // during editor exit. Its static startup delegate is no longer safe to
+        // touch after the module has gone away.
+        if (UToolMenus::TryGet() != nullptr)
+        {
+            UToolMenus::UnRegisterStartupCallback(this);
+            UToolMenus::UnregisterOwner(this);
+        }
     }
     if (ObjectModifiedHandle.IsValid())
     {

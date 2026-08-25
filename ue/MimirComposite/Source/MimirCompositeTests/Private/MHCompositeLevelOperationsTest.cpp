@@ -228,11 +228,23 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         }
 
         TArray<AActor*> BrokenActors;
+        TArray<TWeakObjectPtr<UActorComponent>> DestroyedPlacementComponents;
+        for (UActorComponent* Component : CompositeActor->GetDerivedComponents())
+        {
+            DestroyedPlacementComponents.Add(Component);
+        }
         Error.Reset();
         bPassed &= TestTrue(
             TEXT("Break removes one composite layer"),
             Subsystem->BreakComposites({CompositeActor}, BrokenActors, Warnings, Error));
         bPassed &= TestEqual(TEXT("Break creates every authored placement actor"), BrokenActors.Num(), 4);
+        MHRebuildAllLoadedCompositeActors();
+        for (const TWeakObjectPtr<UActorComponent>& Component : DestroyedPlacementComponents)
+        {
+            bPassed &= TestTrue(
+                TEXT("destroyed composite leaves no registered placement hit proxy"),
+                !Component.IsValid() || !Component->IsRegistered());
+        }
         TMap<FString, AActor*> ActorsByLabel;
         for (AActor* BrokenActor : BrokenActors)
         {

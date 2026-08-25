@@ -164,6 +164,16 @@ void AMHCompositeActor::PostLoad()
     RebuildComposite();
 }
 
+void AMHCompositeActor::Destroyed()
+{
+    // EditorDestroyActor keeps the actor UObject alive for undo, but its
+    // transient placement components must stop contributing render hit proxies
+    // immediately. Otherwise a composite built from another composite can
+    // still click through to the destroyed source actor.
+    ClearDerivedComponents();
+    Super::Destroyed();
+}
+
 #if WITH_EDITOR
 void AMHCompositeActor::PostEditUndo()
 {

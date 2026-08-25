@@ -115,6 +115,11 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
 {
     UMHSourceImporter* Importer = NewObject<UMHSourceImporter>();
     int32 StartupAttempts = 0;
+    int32 StartupCompositeRefreshes = 0;
+    Importer->SetStartupCompositeRefreshExecutorForTests([&StartupCompositeRefreshes]()
+    {
+        ++StartupCompositeRefreshes;
+    });
     Importer->SetStartupExecutorForTests([&StartupAttempts]()
     {
         ++StartupAttempts;
@@ -133,12 +138,15 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
     Importer->SetLifecycleTimeForTests(101.0);
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("first startup attempt is retryable"), StartupAttempts, 1);
+    bPassed &= TestEqual(TEXT("failed startup does not refresh composite instances"), StartupCompositeRefreshes, 0);
     bPassed &= TestFalse(TEXT("failed attempt is not marked complete"), Importer->HasStartupPlanRunForTests());
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("startup retries once"), StartupAttempts, 2);
     bPassed &= TestTrue(TEXT("successful startup is complete"), Importer->HasStartupPlanRunForTests());
+    bPassed &= TestEqual(TEXT("successful startup refreshes composite instances once"), StartupCompositeRefreshes, 1);
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("completed startup is exactly once"), StartupAttempts, 2);
+    bPassed &= TestEqual(TEXT("completed startup does not refresh twice"), StartupCompositeRefreshes, 1);
 
     UMHSourceImporter* PIEStartupImporter = NewObject<UMHSourceImporter>();
     int32 PIEStartupAttempts = 0;
@@ -303,6 +311,16 @@ bool FMHSourceLifecycleSelfPublishEchoTest::RunTest(const FString& Parameters)
         }
     }
     bPassed &= TestFalse(TEXT("echo plan executes no builder"), bEchoExecuted);
+    bPassed &= TestFalse(
+        TEXT("NO_CHANGE watcher echo does not present the all-project plan"),
+        MHShouldPresentWatcherAnalysis({SourcePath}, EchoAnalysis));
+    FMHSourceAnalysis RelevantWatcherAnalysis;
+    FMHSourceAnalysisEntry& RelevantEntry = RelevantWatcherAnalysis.Entries.AddDefaulted_GetRef();
+    RelevantEntry.Key = Key;
+    RelevantEntry.Change = EMHSourceChange::Reimport;
+    bPassed &= TestTrue(
+        TEXT("real watcher change remains visible"),
+        MHShouldPresentWatcherAnalysis({SourcePath}, RelevantWatcherAnalysis));
     bPassed &= TestTrue(
         TEXT("publish preserves managed UObject identity"),
         LoadObject<UMHCompositeAsset>(nullptr, *ObjectPath) == PublishedIdentity);

@@ -345,9 +345,13 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
             MeshPackage,
             FName(*MeshName),
             RF_Public | RF_Standalone | RF_Transactional);
-        MHNotifyGeneratedResourceChanged(MeshKey);
+        const bool bWorldPackageWasDirty = Actor->GetOutermost()->IsDirty();
+        const int32 StartupRefreshCount = MHRebuildAllLoadedCompositeActors();
+        bPassed &= TestTrue(
+            TEXT("startup refresh visits the loaded unresolved placement"),
+            StartupRefreshCount > 0);
         bPassed &= TestEqual(
-            TEXT("same-name mesh notify replaces placeholder with endpoint"),
+            TEXT("startup refresh replaces same-name placeholder with endpoint"),
             Actor->GetDerivedComponents().Num(),
             1);
         bPassed &= TestTrue(
@@ -357,6 +361,10 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(
             TEXT("healed placement has no unresolved warning"),
             Actor->GetLastPlacementWarnings().IsEmpty());
+        bPassed &= TestEqual(
+            TEXT("startup refresh does not dirty the level package"),
+            Actor->GetOutermost()->IsDirty(),
+            bWorldPackageWasDirty);
 
         RestoredMesh->ClearFlags(RF_Public | RF_Standalone);
         RestoredMesh->MarkAsGarbage();

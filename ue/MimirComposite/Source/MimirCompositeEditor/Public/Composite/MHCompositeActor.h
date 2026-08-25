@@ -58,6 +58,7 @@ public:
 
     virtual void OnConstruction(const FTransform& Transform) override;
     virtual void PostLoad() override;
+    virtual void Destroyed() override;
 
 #if WITH_EDITOR
     virtual void PostEditUndo() override;

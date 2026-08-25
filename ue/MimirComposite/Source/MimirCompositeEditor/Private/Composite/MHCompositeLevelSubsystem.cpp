@@ -531,13 +531,17 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     }
     CompositeActor->SetCompositeAsset(Asset);
     CompositeActor->SetActorLabel(Key.LogicalName);
+    // Selection must release the source actors while they are still valid.
+    // Deselecting after EditorDestroyActor asks the Level Editor to operate on
+    // pending-kill actors and leaves stale hit proxies for nested composites.
+    GEditor->SelectNone(false, true, false);
     for (AActor* Actor : Actors)
     {
         Actor->Modify();
         Actor->GetWorld()->EditorDestroyActor(Actor, true);
     }
-    GEditor->SelectNone(false, true, false);
     GEditor->SelectActor(CompositeActor, true, true, true);
+    GEditor->RedrawAllViewports();
     OutActor = CompositeActor;
     return true;
 }

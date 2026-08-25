@@ -4,6 +4,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeImporter.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Containers/Ticker.h"
 #include "DirectoryWatcherModule.h"
@@ -367,6 +368,39 @@ bool MHImportSourcesHeadless(
         bOutExecuted);
 }
 
+bool MHShouldPresentWatcherAnalysis(
+    const TArray<FString>& Paths,
+    const FMHSourceAnalysis& Analysis)
+{
+    TSet<FMHResourceKey> ObservedKeys;
+    for (const FString& Path : Paths)
+    {
+        FMHResourceKey Key;
+        FString ClassificationError;
+        if (MHResourceKeyFromSourceFile(Path, Key, ClassificationError))
+        {
+            ObservedKeys.Add(MoveTemp(Key));
+        }
+        else if (!ClassificationError.IsEmpty())
+        {
+            return true;
+        }
+    }
+
+    for (const FMHResourceKey& Key : ObservedKeys)
+    {
+        const FMHSourceAnalysisEntry* Entry = Analysis.Find(Key);
+        if (Entry != nullptr &&
+            (Entry->Change != EMHSourceChange::NoChange ||
+             !Entry->Warnings.IsEmpty() ||
+             !Entry->Errors.IsEmpty()))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 void MHSetImportStageObserverForTests(TFunction<void(EMHResourceKind)> Observer)
 {
@@ -473,6 +507,10 @@ bool UMHSourceImporter::RunStartupPlan()
     {
         const bool bAttempted = StartupExecutorForTests();
         bStartupPlanRan = bAttempted;
+        if (bAttempted)
+        {
+            RefreshLoadedCompositeActorsAfterStartup();
+        }
         return bAttempted;
     }
 #endif
@@ -491,7 +529,26 @@ bool UMHSourceImporter::RunStartupPlan()
     // A configured startup root is attempted exactly once. Validation failures
     // remain visible in the plan; subsequent source fixes arrive via watcher.
     bStartupPlanRan = true;
+    RefreshLoadedCompositeActorsAfterStartup();
     return true;
+}
+
+void UMHSourceImporter::RefreshLoadedCompositeActorsAfterStartup()
+{
+#if WITH_DEV_AUTOMATION_TESTS
+    if (StartupCompositeRefreshExecutorForTests)
+    {
+        StartupCompositeRefreshExecutorForTests();
+        return;
+    }
+#endif
+    const int32 RebuiltCount = MHRebuildAllLoadedCompositeActors();
+    if (RebuiltCount > 0)
+    {
+        FMessageLog(TEXT("Mimir")).Info(FText::Format(
+            INVTEXT("Startup source pass settled; rebuilt {0} loaded composite instance(s)"),
+            FText::AsNumber(RebuiltCount)));
+    }
 }
 
 bool UMHSourceImporter::ImportSources(
@@ -733,7 +790,11 @@ bool UMHSourceImporter::ImportChangedSourcePaths(const TArray<FString>& Paths)
     {
         Log.Info(INVTEXT("Project index was recreated; watcher batch used one full projection"));
     }
-    PresentPlan(Analysis);
+    if (bUsedFullScan || !Update.SessionEvents.IsEmpty() ||
+        MHShouldPresentWatcherAnalysis(Paths, Analysis))
+    {
+        PresentPlan(Analysis);
+    }
     return bSucceeded;
 }
 
@@ -821,6 +882,12 @@ void UMHSourceImporter::SetBatchExecutorForTests(
 void UMHSourceImporter::SetStartupExecutorForTests(TFunction<bool()> Executor)
 {
     StartupExecutorForTests = MoveTemp(Executor);
+}
+
+void UMHSourceImporter::SetStartupCompositeRefreshExecutorForTests(
+    TFunction<void()> Executor)
+{
+    StartupCompositeRefreshExecutorForTests = MoveTemp(Executor);
 }
 #endif
 
