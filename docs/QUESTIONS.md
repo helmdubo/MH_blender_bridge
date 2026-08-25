@@ -1056,6 +1056,31 @@ alias ниже границы настроенного `source_root`; сам roo
 **Статус.** ОТКРЫТ; действует временное fail-closed правило. Упоминание его
 реализации в C1 является исторической квитанцией, а не приёмкой v4.
 
+### OPEN-V4-24 — group transform: document-world или parent-local
+
+**Контекст.** Новая поправка `08` §6.1 требует для Break композицию
+`group scale × child rotation`, проверку shear и утверждает, что компилятор
+сохраняет иерархию и перемножает её без потерь. Но действующий `08` §6
+определяет значения узлов как UE world transforms, а принятый Automation-гейт
+`Mimir.V4.Composite.CompilerPreservesSourceWorldTransforms` прямо закрепляет:
+child translation `125` под group translation `100` остаётся world `125`, а
+не становится `225`. Оба UE-компилятора вызывают `SetWorldTransform`, а Break
+рекурсирует с неизменным document basis; group сейчас structural-only.
+
+**Вопрос.** Какой контракт должен победить: (а) сохранить document-world и
+удалить premise о group-композиции/shear из новой поправки §6.1; либо (б)
+перевести всё composite-дерево на parent-local T/R/S, что требует согласованно
+изменить UE compiler/placement compiler, Blender import/export transforms,
+FBX parity и принятый world-transform golden, после чего Break проверяет
+матричную представимость при flatten?
+
+**Временное правило.** Пока домен transform не выбран owner'ом, Break
+fail-closed отклоняет растворение transform-bearing group с размещаемыми
+потомками через `MH_E_UNREPRESENTABLE_SCENE_OBJECT` и перечисляет такие группы;
+тихая document-world интерпретация либо переход на parent-local запрещены.
+
+**Статус.** ОТКРЫТ; блокирует только group-transform часть Break follow-up.
+
 ### UE-QUESTION-19 — организационные/групповые Empty в mesh-ресурсе
 
 **Статус. ЧАСТИЧНО SUPERSEDED BY 08 §§4, 12.** Полная иерархия, parent closure
