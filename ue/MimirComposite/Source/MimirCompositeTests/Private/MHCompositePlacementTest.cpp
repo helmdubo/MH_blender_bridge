@@ -2,6 +2,7 @@
 #include "Composite/MHCompositeActorFactory.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeFactory.h"
+#include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 
@@ -472,6 +473,9 @@ bool FMHCompositeManualFileImportTest::RunTest(const FString& Parameters)
 
     const FString ExpectedPackage = TEXT("/Game/MH/Generated/Composites/") + LogicalName;
     UMHCompositeAsset* FirstAsset = nullptr;
+    UMHCompositeAsset* AdoptedAsset = nullptr;
+    FString AdoptedPackage;
+    FString AdoptedSourcePath;
     TArray<FString> Warnings;
     if (Importer != nullptr)
     {
@@ -505,38 +509,75 @@ bool FMHCompositeManualFileImportTest::RunTest(const FString& Parameters)
                 Error));
         bPassed &= TestEqual(TEXT("repeated import preserves exact UObject"), SecondAsset, FirstAsset);
 
-        UMHCompositeAsset* RejectedAsset = nullptr;
+        UMHCompositeAsset* ArbitraryTargetAsset = nullptr;
         Error.Reset();
-        bPassed &= TestFalse(
-            TEXT("arbitrary Content Browser target is rejected"),
+        bPassed &= TestTrue(
+            TEXT("Content Browser target does not affect identity-derived path"),
             Importer->ImportCompositeFile(
                 SourcePath,
                 TEXT("/Game/Arbitrary/") + LogicalName,
-                RejectedAsset,
+                ArbitraryTargetAsset,
                 Warnings,
                 Error));
-        bPassed &= TestTrue(
-            TEXT("wrong-target error names expected generated path"),
-            Error.Contains(ExpectedPackage, ESearchCase::CaseSensitive));
+        bPassed &= TestEqual(
+            TEXT("arbitrary target returns the same generated UObject"),
+            ArbitraryTargetAsset,
+            FirstAsset);
 
         const FString OutsidePath = FPaths::Combine(
             FPaths::ProjectSavedDir(),
             LogicalName + TEXT("_outside.composite"));
         bPassed &= TestTrue(TEXT("outside fixture written"), FFileHelper::SaveArrayToFile(Bytes, *OutsidePath));
+        const FString AdoptedName = LogicalName + TEXT("_adopted");
+        const FString AdoptedFolder = FPaths::Combine(SourceRoot, TEXT("adopted"));
+        AdoptedSourcePath = FPaths::Combine(AdoptedFolder, AdoptedName + TEXT(".composite"));
+        AdoptedPackage = TEXT("/Game/MH/Generated/Composites/") + AdoptedName;
+        FMHCompositeAdoptTarget AdoptTarget{AdoptedFolder, AdoptedName};
         Error.Reset();
-        bPassed &= TestFalse(
-            TEXT("outside-root file fails closed"),
-            Importer->ImportCompositeFile(
+        bPassed &= TestTrue(
+            TEXT("external file is atomically adopted and imported"),
+            Importer->AdoptCompositeFile(
                 OutsidePath,
-                ExpectedPackage,
-                RejectedAsset,
+                AdoptTarget.Folder,
+                AdoptTarget.LogicalName,
+                AdoptedAsset,
                 Warnings,
                 Error));
-        FString NormalizedOutside = FPaths::ConvertRelativePathToFull(OutsidePath);
-        FPaths::NormalizeFilename(NormalizedOutside);
+        if (!Error.IsEmpty()) AddError(Error);
+        bPassed &= TestNotNull(TEXT("Adopt returns managed asset"), AdoptedAsset);
+        if (AdoptedAsset != nullptr)
+        {
+            bPassed &= TestEqual(
+                TEXT("Adopt uses identity-derived generated path"),
+                AdoptedAsset->GetPathName(),
+                AdoptedPackage + TEXT(".") + AdoptedName);
+        }
+        TArray<uint8> AdoptedBytes;
         bPassed &= TestTrue(
-            TEXT("outside-root diagnostic names absolute file"),
-            Error.Contains(NormalizedOutside, ESearchCase::IgnoreCase));
+            TEXT("Adopt preserves payload bytes"),
+            FFileHelper::LoadFileToArray(AdoptedBytes, *AdoptedSourcePath));
+        bPassed &= TestEqual(TEXT("Adopt byte count"), AdoptedBytes.Num(), Bytes.Num());
+        bPassed &= TestTrue(TEXT("Adopt bytes are exact"), AdoptedBytes == Bytes);
+
+        UMHCompositeAsset* DuplicateAsset = nullptr;
+        Error.Reset();
+        bPassed &= TestFalse(
+            TEXT("duplicate Adopt is rejected without overwrite"),
+            Importer->AdoptCompositeFile(
+                OutsidePath,
+                AdoptTarget.Folder,
+                AdoptTarget.LogicalName,
+                DuplicateAsset,
+                Warnings,
+                Error));
+        bPassed &= TestTrue(
+            TEXT("duplicate Adopt emits machine diagnostic"),
+            Error.Contains(TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME"), ESearchCase::CaseSensitive));
+        TArray<uint8> BytesAfterReject;
+        bPassed &= TestTrue(
+            TEXT("adopted source remains readable after duplicate reject"),
+            FFileHelper::LoadFileToArray(BytesAfterReject, *AdoptedSourcePath));
+        bPassed &= TestTrue(TEXT("duplicate reject leaves bytes unchanged"), BytesAfterReject == Bytes);
         IFileManager::Get().Delete(*OutsidePath, false, true, true);
     }
 
@@ -554,6 +595,21 @@ bool FMHCompositeManualFileImportTest::RunTest(const FString& Parameters)
         ExpectedPackage,
         FPackageName::GetAssetPackageExtension());
     IFileManager::Get().Delete(*AssetFilename, false, true, true);
+    if (AdoptedAsset != nullptr)
+    {
+        ObjectTools::DeleteSingleObject(AdoptedAsset, false);
+    }
+    if (!AdoptedPackage.IsEmpty())
+    {
+        const FString AdoptedAssetFilename = FPackageName::LongPackageNameToFilename(
+            AdoptedPackage,
+            FPackageName::GetAssetPackageExtension());
+        IFileManager::Get().Delete(*AdoptedAssetFilename, false, true, true);
+    }
+    if (!AdoptedSourcePath.IsEmpty())
+    {
+        IFileManager::Get().Delete(*AdoptedSourcePath, false, true, true);
+    }
     IFileManager::Get().DeleteDirectory(*SourceRoot, false, true);
     return bPassed;
 }

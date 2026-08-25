@@ -85,10 +85,19 @@ public:
         TArray<FString>& OutWarnings,
         FString& OutError);
 
-    /** Manual file-drop adapter. The file must already be the unique source_root candidate. */
+    /** Manual file-drop adapter for a source already inside source_root; CB target is ignored. */
     bool ImportCompositeFile(
         const FString& Filename,
         const FString& TargetPackageName,
+        UMHCompositeAsset*& OutAsset,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
+
+    /** Atomically adopts an external .composite into source_root, then performs the normal import. */
+    bool AdoptCompositeFile(
+        const FString& Filename,
+        const FString& AdoptFolder,
+        const FString& AdoptLogicalName,
         UMHCompositeAsset*& OutAsset,
         TArray<FString>& OutWarnings,
         FString& OutError);

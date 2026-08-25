@@ -4,6 +4,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeImporter.h"
+#include "Composite/MHCompositeProtocol.h"
 #include "Containers/Ticker.h"
 #include "DirectoryWatcherModule.h"
 #include "Editor.h"
@@ -1009,6 +1010,7 @@ bool UMHSourceImporter::ImportCompositeFile(
     TArray<FString>& OutWarnings,
     FString& OutError)
 {
+    (void)TargetPackageName;
     OutAsset = nullptr;
     OutWarnings.Reset();
     OutError.Reset();
@@ -1050,17 +1052,6 @@ bool UMHSourceImporter::ImportCompositeFile(
         OutError = FString::Printf(
             TEXT("%s: MH_E_NONCANONICAL_RESOURCE_NAME: composite filename must be <[a-z0-9_]+>.composite"),
             *AbsoluteFile);
-        return false;
-    }
-
-    const FString ExpectedPackageName = FString(TEXT("/Game/MH/Generated/Composites/")) + Key.LogicalName;
-    if (!TargetPackageName.Equals(ExpectedPackageName, ESearchCase::CaseSensitive))
-    {
-        OutError = FString::Printf(
-            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: import this file into '%s'; generated composites cannot be created in '%s'"),
-            *AbsoluteFile,
-            *ExpectedPackageName,
-            *TargetPackageName);
         return false;
     }
 
@@ -1116,6 +1107,137 @@ bool UMHSourceImporter::ImportCompositeFile(
     }
     OutAsset = Result.Asset;
     return true;
+}
+
+bool UMHSourceImporter::AdoptCompositeFile(
+    const FString& Filename,
+    const FString& AdoptFolder,
+    const FString& AdoptLogicalName,
+    UMHCompositeAsset*& OutAsset,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutAsset = nullptr;
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread())
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: AdoptCompositeFile must run on the game thread");
+        return false;
+    }
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (Settings == nullptr || SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FString AbsoluteRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FString AbsoluteFile = FPaths::ConvertRelativePathToFull(Filename);
+    FPaths::NormalizeDirectoryName(AbsoluteRoot);
+    FPaths::NormalizeFilename(AbsoluteFile);
+    FPaths::CollapseRelativeDirectories(AbsoluteRoot);
+    FPaths::CollapseRelativeDirectories(AbsoluteFile);
+    if (!FPaths::GetExtension(AbsoluteFile, true).Equals(TEXT(".composite"), ESearchCase::CaseSensitive) ||
+        FPaths::IsUnderDirectory(AbsoluteFile, AbsoluteRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: Adopt expects an external file with exact .composite suffix"),
+            *AbsoluteFile);
+        return false;
+    }
+
+    FString TargetPath;
+    FString TargetRelativePath;
+    const FMHCompositeAdoptTarget AdoptTarget{AdoptFolder, AdoptLogicalName};
+    if (!MHValidateCompositeAdoptTarget(
+            SourceRoot,
+            AdoptTarget,
+            TargetPath,
+            TargetRelativePath,
+            OutError))
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::Composite;
+    Key.LogicalName = AdoptTarget.LogicalName;
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+    const FMHResolveOutcome Existing = Services.Resolver->Resolve(Key);
+    if (Existing.Status != EMHResolveStatus::Unresolved || FPaths::FileExists(TargetPath))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_AMBIGUOUS_RESOURCE_NAME: composite:%s already exists in source_root; Adopt never overwrites"),
+            *AbsoluteFile,
+            *Key.LogicalName);
+        return false;
+    }
+
+    TArray<uint8> SourceBytes;
+    FMHCompositeDocument Document;
+    if (!FFileHelper::LoadFileToArray(SourceBytes, *AbsoluteFile) ||
+        !MHParseCompositeV4(SourceBytes, Document, OutError))
+    {
+        if (OutError.IsEmpty())
+        {
+            OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: cannot read external composite payload");
+        }
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+
+    const FString TargetFolder = FPaths::GetPath(TargetPath);
+    if (!IFileManager::Get().MakeDirectory(*TargetFolder, true))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: cannot create Adopt target folder '%s'"),
+            *AbsoluteFile,
+            *TargetFolder);
+        return false;
+    }
+    const FString TempPath = TargetPath + FString::Printf(
+        TEXT(".tmp.%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    TArray<uint8> ReadBack;
+    FMHCompositeDocument ReadBackDocument;
+    FString ValidationError;
+    if (!FFileHelper::SaveArrayToFile(SourceBytes, *TempPath) ||
+        !FFileHelper::LoadFileToArray(ReadBack, *TempPath) ||
+        ReadBack != SourceBytes ||
+        !MHParseCompositeV4(ReadBack, ReadBackDocument, ValidationError))
+    {
+        IFileManager::Get().Delete(*TempPath, false, true, true);
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_COMPOSITE_GRAMMAR: Adopt temporary read-back failed: %s"),
+            *AbsoluteFile,
+            *ValidationError);
+        return false;
+    }
+    if (FPaths::FileExists(TargetPath) ||
+        !IFileManager::Get().Move(*TargetPath, *TempPath, false, false, false, true))
+    {
+        IFileManager::Get().Delete(*TempPath, false, true, true);
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_AMBIGUOUS_RESOURCE_NAME: Adopt target appeared concurrently; no file was overwritten"),
+            *AbsoluteFile);
+        return false;
+    }
+
+    return ImportCompositeFile(
+        TargetPath,
+        FString(),
+        OutAsset,
+        OutWarnings,
+        OutError);
 }
 
 bool UMHSourceImporter::PublishMaterial(

@@ -655,6 +655,15 @@ void AddLevelAction(
 
 } // namespace
 
+bool MHPromptCompositeAdoptTarget(
+    UE::MimirComposite::FMHCompositeAdoptTarget& OutTarget,
+    const FString& SuggestedName,
+    const FText& WindowTitle,
+    const FText& AcceptLabel)
+{
+    return PromptCompositeAdoptTarget(OutTarget, SuggestedName, WindowTitle, AcceptLabel);
+}
+
 void MHRegisterS6ToolMenus()
 {
     if (UToolMenu* ToolsMenu = UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.MainMenu.Tools")))

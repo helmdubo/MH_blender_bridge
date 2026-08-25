@@ -3,7 +3,7 @@
 #include "Factories/Factory.h"
 #include "MHCompositeFactory.generated.h"
 
-/** File-drop adapter for canonical .composite sources already inside source_root. */
+/** File-drop adapter: direct import inside source_root, explicit Adopt outside it. */
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHCompositeFactory final : public UFactory
 {
