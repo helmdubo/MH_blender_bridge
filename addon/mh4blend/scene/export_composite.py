@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
+import struct
 
 import bpy
 from mathutils import Matrix
@@ -45,6 +47,8 @@ NODE_NAME_KEY = "mh_composite_name"
 UNRESOLVED_PLACEMENT_KEY = "mh_unresolved_placement"
 _IMPORTED_TRANSFORM_KEY = "mh_imported_source_transform"
 _IMPORTED_MATRIX_KEY = "mh_imported_matrix"
+_FLOAT32_EPSILON = 2.0 ** -23
+_FLOAT32_RECONSTRUCTION_ULPS = 8.0
 
 
 def _matrix_signature(matrix) -> str:
@@ -53,6 +57,31 @@ def _matrix_signature(matrix) -> str:
         for row in range(4)
         for column in range(4)
     )
+
+
+def _float32(value: float) -> float:
+    return struct.unpack("<f", struct.pack("<f", float(value)))[0]
+
+
+def _matrix_reconstructs_as_float32_trs(matrix, reconstructed) -> bool:
+    """Return whether decomposition preserves every matrix element as float32."""
+    try:
+        for row in range(4):
+            for column in range(4):
+                source = _float32(matrix[row][column])
+                restored = _float32(reconstructed[row][column])
+                if not math.isfinite(source) or not math.isfinite(restored):
+                    return False
+                magnitude = max(1.0, abs(source), abs(restored))
+                tolerance = (
+                    _FLOAT32_RECONSTRUCTION_ULPS
+                    * _FLOAT32_EPSILON
+                    * magnitude)
+                if abs(source - restored) > tolerance:
+                    return False
+    except (OverflowError, struct.error):
+        return False
+    return True
 
 
 def _stamp_imported_transform(obj, transform: CompositeTransform) -> None:
@@ -276,11 +305,11 @@ def _object_transform(obj):
         return stored
     translation, rotation, scale = obj.matrix_world.decompose()
     recomposed = Matrix.LocRotScale(translation, rotation, scale)
-    if max(abs(obj.matrix_world[row][column] - recomposed[row][column])
-           for row in range(4) for column in range(4)) > 1.0e-5:
+    if not _matrix_reconstructs_as_float32_trs(obj.matrix_world, recomposed):
         raise MHValidationError(
-            "MH_E_COMPOSITE_GRAMMAR", [obj.name],
-            "composite placement contains shear and cannot round-trip as TRS")
+            "MH_E_INVALID_RESOURCE_SOURCE", [obj.name],
+            f"composite placement object {obj.name!r} matrix_world contains "
+            "shear or cannot round-trip as float32 T/R/S")
     return blender_to_ue_transform(
         tuple(float(value) for value in translation),
         (float(rotation.x), float(rotation.y), float(rotation.z),

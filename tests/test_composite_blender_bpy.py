@@ -1,5 +1,6 @@
 """Blender gates for v4 Composite scene adapters."""
 
+import math
 from pathlib import Path
 import sys
 
@@ -286,8 +287,39 @@ def test_writer_rejects_non_roundtrippable_shear(tmp_path):
         (0.0, 0.0, 1.0, 0.0),
         (0.0, 0.0, 0.0, 1.0),
     ))
-    with pytest.raises(ValueError, match="MH_E_COMPOSITE_GRAMMAR"):
+    with pytest.raises(
+            ValueError,
+            match="MH_E_INVALID_RESOURCE_SOURCE") as excinfo:
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
+    assert "sheared_group" in str(excinfo.value)
+    assert not (tmp_path / "sheared.composite").exists()
+
+
+def test_writer_rejects_child_shear_from_rotated_nonuniform_parent(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = bpy.data.collections.new("parent_shear")
+    bpy.context.scene.collection.children.link(collection)
+
+    parent = bpy.data.objects.new("scaled_parent", None)
+    collection.objects.link(parent)
+    parent[NODE_KIND_KEY] = "group"
+    parent.scale = (1.0, 2.0, 1.0)
+
+    child = bpy.data.objects.new("rotated_child", None)
+    collection.objects.link(child)
+    child[NODE_KIND_KEY] = "group"
+    child.parent = parent
+    child.rotation_euler[2] = math.radians(45.0)
+    bpy.context.view_layer.update()
+
+    with pytest.raises(
+            ValueError,
+            match="MH_E_INVALID_RESOURCE_SOURCE") as excinfo:
+        export_composite_collection(collection, tmp_path, source_root=tmp_path)
+    rendered = str(excinfo.value)
+    assert "rotated_child" in rendered
+    assert "float32 T/R/S" in rendered
+    assert not (tmp_path / "parent_shear.composite").exists()
 
 
 def test_writer_identifies_raw_mesh_instead_of_collection_instance(tmp_path):
