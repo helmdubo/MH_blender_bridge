@@ -3,12 +3,28 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Components/SceneComponent.h"
+#include "LevelEditor.h"
 #include "Logging/MessageLog.h"
+#include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeActor)
 
 DEFINE_LOG_CATEGORY_STATIC(LogMHCompositeActor, Display, All);
+
+namespace
+{
+void BroadcastMHCompositeComponentsEdited()
+{
+#if WITH_EDITOR
+    if (!IsRunningCommandlet() && FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
+    {
+        FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"))
+            .BroadcastComponentsEdited();
+    }
+#endif
+}
+}
 
 AMHCompositeActor::AMHCompositeActor()
 {
@@ -53,6 +69,7 @@ void AMHCompositeActor::ClearDerivedComponents()
     TopLevelPlacementComponents.Reset();
     PlacementDependencies.Reset();
     LastPlacementWarnings.Reset();
+    BroadcastMHCompositeComponentsEdited();
 }
 
 void AMHCompositeActor::RebuildComposite()
@@ -101,6 +118,7 @@ void AMHCompositeActor::RebuildComposite()
             Component->DestroyComponent();
         }
     }
+    BroadcastMHCompositeComponentsEdited();
 
     for (const FString& Warning : LastPlacementWarnings)
     {
@@ -131,7 +149,13 @@ void AMHCompositeActor::RebuildComposite()
 void AMHCompositeActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
-    RebuildComposite();
+    // Moving the actor already moves the attached derived tree. Rebuilding it
+    // here replaces every component during a transform drag and leaves the
+    // Details component tree temporarily pointing at destroyed objects.
+    if (DerivedComponents.IsEmpty())
+    {
+        RebuildComposite();
+    }
 }
 
 void AMHCompositeActor::PostLoad()
@@ -150,6 +174,10 @@ void AMHCompositeActor::PostEditUndo()
 void AMHCompositeActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
     Super::PostEditChangeProperty(PropertyChangedEvent);
-    RebuildComposite();
+    const FName PropertyName = PropertyChangedEvent.GetPropertyName();
+    if (PropertyName == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, CompositeAsset))
+    {
+        RebuildComposite();
+    }
 }
 #endif

@@ -8,8 +8,9 @@
 #include "ContentBrowserMenuContexts.h"
 #include "Diagnostics/MHSourceOperations.h"
 #include "Editor.h"
-#include "Engine/Selection.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
 #include "Index/MHProjectResourceIndex.h"
+#include "LevelEditorMenuContext.h"
 #include "Logging/MessageLog.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/MessageDialog.h"
@@ -80,16 +81,19 @@ void NotifyOperation(
     Log.Notify(Summary, Error.IsEmpty() ? EMessageSeverity::Info : EMessageSeverity::Error, true);
 }
 
-TArray<AActor*> SelectedLevelActors()
+TArray<TWeakObjectPtr<AActor>> ContextLevelActors(UToolMenu* Menu)
 {
-    TArray<AActor*> Result;
-    if (GEditor == nullptr || GEditor->GetSelectedActors() == nullptr)
+    TArray<TWeakObjectPtr<AActor>> Result;
+    const ULevelEditorContextMenuContext* Context = Menu != nullptr
+        ? Menu->FindContext<ULevelEditorContextMenuContext>()
+        : nullptr;
+    if (Context == nullptr || Context->CurrentSelection == nullptr)
     {
         return Result;
     }
-    for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
+    for (UObject* SelectedObject : Context->CurrentSelection->GetSelectedObjects(AActor::StaticClass()))
     {
-        if (AActor* Actor = Cast<AActor>(*It))
+        if (AActor* Actor = Cast<AActor>(SelectedObject))
         {
             Result.Add(Actor);
         }
@@ -97,17 +101,37 @@ TArray<AActor*> SelectedLevelActors()
     return Result;
 }
 
-TArray<AMHCompositeActor*> SelectedCompositeActors()
+TArray<TWeakObjectPtr<AMHCompositeActor>> ContextCompositeActors(
+    const TArray<TWeakObjectPtr<AActor>>& Actors)
 {
-    TArray<AMHCompositeActor*> Result;
-    for (AActor* Actor : SelectedLevelActors())
+    TArray<TWeakObjectPtr<AMHCompositeActor>> Result;
+    for (const TWeakObjectPtr<AActor>& ActorPtr : Actors)
     {
-        if (AMHCompositeActor* CompositeActor = Cast<AMHCompositeActor>(Actor))
+        if (AMHCompositeActor* CompositeActor = Cast<AMHCompositeActor>(ActorPtr.Get()))
         {
             Result.Add(CompositeActor);
         }
     }
     return Result;
+}
+
+template <typename ActorType>
+bool ResolveActorSnapshot(
+    const TArray<TWeakObjectPtr<ActorType>>& Snapshot,
+    TArray<ActorType*>& OutActors)
+{
+    OutActors.Reset(Snapshot.Num());
+    for (const TWeakObjectPtr<ActorType>& ActorPtr : Snapshot)
+    {
+        ActorType* Actor = ActorPtr.Get();
+        if (Actor == nullptr)
+        {
+            OutActors.Reset();
+            return false;
+        }
+        OutActors.Add(Actor);
+    }
+    return !OutActors.IsEmpty();
 }
 
 UMHCompositeLevelSubsystem* LevelSubsystem()
@@ -264,22 +288,23 @@ void ExecuteImportChanged(const FToolMenuContext&)
         true);
 }
 
-void ExecuteBuildComposite(const FToolMenuContext&)
+void ExecuteBuildComposite(const TArray<TWeakObjectPtr<AActor>>& ActorSnapshot)
 {
-    const TArray<AActor*> Actors = SelectedLevelActors();
+    TArray<AActor*> Actors;
+    const bool bSelectionIsLive = ResolveActorSnapshot(ActorSnapshot, Actors);
     FString SuggestedName;
     if (Actors.Num() == 1 && MHIsCanonicalCompositeToken(Actors[0]->GetActorLabel()))
     {
         SuggestedName = Actors[0]->GetActorLabel();
     }
     FMHCompositeAdoptTarget Target;
-    if (Actors.IsEmpty() || !PromptCompositeAdoptTarget(
+    if (!bSelectionIsLive || !PromptCompositeAdoptTarget(
             Target,
             SuggestedName,
             LOCTEXT("BuildCompositeTargetTitle", "Build MH Composite"),
             LOCTEXT("BuildCompositeAccept", "Build")))
     {
-        if (Actors.IsEmpty())
+        if (!bSelectionIsLive)
         {
             NotifyOperation(
                 LOCTEXT("BuildCompositePage", "Build MH Composite"),
@@ -306,14 +331,16 @@ void ExecuteBuildComposite(const FToolMenuContext&)
         Error);
 }
 
-void ExecuteBreakComposite(const FToolMenuContext&)
+void ExecuteBreakComposite(const TArray<TWeakObjectPtr<AMHCompositeActor>>& ActorSnapshot)
 {
+    TArray<AMHCompositeActor*> Actors;
     TArray<AActor*> Spawned;
     TArray<FString> Warnings;
     FString Error;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
-    if (Subsystem == nullptr || !Subsystem->BreakComposites(
-            SelectedCompositeActors(), Spawned, Warnings, Error))
+    if (!ResolveActorSnapshot(ActorSnapshot, Actors) ||
+        Subsystem == nullptr ||
+        !Subsystem->BreakComposites(Actors, Spawned, Warnings, Error))
     {
         if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select one or more MH Composite actors");
     }
@@ -324,12 +351,12 @@ void ExecuteBreakComposite(const FToolMenuContext&)
         Error);
 }
 
-void ExecuteBeginEditComposite(const FToolMenuContext&)
+void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnapshot)
 {
-    const TArray<AMHCompositeActor*> Actors = SelectedCompositeActors();
+    AMHCompositeActor* Actor = ActorSnapshot.Get();
     FString Error;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
-    if (Actors.Num() != 1 || Subsystem == nullptr || !Subsystem->BeginEditComposite(Actors[0], Error))
+    if (Actor == nullptr || Subsystem == nullptr || !Subsystem->BeginEditComposite(Actor, Error))
     {
         if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select exactly one MH Composite actor");
     }
@@ -371,12 +398,15 @@ void ExecuteCancelEditComposite(const FToolMenuContext&)
         Error);
 }
 
-void ExecuteRebuildSelected(const FToolMenuContext&)
+void ExecuteRebuildSelected(const TArray<TWeakObjectPtr<AMHCompositeActor>>& ActorSnapshot)
 {
+    TArray<AMHCompositeActor*> Actors;
     TArray<FString> Warnings;
     FString Error;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
-    if (Subsystem == nullptr || !Subsystem->RebuildComposites(SelectedCompositeActors(), Warnings, Error))
+    if (!ResolveActorSnapshot(ActorSnapshot, Actors) ||
+        Subsystem == nullptr ||
+        !Subsystem->RebuildComposites(Actors, Warnings, Error))
     {
         if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select one or more MH Composite actors");
     }
@@ -653,6 +683,74 @@ void AddLevelAction(
     Section.AddMenuEntry(Name, Label, Tooltip, FSlateIcon(), Action);
 }
 
+void FillCompositeOptionsSubMenu(UToolMenu* Menu)
+{
+    if (Menu == nullptr)
+    {
+        return;
+    }
+    const TArray<TWeakObjectPtr<AActor>> Actors = ContextLevelActors(Menu);
+    const TArray<TWeakObjectPtr<AMHCompositeActor>> CompositeActors = ContextCompositeActors(Actors);
+    UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    const bool bEditing = Subsystem != nullptr && Subsystem->IsEditingComposite();
+    const bool bSelectedActiveEditActor = bEditing &&
+        Actors.Num() == 1 &&
+        CompositeActors.Num() == 1 &&
+        Subsystem->IsEditingComposite(CompositeActors[0].Get());
+    if (Actors.IsEmpty() || (bEditing && !bSelectedActiveEditActor))
+    {
+        return;
+    }
+
+    FToolMenuSection& Section = Menu->AddSection(
+        TEXT("MHCompositeOptionsActions"),
+        LOCTEXT("CompositeOptionsActions", "Composite Actions"));
+
+    if (bSelectedActiveEditActor)
+    {
+        AddLevelAction(Section, TEXT("MHCommitCompositeEdit"), LOCTEXT("CommitCompositeEdit", "Apply Edited Transforms to Source"),
+            LOCTEXT("CommitCompositeEditTip", "Publish the edited top-level transforms to the .composite source, then rebuild every loaded instance."),
+            FToolMenuExecuteAction::CreateStatic(&ExecuteCommitEditComposite));
+        AddLevelAction(Section, TEXT("MHCancelCompositeEdit"), LOCTEXT("CancelCompositeEdit", "Cancel Transform Edit"),
+            LOCTEXT("CancelCompositeEditTip", "Discard the edited transforms and refresh the instance from its managed asset."),
+            FToolMenuExecuteAction::CreateStatic(&ExecuteCancelEditComposite));
+        return;
+    }
+
+    AddLevelAction(Section, TEXT("MHBuildComposite"), LOCTEXT("BuildComposite", "Build Composite"),
+        LOCTEXT("BuildCompositeTip", "Publish the selected representable actors as one composite and replace the selection."),
+        FToolMenuExecuteAction::CreateLambda([Actors](const FToolMenuContext&)
+        {
+            ExecuteBuildComposite(Actors);
+        }));
+
+    if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())
+    {
+        AddLevelAction(Section, TEXT("MHBreakComposite"), LOCTEXT("BreakComposite", "Break Composite"),
+            LOCTEXT("BreakCompositeTip", "Replace the selected composite instances with one authored placement layer."),
+            FToolMenuExecuteAction::CreateLambda([CompositeActors](const FToolMenuContext&)
+            {
+                ExecuteBreakComposite(CompositeActors);
+            }));
+        AddLevelAction(Section, TEXT("MHRefreshComposite"), LOCTEXT("RefreshComposite", "Refresh from Composite Asset"),
+            LOCTEXT("RefreshCompositeTip", "Discard derived component edits and recompile the selected instances from their current managed assets."),
+            FToolMenuExecuteAction::CreateLambda([CompositeActors](const FToolMenuContext&)
+            {
+                ExecuteRebuildSelected(CompositeActors);
+            }));
+    }
+
+    if (CompositeActors.Num() == 1 && CompositeActors.Num() == Actors.Num())
+    {
+        AddLevelAction(Section, TEXT("MHEditComposite"), LOCTEXT("EditComposite", "Edit Placement Transforms"),
+            LOCTEXT("EditCompositeTip", "Unlock the selected composite's top-level placement transforms."),
+            FToolMenuExecuteAction::CreateLambda([Actor = CompositeActors[0]](const FToolMenuContext&)
+            {
+                ExecuteBeginEditComposite(Actor);
+            }));
+    }
+}
+
 } // namespace
 
 bool MHPromptCompositeAdoptTarget(
@@ -686,26 +784,37 @@ void MHRegisterS6ToolMenus()
             LOCTEXT("FindOrphansTip", "Show managed assets whose source ResourceKey is absent."),
             FToolMenuExecuteAction::CreateStatic(&ExecuteFindOrphans));
 
-        FToolMenuSection& Placement = ToolsMenu->FindOrAddSection(TEXT("MHCompositePlacement"));
-        Placement.Label = LOCTEXT("MHCompositePlacementSection", "MH Composite Placement");
-        AddLevelAction(Placement, TEXT("MHBuildComposite"), LOCTEXT("BuildComposite", "Build Composite"),
-            LOCTEXT("BuildCompositeTip", "Publish selected representable actors as one composite and replace the selection."),
-            FToolMenuExecuteAction::CreateStatic(&ExecuteBuildComposite));
-        AddLevelAction(Placement, TEXT("MHBreakComposite"), LOCTEXT("BreakComposite", "Break Composite"),
-            LOCTEXT("BreakCompositeTip", "Replace selected MH Composite actors with one authored placement layer."),
-            FToolMenuExecuteAction::CreateStatic(&ExecuteBreakComposite));
-        AddLevelAction(Placement, TEXT("MHEditComposite"), LOCTEXT("EditComposite", "Edit Composite"),
-            LOCTEXT("EditCompositeTip", "Unlock only top-level placement transforms on one selected instance."),
-            FToolMenuExecuteAction::CreateStatic(&ExecuteBeginEditComposite));
-        AddLevelAction(Placement, TEXT("MHCommitCompositeEdit"), LOCTEXT("CommitCompositeEdit", "Commit Composite Edit"),
-            LOCTEXT("CommitCompositeEditTip", "Publish the active transform edit and rebuild every live instance."),
-            FToolMenuExecuteAction::CreateStatic(&ExecuteCommitEditComposite));
-        AddLevelAction(Placement, TEXT("MHCancelCompositeEdit"), LOCTEXT("CancelCompositeEdit", "Cancel Composite Edit"),
-            LOCTEXT("CancelCompositeEditTip", "Discard the active transform edit and rebuild from the managed asset."),
-            FToolMenuExecuteAction::CreateStatic(&ExecuteCancelEditComposite));
-        AddLevelAction(Placement, TEXT("MHRebuildComposite"), LOCTEXT("RebuildComposite", "Rebuild Composite"),
-            LOCTEXT("RebuildCompositeTip", "Recompile the selected instances from current generated resources."),
-            FToolMenuExecuteAction::CreateStatic(&ExecuteRebuildSelected));
+    }
+
+    if (UToolMenu* ActorContextMenu = UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.ActorContextMenu")))
+    {
+        ActorContextMenu->AddDynamicSection(
+            TEXT("MHCompositeActorContext"),
+            FNewToolMenuDelegate::CreateLambda([](UToolMenu* DynamicMenu)
+            {
+                const TArray<TWeakObjectPtr<AActor>> Actors = ContextLevelActors(DynamicMenu);
+                if (Actors.IsEmpty())
+                {
+                    return;
+                }
+                UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+                if (Subsystem != nullptr && Subsystem->IsEditingComposite())
+                {
+                    const TArray<TWeakObjectPtr<AMHCompositeActor>> CompositeActors =
+                        ContextCompositeActors(Actors);
+                    if (Actors.Num() != 1 || CompositeActors.Num() != 1 ||
+                        !Subsystem->IsEditingComposite(CompositeActors[0].Get()))
+                    {
+                        return;
+                    }
+                }
+                FToolMenuSection& Section = DynamicMenu->AddSection(TEXT("MHCompositeOptions"));
+                Section.AddSubMenu(
+                    TEXT("MHCompositeOptionsSubMenu"),
+                    LOCTEXT("CompositeOptions", "Composite Options"),
+                    LOCTEXT("CompositeOptionsTip", "Build, edit, apply, refresh or break MH composites."),
+                    FNewToolMenuDelegate::CreateStatic(&FillCompositeOptionsSubMenu));
+            }));
     }
 
     if (UToolMenu* MaterialMenu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(

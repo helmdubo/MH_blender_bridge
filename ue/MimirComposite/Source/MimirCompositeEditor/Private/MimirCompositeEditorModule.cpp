@@ -2,7 +2,8 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "ContentBrowserMenuContexts.h"
-#include "CoreGlobals.h"
+#include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeThumbnailRenderer.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
@@ -20,6 +21,7 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
+#include "ThumbnailRendering/ThumbnailManager.h"
 #include "UI/MHSourceToolMenus.h"
 #include "UObject/AssetRegistryTagsContext.h"
 
@@ -190,6 +192,10 @@ void FMimirCompositeEditorModule::StartupModule()
     ObjectModifiedHandle = FCoreUObjectDelegates::OnObjectModified.AddStatic(
         &MarkManagedStaticMeshLocallyModified);
 
+    UThumbnailManager::Get().RegisterCustomRenderer(
+        UMHCompositeAsset::StaticClass(),
+        UMHCompositeThumbnailRenderer::StaticClass());
+
     FMessageLogModule& MessageLogModule = FModuleManager::LoadModuleChecked<FMessageLogModule>("MessageLog");
     FMessageLogInitializationOptions LogOptions;
     LogOptions.bShowPages = true;
@@ -205,6 +211,10 @@ void FMimirCompositeEditorModule::ShutdownModule()
     UE::MimirComposite::MHShutdownProjectIndex();
     if (!IsRunningCommandlet())
     {
+        if (UThumbnailManager* ThumbnailManager = UThumbnailManager::TryGet())
+        {
+            ThumbnailManager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
+        }
         UToolMenus::UnRegisterStartupCallback(this);
         UToolMenus::UnregisterOwner(this);
     }

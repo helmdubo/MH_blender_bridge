@@ -26,7 +26,6 @@ public:
     bool IsPlacementEditMode() const { return bPlacementEditMode; }
 
     /** Force a source-keyed rebuild of the transient component view. */
-    UFUNCTION(CallInEditor, Category = "Mimir")
     void RebuildComposite();
 
     const TArray<TObjectPtr<UActorComponent>>& GetDerivedComponents() const

@@ -7,22 +7,28 @@
 #include "Composite/MHCompositeProtocol.h"
 
 #include "AssetRegistry/AssetData.h"
+#include "Components/ChildActorComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/App.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
+#include "Misc/ObjectThumbnail.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
+#include "ThumbnailRendering/ThumbnailManager.h"
+#include "ThumbnailRendering/ThumbnailRenderer.h"
 #include "UObject/UnrealType.h"
 
 namespace UE::MimirComposite::Tests
@@ -433,6 +439,151 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
     {
         RestoredDeadAsset->ClearFlags(RF_Public | RF_Standalone);
         RestoredDeadAsset->MarkAsGarbage();
+    }
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHCompositeThumbnailRegistrationTest,
+    "Mimir.V4.Composite.ThumbnailRegistration",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositeThumbnailRegistrationTest::RunTest(const FString& Parameters)
+{
+    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(GetTransientPackage());
+    Asset->LogicalName = TEXT("s6_thumbnail_registration");
+    UE::MimirComposite::FMHCompositeDocument Document;
+    FString Error;
+    bool bPassed = TestTrue(
+        TEXT("thumbnail fixture applies"),
+        MHApplyCompositeV4(*Asset, Document, Error));
+
+    UClass* RendererClass = FindObject<UClass>(
+        nullptr,
+        TEXT("/Script/MimirCompositeEditor.MHCompositeThumbnailRenderer"));
+    bPassed &= TestNotNull(TEXT("private thumbnail renderer class is registered"), RendererClass);
+    UThumbnailRenderer* Renderer = nullptr;
+    if (FApp::CanEverRender())
+    {
+        FThumbnailRenderingInfo* RenderInfo = UThumbnailManager::Get().GetRenderingInfo(Asset);
+        bPassed &= TestNotNull(TEXT("composite class has registered thumbnail info"), RenderInfo);
+        if (RenderInfo != nullptr)
+        {
+            bPassed &= TestNotNull(TEXT("composite thumbnail renderer exists"), RenderInfo->Renderer.Get());
+            bPassed &= TestTrue(
+                TEXT("composite uses the live placement thumbnail renderer"),
+                RenderInfo->Renderer != nullptr &&
+                    RendererClass != nullptr &&
+                    RenderInfo->Renderer->IsA(RendererClass));
+            Renderer = RenderInfo->Renderer;
+        }
+    }
+    else
+    {
+        // UThumbnailManager intentionally leaves renderer objects null under
+        // NullRHI; validate the class contract without requesting a scene.
+        if (RendererClass != nullptr)
+        {
+            Renderer = NewObject<UThumbnailRenderer>(GetTransientPackage(), RendererClass);
+        }
+    }
+    if (Renderer != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("renderer visualizes a composite asset"), Renderer->CanVisualizeAsset(Asset));
+        bPassed &= TestEqual(
+            TEXT("thumbnail refreshes on managed asset edits"),
+            Renderer->GetThumbnailRenderFrequency(Asset),
+            EThumbnailRenderFrequency::OnPropertyChange);
+    }
+    if (FApp::CanEverRender())
+    {
+        FObjectThumbnail Thumbnail;
+        ThumbnailTools::RenderThumbnail(
+            Asset,
+            128,
+            128,
+            ThumbnailTools::EThumbnailTextureFlushMode::AlwaysFlush,
+            nullptr,
+            &Thumbnail);
+        bPassed &= TestEqual(TEXT("rendered thumbnail width"), Thumbnail.GetImageWidth(), 128);
+        bPassed &= TestEqual(TEXT("rendered thumbnail height"), Thumbnail.GetImageHeight(), 128);
+        bPassed &= TestEqual(
+            TEXT("rendered thumbnail BGRA byte count"),
+            Thumbnail.GetUncompressedImageData().Num(),
+            128 * 128 * 4);
+    }
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHCompositeDerivedActorVisibilityTest,
+    "Mimir.V4.Composite.DerivedActorVisibility",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
+{
+    UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+    const TMap<FString, FSoftClassPath> PreviousRegistry = Settings->ActorClassRegistry;
+    Settings->ActorClassRegistry.Add(
+        TEXT("s6_visibility_actor"),
+        FSoftClassPath(AStaticMeshActor::StaticClass()));
+
+    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(GetTransientPackage());
+    Asset->LogicalName = TEXT("s6_visibility_root");
+    FMHCompositeDocument Document;
+    FMHCompositeNode Node;
+    Node.Kind = EMHCompositeNodeKind::Actor;
+    Node.Resource = TEXT("s6_visibility_actor");
+    Node.Name = TEXT("authored_visibility_actor");
+    Document.Nodes.Add(Node);
+    FString Error;
+    bool bPassed = TestTrue(
+        TEXT("derived-actor fixture applies"),
+        MHApplyCompositeV4(*Asset, Document, Error));
+
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    bPassed &= TestNotNull(TEXT("derived-actor preview world exists"), World);
+    AMHCompositeActor* Actor = World != nullptr
+        ? World->SpawnActor<AMHCompositeActor>()
+        : nullptr;
+    bPassed &= TestNotNull(TEXT("derived-actor composite exists"), Actor);
+    if (Actor != nullptr)
+    {
+        Actor->SetCompositeAsset(Asset);
+        UChildActorComponent* ChildComponent = Actor->GetDerivedComponents().Num() == 1
+            ? Cast<UChildActorComponent>(Actor->GetDerivedComponents()[0])
+            : nullptr;
+        bPassed &= TestNotNull(TEXT("actor node compiles to child-actor component"), ChildComponent);
+        if (ChildComponent != nullptr)
+        {
+            bPassed &= TestEqual(
+                TEXT("derived child actor is hidden from the Scene Outliner"),
+                ChildComponent->GetEditorTreeViewVisualizationMode(),
+                EChildActorComponentTreeViewVisualizationMode::Hidden);
+            bPassed &= TestNotNull(TEXT("derived child actor is instantiated"), ChildComponent->GetChildActor());
+            if (ChildComponent->GetChildActor() != nullptr)
+            {
+                bPassed &= TestEqual(
+                    TEXT("derived child actor receives an authored display label"),
+                    ChildComponent->GetChildActor()->GetActorLabel(false),
+                    FString(TEXT("authored_visibility_actor")));
+            }
+
+            Actor->SetActorLocation(FVector(100.0, 200.0, 300.0));
+            Actor->RerunConstructionScripts();
+            bPassed &= TestEqual(
+                TEXT("moving/rerunning construction preserves the derived component object"),
+                Actor->GetDerivedComponents().Num() == 1
+                    ? Actor->GetDerivedComponents()[0].Get()
+                    : nullptr,
+                static_cast<UActorComponent*>(ChildComponent));
+        }
+    }
+
+    Settings->ActorClassRegistry = PreviousRegistry;
+    if (World != nullptr)
+    {
+        World->DestroyWorld(false);
     }
     return bPassed;
 }

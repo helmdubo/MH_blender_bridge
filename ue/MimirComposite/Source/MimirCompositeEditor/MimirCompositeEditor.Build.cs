@@ -28,12 +28,14 @@ public class MimirCompositeEditor : ModuleRules
                 "ContentBrowser",
                 "DirectoryWatcher",
                 "Json",
+                "LevelEditor",
                 "MessageLog",
                 "Projects",
                 "Slate",
                 "SlateCore",
                 "SQLiteCore",
                 "ToolMenus",
+                "TypedElementRuntime",
                 "UnrealEd"
             });
 

@@ -217,7 +217,20 @@ bool WalkPlacementNodes(
                     UChildActorComponent::StaticClass(),
                     TEXT("MH_Actor_") + Node.Resource,
                     SourceWorld);
-                CastChecked<UChildActorComponent>(Component)->SetChildActorClass(ActorClass);
+                UChildActorComponent* ChildActorComponent = CastChecked<UChildActorComponent>(Component);
+#if WITH_EDITOR
+                // The composite owns one persisted Outliner row. Its derived
+                // child actor must not leak an unnamed transient row while the
+                // component is being reconstructed.
+                ChildActorComponent->SetEditorTreeViewVisualizationMode(
+                    EChildActorComponentTreeViewVisualizationMode::Hidden);
+#endif
+                ChildActorComponent->SetChildActorClass(ActorClass);
+                if (AActor* ChildActor = ChildActorComponent->GetChildActor())
+                {
+                    const FString DisplayLabel = Node.Name.IsEmpty() ? Node.Resource : Node.Name;
+                    ChildActor->SetActorLabel(DisplayLabel, false);
+                }
             }
             else
             {

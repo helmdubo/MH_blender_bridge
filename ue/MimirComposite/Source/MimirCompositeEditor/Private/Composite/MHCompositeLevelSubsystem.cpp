@@ -14,6 +14,7 @@
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/ObjectThumbnail.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
@@ -23,6 +24,7 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
+#include "ThumbnailRendering/ThumbnailManager.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UObjectIterator.h"
 
@@ -36,10 +38,23 @@ namespace
 constexpr const TCHAR* MHLevelGeneratedCompositeRoot = TEXT("/Game/MH/Generated/Composites");
 constexpr const TCHAR* MHLevelGeneratedMeshRoot = TEXT("/Game/MH/Generated/Meshes");
 
+void MHDirtyCompositeThumbnail(UMHCompositeAsset& Asset)
+{
+    if (FObjectThumbnail* Thumbnail = ThumbnailTools::GetThumbnailForObject(&Asset))
+    {
+        Thumbnail->MarkAsDirty();
+    }
+    if (UThumbnailManager* ThumbnailManager = UThumbnailManager::TryGet())
+    {
+        ThumbnailManager->GetOnThumbnailDirtied().Broadcast(FSoftObjectPath(&Asset));
+    }
+}
+
 struct FMHBreakSpawnSpec
 {
     EMHCompositeNodeKind Kind = EMHCompositeNodeKind::Group;
     FString Resource;
+    FString DisplayLabel;
     FTransform WorldTransform = FTransform::Identity;
     TObjectPtr<UStaticMesh> Mesh;
     TObjectPtr<UMHCompositeAsset> Composite;
@@ -212,6 +227,10 @@ bool MHCollectBreakSpecs(
             FMHBreakSpawnSpec& Spec = OutSpecs.AddDefaulted_GetRef();
             Spec.Kind = Node.Kind;
             Spec.Resource = Node.Resource;
+            // Authored names are presentation identity for every placement
+            // kind. Older source documents may omit one, in which case the
+            // stable resource token remains the deterministic fallback.
+            Spec.DisplayLabel = !Node.Name.IsEmpty() ? Node.Name : Node.Resource;
             Spec.WorldTransform = PlacedWorld;
             if (Node.Kind == EMHCompositeNodeKind::Mesh)
             {
@@ -321,6 +340,10 @@ AActor* MHSpawnBreakSpec(
             MHLevelNodeKindLabel(Spec.Kind),
             *Spec.Resource);
     }
+    else
+    {
+        Spawned->SetActorLabel(Spec.DisplayLabel, false);
+    }
     return Spawned;
 }
 
@@ -353,6 +376,11 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     if (!IsInGameThread() || GEditor == nullptr || Actors.IsEmpty())
     {
         OutError = TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT: Build Composite requires selected level actors on the game thread");
+        return false;
+    }
+    if (EditingActor.IsValid())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel the active composite edit before Build");
         return false;
     }
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
@@ -526,6 +554,11 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
     if (!IsInGameThread() || GEditor == nullptr || Actors.IsEmpty())
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break Composite requires selected AMHCompositeActor instances");
+        return false;
+    }
+    if (EditingActor.IsValid() && Actors.Contains(EditingActor.Get()))
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel the active composite edit before Break");
         return false;
     }
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
@@ -725,7 +758,13 @@ bool UMHCompositeLevelSubsystem::RebuildComposites(
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Rebuild requires at least one AMHCompositeActor");
         return false;
     }
+    if (EditingActor.IsValid() && Actors.Contains(EditingActor.Get()))
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel the active composite edit before Refresh");
+        return false;
+    }
     const FScopedTransaction Transaction(INVTEXT("Rebuild MH Composites"));
+    TSet<UMHCompositeAsset*> ChangedAssets;
     for (AMHCompositeActor* Actor : Actors)
     {
         if (Actor == nullptr)
@@ -735,6 +774,16 @@ bool UMHCompositeLevelSubsystem::RebuildComposites(
         Actor->Modify();
         Actor->RebuildComposite();
         OutWarnings.Append(Actor->GetLastPlacementWarnings());
+        if (UMHCompositeAsset* Asset = Actor->GetCompositeAsset())
+        {
+            ChangedAssets.Add(Asset);
+        }
+    }
+    // Refresh can reflect restored nested resources without mutating the root
+    // asset. Dirty only its visual cache, once per unique asset.
+    for (UMHCompositeAsset* Asset : ChangedAssets)
+    {
+        MHDirtyCompositeThumbnail(*Asset);
     }
     return true;
 }
@@ -778,6 +827,11 @@ bool UMHCompositeLevelSubsystem::DeleteCompositeResource(
     if (Asset == nullptr || !MHIsCanonicalCompositeToken(Asset->LogicalName) || Asset->SourceRelativePath.IsEmpty())
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Delete resource requires a managed composite receipt");
+        return false;
+    }
+    if (EditingActor.IsValid() && EditingActor->GetCompositeAsset() == Asset)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel the active composite edit before Delete resource");
         return false;
     }
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();

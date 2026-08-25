@@ -22,6 +22,7 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
+#include "StaticMeshAttributes.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
 
@@ -151,6 +152,12 @@ FbxMesh* CreateTriangleMesh(FbxScene& Scene, const char* Name, const double Size
     Mesh->AddPolygon(1);
     Mesh->AddPolygon(2);
     Mesh->EndPolygon();
+    FbxGeometryElementNormal* Normals = Mesh->CreateElementNormal();
+    Normals->SetMappingMode(FbxGeometryElement::eByControlPoint);
+    Normals->SetReferenceMode(FbxGeometryElement::eDirect);
+    Normals->GetDirectArray().Add(FbxVector4(0.0, 0.0, 1.0));
+    Normals->GetDirectArray().Add(FbxVector4(0.0, 0.0, 1.0));
+    Normals->GetDirectArray().Add(FbxVector4(0.0, 0.0, 1.0));
     return Mesh;
 }
 
@@ -259,6 +266,10 @@ bool ExportPlainStaticMeshFbx(
     {
         FbxMesh* LOD0Mesh = CreateTriangleMesh(*Scene, "render_lod00_geometry", 100.0);
         FbxNode* LOD0 = AddMeshNode(*Scene, "render_lod00", *LOD0Mesh);
+        // A non-axis-aligned transform makes the regression distinguish
+        // inverse-transpose direction handling from FBX MultR, which treats
+        // its argument as Euler angles.
+        LOD0->LclRotation.Set(FbxDouble3(25.0, 0.0, 0.0));
         BindMaterial(*LOD0Mesh, *LOD0, *Material);
         FbxMesh* LOD1Mesh = CreateTriangleMesh(*Scene, "render_lod01_geometry", 50.0);
         FbxNode* LOD1 = AddMeshNode(*Scene, "render_lod01", *LOD1Mesh);
@@ -349,6 +360,35 @@ bool VerifyInitialMesh(
     const FString& MaterialName)
 {
     bool bPassed = Test.TestEqual(TEXT("initial dense LOD count"), StaticMesh.GetNumSourceModels(), 2);
+    if (StaticMesh.GetNumSourceModels() > 0)
+    {
+        const FStaticMeshSourceModel& SourceModel = StaticMesh.GetSourceModel(0);
+        bPassed &= Test.TestFalse(
+            TEXT("source custom vertex normals are preserved"),
+            SourceModel.BuildSettings.bRecomputeNormals);
+        bPassed &= Test.TestTrue(
+            TEXT("Mikk tangents are rebuilt"),
+            SourceModel.BuildSettings.bRecomputeTangents && SourceModel.BuildSettings.bUseMikkTSpace);
+    }
+    const FMeshDescription* LOD0 = StaticMesh.GetMeshDescription(0);
+    bPassed &= Test.TestNotNull(TEXT("initial LOD0 MeshDescription"), LOD0);
+    if (LOD0 != nullptr && LOD0->Triangles().Num() > 0)
+    {
+        const FTriangleID TriangleId = LOD0->Triangles().GetFirstValidID();
+        const TArrayView<const FVertexInstanceID> Instances =
+            LOD0->GetTriangleVertexInstances(TriangleId);
+        const FStaticMeshConstAttributes Attributes(*LOD0);
+        const TVertexAttributesConstRef<FVector3f> Positions = Attributes.GetVertexPositions();
+        const TVertexInstanceAttributesConstRef<FVector3f> Normals =
+            Attributes.GetVertexInstanceNormals();
+        const FVector3f A = Positions[LOD0->GetVertexInstanceVertex(Instances[0])];
+        const FVector3f B = Positions[LOD0->GetVertexInstanceVertex(Instances[1])];
+        const FVector3f C = Positions[LOD0->GetVertexInstanceVertex(Instances[2])];
+        const FVector3f FaceNormal = FVector3f::CrossProduct(C - A, B - A).GetSafeNormal();
+        bPassed &= Test.TestTrue(
+            TEXT("direct FBX winding matches imported split-normal hemisphere"),
+            FVector3f::DotProduct(FaceNormal, Normals[Instances[0]]) > 0.999f);
+    }
     bPassed &= Test.TestEqual(TEXT("material slot count"), StaticMesh.GetStaticMaterials().Num(), 1);
     if (StaticMesh.GetStaticMaterials().Num() == 1)
     {
@@ -530,6 +570,31 @@ bool FMHStaticMeshImporterEndToEndTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("equal source returns existing mesh"), NoChange.Succeeded());
     bPassed &= TestEqual(TEXT("NO_CHANGE preserves exact UObject"), NoChange.StaticMesh, OriginalMesh);
     bPassed &= TestFalse(TEXT("NO_CHANGE performs no rebuild"), NoChange.bRebuilt);
+
+    if (Receipt != nullptr)
+    {
+        Receipt->ImporterVersion = MHStaticMeshImporterVersion - 1;
+    }
+    FMHStaticMeshOperationResult VersionUpgrade = MHImportStaticMeshV4(
+        Entry,
+        Resolver,
+        Fixture.SourceRoot);
+    bPassed &= TestTrue(TEXT("stale importer-version upgrade succeeds"), VersionUpgrade.Succeeded());
+    bPassed &= TestEqual(
+        TEXT("version upgrade preserves exact UObject"),
+        VersionUpgrade.StaticMesh,
+        OriginalMesh);
+    bPassed &= TestTrue(
+        TEXT("equal-hash version upgrade performs full rebuild"),
+        VersionUpgrade.bRebuilt);
+    Receipt = Cast<UMHStaticMeshImportData>(OriginalMesh->GetAssetImportData());
+    if (Receipt != nullptr)
+    {
+        bPassed &= TestEqual(
+            TEXT("version upgrade advances receipt"),
+            Receipt->ImporterVersion,
+            MHStaticMeshImporterVersion);
+    }
 
     bPassed &= TestTrue(
         TEXT("export changed plain FBX"),

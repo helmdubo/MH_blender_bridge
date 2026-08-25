@@ -8,7 +8,7 @@ namespace UE::MimirComposite
 {
 
 /** Current owner-ratified static-mesh build semantics. */
-inline constexpr int32 MHStaticMeshImporterVersion = 1;
+inline constexpr int32 MHStaticMeshImporterVersion = 2;
 
 /**
  * Suppresses managed-mesh local-edit tracking for importer-owned mutations.

@@ -202,10 +202,11 @@ bool FMHSourceLifecycleSelfPublishEchoTest::RunTest(const FString& Parameters)
     const FString Token = FString::Printf(
         TEXT("s6_echo_%08x"),
         FPlatformTime::Cycles());
-    const FString SourceRoot = FPaths::Combine(
+    FString SourceRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(
         FPaths::ProjectSavedDir(),
         TEXT("MimirCompositeTests/lifecycle_echo"),
-        Token);
+        Token));
+    FPaths::NormalizeDirectoryName(SourceRoot);
     IFileManager::Get().MakeDirectory(*SourceRoot, true);
     const FString SourcePath = FPaths::Combine(SourceRoot, Token + TEXT(".composite"));
     const TArray<uint8> Initial = LifecycleUtf8(TEXT("{\n  \"nodes\": []\n}\n"));

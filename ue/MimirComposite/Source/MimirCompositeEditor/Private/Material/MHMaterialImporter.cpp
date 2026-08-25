@@ -737,6 +737,8 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     const FMHMaterialAdoptTarget* AdoptTarget)
 {
     FMHMaterialOperationResult Result;
+    FString AbsoluteSourceRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(AbsoluteSourceRoot);
     FMHMaterialDocument Document;
     TArray<uint8> Bytes;
     if (!MHExtractMaterialV4(Material, Settings, Document, Result.Error) ||
@@ -750,7 +752,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     if (ExistingData != nullptr && !ExistingData->SourceRelativePath.IsEmpty())
     {
         LogicalName = ExistingData->LogicalName;
-        TargetPath = FPaths::ConvertRelativePathToFull(SourceRoot, ExistingData->SourceRelativePath);
+        TargetPath = FPaths::ConvertRelativePathToFull(AbsoluteSourceRoot, ExistingData->SourceRelativePath);
     }
     else
     {
@@ -762,7 +764,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
         LogicalName = AdoptTarget->LogicalName;
         FString AdoptRelativePath;
         if (!MHValidateMaterialAdoptTarget(
-                SourceRoot,
+                AbsoluteSourceRoot,
                 *AdoptTarget,
                 TargetPath,
                 AdoptRelativePath,
@@ -774,7 +776,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     FString RelativePath;
     if (!MHIsCanonicalMaterialToken(LogicalName) ||
         !FPaths::GetCleanFilename(TargetPath).Equals(LogicalName + TEXT(".material"), ESearchCase::CaseSensitive) ||
-        !RelativeToRoot(SourceRoot, TargetPath, RelativePath))
+        !RelativeToRoot(AbsoluteSourceRoot, TargetPath, RelativePath))
     {
         Result.Error = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: publish target must be <source_root>/.../<canonical>.material");
         return Result;
@@ -787,7 +789,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     const FString PublishedHash = MHRawPayloadHash(Bytes);
     TArray<FString> SessionEvents;
     if (!MHUpsertPublishedSource(
-            SourceRoot,
+            AbsoluteSourceRoot,
             TargetPath,
             PublishedHash,
             SessionEvents,
@@ -843,7 +845,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
         Material.PostEditChange();
         return Result;
     }
-    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    if (!MHRefreshGeneratedAssetProjection(AbsoluteSourceRoot, Result.Error))
     {
         return Result;
     }

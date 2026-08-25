@@ -211,8 +211,11 @@ bool ReadGeometry(
             UTF8_TO_TCHAR(Node.GetName())));
         return false;
     }
-    // The pinned FBX->UE basis reflection has determinant -1.
-    OutNode.bReverseWinding = GeometryDeterminant > 0.0;
+    // Match the stock UFbxFactory path exactly: ConvertPos performs the same
+    // right-handed FBX -> left-handed UE reflection while preserving the FBX
+    // polygon corner order. Reversing the perimeter a second time turns every
+    // ordinary Blender face inside-out.
+    OutNode.bReverseWinding = false;
     const FbxAMatrix NormalMatrix = GlobalGeometry.Inverse().Transpose();
     FMHSceneGeometry Geometry;
     Geometry.Positions.Reserve(Mesh->GetControlPointsCount());
@@ -283,7 +286,10 @@ bool ReadGeometry(
             FbxVector4 Normal;
             if (Mesh->GetPolygonVertexNormal(PolygonIndex, Corner, Normal))
             {
-                Triangle.CornerNormals[Corner] = ToUnrealNormal(NormalMatrix.MultR(Normal));
+                // MultR transforms an Euler rotation vector, not an arbitrary
+                // direction. Stock UE applies the inverse-transpose with
+                // MultT before the FBX->UE basis conversion.
+                Triangle.CornerNormals[Corner] = ToUnrealNormal(NormalMatrix.MultT(Normal));
             }
             else if (bHasNormalLayer)
             {
@@ -320,11 +326,9 @@ bool ReadGeometry(
             const FVector3f A = Geometry.Positions[Triangle.PositionIndices[0]];
             const FVector3f B = Geometry.Positions[Triangle.PositionIndices[1]];
             const FVector3f C = Geometry.Positions[Triangle.PositionIndices[2]];
-            FVector3f FaceNormal = FVector3f::CrossProduct(B - A, C - A).GetSafeNormal();
-            if (OutNode.bReverseWinding)
-            {
-                FaceNormal *= -1.0f;
-            }
+            // FMeshDescription's left-handed face convention is the reverse
+            // cross used by the stock FBX importer/static-mesh operations.
+            FVector3f FaceNormal = FVector3f::CrossProduct(C - A, B - A).GetSafeNormal();
             if (FaceNormal.IsNearlyZero())
             {
                 OutError = TransportError(FString::Printf(

@@ -282,16 +282,11 @@ bool BuildMeshDescriptionForLOD(
             const FPolygonGroupID PolygonGroup = FindOrCreatePolygonGroup(SlotName);
             TArray<FVertexInstanceID> Perimeter;
             Perimeter.Reserve(3);
-            // Translator records the parity of the complete node geometry
-            // matrix together with the pinned FBX->UE reflection.
-            constexpr int32 ForwardCornerOrder[3] = {0, 1, 2};
-            constexpr int32 ReverseCornerOrder[3] = {0, 2, 1};
-            const int32* CornerOrder = Node.bReverseWinding
-                ? ReverseCornerOrder
-                : ForwardCornerOrder;
             for (int32 OutputCorner = 0; OutputCorner < 3; ++OutputCorner)
             {
-                const int32 SourceCorner = CornerOrder[OutputCorner];
+                // Match UFbxFactory: FBX->UE position conversion already
+                // changes handedness, while polygon corner order is retained.
+                const int32 SourceCorner = OutputCorner;
                 const int32 PositionIndex = Triangle.PositionIndices[SourceCorner];
                 if (!VertexIds.IsValidIndex(PositionIndex))
                 {

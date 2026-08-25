@@ -9,7 +9,9 @@ namespace
 constexpr int32 ExpectedSourceVertices = 9;
 constexpr int32 ExpectedSourcePolygons = 7;
 constexpr int32 ExpectedMeshDescriptionPolygons = 13;
-constexpr int32 ExpectedRenderVertices = 9;
+// ImportNormals preserves the fixture's per-corner split normals exactly;
+// both direct and stock legacy paths therefore materialize 27 render verts.
+constexpr int32 ExpectedRenderVertices = 27;
 constexpr int32 ExpectedRenderTriangles = 13;
 constexpr double PositionToleranceCm = 0.1;
 

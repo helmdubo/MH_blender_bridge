@@ -43,6 +43,10 @@ public:
     bool CommitEditComposite(TArray<FString>& OutWarnings, FString& OutError);
     bool CancelEditComposite(FString& OutError);
     bool IsEditingComposite() const { return EditingActor.IsValid(); }
+    bool IsEditingComposite(const AMHCompositeActor* Actor) const
+    {
+        return EditingActor.IsValid() && EditingActor.Get() == Actor;
+    }
 
     bool RebuildComposites(
         const TArray<AMHCompositeActor*>& Actors,
