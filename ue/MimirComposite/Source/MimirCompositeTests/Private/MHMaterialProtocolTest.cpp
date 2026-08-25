@@ -27,6 +27,7 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
 #include "StaticParameterSet.h"
+#include "Texture/MHTextureImporter.h"
 #include "Texture/MHTextureSourceData.h"
 #include "UObject/Package.h"
 #include "UObject/PackageReload.h"
@@ -562,13 +563,13 @@ bool FMHMaterialTextureImportPersistenceTest::RunTest(const FString& Parameters)
         FPaths::ProjectSavedDir(),
         TEXT("Mimir/MaterialTexturePersistence"));
     IFileManager::Get().MakeDirectory(*SourceRoot, true);
-    const FString TexturePath = FPaths::Combine(SourceRoot, TEXT("s2_persist_texture.png"));
+    const FString TexturePath = FPaths::Combine(SourceRoot, TEXT("s2_persist_tex_n.png"));
     const FString MaterialPath = FPaths::Combine(SourceRoot, TEXT("s2_texture_valid.material"));
     bool bPassed = TestTrue(TEXT("real PNG written"), WriteTestPng(TexturePath));
     bPassed &= TestTrue(
         TEXT("textured material written"),
         FFileHelper::SaveArrayToFile(
-            Utf8(TEXT("{\"class\":\"simple\",\"textures\":{\"tex0\":\"s2_persist_texture\"}}")),
+            Utf8(TEXT("{\"class\":\"simple\",\"textures\":{\"tex0\":\"s2_persist_tex_n\"}}")),
             *MaterialPath));
 
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
@@ -594,8 +595,8 @@ bool FMHMaterialTextureImportPersistenceTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    const FString TexturePackageName = TEXT("/Game/MH/Generated/Textures/s2_persist_texture");
-    const FString TextureObjectPath = TexturePackageName + TEXT(".s2_persist_texture");
+    const FString TexturePackageName = TEXT("/Game/MH/Generated/Textures/s2_persist_tex_n");
+    const FString TextureObjectPath = TexturePackageName + TEXT(".s2_persist_tex_n");
     UTexture* Texture = LoadObject<UTexture>(nullptr, *TextureObjectPath);
     bPassed &= TestNotNull(TEXT("exact imported texture exists"), Texture);
     const FString TextureFilename = FPackageName::LongPackageNameToFilename(
@@ -608,7 +609,7 @@ bool FMHMaterialTextureImportPersistenceTest::RunTest(const FString& Parameters)
     }
     FMHResourceKey TextureKey;
     TextureKey.Kind = EMHResourceKind::Texture;
-    TextureKey.LogicalName = TEXT("s2_persist_texture");
+    TextureKey.LogicalName = TEXT("s2_persist_tex_n");
     const FMHResolveOutcome ResolvedTexture = Resolver.Resolve(TextureKey);
     const UMHTextureSourceData* TextureData = Cast<UMHTextureSourceData>(
         Texture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass()));
@@ -621,8 +622,33 @@ bool FMHMaterialTextureImportPersistenceTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(
         TEXT("texture receipt source path"),
         TextureData->SourceRelativePath,
-        FString(TEXT("s2_persist_texture.png")));
+        FString(TEXT("s2_persist_tex_n.png")));
+    bPassed &= TestFalse(TEXT("normal-map texture disables sRGB"), Texture->SRGB);
+    bPassed &= TestEqual(
+        TEXT("normal-map texture uses BC7 compression"),
+        Texture->CompressionSettings,
+        TC_BC7);
     bPassed &= TestEqual(TEXT("texture receipt source hash"), TextureData->SourceHash, ResolvedTexture.RawHash);
+    Texture->SRGB = true;
+    Texture->CompressionSettings = TC_Default;
+    Texture->PostEditChange();
+    FMHSourceAnalysisEntry TextureEntry;
+    TextureEntry.Key = TextureKey;
+    TextureEntry.PayloadPath = ResolvedTexture.PayloadPath;
+    TextureEntry.SourcePath = TEXT("s2_persist_tex_n.png");
+    TextureEntry.RawHash = ResolvedTexture.RawHash;
+    TextureEntry.Change = EMHSourceChange::NoChange;
+    const FMHTextureOperationResult CorrectedSettings = MHEnsureTextureV4(
+        TextureEntry,
+        SourceRoot,
+        false);
+    bPassed &= TestTrue(
+        TEXT("equal-hash normal map with stale settings is reapplied"),
+        CorrectedSettings.Succeeded() && CorrectedSettings.bImported);
+    if (!CorrectedSettings.Succeeded()) AddError(CorrectedSettings.Error);
+    bPassed &= TestEqual(TEXT("settings repair preserves exact texture UObject"), CorrectedSettings.Texture, Texture);
+    bPassed &= TestFalse(TEXT("settings repair disables sRGB"), Texture->SRGB);
+    bPassed &= TestEqual(TEXT("settings repair restores BC7"), Texture->CompressionSettings, TC_BC7);
     const FAssetData TextureAssetData = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
         .Get()
         .GetAssetByObjectPath(FSoftObjectPath::ConstructFromObject(Texture));
@@ -650,6 +676,11 @@ bool FMHMaterialTextureImportPersistenceTest::RunTest(const FString& Parameters)
     bPassed &= TestNotNull(TEXT("exact texture reloads"), ReloadedTexture);
     if (ReloadedTexture != nullptr)
     {
+        bPassed &= TestFalse(TEXT("reloaded normal-map texture keeps sRGB disabled"), ReloadedTexture->SRGB);
+        bPassed &= TestEqual(
+            TEXT("reloaded normal-map texture keeps BC7 compression"),
+            ReloadedTexture->CompressionSettings,
+            TC_BC7);
         const UMHTextureSourceData* ReloadedData = Cast<UMHTextureSourceData>(
             ReloadedTexture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass()));
         bPassed &= TestNotNull(TEXT("texture receipt reloads"), ReloadedData);

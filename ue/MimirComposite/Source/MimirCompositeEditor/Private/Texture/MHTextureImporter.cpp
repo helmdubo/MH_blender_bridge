@@ -26,6 +26,28 @@ namespace
 
 constexpr const TCHAR* GeneratedTextureRoot = TEXT("/Game/MH/Generated/Textures");
 
+bool MHTextureIsManagedNormalMap(const FString& LogicalName)
+{
+    return LogicalName.EndsWith(TEXT("tex_n"), ESearchCase::CaseSensitive);
+}
+
+bool MHTextureHasManagedSettings(const UTexture& Texture, const FString& LogicalName)
+{
+    return !MHTextureIsManagedNormalMap(LogicalName) ||
+        (!Texture.SRGB && Texture.CompressionSettings == TC_BC7);
+}
+
+void MHTextureApplyManagedSettings(UTexture& Texture, const FString& LogicalName)
+{
+    if (!MHTextureIsManagedNormalMap(LogicalName))
+    {
+        return;
+    }
+    Texture.SRGB = false;
+    Texture.CompressionSettings = TC_BC7;
+    Texture.PostEditChange();
+}
+
 bool TextureRelativeToRoot(
     const FString& Root,
     const FString& Path,
@@ -61,7 +83,8 @@ bool HasExactTextureReceipt(
     return Data != nullptr &&
         Data->LogicalName == Entry.Key.LogicalName &&
         Data->SourceRelativePath == RelativePath &&
-        Data->SourceHash == Entry.RawHash;
+        Data->SourceHash == Entry.RawHash &&
+        MHTextureHasManagedSettings(Texture, Entry.Key.LogicalName);
 }
 
 bool SaveTexturePackage(
@@ -221,6 +244,7 @@ FMHTextureOperationResult MHEnsureTextureV4(
     return Result;
 #endif
 
+    MHTextureApplyManagedSettings(*Texture, Entry.Key.LogicalName);
     FAssetCompilingManager::Get().FinishAllCompilation();
     if (!SaveTexturePackage(*Texture, PackageName, Result.Error))
     {
