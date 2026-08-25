@@ -109,14 +109,17 @@ bool ExecutePreparedSourceImports(
     ObserveImportStage(EMHResourceKind::Texture);
     for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
     {
-        if (Entry.Key.Kind != EMHResourceKind::Texture || !ShouldExecuteEntry(Entry))
+        const bool bNoChangePolicyCheck =
+            Entry.Change == EMHSourceChange::NoChange && Entry.Errors.IsEmpty();
+        if (Entry.Key.Kind != EMHResourceKind::Texture ||
+            (!ShouldExecuteEntry(Entry) && !bNoChangePolicyCheck))
         {
             continue;
         }
         FMHTextureOperationResult TextureResult = MHEnsureTextureV4(
             Entry,
             SourceRoot,
-            true);
+            !bNoChangePolicyCheck);
         Entry.Warnings.Append(TextureResult.Warnings);
         if (!TextureResult.Succeeded())
         {
@@ -126,6 +129,10 @@ bool ExecutePreparedSourceImports(
         }
         else
         {
+            if (bNoChangePolicyCheck && TextureResult.bImported)
+            {
+                Entry.Change = EMHSourceChange::Reimport;
+            }
             bOutExecuted |= TextureResult.bImported;
         }
     }
@@ -133,7 +140,7 @@ bool ExecutePreparedSourceImports(
     ObserveImportStage(EMHResourceKind::Material);
     for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
     {
-        if (Entry.Key.Kind != EMHResourceKind::Material || !ShouldExecuteEntry(Entry))
+        if (Entry.Key.Kind != EMHResourceKind::Material || !Entry.Errors.IsEmpty())
         {
             continue;
         }
@@ -145,6 +152,10 @@ bool ExecutePreparedSourceImports(
                 TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: material:%s depends on failed texture:%s"),
                 *Entry.Key.LogicalName,
                 *FailedTexture));
+            continue;
+        }
+        if (!ShouldExecuteEntry(Entry))
+        {
             continue;
         }
         FMHMaterialOperationResult MaterialResult = MHImportMaterialV4(

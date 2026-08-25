@@ -27,7 +27,6 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
 #include "StaticParameterSet.h"
-#include "Texture/MHTextureImporter.h"
 #include "Texture/MHTextureSourceData.h"
 #include "UObject/Package.h"
 #include "UObject/PackageReload.h"
@@ -632,21 +631,47 @@ bool FMHMaterialTextureImportPersistenceTest::RunTest(const FString& Parameters)
     Texture->SRGB = true;
     Texture->CompressionSettings = TC_Default;
     Texture->PostEditChange();
-    FMHSourceAnalysisEntry TextureEntry;
-    TextureEntry.Key = TextureKey;
-    TextureEntry.PayloadPath = ResolvedTexture.PayloadPath;
-    TextureEntry.SourcePath = TEXT("s2_persist_tex_n.png");
-    TextureEntry.RawHash = ResolvedTexture.RawHash;
-    TextureEntry.Change = EMHSourceChange::NoChange;
-    const FMHTextureOperationResult CorrectedSettings = MHEnsureTextureV4(
-        TextureEntry,
+    FMHSourceAnalysis PolicyAnalysis;
+    bool bPolicyExecuted = false;
+    FMHImportSourcesScope PolicyScope;
+    PolicyScope.ResourceKeys.Add(TextureKey);
+    const bool bPolicySucceeded = MHImportSourcesHeadless(
         SourceRoot,
-        false);
+        PolicyScope,
+        *Settings,
+        PolicyAnalysis,
+        bPolicyExecuted);
+    const FMHSourceAnalysisEntry* PolicyTextureEntry = PolicyAnalysis.Entries.FindByPredicate(
+        [&TextureKey](const FMHSourceAnalysisEntry& Candidate)
+        {
+            return Candidate.Key == TextureKey;
+        });
     bPassed &= TestTrue(
-        TEXT("equal-hash normal map with stale settings is reapplied"),
-        CorrectedSettings.Succeeded() && CorrectedSettings.bImported);
-    if (!CorrectedSettings.Succeeded()) AddError(CorrectedSettings.Error);
-    bPassed &= TestEqual(TEXT("settings repair preserves exact texture UObject"), CorrectedSettings.Texture, Texture);
+        TEXT("Import Changed reapplies equal-hash normal map with stale settings"),
+        bPolicyExecuted);
+    // The complete Automation suite intentionally retains invalid-receipt
+    // fixtures in the fixed generated root. Scoped imports retain those global
+    // diagnostics, so verify the coordinator return contract independently of
+    // the resource-local policy result below.
+    bPassed &= TestEqual(
+        TEXT("normal-map policy coordinator result matches global analysis state"),
+        bPolicySucceeded,
+        !PolicyAnalysis.HasErrors());
+    bPassed &= TestNotNull(TEXT("Import Changed retains the texture analysis entry"), PolicyTextureEntry);
+    if (PolicyTextureEntry != nullptr)
+    {
+        bPassed &= TestTrue(
+            TEXT("normal-map policy check has no resource-local errors"),
+            PolicyTextureEntry->Errors.IsEmpty());
+        bPassed &= TestEqual(
+            TEXT("repaired equal-hash texture is reported as reimported"),
+            PolicyTextureEntry->Change,
+            EMHSourceChange::Reimport);
+    }
+    bPassed &= TestEqual(
+        TEXT("settings repair preserves exact texture UObject"),
+        LoadObject<UTexture>(nullptr, *TextureObjectPath),
+        Texture);
     bPassed &= TestFalse(TEXT("settings repair disables sRGB"), Texture->SRGB);
     bPassed &= TestEqual(TEXT("settings repair restores BC7"), Texture->CompressionSettings, TC_BC7);
     const FAssetData TextureAssetData = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
@@ -740,6 +765,58 @@ bool FMHMaterialTextureStaleFailureTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("texture source replaced with invalid bytes"),
         FFileHelper::SaveArrayToFile(Utf8(TEXT("not_png")), *TexturePath));
+    FMHResourceKey TextureKey;
+    TextureKey.Kind = EMHResourceKind::Texture;
+    TextureKey.LogicalName = TEXT("s2_stale_texture");
+    FMHImportSourcesScope FailureScope;
+    FailureScope.ResourceKeys.Add(TextureKey);
+    FailureScope.ResourceKeys.Add(ValidKey);
+    FMHSourceAnalysis FailureAnalysis;
+    bool bFailureExecuted = false;
+    AddExpectedError(
+        TEXT("Texture import failed"),
+        EAutomationExpectedErrorFlags::Contains,
+        -1);
+    const bool bCoordinatorSucceeded = MHImportSourcesHeadless(
+        SourceRoot,
+        FailureScope,
+        *Settings,
+        FailureAnalysis,
+        bFailureExecuted);
+    const FMHSourceAnalysisEntry* FailedTextureEntry = FailureAnalysis.Entries.FindByPredicate(
+        [&TextureKey](const FMHSourceAnalysisEntry& Candidate)
+        {
+            return Candidate.Key == TextureKey;
+        });
+    const FMHSourceAnalysisEntry* BlockedMaterialEntry = FailureAnalysis.Entries.FindByPredicate(
+        [&ValidKey](const FMHSourceAnalysisEntry& Candidate)
+        {
+            return Candidate.Key == ValidKey;
+        });
+    bPassed &= TestFalse(TEXT("failed texture import fails coordinator"), bCoordinatorSucceeded);
+    bPassed &= TestTrue(TEXT("failed texture import produces analysis errors"), FailureAnalysis.HasErrors());
+    bPassed &= TestNotNull(TEXT("failed texture remains in scoped analysis"), FailedTextureEntry);
+    if (FailedTextureEntry != nullptr)
+    {
+        bPassed &= TestEqual(
+            TEXT("failed texture is blocked"),
+            FailedTextureEntry->Change,
+            EMHSourceChange::Blocked);
+    }
+    bPassed &= TestNotNull(TEXT("dependent unchanged material remains in scoped analysis"), BlockedMaterialEntry);
+    if (BlockedMaterialEntry != nullptr)
+    {
+        bPassed &= TestEqual(
+            TEXT("failed texture blocks unchanged dependent material"),
+            BlockedMaterialEntry->Change,
+            EMHSourceChange::Blocked);
+        bPassed &= TestTrue(
+            TEXT("blocked unchanged material reports unresolved texture"),
+            BlockedMaterialEntry->Errors.ContainsByPredicate([](const FString& Candidate)
+            {
+                return ErrorStartsWith(Candidate, TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE"));
+            }));
+    }
     const FString InvalidPath = FPaths::Combine(SourceRoot, TEXT("s2_stale_invalid.material"));
     bPassed &= TestTrue(
         TEXT("stale failure material written"),
@@ -754,10 +831,6 @@ bool FMHMaterialTextureStaleFailureTest::RunTest(const FString& Parameters)
     // The invalid replacement is intentional. Interchange may either log its
     // decoder failure or return the pre-existing object silently; the protocol
     // must reject both outcomes by validating the exact imported source bytes.
-    AddExpectedError(
-        TEXT("Texture import failed"),
-        EAutomationExpectedErrorFlags::Contains,
-        -1);
     const FMHMaterialOperationResult InvalidImport = MHImportMaterialV4(
         MaterialEntry(
             TEXT("s2_stale_invalid"),
