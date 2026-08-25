@@ -8,10 +8,12 @@
 #include "Editor.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
+#include "Editor/Transactor.h"
 #include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "ScopedTransaction.h"
 #include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
@@ -191,6 +193,47 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
                 CompositeActor->GetTopLevelComponents()[0]->GetComponentLocation().Equals(
                     FVector(125.0, 0.0, 0.0),
                     KINDA_SMALL_NUMBER));
+        }
+
+        Error.Reset();
+        bPassed &= TestTrue(
+            TEXT("Edit can restart for irreversible Commit boundary gate"),
+            Subsystem->BeginEditComposite(CompositeActor, Error));
+        if (CompositeActor->GetTopLevelComponents().Num() == 4)
+        {
+            USceneComponent* EditedComponent = CompositeActor->GetTopLevelComponents()[0];
+            {
+                const FScopedTransaction UserTransformTransaction(
+                    INVTEXT("Automation composite placement edit"));
+                EditedComponent->Modify();
+                EditedComponent->SetWorldLocation(FVector(126.0, 0.0, 0.0));
+                EditedComponent->SetWorldLocation(FVector(125.0, 0.0, 0.0));
+            }
+        }
+        bool bPublisherObservedClosedTransaction = false;
+        Subsystem->SetCommitPublisherForTests(
+            [&bPublisherObservedClosedTransaction](UMHCompositeAsset&, FString&)
+            {
+                bPublisherObservedClosedTransaction =
+                    GEditor != nullptr &&
+                    !GEditor->IsTransactionActive() &&
+                    GEditor->Trans != nullptr &&
+                    !GEditor->Trans->CanUndo();
+                return true;
+            });
+        Error.Reset();
+        bPassed &= TestTrue(
+            TEXT("Commit succeeds through the source-publish seam"),
+            Subsystem->CommitEditComposite(Warnings, Error));
+        bPassed &= TestTrue(
+            TEXT("Commit clears UE Undo before the source-publish seam"),
+            bPublisherObservedClosedTransaction);
+        bPassed &= TestFalse(
+            TEXT("Ctrl+Z cannot resurrect a pre-Commit placement edit"),
+            GEditor->UndoTransaction());
+        Subsystem->SetCommitPublisherForTests({});
+        if (CompositeActor->GetTopLevelComponents().Num() == 4)
+        {
             CompositeActor->GetTopLevelComponents()[0]->SetWorldLocation(FVector(777.0, 0.0, 0.0));
         }
         FMHCompositeDocument BeforeRefreshDocument;
@@ -226,6 +269,51 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
                     FVector(125.0, 0.0, 0.0),
                     KINDA_SMALL_NUMBER));
         }
+
+        UMHCompositeAsset* AmbiguousGroupAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
+        AmbiguousGroupAsset->LogicalName = TEXT("ambiguous_group_") + Suffix;
+        FMHCompositeDocument AmbiguousGroupDocument;
+        FMHCompositeNode AmbiguousGroup;
+        AmbiguousGroup.Kind = EMHCompositeNodeKind::Group;
+        AmbiguousGroup.Name = TEXT("scaled_group");
+        AmbiguousGroup.Transform.Scale = FVector(1.0, 2.0, 1.0);
+        FMHCompositeNode RotatedGroupChild;
+        RotatedGroupChild.Kind = EMHCompositeNodeKind::Mesh;
+        RotatedGroupChild.Resource = MeshResource;
+        RotatedGroupChild.Name = TEXT("rotated_child");
+        RotatedGroupChild.Transform.RotationQuat = FQuat(FVector::UpVector, FMath::DegreesToRadians(45.0));
+        AmbiguousGroup.Children.Add(RotatedGroupChild);
+        AmbiguousGroupDocument.Nodes.Add(AmbiguousGroup);
+        Error.Reset();
+        bPassed &= TestTrue(
+            TEXT("transform-bearing group fixture applies"),
+            MHApplyCompositeV4(*AmbiguousGroupAsset, AmbiguousGroupDocument, Error));
+        AMHCompositeActor* AmbiguousGroupActor = World->SpawnActor<AMHCompositeActor>(
+            AMHCompositeActor::StaticClass(),
+            FTransform::Identity,
+            SpawnParameters);
+        AmbiguousGroupActor->SetCompositeAsset(AmbiguousGroupAsset);
+        TArray<AActor*> RejectedGroupBreakActors;
+        Error.Reset();
+        bPassed &= TestFalse(
+            TEXT("Break fails closed while group transform domain is unresolved"),
+            Subsystem->BreakComposites(
+                {AmbiguousGroupActor},
+                RejectedGroupBreakActors,
+                Warnings,
+                Error));
+        bPassed &= TestTrue(
+            TEXT("blocked group Break is machine-readable and names the JSON path"),
+            Error.StartsWith(TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT:")) &&
+                Error.Contains(TEXT("nodes[0]")) &&
+                Error.Contains(TEXT("scaled_group")));
+        bPassed &= TestTrue(
+            TEXT("blocked group Break leaves the source actor intact"),
+            IsValid(AmbiguousGroupActor) && !AmbiguousGroupActor->IsActorBeingDestroyed());
+        bPassed &= TestTrue(
+            TEXT("blocked group Break leaves no spawned actor delta"),
+            RejectedGroupBreakActors.IsEmpty());
+        AmbiguousGroupActor->Destroy();
 
         TArray<AActor*> BrokenActors;
         TArray<TWeakObjectPtr<UActorComponent>> DestroyedPlacementComponents;

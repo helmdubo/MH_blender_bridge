@@ -61,6 +61,37 @@ struct FMHBreakSpawnSpec
     TObjectPtr<UClass> ActorClass;
 };
 
+bool MHCompositeTransformIsIdentity(const FMHCompositeTransform& Transform)
+{
+    return Transform.TranslationCm.IsNearlyZero(UE_KINDA_SMALL_NUMBER) &&
+        Transform.RotationQuat.Equals(FQuat::Identity, UE_KINDA_SMALL_NUMBER) &&
+        Transform.Scale.Equals(FVector::OneVector, UE_KINDA_SMALL_NUMBER);
+}
+
+void MHCollectAmbiguousTransformGroups(
+    const TArray<FMHCompositeNode>& Nodes,
+    const FString& PathPrefix,
+    TArray<FString>& OutPaths)
+{
+    for (int32 Index = 0; Index < Nodes.Num(); ++Index)
+    {
+        const FMHCompositeNode& Node = Nodes[Index];
+        const FString Path = FString::Printf(TEXT("%s[%d]"), *PathPrefix, Index);
+        if (Node.Kind == EMHCompositeNodeKind::Group &&
+            !Node.Children.IsEmpty() &&
+            !MHCompositeTransformIsIdentity(Node.Transform))
+        {
+            OutPaths.Add(Node.Name.IsEmpty()
+                ? Path
+                : FString::Printf(TEXT("%s ('%s')"), *Path, *Node.Name));
+        }
+        MHCollectAmbiguousTransformGroups(
+            Node.Children,
+            Path + TEXT(".children"),
+            OutPaths);
+    }
+}
+
 const TCHAR* MHLevelNodeKindLabel(const EMHCompositeNodeKind Kind)
 {
     switch (Kind)
@@ -76,31 +107,6 @@ const TCHAR* MHLevelNodeKindLabel(const EMHCompositeNodeKind Kind)
     default:
         return TEXT("unknown");
     }
-}
-
-bool MHSaveCompositeLevelAsset(UMHCompositeAsset& Asset, FString& OutError)
-{
-    UPackage* Package = Asset.GetOutermost();
-    if (Package == nullptr || !FPackageName::IsValidLongPackageName(Package->GetName()))
-    {
-        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: composite asset package is not persistent");
-        return false;
-    }
-    FSavePackageArgs Args;
-    Args.TopLevelFlags = RF_Public | RF_Standalone;
-    Args.SaveFlags = SAVE_NoError;
-    const FString Filename = FPackageName::LongPackageNameToFilename(
-        Package->GetName(),
-        FPackageName::GetAssetPackageExtension());
-    Package->MarkPackageDirty();
-    if (!UPackage::SavePackage(Package, &Asset, *Filename, Args))
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_INVALID_RESOURCE_SOURCE: cannot save composite asset '%s'"),
-            *Asset.GetPathName());
-        return false;
-    }
-    return true;
 }
 
 bool MHReverseLookupActorToken(
@@ -578,6 +584,7 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         TArray<FMHBreakSpawnSpec> Specs;
     };
     TArray<FActorBreakPlan> Plans;
+    TArray<FString> AmbiguousTransformGroups;
     for (AMHCompositeActor* Actor : Actors)
     {
         UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
@@ -591,6 +598,15 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         {
             return false;
         }
+        const int32 PreviousAmbiguousCount = AmbiguousTransformGroups.Num();
+        MHCollectAmbiguousTransformGroups(
+            Document.Nodes,
+            Actor->GetPathName() + TEXT("/nodes"),
+            AmbiguousTransformGroups);
+        if (AmbiguousTransformGroups.Num() != PreviousAmbiguousCount)
+        {
+            continue;
+        }
         FActorBreakPlan& Plan = Plans.AddDefaulted_GetRef();
         Plan.Actor = Actor;
         if (!MHCollectBreakSpecs(
@@ -602,6 +618,13 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         {
             return false;
         }
+    }
+    if (!AmbiguousTransformGroups.IsEmpty())
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT: Break transform domain is unresolved for transform-bearing groups with children: %s"),
+            *FString::Join(AmbiguousTransformGroups, TEXT(", ")));
+        return false;
     }
 
     const FScopedTransaction Transaction(INVTEXT("Break MH Composite"));
@@ -703,32 +726,84 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
         Edited.Nodes[Index].Transform.Scale = Relative.GetScale3D();
     }
 
-    const FMHCompositeDocument Previous = EditingDocument;
-    const FScopedTransaction Transaction(INVTEXT("Commit MH Composite Edit"));
-    Asset->Modify();
-    Actor->Modify();
-    if (!MHApplyCompositeV4(*Asset, Edited, OutError))
+    // Validate the complete edited document while the edit session is still
+    // recoverable. Once Commit crosses the source-file boundary, UE Undo must
+    // no longer be able to resurrect a pre-Commit component snapshot.
+    TArray<uint8> CanonicalPreflight;
+    if (!MHWriteCanonicalCompositeV4(Edited, CanonicalPreflight, OutError))
     {
         return false;
     }
-    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
-    FMHCompositeOperationResult Published = MHPublishCompositeV4(*Asset, SourceRoot, nullptr);
-    OutWarnings.Append(Published.Warnings);
-    if (!Published.Succeeded())
-    {
-        FString RestoreError;
-        MHApplyCompositeV4(*Asset, Previous, RestoreError);
-        MHSaveCompositeLevelAsset(*Asset, RestoreError);
-        OutError = MoveTemp(Published.Error);
-        return false;
-    }
+
+    const FString PreviousSourceRelativePath = Asset->SourceRelativePath;
     Actor->SetPlacementEditMode(false);
     EditingActor.Reset();
     EditingTopLevelComponents.Reset();
     EditingDocument = FMHCompositeDocument();
+    GEditor->ResetTransaction(INVTEXT("MH Composite source Commit cannot be undone"));
+
+    if (!MHApplyCompositeV4(*Asset, Edited, OutError))
+    {
+        Actor->RebuildComposite();
+        return false;
+    }
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    FMHCompositeOperationResult Published;
+#if WITH_DEV_AUTOMATION_TESTS
+    if (CommitPublisherForTests)
+    {
+        if (CommitPublisherForTests(*Asset, Published.Error))
+        {
+            Published.Asset = Asset;
+        }
+    }
+    else
+#endif
+    {
+        Published = MHPublishCompositeV4(*Asset, SourceRoot, nullptr);
+    }
+    OutWarnings.Append(Published.Warnings);
+    if (!Published.Succeeded())
+    {
+        const FString PublishError = MoveTemp(Published.Error);
+        FString ReconcileError;
+        TArray<FString> ReconcileWarnings;
+        UMHCompositeAsset* ReconciledAsset = nullptr;
+        UMHSourceImporter* Importer = GEditor->GetEditorSubsystem<UMHSourceImporter>();
+        FString SourcePath = FPaths::ConvertRelativePathToFull(
+            SourceRoot,
+            PreviousSourceRelativePath);
+        FPaths::NormalizeFilename(SourcePath);
+        const bool bReconciled =
+            Importer != nullptr &&
+            !PreviousSourceRelativePath.IsEmpty() &&
+            Importer->ImportCompositeFile(
+                SourcePath,
+                Asset->GetOutermost()->GetName(),
+                ReconciledAsset,
+                ReconcileWarnings,
+                ReconcileError) &&
+            ReconciledAsset == Asset;
+        OutWarnings.Append(ReconcileWarnings);
+        OutError = bReconciled
+            ? PublishError
+            : FString::Printf(
+                TEXT("%s; managed asset reconciliation from authoritative source failed: %s"),
+                *PublishError,
+                ReconcileError.IsEmpty() ? TEXT("source import was unavailable") : *ReconcileError);
+        Actor->RebuildComposite();
+        return false;
+    }
     Actor->RebuildComposite();
     return true;
+}
+
+FString UMHCompositeLevelSubsystem::GetEditingCompositeLogicalName() const
+{
+    const AMHCompositeActor* Actor = EditingActor.Get();
+    const UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
+    return Asset != nullptr ? Asset->LogicalName : FString();
 }
 
 bool UMHCompositeLevelSubsystem::CancelEditComposite(FString& OutError)

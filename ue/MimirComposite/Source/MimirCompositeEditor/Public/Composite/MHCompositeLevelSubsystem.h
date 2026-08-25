@@ -47,6 +47,7 @@ public:
     {
         return EditingActor.IsValid() && EditingActor.Get() == Actor;
     }
+    FString GetEditingCompositeLogicalName() const;
 
     bool RebuildComposites(
         const TArray<AMHCompositeActor*>& Actors,
@@ -64,8 +65,19 @@ public:
         TArray<FString>& OutWarnings,
         FString& OutError);
 
+#if WITH_DEV_AUTOMATION_TESTS
+    void SetCommitPublisherForTests(
+        TFunction<bool(UMHCompositeAsset&, FString&)> Publisher)
+    {
+        CommitPublisherForTests = MoveTemp(Publisher);
+    }
+#endif
+
 private:
     TWeakObjectPtr<AMHCompositeActor> EditingActor;
     UE::MimirComposite::FMHCompositeDocument EditingDocument;
     TArray<TWeakObjectPtr<USceneComponent>> EditingTopLevelComponents;
+#if WITH_DEV_AUTOMATION_TESTS
+    TFunction<bool(UMHCompositeAsset&, FString&)> CommitPublisherForTests;
+#endif
 };

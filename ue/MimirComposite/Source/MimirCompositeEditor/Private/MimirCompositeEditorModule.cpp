@@ -11,6 +11,7 @@
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MessageLogModule.h"
+#include "Misc/CoreDelegates.h"
 #include "Modules/ModuleManager.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "Source/MHSourceComposition.h"
@@ -204,25 +205,41 @@ void FMimirCompositeEditorModule::StartupModule()
 
     UToolMenus::RegisterStartupCallback(
         FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FMimirCompositeEditorModule::RegisterMenus));
+    bOwnsToolMenusRegistration = true;
+    // OnPreExit runs while editor UI modules are still alive. ToolMenus may
+    // already have destroyed its singleton by the later module-shutdown pass,
+    // so plugin-owned delegates must be released here rather than discovered
+    // through UToolMenus::TryGet() during teardown.
+    PreExitHandle = FCoreDelegates::OnPreExit.AddRaw(
+        this,
+        &FMimirCompositeEditorModule::UnregisterMenusBeforeExit);
 }
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
     UE::MimirComposite::MHShutdownProjectIndex();
+    if (PreExitHandle.IsValid())
+    {
+        FCoreDelegates::OnPreExit.Remove(PreExitHandle);
+        PreExitHandle.Reset();
+    }
     if (!IsRunningCommandlet())
     {
         if (UThumbnailManager* ThumbnailManager = UThumbnailManager::TryGet())
         {
             ThumbnailManager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
         }
-        // ToolMenus may already have shut down when a project plugin unloads
-        // during editor exit. Its static startup delegate is no longer safe to
-        // touch after the module has gone away.
-        if (UToolMenus::TryGet() != nullptr)
+        // Dynamic plugin unload still needs cleanup, but engine exit must not
+        // touch ToolMenus: its singleton can already be torn down even though
+        // this editor module is only now receiving ShutdownModule(). Normal
+        // exit was cleaned by OnPreExit above.
+        if (bOwnsToolMenusRegistration &&
+            !IsEngineExitRequested() &&
+            FModuleManager::Get().IsModuleLoaded(TEXT("ToolMenus")))
         {
-            UToolMenus::UnRegisterStartupCallback(this);
-            UToolMenus::UnregisterOwner(this);
+            UnregisterMenusBeforeExit();
         }
+        bOwnsToolMenusRegistration = false;
     }
     if (ObjectModifiedHandle.IsValid())
     {
@@ -238,6 +255,17 @@ void FMimirCompositeEditorModule::ShutdownModule()
     {
         FModuleManager::GetModuleChecked<FMessageLogModule>("MessageLog").UnregisterLogListing("Mimir");
     }
+}
+
+void FMimirCompositeEditorModule::UnregisterMenusBeforeExit()
+{
+    if (!bOwnsToolMenusRegistration)
+    {
+        return;
+    }
+    UToolMenus::UnRegisterStartupCallback(this);
+    UToolMenus::UnregisterOwner(this);
+    bOwnsToolMenusRegistration = false;
 }
 
 void FMimirCompositeEditorModule::RegisterMenus()

@@ -372,9 +372,26 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
     TArray<FString> Warnings;
     FString Error;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
-    if (Subsystem == nullptr || !Subsystem->CommitEditComposite(Warnings, Error))
+    if (Subsystem == nullptr)
     {
-        if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
+        Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
+    }
+    else
+    {
+        const FString LogicalName = Subsystem->GetEditingCompositeLogicalName();
+        const FText Confirmation = FText::Format(
+            LOCTEXT(
+                "CommitCompositeIrreversiblePrompt",
+                "This will overwrite {0}.composite. Unreal Editor Undo cannot restore the previous source file; revert with a new edit or VCS. Continue?"),
+            FText::FromString(LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName));
+        if (FMessageDialog::Open(EAppMsgType::YesNo, Confirmation) != EAppReturnType::Yes)
+        {
+            return;
+        }
+        if (!Subsystem->CommitEditComposite(Warnings, Error) && Error.IsEmpty())
+        {
+            Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
+        }
     }
     NotifyOperation(
         LOCTEXT("CommitCompositePage", "Commit MH Composite Edit"),
