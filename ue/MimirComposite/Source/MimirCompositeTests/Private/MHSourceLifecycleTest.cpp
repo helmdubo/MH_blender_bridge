@@ -92,7 +92,13 @@ bool FMHSourceLifecycleDebouncePIETest::RunTest(const FString& Parameters)
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("PIE holds mature batch"), Batches.Num(), 1);
     Importer->SetPIEActiveForTests(false);
-    bPassed &= TestEqual(TEXT("EndPIE flushes queued batch"), Batches.Num(), 2);
+    bPassed &= TestEqual(TEXT("EndPIE delegate never flushes queued batch"), Batches.Num(), 1);
+    Importer->SetLifecycleTimeForTests(30.999);
+    Importer->TickSourceLifecycleForTests();
+    bPassed &= TestEqual(TEXT("post-PIE batch waits for quiet period"), Batches.Num(), 1);
+    Importer->SetLifecycleTimeForTests(31.0);
+    Importer->TickSourceLifecycleForTests();
+    bPassed &= TestEqual(TEXT("ticker flushes queued batch after post-PIE quiet period"), Batches.Num(), 2);
     bPassed &= TestTrue(
         TEXT("rescan-required survives PIE queue"),
         FullScanFlags.Num() == 2 && FullScanFlags[1]);
@@ -114,10 +120,17 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
         ++StartupAttempts;
         return StartupAttempts >= 2;
     });
+    Importer->SetLifecycleTimeForTests(100.0);
     Importer->SetAssetRegistryReadyForTests(false);
     Importer->TickSourceLifecycleForTests();
     bool bPassed = TestEqual(TEXT("startup waits for Asset Registry"), StartupAttempts, 0);
     Importer->SetAssetRegistryReadyForTests(true);
+    Importer->TickSourceLifecycleForTests();
+    bPassed &= TestEqual(TEXT("startup never runs from Asset Registry readiness"), StartupAttempts, 0);
+    Importer->SetLifecycleTimeForTests(100.999);
+    Importer->TickSourceLifecycleForTests();
+    bPassed &= TestEqual(TEXT("startup waits for one-second editor quiet period"), StartupAttempts, 0);
+    Importer->SetLifecycleTimeForTests(101.0);
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("first startup attempt is retryable"), StartupAttempts, 1);
     bPassed &= TestFalse(TEXT("failed attempt is not marked complete"), Importer->HasStartupPlanRunForTests());
@@ -126,6 +139,28 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("successful startup is complete"), Importer->HasStartupPlanRunForTests());
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("completed startup is exactly once"), StartupAttempts, 2);
+
+    UMHSourceImporter* PIEStartupImporter = NewObject<UMHSourceImporter>();
+    int32 PIEStartupAttempts = 0;
+    PIEStartupImporter->SetStartupExecutorForTests([&PIEStartupAttempts]()
+    {
+        ++PIEStartupAttempts;
+        return true;
+    });
+    PIEStartupImporter->SetLifecycleTimeForTests(200.0);
+    PIEStartupImporter->SetAssetRegistryReadyForTests(true);
+    PIEStartupImporter->SetPIEActiveForTests(true);
+    PIEStartupImporter->SetLifecycleTimeForTests(202.0);
+    PIEStartupImporter->TickSourceLifecycleForTests();
+    bPassed &= TestEqual(TEXT("PIE holds mature startup"), PIEStartupAttempts, 0);
+    PIEStartupImporter->SetPIEActiveForTests(false);
+    bPassed &= TestEqual(TEXT("EndPIE delegate never starts startup"), PIEStartupAttempts, 0);
+    PIEStartupImporter->SetLifecycleTimeForTests(202.999);
+    PIEStartupImporter->TickSourceLifecycleForTests();
+    bPassed &= TestEqual(TEXT("post-PIE startup waits for quiet period"), PIEStartupAttempts, 0);
+    PIEStartupImporter->SetLifecycleTimeForTests(203.0);
+    PIEStartupImporter->TickSourceLifecycleForTests();
+    bPassed &= TestEqual(TEXT("ticker starts startup after post-PIE quiet period"), PIEStartupAttempts, 1);
 
     const FString SourceRoot = FPaths::Combine(
         FPaths::ProjectSavedDir(),

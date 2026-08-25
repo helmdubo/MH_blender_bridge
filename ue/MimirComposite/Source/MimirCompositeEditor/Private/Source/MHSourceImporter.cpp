@@ -19,7 +19,6 @@
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/FileHelper.h"
-#include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
@@ -35,6 +34,8 @@ namespace UE::MimirComposite
 {
 namespace
 {
+
+constexpr double StartupImportDelaySeconds = 1.0;
 
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void(EMHResourceKind)> GImportStageObserverForTests;
@@ -452,10 +453,10 @@ void UMHSourceImporter::OnAssetRegistryFilesLoaded()
     TWeakObjectPtr<UMHSourceImporter> WeakThis(this);
     AsyncTask(ENamedThreads::GameThread, [WeakThis]()
     {
-        if (WeakThis.IsValid())
+        if (WeakThis.IsValid() && WeakThis->LifecycleTickerHandle.IsValid())
         {
             WeakThis->bAssetRegistryReady = true;
-            WeakThis->RunStartupPlan();
+            WeakThis->AssetRegistryReadySeconds = WeakThis->LifecycleNowSeconds();
         }
     });
 }
@@ -537,7 +538,11 @@ double UMHSourceImporter::LifecycleNowSeconds() const
 bool UMHSourceImporter::TickSourceLifecycle(const float DeltaSeconds)
 {
     (void)DeltaSeconds;
-    if (bAssetRegistryReady && !bStartupPlanRan)
+    if (bAssetRegistryReady &&
+        !bStartupPlanRan &&
+        !bPIEActive &&
+        !bImportInProgress &&
+        LifecycleNowSeconds() - AssetRegistryReadySeconds >= StartupImportDelaySeconds)
     {
         RunStartupPlan();
     }
@@ -561,7 +566,12 @@ void UMHSourceImporter::OnEndPIE(const bool bIsSimulating)
 {
     (void)bIsSimulating;
     bPIEActive = false;
-    TickSourceLifecycle(0.0f);
+    const double ResumeSeconds = LifecycleNowSeconds();
+    LastSourceChangeSeconds = ResumeSeconds;
+    if (!bStartupPlanRan)
+    {
+        AssetRegistryReadySeconds = ResumeSeconds;
+    }
 }
 
 void UMHSourceImporter::OnDirectoryChanged(
@@ -589,7 +599,7 @@ void UMHSourceImporter::OnDirectoryChanged(
     TWeakObjectPtr<UMHSourceImporter> WeakThis(this);
     AsyncTask(ENamedThreads::GameThread, [WeakThis, Paths = MoveTemp(Paths), bRequestFullScan]()
     {
-        if (WeakThis.IsValid())
+        if (WeakThis.IsValid() && WeakThis->LifecycleTickerHandle.IsValid())
         {
             WeakThis->QueueSourcePaths(Paths, bRequestFullScan);
         }
@@ -773,16 +783,21 @@ void UMHSourceImporter::SetLifecycleTimeForTests(const double TimeSeconds)
 
 void UMHSourceImporter::SetAssetRegistryReadyForTests(const bool bReady)
 {
+    if (bReady && !bAssetRegistryReady)
+    {
+        AssetRegistryReadySeconds = LifecycleNowSeconds();
+    }
     bAssetRegistryReady = bReady;
 }
 
 void UMHSourceImporter::SetPIEActiveForTests(const bool bActive)
 {
-    bPIEActive = bActive;
-    if (!bPIEActive)
+    if (bActive)
     {
-        TickSourceLifecycle(0.0f);
+        bPIEActive = true;
+        return;
     }
+    OnEndPIE(false);
 }
 
 void UMHSourceImporter::QueueSourcePathsForTests(
@@ -1399,7 +1414,6 @@ void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     if (Settings != nullptr && Settings->StartupScanMode == EMHStartupScanMode::Prompt)
     {
-        FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
-        Log.Notify(INVTEXT("Mimir source plan is ready"));
+        Log.Notify(FText::FromString(Summary));
     }
 }

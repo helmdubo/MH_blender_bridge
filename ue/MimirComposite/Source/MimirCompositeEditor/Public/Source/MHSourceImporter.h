@@ -161,6 +161,7 @@ private:
     FString WatchedSourceRoot;
     TSet<FString> PendingSourcePaths;
     double LastSourceChangeSeconds = 0.0;
+    double AssetRegistryReadySeconds = 0.0;
     bool bAssetRegistryReady = false;
     bool bStartupPlanRan = false;
     bool bPIEActive = false;
