@@ -551,6 +551,16 @@ Blender-правила выше; (в) отсутствие generated-завис�
 заменяет placeholder полноценным узлом автоматически (name-keyed
 identity).
 
+**File-drop payload-файлов (решение OPEN-V4-23).** Drop файла ИЗНУТРИ
+`source_root` в Content Browser — штатный ручной импорт; CB-target
+НИКОГДА не влияет на generated path — identity определяет путь
+(`/Game/MH/Generated/<Kind>/<name>`). Drop ВНЕШНЕГО файла открывает
+Adopt-диалог (папка внутри `source_root` + имя, предзаполненное stem'ом):
+каноничная валидация, duplicate — fail-closed reject без overwrite,
+копирование sibling-tmp → atomic replace, затем штатный импорт; отмена =
+полный отказ без следов. Семантика единообразна для всех payload-kinds
+по мере реализации их file-drop UX (прецедент — Adopt материалов §5).
+
 ## 7. Applied state в ассетах (поправка №9)
 
 - `UMHStaticMeshImportData : UAssetImportData` на UStaticMesh (решение

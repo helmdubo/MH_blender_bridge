@@ -6,12 +6,22 @@
 вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
 сохранены как история и явно помечены `SUPERSEDED BY 08`.
 
-Открыты два вопроса v4: filesystem aliases (`OPEN-V4-1`) и семантика
-ручного file-drop внешнего `.composite` (`OPEN-V4-23`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-22` (включая блокеры S5) решены owner — нормативный
+Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
+`OPEN-V4-2`–`OPEN-V4-23` (включая file-drop policy) решены owner — нормативный
 текст перенесён в 08 §§2–9 и 09 (S2/S3/S4/S5/S6).
 
 ## OPEN-V4-23 — ручной file-drop `.composite` вне `source_root`
+
+**Статус. РЕШЕНО OWNER — нормативно в 08 §6.1 (этот docs-коммит).**
+Drop внешнего payload-файла открывает **Adopt-диалог** (папка внутри
+`source_root` + имя, предзаполненное stem'ом): каноничная валидация имени,
+duplicate — fail-closed reject без overwrite, копирование sibling-tmp →
+atomic replace, затем ШТАТНЫЙ импорт. Отмена диалога = полный отказ без
+следов. Content Browser target НИКОГДА не влияет на generated path —
+identity определяет путь (`/Game/MH/Generated/<Kind>/<name>`),
+подтверждено. Семантика единообразна для всех payload-kinds по мере
+реализации их file-drop UX. «Молчаливого копирования» нет — диалог делает
+выбор явным; это то же Adopt-прецедентное правило, что у материалов 08 §5.
 
 **Контекст.** S6 требует UX импорта и единственную source-authority, но 08/09
 не задают поведение стандартного Content Browser file-drop для файла,
@@ -34,8 +44,8 @@ Browser target отклоняются с абсолютным путём и `MH_
 не выполняются. Это не блокирует ручной импорт канонического project-source
 файла и размещение уже импортированного `UMHCompositeAsset` в уровне.
 
-**Статус.** ОТКРЫТ; блокирует только Adopt/copy внешнего файла, но не
-fail-closed ручной импорт внутри source-tree.
+**Прежний статус.** ОТКРЫТ; блокировал только Adopt/copy внешнего файла, но
+не fail-closed ручной импорт внутри source-tree.
 
 ## OPEN-V4-2 — canonical texture reference и image extensions
 
