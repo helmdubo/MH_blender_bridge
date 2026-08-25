@@ -1,13 +1,10 @@
 #include "Composite/MHCompositeActor.h"
 
 #include "Composite/MHCompositeAsset.h"
-#include "Composite/MHCompositeCompiler.h"
-#include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositePlacementCompiler.h"
 #include "Components/SceneComponent.h"
 #include "Logging/MessageLog.h"
 #include "Settings/MHCompositeSettings.h"
-#include "Source/MHPayloadScanResolver.h"
-#include "UObject/UObjectIterator.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeActor)
 
@@ -22,6 +19,7 @@ AMHCompositeActor::AMHCompositeActor()
 void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
 {
     Modify();
+    bPlacementEditMode = false;
     CompositeAsset = Asset;
     RebuildComposite();
 }
@@ -29,6 +27,17 @@ void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
 UMHCompositeAsset* AMHCompositeActor::GetCompositeAsset() const
 {
     return CompositeAsset.LoadSynchronous();
+}
+
+void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)
+{
+    bPlacementEditMode = bEnabled;
+}
+
+bool AMHCompositeActor::DependsOnResource(
+    const UE::MimirComposite::FMHResourceKey& Key) const
+{
+    return PlacementDependencies.Contains(Key);
 }
 
 void AMHCompositeActor::ClearDerivedComponents()
@@ -41,75 +50,80 @@ void AMHCompositeActor::ClearDerivedComponents()
         }
     }
     DerivedComponents.Reset();
+    TopLevelPlacementComponents.Reset();
+    PlacementDependencies.Reset();
+    LastPlacementWarnings.Reset();
 }
 
 void AMHCompositeActor::RebuildComposite()
 {
-    if (bRebuildInProgress || IsTemplate() || HasAnyFlags(RF_ClassDefaultObject))
+    if (bRebuildInProgress || bPlacementEditMode || IsTemplate() ||
+        HasAnyFlags(RF_ClassDefaultObject))
     {
         return;
     }
     TGuardValue<bool> RebuildGuard(bRebuildInProgress, true);
 
-    UMHCompositeAsset* Asset = GetCompositeAsset();
-    if (Asset == nullptr)
+    const FSoftObjectPath AssetPath = CompositeAsset.ToSoftObjectPath();
+    if (AssetPath.IsNull())
     {
         ClearDerivedComponents();
         return;
     }
 
+    UMHCompositeAsset* Asset = GetCompositeAsset();
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
-    FString Error;
-    if (Settings == nullptr || SourceRoot.IsEmpty())
+    if (Settings == nullptr)
     {
-        Error = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
-    }
-
-    UE::MimirComposite::FMHCompositeDocument Document;
-    if (Error.IsEmpty() && !UE::MimirComposite::MHExtractCompositeV4(*Asset, Document, Error))
-    {
-        // Error is already diagnostic-bearing.
-    }
-
-    UE::MimirComposite::FMHPayloadScanResolver Resolver(SourceRoot);
-    if (Error.IsEmpty() && !Resolver.Initialize(Error))
-    {
-        // Error is already diagnostic-bearing.
-    }
-
-    UE::MimirComposite::FMHCompositeCompileResult Result;
-    if (Error.IsEmpty())
-    {
-        Result = UE::MimirComposite::MHCompileCompositeV4(
-            *this,
-            Asset->LogicalName,
-            Document,
-            Resolver,
-            *Settings);
-        Error = MoveTemp(Result.Error);
-    }
-    if (!Error.IsEmpty())
-    {
-        const FString Diagnostic = FString::Printf(
-            TEXT("%s: %s"),
-            *Asset->GetPathName(),
-            *Error);
-        UE_LOG(LogMHCompositeActor, Error, TEXT("%s"), *Diagnostic);
-        if (!IsRunningCommandlet())
-        {
-            FMessageLog(TEXT("Mimir")).Error(FText::FromString(Diagnostic));
-        }
+        ClearDerivedComponents();
         return;
     }
 
+    const FString ExpectedLogicalName = Asset != nullptr && !Asset->LogicalName.IsEmpty()
+        ? Asset->LogicalName
+        : AssetPath.GetAssetName();
+    UE::MimirComposite::FMHCompositePlacementCompileResult Result =
+        UE::MimirComposite::MHCompileCompositePlacementV4(
+            *this,
+            Asset,
+            ExpectedLogicalName,
+            *Settings);
+
     const TArray<TObjectPtr<UActorComponent>> PreviousComponents = MoveTemp(DerivedComponents);
     DerivedComponents = MoveTemp(Result.Components);
+    TopLevelPlacementComponents = MoveTemp(Result.TopLevelComponents);
+    PlacementDependencies = MoveTemp(Result.Dependencies);
+    LastPlacementWarnings = MoveTemp(Result.Warnings);
     for (int32 Index = PreviousComponents.Num() - 1; Index >= 0; --Index)
     {
         if (UActorComponent* Component = PreviousComponents[Index])
         {
             Component->DestroyComponent();
+        }
+    }
+
+    for (const FString& Warning : LastPlacementWarnings)
+    {
+        const FString Diagnostic = FString::Printf(
+            TEXT("%s: %s"),
+            *AssetPath.ToString(),
+            *Warning);
+        UE_LOG(LogMHCompositeActor, Warning, TEXT("%s"), *Diagnostic);
+        if (!IsRunningCommandlet())
+        {
+            FMessageLog(TEXT("Mimir")).Warning(FText::FromString(Diagnostic));
+        }
+    }
+    if (!Result.Error.IsEmpty())
+    {
+        const FString Diagnostic = FString::Printf(
+            TEXT("%s: %s"),
+            *AssetPath.ToString(),
+            *Result.Error);
+        UE_LOG(LogMHCompositeActor, Error, TEXT("%s"), *Diagnostic);
+        if (!IsRunningCommandlet())
+        {
+            FMessageLog(TEXT("Mimir")).Error(FText::FromString(Diagnostic));
         }
     }
 }
@@ -139,25 +153,3 @@ void AMHCompositeActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
     RebuildComposite();
 }
 #endif
-
-namespace UE::MimirComposite
-{
-
-void MHNotifyCompositeAssetChanged(UMHCompositeAsset& Asset)
-{
-    const FSoftObjectPath ChangedPath(&Asset);
-    for (TObjectIterator<AMHCompositeActor> It; It; ++It)
-    {
-        AMHCompositeActor* Actor = *It;
-        if (Actor == nullptr || Actor->IsTemplate() || Actor->GetWorld() == nullptr)
-        {
-            continue;
-        }
-        if (FSoftObjectPath(Actor->GetCompositeAsset()) == ChangedPath)
-        {
-            Actor->RebuildComposite();
-        }
-    }
-}
-
-} // namespace UE::MimirComposite

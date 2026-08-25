@@ -20,6 +20,7 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
+#include "UI/MHSourceToolMenus.h"
 #include "UObject/AssetRegistryTagsContext.h"
 
 #define LOCTEXT_NAMESPACE "MimirCompositeEditor"
@@ -228,46 +229,45 @@ void FMimirCompositeEditorModule::RegisterMenus()
     FToolMenuOwnerScoped OwnerScoped(this);
     UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(
         UMaterialInstanceConstant::StaticClass());
-    if (Menu == nullptr)
+    if (Menu != nullptr)
     {
-        return;
-    }
-
-    FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("GetAssetActions"));
-    Section.AddDynamicEntry(
-        TEXT("MHManagedMaterialActions"),
-        FNewToolMenuSectionDelegate::CreateLambda([](FToolMenuSection& DynamicSection)
-        {
-            const UContentBrowserAssetContextMenuContext* Context =
-                UContentBrowserAssetContextMenuContext::FindContextWithAssets(DynamicSection);
-            if (Context == nullptr)
+        FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("GetAssetActions"));
+        Section.AddDynamicEntry(
+            TEXT("MHManagedMaterialActions"),
+            FNewToolMenuSectionDelegate::CreateLambda([](FToolMenuSection& DynamicSection)
             {
-                return;
-            }
-
-            const bool bHasMaterialInstance = Context->SelectedAssets.ContainsByPredicate(
-                [](const FAssetData& Asset)
+                const UContentBrowserAssetContextMenuContext* Context =
+                    UContentBrowserAssetContextMenuContext::FindContextWithAssets(DynamicSection);
+                if (Context == nullptr)
                 {
-                    return Asset.IsInstanceOf(UMaterialInstanceConstant::StaticClass());
-                });
-            if (!bHasMaterialInstance)
-            {
-                return;
-            }
+                    return;
+                }
 
-            FToolUIAction Action;
-            Action.ExecuteAction = FToolMenuExecuteAction::CreateStatic(
-                &ExecuteReimportManagedMaterials);
-            DynamicSection.AddMenuEntry(
-                TEXT("MHReimportManagedMaterials"),
-                LOCTEXT("ReimportManagedMaterials", "Reimport from MH Source"),
-                LOCTEXT(
-                    "ReimportManagedMaterialsTooltip",
-                    "Force a full source-wins reimport of the selected managed Material Instances. "
-                    "Parent, textures, parameters and base overrides are replaced from the current .material files."),
-                FSlateIcon(),
-                Action);
-        }));
+                const bool bHasMaterialInstance = Context->SelectedAssets.ContainsByPredicate(
+                    [](const FAssetData& Asset)
+                    {
+                        return Asset.IsInstanceOf(UMaterialInstanceConstant::StaticClass());
+                    });
+                if (!bHasMaterialInstance)
+                {
+                    return;
+                }
+
+                FToolUIAction Action;
+                Action.ExecuteAction = FToolMenuExecuteAction::CreateStatic(
+                    &ExecuteReimportManagedMaterials);
+                DynamicSection.AddMenuEntry(
+                    TEXT("MHReimportManagedMaterials"),
+                    LOCTEXT("ReimportManagedMaterials", "Reimport from MH Source"),
+                    LOCTEXT(
+                        "ReimportManagedMaterialsTooltip",
+                        "Force a full source-wins reimport of the selected managed Material Instances. "
+                        "Parent, textures, parameters and base overrides are replaced from the current .material files."),
+                    FSlateIcon(),
+                    Action);
+            }));
+    }
+    MHRegisterS6ToolMenus();
 }
 
 IMPLEMENT_MODULE(FMimirCompositeEditorModule, MimirCompositeEditor)

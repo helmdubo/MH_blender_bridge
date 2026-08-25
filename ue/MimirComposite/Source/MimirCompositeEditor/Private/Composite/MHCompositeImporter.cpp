@@ -1,7 +1,7 @@
 #include "Composite/MHCompositeImporter.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
@@ -309,7 +309,7 @@ FMHCompositeOperationResult MHImportCompositeV4(
         return Result;
     }
     Result.Asset = Asset;
-    MHNotifyCompositeAssetChanged(*Asset);
+    MHNotifyGeneratedResourceChanged(Entry.Key);
     return Result;
 }
 
@@ -401,7 +401,10 @@ FMHCompositeOperationResult MHPublishCompositeV4(
         return Result;
     }
     Result.Asset = &Asset;
-    MHNotifyCompositeAssetChanged(Asset);
+    FMHResourceKey ChangedKey;
+    ChangedKey.Kind = EMHResourceKind::Composite;
+    ChangedKey.LogicalName = Asset.LogicalName;
+    MHNotifyGeneratedResourceChanged(ChangedKey);
     return Result;
 }
 

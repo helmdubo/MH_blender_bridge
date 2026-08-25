@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/Ticker.h"
 #include "CoreMinimal.h"
 #include "EditorSubsystem.h"
 #include "Source/MHSourceAnalyzer.h"
@@ -7,7 +8,9 @@
 
 class UMaterialInstanceConstant;
 class UMHCompositeAsset;
+class UMHCompositeSettings;
 class UStaticMesh;
+struct FFileChangeData;
 
 namespace UE::MimirComposite
 {
@@ -21,9 +24,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHImportSourcesScope
 };
 
 /**
- * Filters an already-built plan without re-reading source files. C1 uses this
- * after the one full resolver/detector pass; dependency closure lands with the
- * executable Plan in C2.
+ * Filters an already-built plan without re-reading source files.
  */
 MIMIRCOMPOSITEEDITOR_API void MHFilterAnalysisToScope(
     const FMHImportSourcesScope& Scope,
@@ -38,13 +39,24 @@ MIMIRCOMPOSITEEDITOR_API bool MHBuildSourceImportPlan(
     FMHSourceAnalysis& OutAnalysis,
     bool& bOutExecuted);
 
+/** Full-scan coordinator with no Message Log, modal, subsystem or Slate use. */
+MIMIRCOMPOSITEEDITOR_API bool MHImportSourcesHeadless(
+    const FString& SourceRoot,
+    const FMHImportSourcesScope& Scope,
+    const UMHCompositeSettings& Settings,
+    FMHSourceAnalysis& OutAnalysis,
+    bool& bOutExecuted);
+
+#if WITH_DEV_AUTOMATION_TESTS
+/** Observes the coordinator's fixed texture -> material -> mesh -> composite stages. */
+MIMIRCOMPOSITEEDITOR_API void MHSetImportStageObserverForTests(
+    TFunction<void(EMHResourceKind)> Observer);
+#endif
+
 } // namespace UE::MimirComposite
 
 /**
- * Public import coordinator seam from docs/07 section 2.
- *
- * ImportSources executes the available v4 builders and leaves unsupported
- * resource kinds in the plan; bOutExecuted makes execution explicit to callers.
+ * Source Protocol v4 editor import coordinator.
  */
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHSourceImporter final : public UEditorSubsystem
@@ -55,7 +67,7 @@ public:
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
 
-    /** Game-thread only. Executes material -> static mesh -> Composite in dependency order. */
+    /** Game-thread only. Executes texture -> material -> static mesh -> Composite. */
     bool ImportSources(
         const UE::MimirComposite::FMHImportSourcesScope& Scope,
         UE::MimirComposite::FMHSourceAnalysis& OutAnalysis,
@@ -103,11 +115,53 @@ public:
         TArray<FString>& OutWarnings,
         FString& OutError);
 
+#if WITH_DEV_AUTOMATION_TESTS
+    void SetLifecycleTimeForTests(double TimeSeconds);
+    void SetAssetRegistryReadyForTests(bool bReady);
+    void SetPIEActiveForTests(bool bActive);
+    void QueueSourcePathsForTests(const TArray<FString>& Paths, bool bRequestFullScan = false);
+    void TickSourceLifecycleForTests();
+    void SetBatchExecutorForTests(
+        TFunction<bool(const TArray<FString>&, bool)> Executor);
+    void SetStartupExecutorForTests(TFunction<bool()> Executor);
+    int32 GetExecutedBatchCountForTests() const { return ExecutedBatchCountForTests; }
+    int32 GetPendingPathCountForTests() const { return PendingSourcePaths.Num(); }
+    bool HasStartupPlanRunForTests() const { return bStartupPlanRan; }
+#endif
+
 private:
     void OnAssetRegistryFilesLoaded();
-    void RunStartupPlan();
+    bool RunStartupPlan();
     void PresentPlan(const UE::MimirComposite::FMHSourceAnalysis& Analysis) const;
+    bool TickSourceLifecycle(float DeltaSeconds);
+    void OnBeginPIE(bool bIsSimulating);
+    void OnEndPIE(bool bIsSimulating);
+    void OnDirectoryChanged(const TArray<FFileChangeData>& FileChanges);
+    void QueueSourcePaths(const TArray<FString>& Paths, bool bRequestFullScan);
+    bool EnsureDirectoryWatcher(const FString& SourceRoot, FString& OutError);
+    void StopDirectoryWatcher();
+    void FlushPendingSourcePaths();
+    bool ImportChangedSourcePaths(const TArray<FString>& Paths);
+    double LifecycleNowSeconds() const;
 
     FDelegateHandle FilesLoadedHandle;
+    FTSTicker::FDelegateHandle LifecycleTickerHandle;
+    FDelegateHandle BeginPIEHandle;
+    FDelegateHandle EndPIEHandle;
+    FDelegateHandle DirectoryWatcherHandle;
+    FString WatchedSourceRoot;
+    TSet<FString> PendingSourcePaths;
+    double LastSourceChangeSeconds = 0.0;
+    bool bAssetRegistryReady = false;
     bool bStartupPlanRan = false;
+    bool bPIEActive = false;
+    bool bImportInProgress = false;
+    bool bPendingFullScan = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+    TOptional<double> LifecycleTimeForTests;
+    TFunction<bool(const TArray<FString>&, bool)> BatchExecutorForTests;
+    TFunction<bool()> StartupExecutorForTests;
+    int32 ExecutedBatchCountForTests = 0;
+#endif
 };

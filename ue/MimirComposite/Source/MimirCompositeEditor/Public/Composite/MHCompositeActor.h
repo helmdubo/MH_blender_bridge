@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Composite/MHCompositePlacementEvents.h"
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "MHCompositeActor.generated.h"
@@ -20,6 +21,10 @@ public:
     void SetCompositeAsset(UMHCompositeAsset* Asset);
     UMHCompositeAsset* GetCompositeAsset() const;
 
+    /** Transient seam used by the S6 Edit operation; no edit state is persisted. */
+    void SetPlacementEditMode(bool bEnabled);
+    bool IsPlacementEditMode() const { return bPlacementEditMode; }
+
     /** Force a source-keyed rebuild of the transient component view. */
     UFUNCTION(CallInEditor, Category = "Mimir")
     void RebuildComposite();
@@ -28,6 +33,29 @@ public:
     {
         return DerivedComponents;
     }
+
+    /** Root-document node components in authored order, for the future Edit session. */
+    const TArray<TObjectPtr<USceneComponent>>& GetTopLevelPlacementComponents() const
+    {
+        return TopLevelPlacementComponents;
+    }
+
+    const TArray<TObjectPtr<USceneComponent>>& GetTopLevelComponents() const
+    {
+        return TopLevelPlacementComponents;
+    }
+
+    const TArray<FString>& GetLastPlacementWarnings() const
+    {
+        return LastPlacementWarnings;
+    }
+
+    const TArray<FString>& GetPlacementWarnings() const
+    {
+        return LastPlacementWarnings;
+    }
+
+    bool DependsOnResource(const UE::MimirComposite::FMHResourceKey& Key) const;
 
     virtual void OnConstruction(const FTransform& Transform) override;
     virtual void PostLoad() override;
@@ -44,19 +72,18 @@ private:
     TObjectPtr<USceneComponent> CompositeRoot;
 
     /** Soft path is the single persisted identity row for this level instance. */
-    UPROPERTY(EditAnywhere, Category = "Mimir")
+    UPROPERTY(VisibleInstanceOnly, Category = "Mimir")
     TSoftObjectPtr<UMHCompositeAsset> CompositeAsset;
 
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<UActorComponent>> DerivedComponents;
 
+    UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
+    TArray<TObjectPtr<USceneComponent>> TopLevelPlacementComponents;
+
+    TSet<UE::MimirComposite::FMHResourceKey> PlacementDependencies;
+    TArray<FString> LastPlacementWarnings;
+
     bool bRebuildInProgress = false;
+    bool bPlacementEditMode = false;
 };
-
-namespace UE::MimirComposite
-{
-
-/** Notify loaded level instances only after a managed composite commit succeeds. */
-MIMIRCOMPOSITEEDITOR_API void MHNotifyCompositeAssetChanged(UMHCompositeAsset& Asset);
-
-} // namespace UE::MimirComposite

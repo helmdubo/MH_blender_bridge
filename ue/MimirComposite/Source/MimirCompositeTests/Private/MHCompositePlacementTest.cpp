@@ -2,11 +2,14 @@
 #include "Composite/MHCompositeActorFactory.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeFactory.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 
 #include "AssetRegistry/AssetData.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editor.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
@@ -19,6 +22,7 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
+#include "UObject/UnrealType.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -84,12 +88,26 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
     if (Actor != nullptr)
     {
         Factory->PostSpawnActor(Asset, Actor);
+        const FProperty* CompositeAssetProperty = FindFProperty<FProperty>(
+            AMHCompositeActor::StaticClass(),
+            TEXT("CompositeAsset"));
+        bPassed &= TestNotNull(TEXT("composite asset property exists"), CompositeAssetProperty);
+        if (CompositeAssetProperty != nullptr)
+        {
+            bPassed &= TestTrue(
+                TEXT("composite identity is sealed in Details"),
+                CompositeAssetProperty->HasAnyPropertyFlags(CPF_EditConst));
+        }
         bPassed &= TestEqual(TEXT("factory stores source asset"), Actor->GetCompositeAsset(), Asset);
         bPassed &= TestEqual(
             TEXT("factory reverse lookup"),
             Factory->GetAssetFromActorInstance(Actor),
             static_cast<UObject*>(Asset));
         bPassed &= TestEqual(TEXT("one authored group compiles"), Actor->GetDerivedComponents().Num(), 1);
+        bPassed &= TestEqual(
+            TEXT("one ordered top-level edit seam"),
+            Actor->GetTopLevelPlacementComponents().Num(),
+            1);
         if (Actor->GetDerivedComponents().Num() == 1)
         {
             UActorComponent* Component = Actor->GetDerivedComponents()[0];
@@ -110,21 +128,69 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
             }
         }
 
+        USceneComponent* EditedComponent = Actor->GetTopLevelPlacementComponents().IsEmpty()
+            ? nullptr
+            : Actor->GetTopLevelPlacementComponents()[0];
+        if (EditedComponent != nullptr)
+        {
+            EditedComponent->SetWorldLocation(FVector(1175.0, 0.0, 0.0));
+            Actor->SetPlacementEditMode(true);
+        }
         Document.Nodes[0].Transform.TranslationCm = FVector(250.0, 0.0, 0.0);
         bPassed &= TestTrue(TEXT("updated asset applies in place"), MHApplyCompositeV4(*Asset, Document, Error));
-        MHNotifyCompositeAssetChanged(*Asset);
+        FMHResourceKey RootKey;
+        RootKey.Kind = EMHResourceKind::Composite;
+        RootKey.LogicalName = LogicalName;
+        MHNotifyGeneratedResourceChanged(RootKey);
+        bPassed &= TestTrue(TEXT("actor observes its root ResourceKey"), Actor->DependsOnResource(RootKey));
+        bPassed &= TestEqual(
+            TEXT("notify is deferred while placement edit mode is active"),
+            Actor->GetTopLevelPlacementComponents().IsEmpty()
+                ? nullptr
+                : Actor->GetTopLevelPlacementComponents()[0].Get(),
+            EditedComponent);
+        if (EditedComponent != nullptr)
+        {
+            bPassed &= TestTrue(
+                TEXT("edit-mode notify preserves local top-level transform"),
+                EditedComponent->GetComponentLocation().Equals(FVector(1175.0, 0.0, 0.0), 0.01));
+        }
+        Actor->SetPlacementEditMode(false);
+        Actor->RebuildComposite();
         bPassed &= TestEqual(TEXT("notify keeps one derived group"), Actor->GetDerivedComponents().Num(), 1);
         if (Actor->GetDerivedComponents().Num() == 1)
         {
-            const USceneComponent* SceneComponent = Cast<USceneComponent>(Actor->GetDerivedComponents()[0]);
+            USceneComponent* SceneComponent = Cast<USceneComponent>(Actor->GetDerivedComponents()[0]);
             bPassed &= TestNotNull(TEXT("notify rebuild component exists"), SceneComponent);
             if (SceneComponent != nullptr)
             {
                 bPassed &= TestTrue(
                     TEXT("in-place notify rebuilds loaded placement"),
                     SceneComponent->GetComponentLocation().Equals(FVector(1250.0, 0.0, 0.0), 0.01));
+
+                SceneComponent->SetWorldLocation(FVector(1600.0, 0.0, 0.0));
+                Actor->RebuildComposite();
+                const USceneComponent* Rebuilt = Actor->GetTopLevelPlacementComponents().IsEmpty()
+                    ? nullptr
+                    : Actor->GetTopLevelPlacementComponents()[0];
+                bPassed &= TestNotNull(TEXT("sealed rebuild creates replacement component"), Rebuilt);
+                if (Rebuilt != nullptr)
+                {
+                    bPassed &= TestTrue(
+                        TEXT("derived transform edit does not survive rebuild"),
+                        Rebuilt->GetComponentLocation().Equals(FVector(1250.0, 0.0, 0.0), 0.01));
+                }
             }
         }
+
+        Document.Nodes[0].Transform.TranslationCm = FVector(300.0, 0.0, 0.0);
+        bPassed &= TestTrue(TEXT("second in-place update applies"), MHApplyCompositeV4(*Asset, Document, Error));
+        UPackage* LevelPackage = Actor->GetOutermost();
+        LevelPackage->SetDirtyFlag(false);
+        MHNotifyGeneratedResourceChanged(RootKey);
+        bPassed &= TestFalse(
+            TEXT("notify rebuild does not dirty the level package"),
+            LevelPackage->IsDirty());
     }
 
     if (World != nullptr)
@@ -133,6 +199,240 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
     }
     Settings->SourceRoot = PreviousSourceRoot;
     IFileManager::Get().DeleteDirectory(*SourceRoot, false, true);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHCompositePlacementDependencyViewTest,
+    "Mimir.V4.Composite.PlacementDependencyView",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
+{
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    const FString RootName = TEXT("s6_view_root_") + Suffix;
+    const FString NestedName = TEXT("s6_view_nested_") + Suffix;
+    const FString MeshName = TEXT("s6_view_mesh_") + Suffix;
+    FString Error;
+    bool bPassed = true;
+    UMHCompositeAsset* RestoredDeadAsset = nullptr;
+
+    const FString NestedPackageName = TEXT("/Game/MH/Generated/Composites/") + NestedName;
+    UPackage* NestedPackage = CreatePackage(*NestedPackageName);
+    UMHCompositeAsset* NestedAsset = NewObject<UMHCompositeAsset>(
+        NestedPackage,
+        FName(*NestedName),
+        RF_Public | RF_Standalone | RF_Transactional);
+    NestedAsset->LogicalName = NestedName;
+    FMHCompositeDocument NestedDocument;
+    FMHCompositeNode NestedGroup;
+    NestedGroup.Kind = EMHCompositeNodeKind::Group;
+    NestedGroup.Name = TEXT("nested_group");
+    NestedGroup.Transform.TranslationCm = FVector(10.0, 0.0, 0.0);
+    NestedDocument.Nodes.Add(NestedGroup);
+    bPassed &= TestTrue(
+        TEXT("nested generated asset applies"),
+        MHApplyCompositeV4(*NestedAsset, NestedDocument, Error));
+
+    UMHCompositeAsset* RootAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
+    RootAsset->LogicalName = RootName;
+    FMHCompositeDocument RootDocument;
+    FMHCompositeNode NestedPlacement;
+    NestedPlacement.Kind = EMHCompositeNodeKind::Composite;
+    NestedPlacement.Resource = NestedName;
+    NestedPlacement.Transform.TranslationCm = FVector(100.0, 0.0, 0.0);
+    RootDocument.Nodes.Add(NestedPlacement);
+    bPassed &= TestTrue(
+        TEXT("root nested document applies"),
+        MHApplyCompositeV4(*RootAsset, RootDocument, Error));
+
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    bPassed &= TestNotNull(TEXT("dependency-view world exists"), World);
+    AMHCompositeActor* Actor = nullptr;
+    if (World != nullptr)
+    {
+        FActorSpawnParameters SpawnParameters;
+        SpawnParameters.ObjectFlags = RF_Transient;
+        Actor = World->SpawnActor<AMHCompositeActor>(
+            AMHCompositeActor::StaticClass(),
+            FTransform(FRotator::ZeroRotator, FVector(1000.0, 0.0, 0.0)),
+            SpawnParameters);
+    }
+    bPassed &= TestNotNull(TEXT("dependency-view actor exists"), Actor);
+    if (Actor != nullptr)
+    {
+        Actor->SetCompositeAsset(RootAsset);
+        FMHResourceKey NestedKey;
+        NestedKey.Kind = EMHResourceKind::Composite;
+        NestedKey.LogicalName = NestedName;
+        bPassed &= TestTrue(
+            TEXT("nested generated key is observed"),
+            Actor->DependsOnResource(NestedKey));
+        bPassed &= TestEqual(
+            TEXT("nested placement retains one root-document edit handle"),
+            Actor->GetTopLevelPlacementComponents().Num(),
+            1);
+        bPassed &= TestEqual(TEXT("nested resource flattens into two components"), Actor->GetDerivedComponents().Num(), 2);
+        if (Actor->GetDerivedComponents().Num() == 2)
+        {
+            const USceneComponent* NestedComponent = Cast<USceneComponent>(Actor->GetDerivedComponents()[1]);
+            bPassed &= TestNotNull(TEXT("nested authored component exists"), NestedComponent);
+            if (NestedComponent != nullptr)
+            {
+                bPassed &= TestTrue(
+                    TEXT("nested placement composes document bases"),
+                    NestedComponent->GetComponentLocation().Equals(FVector(1110.0, 0.0, 0.0), 0.01));
+            }
+        }
+
+        NestedDocument.Nodes[0].Transform.TranslationCm = FVector(20.0, 0.0, 0.0);
+        bPassed &= TestTrue(
+            TEXT("nested asset updates in place"),
+            MHApplyCompositeV4(*NestedAsset, NestedDocument, Error));
+        MHNotifyGeneratedResourceChanged(NestedKey);
+        if (Actor->GetDerivedComponents().Num() == 2)
+        {
+            const USceneComponent* NestedComponent = Cast<USceneComponent>(Actor->GetDerivedComponents()[1]);
+            bPassed &= TestTrue(
+                TEXT("nested ResourceKey notify rebuilds parent placement"),
+                NestedComponent != nullptr &&
+                    NestedComponent->GetComponentLocation().Equals(FVector(1120.0, 0.0, 0.0), 0.01));
+        }
+
+        FMHCompositeDocument MissingMeshDocument;
+        FMHCompositeNode MissingMesh;
+        MissingMesh.Kind = EMHCompositeNodeKind::Mesh;
+        MissingMesh.Resource = MeshName;
+        MissingMeshDocument.Nodes.Add(MissingMesh);
+        bPassed &= TestTrue(
+            TEXT("missing-mesh document applies"),
+            MHApplyCompositeV4(*RootAsset, MissingMeshDocument, Error));
+        FMHResourceKey RootKey;
+        RootKey.Kind = EMHResourceKind::Composite;
+        RootKey.LogicalName = RootName;
+        MHNotifyGeneratedResourceChanged(RootKey);
+
+        FMHResourceKey MeshKey;
+        MeshKey.Kind = EMHResourceKind::StaticMesh;
+        MeshKey.LogicalName = MeshName;
+        bPassed &= TestTrue(TEXT("unresolved mesh key is observed"), Actor->DependsOnResource(MeshKey));
+        bPassed &= TestEqual(
+            TEXT("unresolved node still has one top-level edit handle"),
+            Actor->GetTopLevelPlacementComponents().Num(),
+            1);
+        bPassed &= TestTrue(
+            TEXT("unresolved node produces bbox and label view"),
+            Actor->GetDerivedComponents().Num() >= 3);
+        bPassed &= TestTrue(
+            TEXT("unresolved node reports registered placement warning"),
+            Actor->GetLastPlacementWarnings().ContainsByPredicate(
+                [&MeshName](const FString& Warning)
+                {
+                    return Warning.Contains(TEXT("MH_W_UNRESOLVED_PLACEMENT")) &&
+                        Warning.Contains(MeshName);
+                }));
+
+        const FString MeshPackageName = TEXT("/Game/MH/Generated/Meshes/") + MeshName;
+        UPackage* MeshPackage = CreatePackage(*MeshPackageName);
+        UStaticMesh* RestoredMesh = NewObject<UStaticMesh>(
+            MeshPackage,
+            FName(*MeshName),
+            RF_Public | RF_Standalone | RF_Transactional);
+        MHNotifyGeneratedResourceChanged(MeshKey);
+        bPassed &= TestEqual(
+            TEXT("same-name mesh notify replaces placeholder with endpoint"),
+            Actor->GetDerivedComponents().Num(),
+            1);
+        bPassed &= TestTrue(
+            TEXT("restored endpoint compiles as static mesh component"),
+            Actor->GetDerivedComponents().Num() == 1 &&
+                Cast<UStaticMeshComponent>(Actor->GetDerivedComponents()[0]) != nullptr);
+        bPassed &= TestTrue(
+            TEXT("healed placement has no unresolved warning"),
+            Actor->GetLastPlacementWarnings().IsEmpty());
+
+        RestoredMesh->ClearFlags(RF_Public | RF_Standalone);
+        RestoredMesh->MarkAsGarbage();
+    }
+
+    // Exercise the dead-root view directly: it must be visible and retain the
+    // key so a later generated-asset notification can heal an actor instance.
+    if (World != nullptr)
+    {
+        FActorSpawnParameters SpawnParameters;
+        SpawnParameters.ObjectFlags = RF_Transient;
+        AMHCompositeActor* DeadRootActor = World->SpawnActor<AMHCompositeActor>(SpawnParameters);
+        FSoftObjectProperty* AssetProperty = FindFProperty<FSoftObjectProperty>(
+            AMHCompositeActor::StaticClass(),
+            TEXT("CompositeAsset"));
+        bPassed &= TestNotNull(TEXT("soft composite identity property exists"), AssetProperty);
+        if (DeadRootActor != nullptr && AssetProperty != nullptr)
+        {
+            TSoftObjectPtr<UMHCompositeAsset>* StoredPath =
+                AssetProperty->ContainerPtrToValuePtr<TSoftObjectPtr<UMHCompositeAsset>>(DeadRootActor);
+            const FString DeadName = TEXT("s6_dead_root_") + Suffix;
+            *StoredPath = TSoftObjectPtr<UMHCompositeAsset>(FSoftObjectPath(FString::Printf(
+                TEXT("/Game/MH/Generated/Composites/%s.%s"),
+                *DeadName,
+                *DeadName)));
+            DeadRootActor->RebuildComposite();
+            FMHResourceKey DeadKey;
+            DeadKey.Kind = EMHResourceKind::Composite;
+            DeadKey.LogicalName = DeadName;
+            bPassed &= TestTrue(TEXT("dead-root key remains observable"), DeadRootActor->DependsOnResource(DeadKey));
+            bPassed &= TestTrue(
+                TEXT("dead root renders bbox and label"),
+                DeadRootActor->GetDerivedComponents().Num() >= 3);
+            bPassed &= TestTrue(
+                TEXT("dead root reports unresolved placement warning"),
+                DeadRootActor->GetLastPlacementWarnings().ContainsByPredicate(
+                    [&DeadName](const FString& Warning)
+                    {
+                        return Warning.Contains(TEXT("MH_W_UNRESOLVED_PLACEMENT")) &&
+                            Warning.Contains(DeadName);
+                    }));
+
+            const FString DeadPackageName = TEXT("/Game/MH/Generated/Composites/") + DeadName;
+            UPackage* DeadPackage = CreatePackage(*DeadPackageName);
+            RestoredDeadAsset = NewObject<UMHCompositeAsset>(
+                DeadPackage,
+                FName(*DeadName),
+                RF_Public | RF_Standalone | RF_Transactional);
+            RestoredDeadAsset->LogicalName = DeadName;
+            FMHCompositeDocument HealedDocument;
+            FMHCompositeNode HealedGroup;
+            HealedGroup.Kind = EMHCompositeNodeKind::Group;
+            HealedGroup.Name = TEXT("healed_root");
+            HealedDocument.Nodes.Add(HealedGroup);
+            bPassed &= TestTrue(
+                TEXT("same-name dead-root replacement applies"),
+                MHApplyCompositeV4(*RestoredDeadAsset, HealedDocument, Error));
+            MHNotifyGeneratedResourceChanged(DeadKey);
+            bPassed &= TestEqual(
+                TEXT("same-name root notification heals dead placeholder"),
+                DeadRootActor->GetCompositeAsset(),
+                RestoredDeadAsset);
+            bPassed &= TestEqual(
+                TEXT("healed dead root compiles authored view"),
+                DeadRootActor->GetDerivedComponents().Num(),
+                1);
+            bPassed &= TestTrue(
+                TEXT("healed dead root clears warning"),
+                DeadRootActor->GetLastPlacementWarnings().IsEmpty());
+        }
+    }
+
+    if (World != nullptr)
+    {
+        World->DestroyWorld(false);
+    }
+    NestedAsset->ClearFlags(RF_Public | RF_Standalone);
+    NestedAsset->MarkAsGarbage();
+    if (RestoredDeadAsset != nullptr)
+    {
+        RestoredDeadAsset->ClearFlags(RF_Public | RF_Standalone);
+        RestoredDeadAsset->MarkAsGarbage();
+    }
     return bPassed;
 }
 

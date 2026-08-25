@@ -1,6 +1,7 @@
 #include "StaticMesh/MHStaticMeshImporter.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Geometry/MHFbxSceneTranslator.h"
 #include "Geometry/MHSceneIR.h"
 #include "HAL/FileManager.h"
@@ -685,6 +686,7 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
     }
     Result.StaticMesh = StaticMesh;
     Result.bRebuilt = true;
+    MHNotifyGeneratedResourceChanged(Entry.Key);
     return Result;
 }
 

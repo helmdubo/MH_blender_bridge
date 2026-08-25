@@ -26,6 +26,7 @@ public class MimirCompositeEditor : ModuleRules
                 "AssetTools",
                 "AssetRegistry",
                 "ContentBrowser",
+                "DirectoryWatcher",
                 "Json",
                 "MessageLog",
                 "Projects",

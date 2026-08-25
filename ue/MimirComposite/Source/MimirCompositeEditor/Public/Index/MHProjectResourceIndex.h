@@ -45,6 +45,9 @@ struct MIMIRCOMPOSITEEDITOR_API FMHGeneratedAssetTagClaim
 struct MIMIRCOMPOSITEEDITOR_API FMHProjectIndexGeneratedAssetState
 {
     FMHResourceKey Key;
+    /** Raw persisted fields remain available even when bKeyValid is false. */
+    FString KindLabel;
+    FString LogicalName;
     FString UEObjectPath;
     FString SourcePath;
     FString SourceHash;
@@ -52,6 +55,25 @@ struct MIMIRCOMPOSITEEDITOR_API FMHProjectIndexGeneratedAssetState
     EMHGeneratedAssetStatus Status = EMHGeneratedAssetStatus::InvalidReceipt;
     bool bKeyValid = false;
     bool bReceiptValid = false;
+};
+
+enum class EMHProjectDiagnosticSeverity : uint8
+{
+    Warning,
+    Error
+};
+
+/** Typed reader view of one derived Diagnostics row. */
+struct MIMIRCOMPOSITEEDITOR_API FMHProjectIndexDiagnostic
+{
+    EMHProjectDiagnosticSeverity Severity = EMHProjectDiagnosticSeverity::Error;
+    FString Code;
+    FString OwnerKind;
+    FString OwnerName;
+    FString Path;
+    FString TargetKind;
+    FString TargetName;
+    FString Message;
 };
 
 /** Session-only events are deliberately excluded from the normalized dump. */
@@ -119,6 +141,16 @@ public:
     bool GetGeneratedAssets(
         const FMHResourceKey& Key,
         TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,
+        FString& OutError) const;
+
+    /** Enumerates every generated claim, including malformed key rows. */
+    bool GetAllGeneratedAssets(
+        TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,
+        FString& OutError) const;
+
+    /** Enumerates the stable derived diagnostics projection without string parsing. */
+    bool GetDiagnostics(
+        TArray<FMHProjectIndexDiagnostic>& OutDiagnostics,
         FString& OutError) const;
 
     /** Stable logical dump of the five projection tables; volatile fields omitted. */
