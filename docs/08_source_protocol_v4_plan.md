@@ -388,7 +388,16 @@ keys, node trees материалов (восстанавливается тол
   резолвит его по общему texture ResourceKey. Синтетический
   `tex16support`, dag4blend `is_proxy`/`proxy_path`, legacy-поля и UI-state
   не являются содержимым v4 и не сериализуются; proxymat-концепция
-  superseded library-формой.
+  superseded library-формой. Blender UI предоставляет внутри общей панели
+  `MH Source Tools` блок `Misc` с двумя раздельными операциями: Copy All
+  Textures копирует все непустые Dagor slots текущего blend по правилу
+  `<external>/assets/<tail> -> <source_root>/assets/<tail>` (ровно один
+  сегмент `assets`, полный preflight, sibling staging/read-back, locks,
+  rollback набора при обычной ошибке); Remap All Texture Paths ничего не
+  копирует, требует существования всех project-targets и затем меняет пути
+  с read-back/rollback. Copy не меняет Blender paths, Remap не читает внешний
+  файл; обе операции идемпотентны. FBX/Material Export не запускает их
+  неявно.
 - **Publish Material = полная перезапись source-файла без сравнения** (№11):
   extract MI → canonical JSON → sibling tmp → read-back → atomic replace →
   index upsert. Материал без source: диалог «папка + имя» (Adopt). Blender

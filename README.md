@@ -205,12 +205,11 @@ same `mh.*` operators.
 
 Target UX is one N-panel tab **MH** with sections:
 
-- **FBX Export** — Collection, Directory, `Export Materials` default ON,
-  Export FBX;
-- **Composites / Import** — `.composite` path, recursive import always ON;
-- **Composites / Export** — Collection, Directory, Export;
-- **Materials** — Material, first-export Directory, Export;
-- **Source Tools** — Actualize Texture Paths and migration.
+- **Mesh FBX** — Import File либо Collection/Folder/Export Materials/Export;
+- **Composites** — Import или Export source-composite;
+- **Materials** — Material, first-export Folder и точечные v4 overrides;
+- **Misc** — двухфазные Copy All Textures to Project и Remap All Texture
+  Paths внутри той же панели MH.
 
 There is no Bundle Export.
 
@@ -241,18 +240,22 @@ FBX and produces one resource `UPDATE_GEOMETRY`.
 ## Materials and textures
 
 With dag4blend enabled, exporter reads `Material.dagormat` shader, params and
-`tex0…tex15`. A normal Blender material remains valid and exports as
-`rendinst_simple` with empty params/textures.
+`tex0…tex15`; содержимое, представимое closed-грамматикой v4, не нужно
+дублировать в MH-полях. Непредставимый тип блокирует material fail-closed.
 
-Texture resolution uses:
+Misc workflow переносит внешние текстуры в source-проект без изменения
+идентичности:
 
 ```text
-exact path -> unique basename under texture_root -> unresolved
+<external>/assets/<tail> -> <Project Source Root>/assets/<tail>
 ```
 
-Unique basename can actualize the path in `.material`; ambiguous basename is
-reported for user choice. Textures are never copied by FBX/Material export.
-`Export Materials=OFF` writes no material payload.
+Сначала **Copy All Textures to Project** атомарно копирует все непустые Dagor
+slots всех материалов текущего `.blend`, сохраняя дерево ниже единственного
+сегмента `assets`. Затем **Remap All Texture Paths** после полного preflight
+переназначает slots на project-файлы; при ошибке изменения откатываются. Сам
+FBX/Material Export текстуры не копирует. В `.material` по-прежнему попадает
+только extensionless logical name, который индекс резолвит внутри Source Root.
 
 ## Composite import
 
