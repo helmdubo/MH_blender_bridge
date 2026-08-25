@@ -1058,6 +1058,21 @@ alias ниже границы настроенного `source_root`; сам roo
 
 ### OPEN-V4-24 — group transform: document-world или parent-local
 
+**Статус. РЕШЕНО OWNER — вариант (а), нормативно в 08 §§6, 6.1 (этот
+docs-коммит).** Document-world побеждает: это контракт, ратифицированный
+V4-10, реализованный S3 и закреплённый golden-гейтом
+`CompilerPreservesSourceWorldTransforms` (child 125 под group 100 остаётся
+world 125). Ошибочная посылка о parent-local композиции в поправке §6.1
+(«представимость композиции» на Break) ОТОЗВАНА: дети при Break сохраняют
+world-значения дословно, собственный трансформ группы — организационный
+pivot и отбрасывается, shear на Break невозможен (значения в файле — T/R/S
+по грамматике). Временный блок Break для transform-bearing групп снимается.
+Настоящий shear-рубеж перенесён на экспорт из Blender: matrix_world, не
+восстанавливающаяся из T/R/S-декомпозиции в допуске float32, — fail-closed
+`MH_E_INVALID_RESOURCE_SOURCE`. «Drag группы двигает потомков» — поведение
+редакторов (parenting в Blender, явная дельта в UE Edit), не семантика
+файла.
+
 **Контекст.** Новая поправка `08` §6.1 требует для Break композицию
 `group scale × child rotation`, проверку shear и утверждает, что компилятор
 сохраняет иерархию и перемножает её без потерь. Но действующий `08` §6
@@ -1079,7 +1094,8 @@ fail-closed отклоняет растворение transform-bearing group с
 потомками через `MH_E_UNREPRESENTABLE_SCENE_OBJECT` и перечисляет такие группы;
 тихая document-world интерпретация либо переход на parent-local запрещены.
 
-**Статус.** ОТКРЫТ; блокирует только group-transform часть Break follow-up.
+**Прежний статус.** ОТКРЫТ; блокировал только group-transform часть Break
+follow-up.
 
 ### UE-QUESTION-19 — организационные/групповые Empty в mesh-ресурсе
 
