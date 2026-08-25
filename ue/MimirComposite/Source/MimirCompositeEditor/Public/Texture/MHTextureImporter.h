@@ -9,6 +9,10 @@ namespace UE::MimirComposite
 
 struct FMHSourceAnalysisEntry;
 
+/** Exact logical-name policy for managed normal maps. */
+MIMIRCOMPOSITEEDITOR_API bool MHTextureIsManagedNormalMapLogicalName(
+    const FString& LogicalName);
+
 struct MIMIRCOMPOSITEEDITOR_API FMHTextureOperationResult
 {
     UTexture* Texture = nullptr;

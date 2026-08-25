@@ -27,6 +27,7 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
 #include "StaticParameterSet.h"
+#include "Texture/MHTextureImporter.h"
 #include "Texture/MHTextureSourceData.h"
 #include "UObject/Package.h"
 #include "UObject/PackageReload.h"
@@ -548,6 +549,31 @@ bool FMHMaterialTextureResolutionGatesTest::RunTest(const FString& Parameters)
     bPassed &= TestNull(
         TEXT("texture race creates no package ghost"),
         FindPackage(nullptr, *SnapshotPackageName));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHMaterialTextureNormalLogicalNamePolicyTest,
+    "Mimir.V4.Material.TextureNormalLogicalNamePolicy",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHMaterialTextureNormalLogicalNamePolicyTest::RunTest(const FString& Parameters)
+{
+    bool bPassed = TestTrue(
+        TEXT("degenerate tex_n logical name is a managed normal map"),
+        MHTextureIsManagedNormalMapLogicalName(TEXT("tex_n")));
+    bPassed &= TestTrue(
+        TEXT("delimited _tex_n suffix is a managed normal map"),
+        MHTextureIsManagedNormalMapLogicalName(TEXT("wall_tex_n")));
+    bPassed &= TestFalse(
+        TEXT("latex_n does not accidentally match tex_n"),
+        MHTextureIsManagedNormalMapLogicalName(TEXT("latex_n")));
+    bPassed &= TestFalse(
+        TEXT("vertex_n does not accidentally match tex_n"),
+        MHTextureIsManagedNormalMapLogicalName(TEXT("vertex_n")));
+    bPassed &= TestFalse(
+        TEXT("normal-map suffix remains case-sensitive"),
+        MHTextureIsManagedNormalMapLogicalName(TEXT("wall_tex_N")));
     return bPassed;
 }
 

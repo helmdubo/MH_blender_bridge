@@ -21,25 +21,27 @@ DEFINE_LOG_CATEGORY_STATIC(LogMHTextureImport, Display, All);
 
 namespace UE::MimirComposite
 {
+
+bool MHTextureIsManagedNormalMapLogicalName(const FString& LogicalName)
+{
+    return LogicalName == TEXT("tex_n") ||
+        LogicalName.EndsWith(TEXT("_tex_n"), ESearchCase::CaseSensitive);
+}
+
 namespace
 {
 
 constexpr const TCHAR* GeneratedTextureRoot = TEXT("/Game/MH/Generated/Textures");
 
-bool MHTextureIsManagedNormalMap(const FString& LogicalName)
-{
-    return LogicalName.EndsWith(TEXT("tex_n"), ESearchCase::CaseSensitive);
-}
-
 bool MHTextureHasManagedSettings(const UTexture& Texture, const FString& LogicalName)
 {
-    return !MHTextureIsManagedNormalMap(LogicalName) ||
+    return !MHTextureIsManagedNormalMapLogicalName(LogicalName) ||
         (!Texture.SRGB && Texture.CompressionSettings == TC_BC7);
 }
 
 void MHTextureApplyManagedSettings(UTexture& Texture, const FString& LogicalName)
 {
-    if (!MHTextureIsManagedNormalMap(LogicalName))
+    if (!MHTextureIsManagedNormalMapLogicalName(LogicalName))
     {
         return;
     }

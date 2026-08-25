@@ -336,7 +336,8 @@ keys, node trees материалов (восстанавливается тол
   export, UE Publish) выводят token из stem имени файла/ассета сами и
   fail-closed падают на неканоничном stem; reader ничего не нормализует —
   legacy-нормализация абсолютных путей удалена из scope (миграции нет, §11).
-- Managed-текстура, чей canonical logical name оканчивается на `tex_n`,
+- Managed-текстура, чей canonical logical name равен `tex_n` либо оканчивается
+  на `_tex_n`,
   импортируется как normal map с `sRGB = OFF` и UE compression setting
   `BC7` (`TC_BC7`). Эти параметры являются частью применённой import-policy:
   равный raw hash с другими значениями не считается `NO_CHANGE` и
