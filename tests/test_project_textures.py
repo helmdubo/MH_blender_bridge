@@ -51,6 +51,22 @@ def test_plan_accepts_mixed_windows_path_separators(tmp_path):
     assert plan.destination.name == "car_glass_c_tex_d.tif"
 
 
+def test_plan_accepts_windows_separators_for_source_and_project_root(tmp_path):
+    source = _external_texture(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+
+    plan = plan_project_texture(
+        str(source).replace("/", "\\"),
+        str(project).replace("/", "\\"),
+    )
+
+    assert plan.source == source
+    assert plan.destination == (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "car_glass_c_tex_d.tif")
+
+
 def test_atomic_copy_replaces_complete_file_and_cleans_temps(tmp_path):
     source = _external_texture(tmp_path)
     project = tmp_path / "project"

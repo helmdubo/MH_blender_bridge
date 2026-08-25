@@ -51,6 +51,11 @@ def _inside(root: Path, path: Path) -> bool:
         return False
 
 
+def _path_from_transport(value) -> Path:
+    """Parse Blender-authored paths with either platform's separators."""
+    return Path(os.fspath(value).replace("\\", "/"))
+
+
 def plan_project_texture(authored_path, project_root) -> TextureCopyPlan:
     """Map ``.../assets/<tail>`` to ``<project_root>/assets/<tail>``."""
     if not isinstance(authored_path, (str, os.PathLike)):
@@ -63,12 +68,12 @@ def plan_project_texture(authored_path, project_root) -> TextureCopyPlan:
             "MH_E_INVALID_RESOURCE_SOURCE", raw_path,
             "texture path is empty")
 
-    root = Path(project_root).resolve(strict=False)
+    root = _path_from_transport(project_root).resolve(strict=False)
     if not root.is_dir():
         raise ProjectTextureError(
             "MH_E_INVALID_RESOURCE_SOURCE", str(root),
             "Project Source Root does not exist")
-    source = Path(raw_path).resolve(strict=False)
+    source = _path_from_transport(raw_path).resolve(strict=False)
     suffix = source.suffix
     if suffix not in MATERIAL_TEXTURE_EXTENSIONS:
         raise ProjectTextureError(
