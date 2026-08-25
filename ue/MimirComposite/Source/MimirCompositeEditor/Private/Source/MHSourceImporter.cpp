@@ -4,26 +4,248 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeImporter.h"
+#include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositeProtocol.h"
+#include "Containers/Ticker.h"
+#include "DirectoryWatcherModule.h"
+#include "Editor.h"
 #include "Engine/StaticMesh.h"
+#include "HAL/PlatformTime.h"
+#include "IDirectoryWatcher.h"
 #include "Logging/MessageLog.h"
 #include "MessageLogModule.h"
 #include "Material/MHMaterialImporter.h"
 #include "Material/MHMaterialAdoptDialog.h"
+#include "Material/MHMaterialProtocol.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
-#include "Misc/MessageDialog.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "StaticMesh/MHStaticMeshImporter.h"
+#include "Texture/MHTextureImporter.h"
 #include "UObject/UObjectGlobals.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHSourceImporter)
 
 namespace UE::MimirComposite
 {
+namespace
+{
+
+constexpr double StartupImportDelaySeconds = 1.0;
+
+#if WITH_DEV_AUTOMATION_TESTS
+TFunction<void(EMHResourceKind)> GImportStageObserverForTests;
+#endif
+
+void ObserveImportStage(const EMHResourceKind Kind)
+{
+#if WITH_DEV_AUTOMATION_TESTS
+    if (GImportStageObserverForTests)
+    {
+        GImportStageObserverForTests(Kind);
+    }
+#else
+    (void)Kind;
+#endif
+}
+
+bool ShouldExecuteEntry(const FMHSourceAnalysisEntry& Entry)
+{
+    return Entry.Errors.IsEmpty() &&
+        (Entry.Change == EMHSourceChange::Create ||
+         Entry.Change == EMHSourceChange::Reimport ||
+         Entry.Change == EMHSourceChange::Move);
+}
+
+bool MaterialReferencesFailedTexture(
+    const FMHSourceAnalysisEntry& Entry,
+    const TSet<FString>& FailedTextures,
+    FString& OutTexture)
+{
+    OutTexture.Reset();
+    if (FailedTextures.IsEmpty())
+    {
+        return false;
+    }
+    TArray<uint8> Bytes;
+    FMHMaterialDocument Document;
+    FString Error;
+    if (!FFileHelper::LoadFileToArray(Bytes, *Entry.PayloadPath) ||
+        !MHParseMaterialV4(Bytes, Document, Error))
+    {
+        return false;
+    }
+    for (const TPair<int32, FString>& Texture : Document.Textures)
+    {
+        if (FailedTextures.Contains(Texture.Value))
+        {
+            OutTexture = Texture.Value;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ExecutePreparedSourceImports(
+    const FString& SourceRoot,
+    const FMHImportSourcesScope& Scope,
+    const UMHCompositeSettings& Settings,
+    FMHSourceAnalysisServices& Services,
+    FMHSourceAnalysis& OutAnalysis,
+    bool& bOutExecuted)
+{
+    MHBuildSourceImportPlan(
+        *Services.ChangeDetector,
+        *Services.Resolver,
+        SourceRoot,
+        Scope,
+        OutAnalysis,
+        bOutExecuted);
+
+    TSet<FString> FailedTextures;
+    ObserveImportStage(EMHResourceKind::Texture);
+    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    {
+        const bool bNoChangePolicyCheck =
+            Entry.Change == EMHSourceChange::NoChange && Entry.Errors.IsEmpty();
+        if (Entry.Key.Kind != EMHResourceKind::Texture ||
+            (!ShouldExecuteEntry(Entry) && !bNoChangePolicyCheck))
+        {
+            continue;
+        }
+        FMHTextureOperationResult TextureResult = MHEnsureTextureV4(
+            Entry,
+            SourceRoot,
+            !bNoChangePolicyCheck);
+        Entry.Warnings.Append(TextureResult.Warnings);
+        if (!TextureResult.Succeeded())
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.Errors.Add(TextureResult.Error);
+            FailedTextures.Add(Entry.Key.LogicalName);
+        }
+        else
+        {
+            if (bNoChangePolicyCheck && TextureResult.bImported)
+            {
+                Entry.Change = EMHSourceChange::Reimport;
+            }
+            bOutExecuted |= TextureResult.bImported;
+        }
+    }
+
+    ObserveImportStage(EMHResourceKind::Material);
+    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    {
+        if (Entry.Key.Kind != EMHResourceKind::Material || !Entry.Errors.IsEmpty())
+        {
+            continue;
+        }
+        FString FailedTexture;
+        if (MaterialReferencesFailedTexture(Entry, FailedTextures, FailedTexture))
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.Errors.Add(FString::Printf(
+                TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: material:%s depends on failed texture:%s"),
+                *Entry.Key.LogicalName,
+                *FailedTexture));
+            continue;
+        }
+        if (!ShouldExecuteEntry(Entry))
+        {
+            continue;
+        }
+        FMHMaterialOperationResult MaterialResult = MHImportMaterialV4(
+            Entry,
+            *Services.Resolver,
+            SourceRoot,
+            Settings);
+        Entry.Warnings.Append(MaterialResult.Warnings);
+        if (!MaterialResult.Succeeded())
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.Errors.Add(MaterialResult.Error);
+        }
+        else
+        {
+            bOutExecuted = true;
+        }
+    }
+
+    ObserveImportStage(EMHResourceKind::StaticMesh);
+    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    {
+        if (Entry.Key.Kind != EMHResourceKind::StaticMesh || !Entry.Errors.IsEmpty())
+        {
+            continue;
+        }
+        if (Entry.Change == EMHSourceChange::NoChange)
+        {
+            const FString PackageName = FString(TEXT("/Game/MH/Generated/Meshes/")) +
+                Entry.Key.LogicalName;
+            const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;
+            if (const UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *ObjectPath))
+            {
+                const UMHStaticMeshImportData* Data = Cast<UMHStaticMeshImportData>(
+                    Mesh->GetAssetImportData());
+                if (Data != nullptr && Data->ImporterVersion != MHStaticMeshImporterVersion)
+                {
+                    Entry.Change = EMHSourceChange::Reimport;
+                }
+            }
+        }
+        if (!ShouldExecuteEntry(Entry))
+        {
+            continue;
+        }
+        FMHStaticMeshOperationResult MeshResult = MHImportStaticMeshV4(
+            Entry,
+            *Services.Resolver,
+            SourceRoot);
+        Entry.Warnings.Append(MeshResult.Warnings);
+        if (!MeshResult.Succeeded())
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.Errors.Add(MeshResult.Error);
+        }
+        else
+        {
+            bOutExecuted |= MeshResult.bRebuilt || MeshResult.bReceiptUpdated;
+        }
+    }
+
+    ObserveImportStage(EMHResourceKind::Composite);
+    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    {
+        if (Entry.Key.Kind != EMHResourceKind::Composite || !ShouldExecuteEntry(Entry))
+        {
+            continue;
+        }
+        FMHCompositeOperationResult CompositeResult = MHImportCompositeV4(
+            Entry,
+            *Services.Resolver,
+            SourceRoot,
+            Settings);
+        Entry.Warnings.Append(CompositeResult.Warnings);
+        if (!CompositeResult.Succeeded())
+        {
+            Entry.Change = EMHSourceChange::Blocked;
+            Entry.Errors.Add(CompositeResult.Error);
+        }
+        else
+        {
+            bOutExecuted = true;
+        }
+    }
+    return !OutAnalysis.HasErrors();
+}
+
+} // namespace
 
 void MHFilterAnalysisToScope(
     const FMHImportSourcesScope& Scope,
@@ -109,6 +331,83 @@ bool MHBuildSourceImportPlan(
     return !OutAnalysis.HasErrors();
 }
 
+bool MHImportSourcesHeadless(
+    const FString& SourceRoot,
+    const FMHImportSourcesScope& Scope,
+    const UMHCompositeSettings& Settings,
+    FMHSourceAnalysis& OutAnalysis,
+    bool& bOutExecuted)
+{
+    OutAnalysis = FMHSourceAnalysis();
+    bOutExecuted = false;
+    if (!IsInGameThread())
+    {
+        OutAnalysis.Errors.Add(
+            TEXT("MH_E_IMPORT_THREAD_INVALID: MHImportSourcesHeadless must run on the game thread"));
+        return false;
+    }
+    if (SourceRoot.IsEmpty())
+    {
+        OutAnalysis.Errors.Add(TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured"));
+        return false;
+    }
+
+    FMHSourceAnalysisServices Services;
+    FString Error;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, Error))
+    {
+        OutAnalysis.Errors.Add(MoveTemp(Error));
+        return false;
+    }
+    return ExecutePreparedSourceImports(
+        SourceRoot,
+        Scope,
+        Settings,
+        Services,
+        OutAnalysis,
+        bOutExecuted);
+}
+
+bool MHShouldPresentWatcherAnalysis(
+    const TArray<FString>& Paths,
+    const FMHSourceAnalysis& Analysis)
+{
+    TSet<FMHResourceKey> ObservedKeys;
+    for (const FString& Path : Paths)
+    {
+        FMHResourceKey Key;
+        FString ClassificationError;
+        if (MHResourceKeyFromSourceFile(Path, Key, ClassificationError))
+        {
+            ObservedKeys.Add(MoveTemp(Key));
+        }
+        else if (!ClassificationError.IsEmpty())
+        {
+            return true;
+        }
+    }
+
+    for (const FMHResourceKey& Key : ObservedKeys)
+    {
+        const FMHSourceAnalysisEntry* Entry = Analysis.Find(Key);
+        if (Entry != nullptr &&
+            (Entry->Change != EMHSourceChange::NoChange ||
+             !Entry->Warnings.IsEmpty() ||
+             !Entry->Errors.IsEmpty()))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void MHSetImportStageObserverForTests(TFunction<void(EMHResourceKind)> Observer)
+{
+    GImportStageObserverForTests = MoveTemp(Observer);
+}
+#endif
+
 } // namespace UE::MimirComposite
 
 using namespace UE::MimirComposite;
@@ -120,6 +419,15 @@ void UMHSourceImporter::Initialize(FSubsystemCollectionBase& Collection)
     {
         return;
     }
+
+    LifecycleTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateUObject(this, &UMHSourceImporter::TickSourceLifecycle));
+    BeginPIEHandle = FEditorDelegates::BeginPIE.AddUObject(
+        this,
+        &UMHSourceImporter::OnBeginPIE);
+    EndPIEHandle = FEditorDelegates::EndPIE.AddUObject(
+        this,
+        &UMHSourceImporter::OnEndPIE);
 
     IAssetRegistry& AssetRegistry =
         FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
@@ -137,6 +445,22 @@ void UMHSourceImporter::Initialize(FSubsystemCollectionBase& Collection)
 
 void UMHSourceImporter::Deinitialize()
 {
+    StopDirectoryWatcher();
+    if (LifecycleTickerHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(LifecycleTickerHandle);
+        LifecycleTickerHandle.Reset();
+    }
+    if (BeginPIEHandle.IsValid())
+    {
+        FEditorDelegates::BeginPIE.Remove(BeginPIEHandle);
+        BeginPIEHandle.Reset();
+    }
+    if (EndPIEHandle.IsValid())
+    {
+        FEditorDelegates::EndPIE.Remove(EndPIEHandle);
+        EndPIEHandle.Reset();
+    }
     if (FilesLoadedHandle.IsValid() && FModuleManager::Get().IsModuleLoaded(TEXT("AssetRegistry")))
     {
         FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
@@ -145,6 +469,8 @@ void UMHSourceImporter::Deinitialize()
             .Remove(FilesLoadedHandle);
         FilesLoadedHandle.Reset();
     }
+    PendingSourcePaths.Reset();
+    bPendingFullScan = false;
     Super::Deinitialize();
 }
 
@@ -161,30 +487,68 @@ void UMHSourceImporter::OnAssetRegistryFilesLoaded()
     TWeakObjectPtr<UMHSourceImporter> WeakThis(this);
     AsyncTask(ENamedThreads::GameThread, [WeakThis]()
     {
-        if (WeakThis.IsValid())
+        if (WeakThis.IsValid() && WeakThis->LifecycleTickerHandle.IsValid())
         {
-            WeakThis->RunStartupPlan();
+            WeakThis->bAssetRegistryReady = true;
+            WeakThis->AssetRegistryReadySeconds = WeakThis->LifecycleNowSeconds();
         }
     });
 }
 
-void UMHSourceImporter::RunStartupPlan()
+bool UMHSourceImporter::RunStartupPlan()
 {
-    if (bStartupPlanRan)
+    if (bStartupPlanRan || !bAssetRegistryReady || bImportInProgress)
     {
-        return;
+        return bStartupPlanRan;
     }
-    bStartupPlanRan = true;
+
+#if WITH_DEV_AUTOMATION_TESTS
+    if (StartupExecutorForTests)
+    {
+        const bool bAttempted = StartupExecutorForTests();
+        bStartupPlanRan = bAttempted;
+        if (bAttempted)
+        {
+            RefreshLoadedCompositeActorsAfterStartup();
+        }
+        return bAttempted;
+    }
+#endif
 
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     if (Settings == nullptr || Settings->GetSourceRootPath().IsEmpty())
     {
-        return;
+        return false;
     }
 
     FMHSourceAnalysis Analysis;
     bool bExecuted = false;
+    bImportInProgress = true;
     ImportSources(FMHImportSourcesScope::All(), Analysis, bExecuted);
+    bImportInProgress = false;
+    // A configured startup root is attempted exactly once. Validation failures
+    // remain visible in the plan; subsequent source fixes arrive via watcher.
+    bStartupPlanRan = true;
+    RefreshLoadedCompositeActorsAfterStartup();
+    return true;
+}
+
+void UMHSourceImporter::RefreshLoadedCompositeActorsAfterStartup()
+{
+#if WITH_DEV_AUTOMATION_TESTS
+    if (StartupCompositeRefreshExecutorForTests)
+    {
+        StartupCompositeRefreshExecutorForTests();
+        return;
+    }
+#endif
+    const int32 RebuiltCount = MHRebuildAllLoadedCompositeActors();
+    if (RebuiltCount > 0)
+    {
+        FMessageLog(TEXT("Mimir")).Info(FText::Format(
+            INVTEXT("Startup source pass settled; rebuilt {0} loaded composite instance(s)"),
+            FText::AsNumber(RebuiltCount)));
+    }
 }
 
 bool UMHSourceImporter::ImportSources(
@@ -194,138 +558,338 @@ bool UMHSourceImporter::ImportSources(
 {
     OutAnalysis = FMHSourceAnalysis();
     bOutExecuted = false;
-
-    if (!IsInGameThread())
-    {
-        OutAnalysis.Errors.Add(TEXT("MH_E_IMPORT_THREAD_INVALID: ImportSources must run on the game thread"));
-        return false;
-    }
-
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
-    if (SourceRoot.IsEmpty())
+    if (Settings == nullptr)
     {
-        OutAnalysis.Errors.Add(TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured"));
+        OutAnalysis.Errors.Add(TEXT("MH_E_SOURCE_INDEX_INVALID: Mimir settings are unavailable"));
         PresentPlan(OutAnalysis);
+        return false;
+    }
+    const bool bSucceeded = Settings != nullptr && MHImportSourcesHeadless(
+        SourceRoot,
+        Scope,
+        *Settings,
+        OutAnalysis,
+        bOutExecuted);
+    FString WatchError;
+    if (!SourceRoot.IsEmpty() && !EnsureDirectoryWatcher(SourceRoot, WatchError))
+    {
+        OutAnalysis.Errors.Add(MoveTemp(WatchError));
+    }
+    PresentPlan(OutAnalysis);
+    return bSucceeded && !OutAnalysis.HasErrors();
+}
+
+double UMHSourceImporter::LifecycleNowSeconds() const
+{
+#if WITH_DEV_AUTOMATION_TESTS
+    if (LifecycleTimeForTests.IsSet())
+    {
+        return LifecycleTimeForTests.GetValue();
+    }
+#endif
+    return FPlatformTime::Seconds();
+}
+
+bool UMHSourceImporter::TickSourceLifecycle(const float DeltaSeconds)
+{
+    (void)DeltaSeconds;
+    if (bAssetRegistryReady &&
+        !bStartupPlanRan &&
+        !bPIEActive &&
+        !bImportInProgress &&
+        LifecycleNowSeconds() - AssetRegistryReadySeconds >= StartupImportDelaySeconds)
+    {
+        RunStartupPlan();
+    }
+    if (!bPIEActive &&
+        !bImportInProgress &&
+        (bPendingFullScan || !PendingSourcePaths.IsEmpty()) &&
+        LifecycleNowSeconds() - LastSourceChangeSeconds >= 1.0)
+    {
+        FlushPendingSourcePaths();
+    }
+    return true;
+}
+
+void UMHSourceImporter::OnBeginPIE(const bool bIsSimulating)
+{
+    (void)bIsSimulating;
+    bPIEActive = true;
+}
+
+void UMHSourceImporter::OnEndPIE(const bool bIsSimulating)
+{
+    (void)bIsSimulating;
+    bPIEActive = false;
+    const double ResumeSeconds = LifecycleNowSeconds();
+    LastSourceChangeSeconds = ResumeSeconds;
+    if (!bStartupPlanRan)
+    {
+        AssetRegistryReadySeconds = ResumeSeconds;
+    }
+}
+
+void UMHSourceImporter::OnDirectoryChanged(
+    const TArray<FFileChangeData>& FileChanges)
+{
+    TArray<FString> Paths;
+    bool bRequestFullScan = false;
+    for (const FFileChangeData& Change : FileChanges)
+    {
+        if (Change.Action == FFileChangeData::FCA_RescanRequired)
+        {
+            bRequestFullScan = true;
+        }
+        else if (!Change.Filename.IsEmpty())
+        {
+            Paths.Add(Change.Filename);
+        }
+    }
+
+    if (IsInGameThread())
+    {
+        QueueSourcePaths(Paths, bRequestFullScan);
+        return;
+    }
+    TWeakObjectPtr<UMHSourceImporter> WeakThis(this);
+    AsyncTask(ENamedThreads::GameThread, [WeakThis, Paths = MoveTemp(Paths), bRequestFullScan]()
+    {
+        if (WeakThis.IsValid() && WeakThis->LifecycleTickerHandle.IsValid())
+        {
+            WeakThis->QueueSourcePaths(Paths, bRequestFullScan);
+        }
+    });
+}
+
+void UMHSourceImporter::QueueSourcePaths(
+    const TArray<FString>& Paths,
+    const bool bRequestFullScan)
+{
+    for (const FString& Path : Paths)
+    {
+        if (Path.IsEmpty())
+        {
+            continue;
+        }
+        FString Absolute = FPaths::ConvertRelativePathToFull(Path);
+        FPaths::NormalizeFilename(Absolute);
+        PendingSourcePaths.Add(MoveTemp(Absolute));
+    }
+    bPendingFullScan |= bRequestFullScan;
+    if (bRequestFullScan || !Paths.IsEmpty())
+    {
+        LastSourceChangeSeconds = LifecycleNowSeconds();
+    }
+}
+
+bool UMHSourceImporter::EnsureDirectoryWatcher(
+    const FString& SourceRoot,
+    FString& OutError)
+{
+    OutError.Reset();
+    FString NormalizedRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(NormalizedRoot);
+    if (NormalizedRoot.IsEmpty() || !FPaths::DirectoryExists(NormalizedRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_INVALID: source_root directory does not exist: %s"),
+            *NormalizedRoot);
+        return false;
+    }
+    if (DirectoryWatcherHandle.IsValid() &&
+        FPaths::IsSamePath(WatchedSourceRoot, NormalizedRoot))
+    {
+        return true;
+    }
+
+    StopDirectoryWatcher();
+    FDirectoryWatcherModule& Module =
+        FModuleManager::LoadModuleChecked<FDirectoryWatcherModule>(TEXT("DirectoryWatcher"));
+    IDirectoryWatcher* Watcher = Module.Get();
+    if (Watcher == nullptr ||
+        !Watcher->RegisterDirectoryChangedCallback_Handle(
+            NormalizedRoot,
+            IDirectoryWatcher::FDirectoryChanged::CreateUObject(
+                this,
+                &UMHSourceImporter::OnDirectoryChanged),
+            DirectoryWatcherHandle))
+    {
+        DirectoryWatcherHandle.Reset();
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_INVALID: cannot watch source_root: %s"),
+            *NormalizedRoot);
+        return false;
+    }
+    WatchedSourceRoot = MoveTemp(NormalizedRoot);
+    return true;
+}
+
+void UMHSourceImporter::StopDirectoryWatcher()
+{
+    if (DirectoryWatcherHandle.IsValid() &&
+        FModuleManager::Get().IsModuleLoaded(TEXT("DirectoryWatcher")))
+    {
+        FDirectoryWatcherModule& Module =
+            FModuleManager::GetModuleChecked<FDirectoryWatcherModule>(TEXT("DirectoryWatcher"));
+        if (IDirectoryWatcher* Watcher = Module.Get())
+        {
+            Watcher->UnregisterDirectoryChangedCallback_Handle(
+                WatchedSourceRoot,
+                DirectoryWatcherHandle);
+        }
+    }
+    DirectoryWatcherHandle.Reset();
+    WatchedSourceRoot.Reset();
+}
+
+bool UMHSourceImporter::ImportChangedSourcePaths(const TArray<FString>& Paths)
+{
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    FMHSourceAnalysis Analysis;
+    bool bExecuted = false;
+    if (Settings == nullptr || SourceRoot.IsEmpty())
+    {
+        Analysis.Errors.Add(TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured"));
+        PresentPlan(Analysis);
         return false;
     }
 
     FMHSourceAnalysisServices Services;
-    FString CompositionError;
-    if (!MHCreateDefaultSourceAnalysisServices(
+    FMHProjectIndexUpdateResult Update;
+    bool bUsedFullScan = false;
+    FString Error;
+    if (!MHCreateIncrementalSourceAnalysisServices(
             SourceRoot,
+            Paths,
             Services,
-            CompositionError))
+            Update,
+            bUsedFullScan,
+            Error))
     {
-        OutAnalysis.Errors.Add(CompositionError);
-        PresentPlan(OutAnalysis);
+        Analysis.Errors.Add(MoveTemp(Error));
+        PresentPlan(Analysis);
         return false;
     }
 
-    MHBuildSourceImportPlan(
-        *Services.ChangeDetector,
-        *Services.Resolver,
+    const bool bSucceeded = ExecutePreparedSourceImports(
         SourceRoot,
-        Scope,
-        OutAnalysis,
-        bOutExecuted);
-    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+        FMHImportSourcesScope::All(),
+        *Settings,
+        Services,
+        Analysis,
+        bExecuted);
+    FMessageLog Log(TEXT("Mimir"));
+    for (const FString& Event : Update.SessionEvents)
     {
-        if (Entry.Key.Kind != EMHResourceKind::Material || !Entry.Errors.IsEmpty() ||
-            !(Entry.Change == EMHSourceChange::Create ||
-              Entry.Change == EMHSourceChange::Reimport ||
-              Entry.Change == EMHSourceChange::Move))
-        {
-            continue;
-        }
-        FMHMaterialOperationResult MaterialResult = MHImportMaterialV4(
-            Entry,
-            *Services.Resolver,
-            SourceRoot,
-            *Settings);
-        Entry.Warnings.Append(MaterialResult.Warnings);
-        if (!MaterialResult.Succeeded())
-        {
-            Entry.Change = EMHSourceChange::Blocked;
-            Entry.Errors.Add(MaterialResult.Error);
-        }
-        else
-        {
-            bOutExecuted = true;
-        }
+        Log.Info(FText::FromString(Event));
     }
-    // ImporterVersion is persisted in the receipt rather than the exact-six
-    // registry projection, so the coordinator promotes equal-hash meshes here,
-    // outside the no-UObject-load project-index scan.
-    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    if (bUsedFullScan)
     {
-        if (Entry.Key.Kind != EMHResourceKind::StaticMesh || !Entry.Errors.IsEmpty())
-        {
-            continue;
-        }
-        if (Entry.Change == EMHSourceChange::NoChange)
-        {
-            const FString PackageName = FString(TEXT("/Game/MH/Generated/Meshes/")) + Entry.Key.LogicalName;
-            const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;
-            if (const UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *ObjectPath))
-            {
-                const UMHStaticMeshImportData* Data = Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData());
-                if (Data != nullptr && Data->ImporterVersion != MHStaticMeshImporterVersion)
-                {
-                    Entry.Change = EMHSourceChange::Reimport;
-                }
-            }
-        }
-        if (!(Entry.Change == EMHSourceChange::Create ||
-              Entry.Change == EMHSourceChange::Reimport ||
-              Entry.Change == EMHSourceChange::Move))
-        {
-            continue;
-        }
-        FMHStaticMeshOperationResult MeshResult = MHImportStaticMeshV4(
-            Entry,
-            *Services.Resolver,
-            SourceRoot);
-        Entry.Warnings.Append(MeshResult.Warnings);
-        if (!MeshResult.Succeeded())
-        {
-            Entry.Change = EMHSourceChange::Blocked;
-            Entry.Errors.Add(MeshResult.Error);
-        }
-        else
-        {
-            bOutExecuted |= MeshResult.bRebuilt || MeshResult.bReceiptUpdated;
-        }
+        Log.Info(INVTEXT("Project index was recreated; watcher batch used one full projection"));
     }
-    // Composite closure is resolved only after material and mesh execution.
-    for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+    if (bUsedFullScan || !Update.SessionEvents.IsEmpty() ||
+        MHShouldPresentWatcherAnalysis(Paths, Analysis))
     {
-        if (Entry.Key.Kind != EMHResourceKind::Composite || !Entry.Errors.IsEmpty() ||
-            !(Entry.Change == EMHSourceChange::Create ||
-              Entry.Change == EMHSourceChange::Reimport ||
-              Entry.Change == EMHSourceChange::Move))
-        {
-            continue;
-        }
-        FMHCompositeOperationResult CompositeResult = MHImportCompositeV4(
-            Entry,
-            *Services.Resolver,
-            SourceRoot,
-            *Settings);
-        Entry.Warnings.Append(CompositeResult.Warnings);
-        if (!CompositeResult.Succeeded())
-        {
-            Entry.Change = EMHSourceChange::Blocked;
-            Entry.Errors.Add(CompositeResult.Error);
-        }
-        else
-        {
-            bOutExecuted = true;
-        }
+        PresentPlan(Analysis);
     }
-    PresentPlan(OutAnalysis);
-    return !OutAnalysis.HasErrors();
+    return bSucceeded;
 }
+
+void UMHSourceImporter::FlushPendingSourcePaths()
+{
+    if (bPIEActive || bImportInProgress ||
+        (!bPendingFullScan && PendingSourcePaths.IsEmpty()))
+    {
+        return;
+    }
+
+    TArray<FString> Paths = PendingSourcePaths.Array();
+    Paths.Sort();
+    const bool bRunFullScan = bPendingFullScan;
+    PendingSourcePaths.Reset();
+    bPendingFullScan = false;
+    bImportInProgress = true;
+
+#if WITH_DEV_AUTOMATION_TESTS
+    if (BatchExecutorForTests)
+    {
+        BatchExecutorForTests(Paths, bRunFullScan);
+        ++ExecutedBatchCountForTests;
+        bImportInProgress = false;
+        return;
+    }
+#endif
+
+    if (bRunFullScan)
+    {
+        FMHSourceAnalysis Analysis;
+        bool bExecuted = false;
+        ImportSources(FMHImportSourcesScope::All(), Analysis, bExecuted);
+    }
+    else
+    {
+        ImportChangedSourcePaths(Paths);
+    }
+    bImportInProgress = false;
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+void UMHSourceImporter::SetLifecycleTimeForTests(const double TimeSeconds)
+{
+    LifecycleTimeForTests = TimeSeconds;
+}
+
+void UMHSourceImporter::SetAssetRegistryReadyForTests(const bool bReady)
+{
+    if (bReady && !bAssetRegistryReady)
+    {
+        AssetRegistryReadySeconds = LifecycleNowSeconds();
+    }
+    bAssetRegistryReady = bReady;
+}
+
+void UMHSourceImporter::SetPIEActiveForTests(const bool bActive)
+{
+    if (bActive)
+    {
+        bPIEActive = true;
+        return;
+    }
+    OnEndPIE(false);
+}
+
+void UMHSourceImporter::QueueSourcePathsForTests(
+    const TArray<FString>& Paths,
+    const bool bRequestFullScan)
+{
+    QueueSourcePaths(Paths, bRequestFullScan);
+}
+
+void UMHSourceImporter::TickSourceLifecycleForTests()
+{
+    TickSourceLifecycle(0.0f);
+}
+
+void UMHSourceImporter::SetBatchExecutorForTests(
+    TFunction<bool(const TArray<FString>&, bool)> Executor)
+{
+    BatchExecutorForTests = MoveTemp(Executor);
+}
+
+void UMHSourceImporter::SetStartupExecutorForTests(TFunction<bool()> Executor)
+{
+    StartupExecutorForTests = MoveTemp(Executor);
+}
+
+void UMHSourceImporter::SetStartupCompositeRefreshExecutorForTests(
+    TFunction<void()> Executor)
+{
+    StartupCompositeRefreshExecutorForTests = MoveTemp(Executor);
+}
+#endif
 
 bool UMHSourceImporter::ReimportStaticMesh(
     UStaticMesh* StaticMesh,
@@ -414,6 +978,359 @@ bool UMHSourceImporter::ReimportStaticMesh(
         return false;
     }
     return Result.bRebuilt;
+}
+
+bool UMHSourceImporter::ReimportMaterial(
+    UMaterialInstanceConstant* Material,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || Material == nullptr)
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: ReimportMaterial requires a material instance on the game thread");
+        return false;
+    }
+
+    const UMHMaterialSourceData* Data = Cast<UMHMaterialSourceData>(
+        Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
+    if (Data == nullptr || Data->LogicalName.IsEmpty() || Data->SourceRelativePath.IsEmpty())
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: material '%s' has no v4 source receipt"),
+            *Material->GetPathName());
+        return false;
+    }
+
+    FMHResourceKey MaterialKey;
+    MaterialKey.Kind = EMHResourceKind::Material;
+    MaterialKey.LogicalName = Data->LogicalName;
+    if (!MaterialKey.IsCanonical())
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: managed material '%s' has noncanonical receipt name '%s'"),
+            *Material->GetPathName(),
+            *Data->LogicalName);
+        return false;
+    }
+
+    const FString ExpectedPackageName = FString(TEXT("/Game/MH/Generated/Materials/")) + MaterialKey.LogicalName;
+    const FString ExpectedObjectPath = ExpectedPackageName + TEXT(".") + MaterialKey.LogicalName;
+    if (Material->GetPathName() != ExpectedObjectPath ||
+        StaticLoadObject(UMaterialInstanceConstant::StaticClass(), nullptr, *ExpectedObjectPath) != Material)
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: '%s' is not canonical managed material '%s'"),
+            *Material->GetPathName(),
+            *ExpectedObjectPath);
+        return false;
+    }
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    {
+        return false;
+    }
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key = MoveTemp(MaterialKey);
+    const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Entry.Key);
+    if (Outcome.Status != EMHResolveStatus::Resolved)
+    {
+        OutError = Outcome.Diagnostic.IsEmpty()
+            ? FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: source for material:%s does not resolve"),
+                *Entry.Key.LogicalName)
+            : Outcome.Diagnostic;
+        return false;
+    }
+
+    Entry.PayloadPath = Outcome.PayloadPath;
+    FString RelativeBase = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(RelativeBase);
+    RelativeBase += TEXT("/");
+    Entry.SourcePath = Outcome.PayloadPath;
+    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source path for material:%s from '%s'"),
+            *Entry.Key.LogicalName,
+            *Outcome.PayloadPath);
+        return false;
+    }
+    FPaths::NormalizeFilename(Entry.SourcePath);
+    Entry.RawHash = Outcome.RawHash;
+    Entry.Change = EMHSourceChange::Reimport;
+
+    FMHMaterialOperationResult Result = MHImportMaterialV4(
+        Entry,
+        *Services.Resolver,
+        SourceRoot,
+        *Settings);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    if (!Result.Succeeded())
+    {
+        if (!OutError.Contains(Outcome.PayloadPath, ESearchCase::CaseSensitive))
+        {
+            OutError = FString::Printf(TEXT("%s: %s"), *Outcome.PayloadPath, *OutError);
+        }
+        return false;
+    }
+    if (Result.Material != Material)
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: material:%s reimport resolved a different managed UObject"),
+            *Entry.Key.LogicalName);
+        return false;
+    }
+    return true;
+}
+
+bool UMHSourceImporter::ImportCompositeFile(
+    const FString& Filename,
+    const FString& TargetPackageName,
+    UMHCompositeAsset*& OutAsset,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    (void)TargetPackageName;
+    OutAsset = nullptr;
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread())
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: ImportCompositeFile must run on the game thread");
+        return false;
+    }
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (Settings == nullptr || SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FString AbsoluteRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FString AbsoluteFile = FPaths::ConvertRelativePathToFull(Filename);
+    FPaths::NormalizeDirectoryName(AbsoluteRoot);
+    FPaths::NormalizeFilename(AbsoluteFile);
+    FPaths::CollapseRelativeDirectories(AbsoluteRoot);
+    FPaths::CollapseRelativeDirectories(AbsoluteFile);
+    if (!FPaths::GetExtension(AbsoluteFile, true).Equals(TEXT(".composite"), ESearchCase::CaseSensitive) ||
+        !FPaths::IsUnderDirectory(AbsoluteFile, AbsoluteRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: manual .composite import accepts only a source file already inside source_root '%s'"),
+            *AbsoluteFile,
+            *AbsoluteRoot);
+        return false;
+    }
+
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::Composite;
+    Key.LogicalName = FPaths::GetBaseFilename(AbsoluteFile);
+    if (!Key.IsCanonical())
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_NONCANONICAL_RESOURCE_NAME: composite filename must be <[a-z0-9_]+>.composite"),
+            *AbsoluteFile);
+        return false;
+    }
+
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+    const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Key);
+    FString ResolvedPath = FPaths::ConvertRelativePathToFull(Outcome.PayloadPath);
+    FPaths::NormalizeFilename(ResolvedPath);
+    FPaths::CollapseRelativeDirectories(ResolvedPath);
+    if (Outcome.Status != EMHResolveStatus::Resolved ||
+        !ResolvedPath.Equals(AbsoluteFile, ESearchCase::IgnoreCase))
+    {
+        const FString Diagnostic = Outcome.Diagnostic.IsEmpty()
+            ? FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: composite:%s is not the unique resolved candidate for this file"),
+                *Key.LogicalName)
+            : Outcome.Diagnostic;
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *Diagnostic);
+        return false;
+    }
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key = Key;
+    Entry.PayloadPath = Outcome.PayloadPath;
+    Entry.SourcePath = AbsoluteFile;
+    FString RelativeBase = AbsoluteRoot + TEXT("/");
+    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source-relative composite path"),
+            *AbsoluteFile);
+        return false;
+    }
+    FPaths::NormalizeFilename(Entry.SourcePath);
+    Entry.RawHash = Outcome.RawHash;
+    Entry.Change = EMHSourceChange::Reimport;
+
+    FMHCompositeOperationResult Result = MHImportCompositeV4(
+        Entry,
+        *Services.Resolver,
+        SourceRoot,
+        *Settings);
+    OutWarnings = MoveTemp(Result.Warnings);
+    OutError = MoveTemp(Result.Error);
+    if (!Result.Succeeded())
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+    OutAsset = Result.Asset;
+    return true;
+}
+
+bool UMHSourceImporter::AdoptCompositeFile(
+    const FString& Filename,
+    const FString& AdoptFolder,
+    const FString& AdoptLogicalName,
+    UMHCompositeAsset*& OutAsset,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutAsset = nullptr;
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread())
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: AdoptCompositeFile must run on the game thread");
+        return false;
+    }
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (Settings == nullptr || SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FString AbsoluteRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FString AbsoluteFile = FPaths::ConvertRelativePathToFull(Filename);
+    FPaths::NormalizeDirectoryName(AbsoluteRoot);
+    FPaths::NormalizeFilename(AbsoluteFile);
+    FPaths::CollapseRelativeDirectories(AbsoluteRoot);
+    FPaths::CollapseRelativeDirectories(AbsoluteFile);
+    if (!FPaths::GetExtension(AbsoluteFile, true).Equals(TEXT(".composite"), ESearchCase::CaseSensitive) ||
+        FPaths::IsUnderDirectory(AbsoluteFile, AbsoluteRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: Adopt expects an external file with exact .composite suffix"),
+            *AbsoluteFile);
+        return false;
+    }
+
+    FString TargetPath;
+    FString TargetRelativePath;
+    const FMHCompositeAdoptTarget AdoptTarget{AdoptFolder, AdoptLogicalName};
+    if (!MHValidateCompositeAdoptTarget(
+            SourceRoot,
+            AdoptTarget,
+            TargetPath,
+            TargetRelativePath,
+            OutError))
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::Composite;
+    Key.LogicalName = AdoptTarget.LogicalName;
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    {
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+    const FMHResolveOutcome Existing = Services.Resolver->Resolve(Key);
+    if (Existing.Status != EMHResolveStatus::Unresolved || FPaths::FileExists(TargetPath))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_AMBIGUOUS_RESOURCE_NAME: composite:%s already exists in source_root; Adopt never overwrites"),
+            *AbsoluteFile,
+            *Key.LogicalName);
+        return false;
+    }
+
+    TArray<uint8> SourceBytes;
+    FMHCompositeDocument Document;
+    if (!FFileHelper::LoadFileToArray(SourceBytes, *AbsoluteFile) ||
+        !MHParseCompositeV4(SourceBytes, Document, OutError))
+    {
+        if (OutError.IsEmpty())
+        {
+            OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: cannot read external composite payload");
+        }
+        OutError = FString::Printf(TEXT("%s: %s"), *AbsoluteFile, *OutError);
+        return false;
+    }
+
+    const FString TargetFolder = FPaths::GetPath(TargetPath);
+    if (!IFileManager::Get().MakeDirectory(*TargetFolder, true))
+    {
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_INVALID_RESOURCE_SOURCE: cannot create Adopt target folder '%s'"),
+            *AbsoluteFile,
+            *TargetFolder);
+        return false;
+    }
+    const FString TempPath = TargetPath + FString::Printf(
+        TEXT(".tmp.%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    TArray<uint8> ReadBack;
+    FMHCompositeDocument ReadBackDocument;
+    FString ValidationError;
+    if (!FFileHelper::SaveArrayToFile(SourceBytes, *TempPath) ||
+        !FFileHelper::LoadFileToArray(ReadBack, *TempPath) ||
+        ReadBack != SourceBytes ||
+        !MHParseCompositeV4(ReadBack, ReadBackDocument, ValidationError))
+    {
+        IFileManager::Get().Delete(*TempPath, false, true, true);
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_COMPOSITE_GRAMMAR: Adopt temporary read-back failed: %s"),
+            *AbsoluteFile,
+            *ValidationError);
+        return false;
+    }
+    if (FPaths::FileExists(TargetPath) ||
+        !IFileManager::Get().Move(*TargetPath, *TempPath, false, false, false, true))
+    {
+        IFileManager::Get().Delete(*TempPath, false, true, true);
+        OutError = FString::Printf(
+            TEXT("%s: MH_E_AMBIGUOUS_RESOURCE_NAME: Adopt target appeared concurrently; no file was overwritten"),
+            *AbsoluteFile);
+        return false;
+    }
+
+    return ImportCompositeFile(
+        TargetPath,
+        FString(),
+        OutAsset,
+        OutWarnings,
+        OutError);
 }
 
 bool UMHSourceImporter::PublishMaterial(
@@ -556,7 +1473,7 @@ void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
     }
 
     const FString Summary = FString::Printf(
-        TEXT("Mimir source pass: %d resources, %d blocked. S3 executes material and composite entries; mesh remains plan-only."),
+        TEXT("Mimir source pass: %d resources, %d blocked. Import order: textures, materials, meshes, composites."),
         Analysis.Entries.Num(),
         Analysis.CountOf(EMHSourceChange::Blocked));
     Log.Info(FText::FromString(Summary));
@@ -564,7 +1481,6 @@ void UMHSourceImporter::PresentPlan(const FMHSourceAnalysis& Analysis) const
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     if (Settings != nullptr && Settings->StartupScanMode == EMHStartupScanMode::Prompt)
     {
-        FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
-        Log.Notify(INVTEXT("Mimir source plan is ready"));
+        Log.Notify(FText::FromString(Summary));
     }
 }

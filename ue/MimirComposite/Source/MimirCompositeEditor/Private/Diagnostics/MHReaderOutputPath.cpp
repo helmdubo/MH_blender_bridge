@@ -113,6 +113,11 @@ bool MHResolveReaderOutputPath(
 {
     OutAbsolutePath.Reset();
     OutError.Reset();
+    if (RequestedPath.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: reader output path is empty");
+        return false;
+    }
 
     FString CanonicalSourceRoot;
     if (!CanonicalizePath(SourceRoot, CanonicalSourceRoot))

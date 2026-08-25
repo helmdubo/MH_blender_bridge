@@ -1,5 +1,7 @@
 #include "Diagnostics/MHAnalyzeSourcesCommandlet.h"
 
+#include "Diagnostics/MHAnalyzeSourcesReport.h"
+#include "Diagnostics/MHSourceOperations.h"
 #include "Misc/Parse.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceAnalyzer.h"
@@ -37,21 +39,12 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
             LogMHAnalyzeSources,
             Error,
             TEXT("Usage: -run=MHAnalyzeSources -root=<source_root> ")
-            TEXT("[-report=<disabled-until-S6>]"));
+            TEXT("[-report=<Saved/Mimir path>]"));
         return 2;
     }
 
     FString ReportPath;
     FParse::Value(*Params, TEXT("report="), ReportPath);
-
-    if (!ReportPath.IsEmpty())
-    {
-        UE_LOG(
-            LogMHAnalyzeSources,
-            Error,
-            TEXT("MH_E_SOURCE_INDEX_INVALID: -report is disabled until the S6 mh.analyze_sources:4 implementation"));
-        return 2;
-    }
 
     FMHSourceAnalysisServices Services;
     FString ScanError;
@@ -109,5 +102,30 @@ int32 UMHAnalyzeSourcesCommandlet::Main(const FString& Params)
         UE_LOG(LogMHAnalyzeSources, Error, TEXT("%s"), *Error);
     }
 
-    return Analysis.HasErrors() ? 1 : 0;
+    bool bReportSucceeded = true;
+    if (!ReportPath.IsEmpty())
+    {
+        FString AbsoluteReportPath;
+        FString ReportError;
+        bReportSucceeded = MHWriteAnalyzeSourcesReportV4(
+            SourceRoot,
+            ReportPath,
+            Analysis,
+            AbsoluteReportPath,
+            ReportError);
+        if (bReportSucceeded)
+        {
+            UE_LOG(
+                LogMHAnalyzeSources,
+                Display,
+                TEXT("wrote mh.analyze_sources:4 report: %s"),
+                *AbsoluteReportPath);
+        }
+        else
+        {
+            UE_LOG(LogMHAnalyzeSources, Error, TEXT("%s"), *ReportError);
+        }
+    }
+
+    return MHSourceCommandletExitCode(true, bReportSucceeded, Analysis);
 }

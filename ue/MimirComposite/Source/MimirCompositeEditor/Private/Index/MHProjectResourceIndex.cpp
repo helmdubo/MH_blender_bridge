@@ -685,6 +685,12 @@ public:
         const FMHResourceKey& Key,
         TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,
         FString& OutError) const;
+    bool GetAllGeneratedAssets(
+        TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,
+        FString& OutError) const;
+    bool GetDiagnostics(
+        TArray<FMHProjectIndexDiagnostic>& OutDiagnostics,
+        FString& OutError) const;
     bool BuildNormalizedDump(FString& OutDump, FString& OutError) const;
 
     FString SourceRoot;
@@ -2367,7 +2373,7 @@ bool FMHProjectResourceIndex::FImpl::GetGeneratedAssets(
         return false;
     }
     FSQLitePreparedStatement Statement = Database->PrepareStatement(
-        TEXT("SELECT object_path,source_path,source_hash,applied_hash,status,key_valid,receipt_valid FROM GeneratedAssets WHERE kind=?1 AND name=?2 ORDER BY object_path;"));
+        TEXT("SELECT kind,name,object_path,source_path,source_hash,applied_hash,status,key_valid,receipt_valid FROM GeneratedAssets WHERE kind=?1 AND name=?2 ORDER BY object_path;"));
     if (!Statement.IsValid() ||
         !Statement.SetBindingValueByIndex(1, FString(MHResourceKindLabel(Key.Kind))) ||
         !Statement.SetBindingValueByIndex(2, Key.LogicalName))
@@ -2385,21 +2391,23 @@ bool FMHProjectResourceIndex::FImpl::GetGeneratedAssets(
             return false;
         }
         FMHProjectIndexGeneratedAssetState& State = OutAssets.AddDefaulted_GetRef();
-        State.Key = Key;
         FString Status;
         int32 KeyValid = 0;
         int32 ReceiptValid = 0;
-        if (!Statement.GetColumnValueByIndex(0, State.UEObjectPath) ||
-            !Statement.GetColumnValueByIndex(1, State.SourcePath) ||
-            !Statement.GetColumnValueByIndex(2, State.SourceHash) ||
-            !Statement.GetColumnValueByIndex(3, State.AppliedHash) ||
-            !Statement.GetColumnValueByIndex(4, Status) ||
-            !Statement.GetColumnValueByIndex(5, KeyValid) ||
-            !Statement.GetColumnValueByIndex(6, ReceiptValid))
+        if (!Statement.GetColumnValueByIndex(0, State.KindLabel) ||
+            !Statement.GetColumnValueByIndex(1, State.LogicalName) ||
+            !Statement.GetColumnValueByIndex(2, State.UEObjectPath) ||
+            !Statement.GetColumnValueByIndex(3, State.SourcePath) ||
+            !Statement.GetColumnValueByIndex(4, State.SourceHash) ||
+            !Statement.GetColumnValueByIndex(5, State.AppliedHash) ||
+            !Statement.GetColumnValueByIndex(6, Status) ||
+            !Statement.GetColumnValueByIndex(7, KeyValid) ||
+            !Statement.GetColumnValueByIndex(8, ReceiptValid))
         {
             OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: malformed GeneratedAssets row");
             return false;
         }
+        State.Key = Key;
         State.bKeyValid = KeyValid != 0;
         State.bReceiptValid = ReceiptValid != 0;
         if (Status == TEXT("applied")) State.Status = EMHGeneratedAssetStatus::Applied;
@@ -2408,6 +2416,132 @@ bool FMHProjectResourceIndex::FImpl::GetGeneratedAssets(
         else if (Status == TEXT("source_blocked")) State.Status = EMHGeneratedAssetStatus::SourceBlocked;
         else if (Status == TEXT("duplicate_claim")) State.Status = EMHGeneratedAssetStatus::DuplicateClaim;
         else State.Status = EMHGeneratedAssetStatus::InvalidReceipt;
+    }
+    return true;
+}
+
+bool FMHProjectResourceIndex::FImpl::GetAllGeneratedAssets(
+    TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,
+    FString& OutError) const
+{
+    OutAssets.Reset();
+    OutError.Reset();
+    if (!EnsureOpen(OutError))
+    {
+        return false;
+    }
+    FSQLitePreparedStatement Statement = Database->PrepareStatement(
+        TEXT("SELECT kind,name,object_path,source_path,source_hash,applied_hash,status,key_valid,receipt_valid FROM GeneratedAssets ORDER BY object_path;"));
+    if (!Statement.IsValid())
+    {
+        OutError = Database->GetLastError();
+        return false;
+    }
+    while (true)
+    {
+        const ESQLitePreparedStatementStepResult Step = Statement.Step();
+        if (Step == ESQLitePreparedStatementStepResult::Done) break;
+        if (Step != ESQLitePreparedStatementStepResult::Row)
+        {
+            OutError = Database->GetLastError();
+            return false;
+        }
+
+        FMHProjectIndexGeneratedAssetState& State = OutAssets.AddDefaulted_GetRef();
+        FString Status;
+        int32 KeyValid = 0;
+        int32 ReceiptValid = 0;
+        if (!Statement.GetColumnValueByIndex(0, State.KindLabel) ||
+            !Statement.GetColumnValueByIndex(1, State.LogicalName) ||
+            !Statement.GetColumnValueByIndex(2, State.UEObjectPath) ||
+            !Statement.GetColumnValueByIndex(3, State.SourcePath) ||
+            !Statement.GetColumnValueByIndex(4, State.SourceHash) ||
+            !Statement.GetColumnValueByIndex(5, State.AppliedHash) ||
+            !Statement.GetColumnValueByIndex(6, Status) ||
+            !Statement.GetColumnValueByIndex(7, KeyValid) ||
+            !Statement.GetColumnValueByIndex(8, ReceiptValid))
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: malformed GeneratedAssets row");
+            return false;
+        }
+        State.bKeyValid = KeyValid != 0;
+        State.bReceiptValid = ReceiptValid != 0;
+        State.Key.LogicalName = State.LogicalName;
+        const bool bParsedKind = MHResourceKindFromLabel(State.KindLabel, State.Key.Kind);
+        if (State.bKeyValid && (!bParsedKind || !State.Key.IsCanonical()))
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: GeneratedAssets valid key cannot be decoded");
+            return false;
+        }
+        if (Status == TEXT("applied")) State.Status = EMHGeneratedAssetStatus::Applied;
+        else if (Status == TEXT("stale")) State.Status = EMHGeneratedAssetStatus::Stale;
+        else if (Status == TEXT("orphan")) State.Status = EMHGeneratedAssetStatus::Orphan;
+        else if (Status == TEXT("source_blocked")) State.Status = EMHGeneratedAssetStatus::SourceBlocked;
+        else if (Status == TEXT("duplicate_claim")) State.Status = EMHGeneratedAssetStatus::DuplicateClaim;
+        else if (Status == TEXT("invalid_receipt")) State.Status = EMHGeneratedAssetStatus::InvalidReceipt;
+        else
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: unknown GeneratedAssets status");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool FMHProjectResourceIndex::FImpl::GetDiagnostics(
+    TArray<FMHProjectIndexDiagnostic>& OutDiagnostics,
+    FString& OutError) const
+{
+    OutDiagnostics.Reset();
+    OutError.Reset();
+    if (!EnsureOpen(OutError))
+    {
+        return false;
+    }
+    FSQLitePreparedStatement Statement = Database->PrepareStatement(
+        TEXT("SELECT severity,code,owner_kind,owner_name,path,target_kind,target_name,message FROM Diagnostics ORDER BY severity,code,owner_kind,owner_name,path,target_kind,target_name,message;"));
+    if (!Statement.IsValid())
+    {
+        OutError = Database->GetLastError();
+        return false;
+    }
+    while (true)
+    {
+        const ESQLitePreparedStatementStepResult Step = Statement.Step();
+        if (Step == ESQLitePreparedStatementStepResult::Done) break;
+        if (Step != ESQLitePreparedStatementStepResult::Row)
+        {
+            OutError = Database->GetLastError();
+            return false;
+        }
+
+        FMHProjectIndexDiagnostic& Diagnostic = OutDiagnostics.AddDefaulted_GetRef();
+        FString Severity;
+        if (!Statement.GetColumnValueByIndex(0, Severity) ||
+            !Statement.GetColumnValueByIndex(1, Diagnostic.Code) ||
+            !ReadNullableString(Statement, 2, Diagnostic.OwnerKind) ||
+            !ReadNullableString(Statement, 3, Diagnostic.OwnerName) ||
+            !ReadNullableString(Statement, 4, Diagnostic.Path) ||
+            !ReadNullableString(Statement, 5, Diagnostic.TargetKind) ||
+            !ReadNullableString(Statement, 6, Diagnostic.TargetName) ||
+            !Statement.GetColumnValueByIndex(7, Diagnostic.Message))
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: malformed Diagnostics row");
+            return false;
+        }
+        if (Severity == TEXT("warning"))
+        {
+            Diagnostic.Severity = EMHProjectDiagnosticSeverity::Warning;
+        }
+        else if (Severity == TEXT("error"))
+        {
+            Diagnostic.Severity = EMHProjectDiagnosticSeverity::Error;
+        }
+        else
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: unknown Diagnostics severity");
+            return false;
+        }
     }
     return true;
 }
@@ -2565,6 +2699,20 @@ bool FMHProjectResourceIndex::GetGeneratedAssets(
     FString& OutError) const
 {
     return Impl->GetGeneratedAssets(Key, OutAssets, OutError);
+}
+
+bool FMHProjectResourceIndex::GetAllGeneratedAssets(
+    TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,
+    FString& OutError) const
+{
+    return Impl->GetAllGeneratedAssets(OutAssets, OutError);
+}
+
+bool FMHProjectResourceIndex::GetDiagnostics(
+    TArray<FMHProjectIndexDiagnostic>& OutDiagnostics,
+    FString& OutError) const
+{
+    return Impl->GetDiagnostics(OutDiagnostics, OutError);
 }
 
 bool FMHProjectResourceIndex::BuildNormalizedDump(

@@ -42,6 +42,14 @@ bool FMHReaderOutputPathTest::RunTest(const FString& Parameters)
     FString Error;
     bool bPassed = true;
 
+    bPassed &= TestFalse(
+        TEXT("empty diagnostic report path is rejected"),
+        MHResolveReaderOutputPath(
+            SourceRoot,
+            FString(),
+            ResolvedPath,
+            Error));
+
     bPassed &= TestTrue(
         TEXT("relative output is accepted"),
         MHResolveReaderOutputPath(

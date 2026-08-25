@@ -1,11 +1,9 @@
 #include "Material/MHMaterialImporter.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetToolsModule.h"
 #include "AssetCompilingManager.h"
 #include "Engine/AssetUserData.h"
 #include "Engine/Texture.h"
-#include "EditorFramework/AssetImportData.h"
 #include "HAL/FileManager.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Material/MHMaterialSourceData.h"
@@ -19,10 +17,9 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticParameterSet.h"
-#include "Texture/MHTextureSourceData.h"
+#include "Texture/MHTextureImporter.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
-#include "AssetImportTask.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialPublish, Display, All);
 DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialImport, Display, All);
@@ -33,7 +30,6 @@ namespace
 {
 
 constexpr const TCHAR* GeneratedMaterialRoot = TEXT("/Game/MH/Generated/Materials");
-constexpr const TCHAR* GeneratedTextureRoot = TEXT("/Game/MH/Generated/Textures");
 
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void()> GBeforeMaterialSourceCommitTestHook;
@@ -171,147 +167,6 @@ bool LoadBytes(const FString& Path, TArray<uint8>& OutBytes, FString& OutError)
     return true;
 }
 
-bool RelativeToRoot(const FString& Root, const FString& Path, FString& OutRelative);
-
-UTexture* ImportTexture(
-    const FString& LogicalName,
-    const FString& SourcePath,
-    const FString& SourceRelativePath,
-    const FString& ExpectedRawHash,
-    FString& OutError)
-{
-    const FString PackageName = FString(GeneratedTextureRoot) + TEXT("/") + LogicalName;
-    const FString ObjectPath = PackageName + TEXT(".") + LogicalName;
-
-    TArray<uint8> PreImportSourceBytes;
-    if (ExpectedRawHash.IsEmpty() ||
-        !FFileHelper::LoadFileToArray(PreImportSourceBytes, *SourcePath) ||
-        MHRawPayloadHash(PreImportSourceBytes) != ExpectedRawHash)
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: texture:%s changed before import task"),
-            *LogicalName);
-        return nullptr;
-    }
-
-    UAssetImportTask* Task = NewObject<UAssetImportTask>();
-    Task->Filename = SourcePath;
-    Task->DestinationPath = GeneratedTextureRoot;
-    Task->DestinationName = LogicalName;
-    Task->bAutomated = true;
-    Task->bReplaceExisting = true;
-    Task->bReplaceExistingSettings = false;
-    // Persist only after the task result and its exact source receipt validate;
-    // Interchange may otherwise return and save a stale pre-existing object.
-    Task->bSave = false;
-    Task->bAsync = false;
-
-    FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
-    TArray<UAssetImportTask*> Tasks = {Task};
-    AssetToolsModule.Get().ImportAssetTasks(Tasks);
-
-    TArray<uint8> PostImportSourceBytes;
-    if (!FFileHelper::LoadFileToArray(PostImportSourceBytes, *SourcePath) ||
-        PostImportSourceBytes != PreImportSourceBytes ||
-        MHRawPayloadHash(PostImportSourceBytes) != ExpectedRawHash)
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: texture:%s changed during import task"),
-            *LogicalName);
-        return nullptr;
-    }
-
-    UTexture* Texture = nullptr;
-    for (UObject* Imported : Task->GetObjects())
-    {
-        if (UTexture* Candidate = Cast<UTexture>(Imported))
-        {
-            if (Candidate->GetPathName().Equals(ObjectPath, ESearchCase::CaseSensitive))
-            {
-                if (Texture != nullptr && Texture != Candidate)
-                {
-                    OutError = FString::Printf(
-                        TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: current import returned duplicate exact objects for texture:%s"),
-                        *LogicalName);
-                    return nullptr;
-                }
-                Texture = Candidate;
-            }
-        }
-    }
-    if (Texture == nullptr)
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: texture:%s resolved to source but UE import failed: %s"),
-            *LogicalName,
-            *SourcePath);
-        return nullptr;
-    }
-
-#if WITH_EDITORONLY_DATA
-    const UAssetImportData* ImportData = Texture->AssetImportData;
-    const FMD5Hash CurrentSourceHash = FMD5Hash::HashFile(*SourcePath);
-    if (ImportData == nullptr || ImportData->GetSourceFileCount() != 1 ||
-        !FPaths::IsSamePath(ImportData->GetFirstFilename(), SourcePath) ||
-        !CurrentSourceHash.IsValid() ||
-        ImportData->GetSourceData().SourceFiles[0].FileHash != CurrentSourceHash)
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: current import did not record exact source bytes for texture:%s"),
-            *LogicalName);
-        return nullptr;
-    }
-#else
-    OutError = TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: texture import receipts require editor-only data");
-    return nullptr;
-#endif
-
-    FAssetCompilingManager::Get().FinishAllCompilation();
-    UPackage* Package = Texture->GetOutermost();
-    Package->MarkPackageDirty();
-    FSavePackageArgs Args;
-    Args.TopLevelFlags = RF_Public | RF_Standalone;
-    Args.SaveFlags = SAVE_NoError;
-    const FString Filename = FPackageName::LongPackageNameToFilename(
-        PackageName,
-        FPackageName::GetAssetPackageExtension());
-    if (!UPackage::SavePackage(Package, Texture, *Filename, Args))
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: imported texture:%s could not be persisted"),
-            *LogicalName);
-        return nullptr;
-    }
-    if (Package->HasAnyPackageFlags(PKG_InMemoryOnly))
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: persisted texture:%s remained in-memory-only"),
-            *LogicalName);
-        return nullptr;
-    }
-
-    UMHTextureSourceData* SourceData = Cast<UMHTextureSourceData>(
-        Texture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass()));
-    if (SourceData == nullptr)
-    {
-        SourceData = NewObject<UMHTextureSourceData>(Texture, NAME_None, RF_Transactional);
-        Texture->AddAssetUserData(SourceData);
-    }
-    SourceData->LogicalName = LogicalName;
-    SourceData->SourceRelativePath = SourceRelativePath;
-    SourceData->SourceHash = ExpectedRawHash;
-    Texture->PostEditChange();
-    Package->MarkPackageDirty();
-    if (!UPackage::SavePackage(Package, Texture, *Filename, Args))
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: imported texture:%s receipt could not be persisted"),
-            *LogicalName);
-        return nullptr;
-    }
-    return Texture;
-}
-
 bool ResolveTextures(
     const FMHMaterialDocument& Document,
     IMHSourceResolver& Resolver,
@@ -346,31 +201,23 @@ bool ResolveTextures(
             OutError = Outcome.Diagnostic;
             return false;
         }
-        FString SourceRelativePath;
-        if (!RelativeToRoot(SourceRoot, Outcome.PayloadPath, SourceRelativePath))
+        FMHSourceAnalysisEntry TextureEntry;
+        TextureEntry.Key = Key;
+        TextureEntry.PayloadPath = Outcome.PayloadPath;
+        TextureEntry.SourcePath = Outcome.PayloadPath;
+        TextureEntry.RawHash = Outcome.RawHash;
+        TextureEntry.Change = EMHSourceChange::Reimport;
+        FMHTextureOperationResult TextureResult = MHEnsureTextureV4(
+            TextureEntry,
+            SourceRoot,
+            false);
+        OutWarnings.Append(TextureResult.Warnings);
+        if (!TextureResult.Succeeded())
         {
-            OutError = FString::Printf(
-                TEXT("MH_E_UNRESOLVED_TEXTURE_REFERENCE: texture:%s resolved outside source_root"),
-                *Name);
+            OutError = MoveTemp(TextureResult.Error);
             return false;
         }
-        UTexture* Texture = ImportTexture(
-            Name,
-            Outcome.PayloadPath,
-            SourceRelativePath,
-            Outcome.RawHash,
-            OutError);
-        if (Texture == nullptr)
-        {
-            return false;
-        }
-        OutTextures.Add(Name, Texture);
-        FString RebindEvent;
-        if (MHConsumeOrphanRebindEvent(SourceRoot, Key, RebindEvent))
-        {
-            OutWarnings.Add(RebindEvent);
-            UE_LOG(LogMHMaterialImport, Warning, TEXT("%s"), *RebindEvent);
-        }
+        OutTextures.Add(Name, TextureResult.Texture);
     }
     return true;
 }
@@ -890,6 +737,8 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     const FMHMaterialAdoptTarget* AdoptTarget)
 {
     FMHMaterialOperationResult Result;
+    FString AbsoluteSourceRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(AbsoluteSourceRoot);
     FMHMaterialDocument Document;
     TArray<uint8> Bytes;
     if (!MHExtractMaterialV4(Material, Settings, Document, Result.Error) ||
@@ -903,7 +752,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     if (ExistingData != nullptr && !ExistingData->SourceRelativePath.IsEmpty())
     {
         LogicalName = ExistingData->LogicalName;
-        TargetPath = FPaths::ConvertRelativePathToFull(SourceRoot, ExistingData->SourceRelativePath);
+        TargetPath = FPaths::ConvertRelativePathToFull(AbsoluteSourceRoot, ExistingData->SourceRelativePath);
     }
     else
     {
@@ -915,7 +764,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
         LogicalName = AdoptTarget->LogicalName;
         FString AdoptRelativePath;
         if (!MHValidateMaterialAdoptTarget(
-                SourceRoot,
+                AbsoluteSourceRoot,
                 *AdoptTarget,
                 TargetPath,
                 AdoptRelativePath,
@@ -927,7 +776,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     FString RelativePath;
     if (!MHIsCanonicalMaterialToken(LogicalName) ||
         !FPaths::GetCleanFilename(TargetPath).Equals(LogicalName + TEXT(".material"), ESearchCase::CaseSensitive) ||
-        !RelativeToRoot(SourceRoot, TargetPath, RelativePath))
+        !RelativeToRoot(AbsoluteSourceRoot, TargetPath, RelativePath))
     {
         Result.Error = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: publish target must be <source_root>/.../<canonical>.material");
         return Result;
@@ -940,7 +789,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     const FString PublishedHash = MHRawPayloadHash(Bytes);
     TArray<FString> SessionEvents;
     if (!MHUpsertPublishedSource(
-            SourceRoot,
+            AbsoluteSourceRoot,
             TargetPath,
             PublishedHash,
             SessionEvents,
@@ -996,7 +845,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
         Material.PostEditChange();
         return Result;
     }
-    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    if (!MHRefreshGeneratedAssetProjection(AbsoluteSourceRoot, Result.Error))
     {
         return Result;
     }

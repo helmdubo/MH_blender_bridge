@@ -86,6 +86,7 @@ ERROR_CODES = frozenset(
         # Composite and mesh-source import preflight
         "MH_E_INVALID_NODE_MARKERS",
         "MH_E_UNRESOLVED_COMPOSITE_REFERENCE",
+        "MH_E_UNREPRESENTABLE_SCENE_OBJECT",
         "MH_E_UNSUPPORTED_NODE_KIND",
         "MH_E_INVALID_RESOURCE_SOURCE",
         "MH_E_INVALID_EXPORT_MANIFEST",

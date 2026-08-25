@@ -149,6 +149,15 @@ bool AcquireProjectIndex(
     return true;
 }
 
+void BuildAnalysisServices(
+    const TSharedPtr<FMHProjectResourceIndex>& Index,
+    FMHSourceAnalysisServices& OutServices)
+{
+    OutServices.Index = Index;
+    OutServices.Resolver = MakeUnique<FMHProjectIndexResolver>(*Index);
+    OutServices.ChangeDetector = MakeUnique<FMHProjectIndexChangeDetector>(*Index);
+}
+
 } // namespace
 
 bool MHCreateDefaultSourceAnalysisServices(
@@ -174,9 +183,46 @@ bool MHCreateDefaultSourceAnalysisServices(
         return false;
     }
 
-    OutServices.Index = Index;
-    OutServices.Resolver = MakeUnique<FMHProjectIndexResolver>(*Index);
-    OutServices.ChangeDetector = MakeUnique<FMHProjectIndexChangeDetector>(*Index);
+    BuildAnalysisServices(Index, OutServices);
+    return true;
+}
+
+bool MHCreateIncrementalSourceAnalysisServices(
+    const FString& SourceRoot,
+    const TArray<FString>& Paths,
+    FMHSourceAnalysisServices& OutServices,
+    FMHProjectIndexUpdateResult& OutUpdate,
+    bool& bOutUsedFullScan,
+    FString& OutError)
+{
+    OutServices = FMHSourceAnalysisServices();
+    OutUpdate = FMHProjectIndexUpdateResult();
+    OutError.Reset();
+    bOutUsedFullScan = false;
+
+    bool bRecreated = false;
+    TSharedPtr<FMHProjectResourceIndex> Index;
+    if (!AcquireProjectIndex(SourceRoot, Index, bRecreated, OutError))
+    {
+        return false;
+    }
+
+    if (bRecreated)
+    {
+        TArray<FMHGeneratedAssetTagClaim> Claims;
+        GatherGeneratedAssetClaims(Claims);
+        if (!Index->FullScan(Claims, OutUpdate, OutError))
+        {
+            return false;
+        }
+        bOutUsedFullScan = true;
+    }
+    else if (!Index->UpsertPaths(Paths, OutUpdate, OutError))
+    {
+        return false;
+    }
+
+    BuildAnalysisServices(Index, OutServices);
     return true;
 }
 

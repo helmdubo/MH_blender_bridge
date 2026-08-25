@@ -333,7 +333,7 @@ bool FMHFbxBackend::ImportAxisProbe(
     FStaticMeshSourceModel& SourceModel = StaticMesh->AddSourceModel();
     // R1 mirrors the legacy factory defaults used by tools/ue_axis_check.py.
     // The full C2 mapper will exercise the frozen split-normal contract.
-    SourceModel.BuildSettings.bRecomputeNormals = true;
+    SourceModel.BuildSettings.bRecomputeNormals = false;
     SourceModel.BuildSettings.bRecomputeTangents = true;
     SourceModel.BuildSettings.bUseMikkTSpace = true;
     SourceModel.BuildSettings.bRemoveDegenerates = false;
@@ -416,7 +416,7 @@ bool FMHLegacyFbxBackend::ImportAxisProbe(
     StaticMeshOptions->bBuildNanite = false;
     StaticMeshOptions->bGenerateLightmapUVs = false;
     StaticMeshOptions->bAutoGenerateCollision = false;
-    StaticMeshOptions->NormalImportMethod = FBXNIM_ComputeNormals;
+    StaticMeshOptions->NormalImportMethod = FBXNIM_ImportNormals;
     StaticMeshOptions->NormalGenerationMethod = EFBXNormalGenerationMethod::MikkTSpace;
 
     Factory->SetDetectImportTypeOnImport(false);

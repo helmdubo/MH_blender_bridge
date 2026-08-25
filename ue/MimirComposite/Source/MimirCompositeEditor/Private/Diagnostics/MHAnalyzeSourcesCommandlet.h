@@ -11,9 +11,9 @@
  * classified ResourceKey. Nothing is imported and the source tree is never
  * written.
  * Without -root the commandlet falls back to the project SourceRoot setting.
- * -report remains rejected until S6 implements mh.analyze_sources:4. Exit code
- * 0 when no MH_E_* was raised, 1 otherwise, 2 on usage errors or a forbidden
- * output option.
+ * Optional -report writes deterministic mh.analyze_sources:4 JSON through the
+ * Saved/Mimir output guard. Exit code 0 means no MH_E_*, 1 means an operation
+ * or resource error, and 2 means invalid usage.
  */
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHAnalyzeSourcesCommandlet final : public UCommandlet

@@ -1,6 +1,7 @@
 #include "Composite/MHCompositeImporter.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
@@ -308,6 +309,7 @@ FMHCompositeOperationResult MHImportCompositeV4(
         return Result;
     }
     Result.Asset = Asset;
+    MHNotifyGeneratedResourceChanged(Entry.Key);
     return Result;
 }
 
@@ -317,6 +319,8 @@ FMHCompositeOperationResult MHPublishCompositeV4(
     const FMHCompositeAdoptTarget* AdoptTarget)
 {
     FMHCompositeOperationResult Result;
+    FString AbsoluteSourceRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(AbsoluteSourceRoot);
     FMHCompositeDocument Document;
     TArray<uint8> Bytes;
     if (!MHExtractCompositeV4(Asset, Document, Result.Error) ||
@@ -330,8 +334,8 @@ FMHCompositeOperationResult MHPublishCompositeV4(
     if (!Asset.SourceRelativePath.IsEmpty())
     {
         LogicalName = Asset.LogicalName;
-        TargetPath = FPaths::ConvertRelativePathToFull(SourceRoot, Asset.SourceRelativePath);
-        if (!CompositeRelativeToRoot(SourceRoot, TargetPath, RelativePath))
+        TargetPath = FPaths::ConvertRelativePathToFull(AbsoluteSourceRoot, Asset.SourceRelativePath);
+        if (!CompositeRelativeToRoot(AbsoluteSourceRoot, TargetPath, RelativePath))
         {
             Result.Error = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: managed composite source path escapes source_root");
             return Result;
@@ -346,7 +350,7 @@ FMHCompositeOperationResult MHPublishCompositeV4(
         }
         LogicalName = AdoptTarget->LogicalName;
         if (!MHValidateCompositeAdoptTarget(
-                SourceRoot, *AdoptTarget, TargetPath, RelativePath, Result.Error)) return Result;
+                AbsoluteSourceRoot, *AdoptTarget, TargetPath, RelativePath, Result.Error)) return Result;
     }
     if (!MHIsCanonicalCompositeToken(LogicalName) ||
         !FPaths::GetCleanFilename(TargetPath).Equals(
@@ -363,7 +367,7 @@ FMHCompositeOperationResult MHPublishCompositeV4(
     const FString PublishedHash = MHRawPayloadHash(Bytes);
     TArray<FString> SessionEvents;
     if (!MHUpsertPublishedSource(
-            SourceRoot,
+            AbsoluteSourceRoot,
             TargetPath,
             PublishedHash,
             SessionEvents,
@@ -394,11 +398,15 @@ FMHCompositeOperationResult MHPublishCompositeV4(
         Asset.PostEditChange();
         return Result;
     }
-    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    if (!MHRefreshGeneratedAssetProjection(AbsoluteSourceRoot, Result.Error))
     {
         return Result;
     }
     Result.Asset = &Asset;
+    FMHResourceKey ChangedKey;
+    ChangedKey.Kind = EMHResourceKind::Composite;
+    ChangedKey.LogicalName = Asset.LogicalName;
+    MHNotifyGeneratedResourceChanged(ChangedKey);
     return Result;
 }
 

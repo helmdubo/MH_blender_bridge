@@ -10,6 +10,11 @@ public:
     virtual void ShutdownModule() override;
 
 private:
+    void RegisterMenus();
+    void UnregisterMenusBeforeExit();
+
     FDelegateHandle AssetRegistryTagsHandle;
     FDelegateHandle ObjectModifiedHandle;
+    FDelegateHandle PreExitHandle;
+    bool bOwnsToolMenusRegistration = false;
 };

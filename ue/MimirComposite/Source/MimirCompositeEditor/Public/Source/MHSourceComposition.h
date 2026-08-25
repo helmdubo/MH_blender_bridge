@@ -26,6 +26,20 @@ MIMIRCOMPOSITEEDITOR_API bool MHCreateDefaultSourceAnalysisServices(
     FString& OutError);
 
 /**
+ * Applies one watcher batch to the live index and returns reader services for
+ * that exact generation. A valid existing cache is updated with one
+ * UpsertPaths transaction; a newly recreated cache falls back to one complete
+ * projection because an incremental batch cannot reconstruct unseen files.
+ */
+MIMIRCOMPOSITEEDITOR_API bool MHCreateIncrementalSourceAnalysisServices(
+    const FString& SourceRoot,
+    const TArray<FString>& Paths,
+    FMHSourceAnalysisServices& OutServices,
+    FMHProjectIndexUpdateResult& OutUpdate,
+    bool& bOutUsedFullScan,
+    FString& OutError);
+
+/**
  * Publish integration called strictly after atomic source replacement. The
  * single-shot token is registered before the same path is incrementally
  * upserted into the shared project index.
