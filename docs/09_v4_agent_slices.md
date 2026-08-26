@@ -1,5 +1,17 @@
 # 09 — Срезы реализации Source Protocol v4 для внешнего агента
 
+> **SUPERSEDED BY SOURCE PROTOCOL V5 UPON OWNER MERGE OF V5-S0.** На ветке
+> freeze это условный баннер; после owner merge порядок работ задаёт только
+> [`11_v5_agent_slices.md`](11_v5_agent_slices.md), норматив — только
+> [`10_source_protocol_v5_plan.md`](10_source_protocol_v5_plan.md).
+>
+> | Область 09 | Судьба в v5 |
+> |---|---|
+> | Инварианты fail-closed, receipts, owner-only merge, dual unity | перенесены и усилены в 11 |
+> | S0–S6 | завершённая историческая карта v4; не разрешает v5 implementation |
+> | S3/S6 document-world tests и operations | физически заменяются в V5-S2/S5 |
+> | S7 `mh_asset_io`/ufbx | parked отдельный backlog, v5 S0–S7 не блокирует |
+
 Аудитория: **исполнитель без контекста сессии**. Перед любым срезом прочитай
 `docs/08_source_protocol_v4_plan.md` (единственный активный норматив) и этот
 файл целиком. История решений — в superseded-доках, читать их нужно только

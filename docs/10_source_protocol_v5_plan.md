@@ -1,21 +1,18 @@
-# 08 — MH Source Protocol v4: name-keyed, one-way meshes (PLAN, ACTIVE)
+# 10 — MH Source Protocol v5: random composites and placement seeds (FREEZE CANDIDATE)
 
-> **SUPERSEDED BY SOURCE PROTOCOL V5 UPON OWNER MERGE OF V5-S0.** На ветке
-> freeze это условный баннер: `docs/10_source_protocol_v5_plan.md` и
-> `docs/11_v5_agent_slices.md` — кандидаты до owner ratification; production-
-> код v5 до merge запрещён. После merge единственная authority — 10.
->
-> | Область 08 | Судьба в v5 |
-> |---|---|
-> | §§1–5, 7–10 | перенесены в 10; identity/index/mesh/material/texture/applied-state сохраняются, `.placement` добавляется явно |
-> | §§6, 6.1; OPEN-V4-24 | superseded целиком: document-world и structural-only group заменены parent-local v5, random и placement Seed |
-> | §11 | заменён: v4 `.composite` не мигрируется и не dual-read'ится; owner переэкспортирует |
-> | §12 и старые документы | историческая карта; актуальная таблица судьбы — 10 §12 |
+Статус: **кандидат owner freeze V5-S0**. Owner merge среза V5-S0 означает
+ратификацию этого документа и делает его единственным активным нормативом для
+срезов `11_v5_agent_slices.md`. До такого merge запрещены любые production-code
+изменения v5. Неразрешённые места перечислены в §13 и `QUESTIONS.md`; для них
+действует STOP, а не подразумеваемая семантика.
 
-Статус: **утверждённый owner план**. Это нормативная база для срезов
-`09_v4_agent_slices.md`. Все прежние нормативы (01/05/07, ADR_V2, ADR_V3,
-AMENDMENT_combined_lod, AMENDMENT_node_hierarchy, старые UE-QUESTION)
-supersede-ятся в части identity/UID/round-trip; что именно выживает — §12.
+Поколение v5 несовместимо меняет ТОЛЬКО `.composite` и добавляет новый resource
+kind `.placement`. Контракты `.material`, `.mesh.fbx`, текстур, Project Resource
+Index и applied state перенесены из 08; поле версии в них не добавляется.
+
+Номера `S1`…`S7` внутри дословно перенесённых v4-абзацев — provenance прежней
+реализации по 09, а не порядок v5. Активные gates всегда пишутся `V5-S*` и
+определены только в 11.
 
 ## 1. Формула
 
@@ -31,6 +28,10 @@ Rename — сознательный breaking change.
 UUID не существуют нигде: ни в payload, ни в Blender, ни в UE.
 ```
 
+Дополнение v5: `.composite` получает обязательный discriminator `"v": 5`,
+random-узлы и parent-local T/R/S; `<name>.placement` хранит типизированный
+placement profile версии 1. Seed принадлежит только размещению композита в UE.
+
 ## 2. Identity
 
 ```text
@@ -38,6 +39,7 @@ ResourceKey = Kind + LogicalName
 static_mesh: garage_a          <- garage_a.mesh.fbx
 material:    m_stucco          <- m_stucco.material
 composite:   garage_type_a     <- garage_type_a.composite
+placement_profile: vehicle_scatter <- vehicle_scatter.placement
 texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
 ```
 
@@ -50,9 +52,9 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   `MH_E_NON_ASCII_RESOURCE_NAME` во всех call sites, реестре и golden
   (решение OPEN-V4-4).
 - Stem получается срезанием ПОЛНОГО составного расширения (`.mesh.fbx`,
-  `.material`, `.composite`; для текстур — одиночного `<img-ext>` из
+  `.material`, `.composite`, `.placement`; для текстур — одиночного `<img-ext>` из
   allowlist §5); `foo.bar.mesh.fbx` невалиден.
-- Одинаковый stem у разных kind — три разных ресурса; одинаковый stem одного
+- Одинаковый stem у разных kind — разные ResourceKey; одинаковый stem одного
   kind в разных папках: `MH_W_DUPLICATE_RESOURCE_NAME` на скане,
   `MH_E_AMBIGUOUS_RESOURCE_NAME` на resolve/import; блокируется ресурс и его
   dependents; mtime/размер/порядок папок никогда не выбирают победителя.
@@ -184,6 +186,14 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   REIMPORT без дополнительных подтверждений — source побеждает. Слово
   «сильно» из прежней формулировки §2 упразднено — порогов и метрик
   подобия нет.
+
+**Аддитивная проекция v5.** Файл `.placement` классифицируется кандидатом kind
+`placement_profile`; `.composite` без `"v": 5` имеет `invalid_payload` и не
+даёт dependency edges. После ратификации binding из §6.3 добавляется закрытая
+роль `composite→placement_profile: "placement_profile"`. Все остальные таблицы,
+precedence rules, `mh.project_index:4`, шесть Asset Registry tags и rebuild-
+контракт остаются дословно v4: новое поколение composite не является миграцией
+SQLite и не создаёт вторую authority.
 
 ## 4. FBX-контракт v4 (поправки №2, №3)
 
@@ -424,205 +434,318 @@ keys, node trees материалов (восстанавливается тол
 - Импорт: source всегда побеждает; локально изменённый MI перед перезаписью
   получает warning `MH_W_MANAGED_ASSET_LOCALLY_MODIFIED` (не блок).
 
-## 6. Композиты v4 (поправки №8, №10)
+## 6. Композиты v5: random, parent-local T/R/S и placement seed
 
-`<name>.composite` — JSON-дерево **без какой-либо информации о материалах**.
-Kinds узлов: `mesh` (static mesh), `actor` (blueprint/игровой актор),
-`composite` (вложенный композит), `group`. Без schema/version/uid полей.
+`<name>.composite` — несовместимый JSON v5 без информации о материалах.
+Корень всегда начинает поколение полем `"v": 5`. Версия относится ТОЛЬКО к
+`.composite`: `.material`, `.mesh.fbx`, текстуры, Project Resource Index и
+applied state не получают version-поля. Существующие v4-композиты временные:
+миграции и dual-read нет, owner удаляет их и переэкспортирует.
+
+Минимальный документ:
 
 ```json
-{ "nodes": [
-    { "kind": "composite", "resource": "gaz53_a_window_front_cmp",
-      "transform": { "translation_cm": [0,0,0],
-                     "rotation_quat": [0,0,0,1], "scale": [1,1,1] } },
-    { "kind": "mesh", "resource": "gaz53_a_milk_hood",
-      "transform": { "translation_cm": [207.5, 155.8, 10.3],
-                     "rotation_quat": [0,0,0,1], "scale": [1,1,1] } },
-    { "kind": "group", "name": "lights", "transform": { "...": "..." },
-      "children": [ { "kind": "actor", "resource": "lamp_point_warm",
-                      "transform": { "...": "..." } } ] } ] }
+{
+  "v": 5,
+  "nodes": []
+}
 ```
 
-- `name` опционален (читаемость/группы); идентичность узла НЕ несёт —
-  сравнение композитов whole-resource.
-- `actor` резолвится через registry в настройках плагина
-  (`ActorClassRegistry: name -> SoftClassPath`); unresolved — блок композита.
-- Самовключение и включение любого предка запрещены (cycle detection по
-  графу зависимостей).
-- Publish Composite — та же семантика, что материал (№11): полная
-  перезапись source, read-back, atomic replace; импорт — source побеждает с
-  warning при локальной правке. Node-level merge не существует.
-- **Закрытая грамматика (решение OPEN-V4-10).** Корень — объект ровно с
-  одним полем `nodes` (массив, может быть пустым). Узел: `kind`
-  обязателен (`mesh|actor|composite|group`); `resource` обязателен для
-  mesh/actor/composite (canonical `[a-z0-9_]+`) и ЗАПРЕЩЁН для group;
-  `name` опционален (непустая строка, display-only, identity не несёт);
-  `transform` опционален — объект с опциональными `translation_cm`
-  (ровно 3 числа), `rotation_quat` (ровно 4 числа `[x,y,z,w]`), `scale`
-  (ровно 3 числа), дефолты — identity `[0,0,0] / [0,0,0,1] / [1,1,1]`;
-  `children` опционален у ЛЮБОГО kind (массив узлов). Порядок
-  `nodes`/`children` ЗНАЧИМ и сохраняется (это порядок компиляции);
-  никакой сортировки узлов. Числа конечны (`MH_E_NAN_INF_VALUE`);
-  компонента `scale` ≤ 0 — `MH_E_INVALID_SCALE` (правило v2 переносится);
-  неизвестный `kind` — `MH_E_UNSUPPORTED_NODE_KIND`; duplicate JSON key
-  (парсер обязан детектировать), неизвестное поле, неверный тип/арность,
-  `resource` у group или его отсутствие у прочих —
-  `MH_E_COMPOSITE_GRAMMAR` (регистрируется в S3). Reader ничего не
-  игнорирует. Самовключение/предок — `MH_E_COMPOSITE_CYCLE`;
-  нерезолвящийся `resource` (mesh/composite — ресурсы по §2, actor — имя
-  в `ActorClassRegistry`) — `MH_E_UNRESOLVED_COMPOSITE_REFERENCE`; все
-  блокируют ресурс и dependents.
-- **Кватернион**: writer пишет нормализованный (float32) в каноническом
-  знаке (`w > 0`; при `w == 0` — первый ненулевой компонент > 0); reader
-  принимает любой знак, но `|‖q‖ − 1| > 1e-3` — `MH_E_COMPOSITE_GRAMMAR`.
-  Publish каноникализирует норму и знак.
-- **Канонические байты — режим §5**: UTF-8, LF, финальный LF, отступ 2;
-  порядок полей узла `kind → resource → name → transform → children`,
-  внутри transform — `translation_cm → rotation_quat → scale`; float —
-  float32 shortest round-trip, целые без дробной части; identity-дефолты,
-  пустые `transform`/`children` и отсутствующий `name` ОПУСКАЮТСЯ.
-  Общее canonical-ядро с материалами; golden-векторы — общие файлы для
-  pytest и UE Automation.
-- **Transform contract (решение OPEN-V4-10).** Каноническое пространство
-  хранения — конвенция UE: сантиметры, оси и handedness UE, кватернион
-  `[x,y,z,w]` в смысле `FQuat`. Определяющее свойство вместо прозы о
-  матрицах: composite-transform Blender-объекта ОБЯЗАН равняться мировому
-  трансформу, который UE вычисляет для того же объекта, пришедшего через
-  mesh-FBX транспорт §4 (cm, `axis_forward=X`, `axis_up=Z`).
-  UE-компилятор потребляет значения без конверсии; Blender writer/reader
-  выполняют зеркальную конверсию (Blender → JSON → Blender = identity в
-  пределах float32). Обязательный parity-гейт: одно и то же размещение
-  через FBX-узел и через composite даёт совпадающий мировой трансформ в
-  UE (допуск float32). Прежний `core/transforms.py` authority НЕ является
-  и переписывается под это свойство. Квантования нет: детерминизм — из
-  float32 + shortest-записи. **Значения узлов — document-world
-  (подтверждено OPEN-V4-24):** трансформ каждого узла — его мировое
-  размещение в пространстве композита; вложенность `children` —
-  структура/организация, математической композиции parent×child в файле
-  НЕТ (golden-гейт: child translation 125 под group translation 100
-  остаётся world 125). Отсюда shear-рубеж находится на ЭКСПОРТЕ из
-  Blender: `matrix_world` объекта, не восстанавливающаяся из своей
-  T/R/S-декомпозиции в допуске float32 (shear от неоднородного scale
-  родителя над повёрнутым ребёнком), — fail-closed
-  `MH_E_INVALID_RESOURCE_SOURCE` с именем объекта; молчаливая
-  decompose-аппроксимация запрещена. Редакторская условность «drag
-  группы двигает потомков» (в Blender — parenting, в UE Edit-режиме —
-  явная дельта по потомкам) — поведение инструментов, не семантика
-  файла.
-- **Blender и actor tokens**: реестра акторов в Blender нет — Blender
-  хранит и пишет `resource` актора lossless, не валидируя; валидация —
-  только UE через `ActorClassRegistry`. Source-wins warning
-  (`MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`) относится ТОЛЬКО к managed
-  `UMHCompositeAsset`; Blender-сцена — рабочая копия без applied state и
-  без source-wins warnings.
-- **Unresolved placement в Blender-авторинге (поправка owner).** При
-  импорте композита в Blender ОТСУТСТВУЮЩИЙ mesh/composite ресурс узла —
-  не блок, а `MH_W_UNRESOLVED_PLACEMENT` (регистрируется в S3.1) плюс
-  видимый placeholder: Empty display-cube, красный object color, без
-  контента; `resource`-token сохраняется lossless (custom property
-  placement'а), Export пишет узел без изменений. Художник чинит
-  остальное, не будучи заложником битого узла; строгость остаётся у
-  потребителя — UE-сторона по-прежнему блокирует
-  (`MH_E_UNRESOLVED_COMPOSITE_REFERENCE`). Послабление касается ТОЛЬКО
-  отсутствующего ресурса: ambiguous same-kind duplicates остаются жёстким
-  блоком по §2 и в Blender; mesh-FBX импорт §4.1 не меняется (unresolved
-  material — по-прежнему E).
+Файл без поля `v` блокируется кодом
+`MH_E_COMPOSITE_LEGACY_GENERATION` и сообщением: «файл прежнего поколения:
+удалите и переэкспортируйте». Любое `v`, не равное целому `5`, блокируется
+`MH_E_UNKNOWN_SCHEMA_VERSION`. Reader никогда не пытается угадать поколение
+по остальным полям.
 
-### 6.1 UE-модель размещения и операции уровня (поправка owner)
+### 6.1 Закрытая грамматика Composite v5
 
-**Размещаемый актор.** `AMHCompositeActor` — единственная persisted-форма
-композита в уровне: хранит ссылку на `UMHCompositeAsset` и собственный
-трансформ. Дерево компонентов — DERIVED/TRANSIENT: строится компилятором
-S3 при конструировании и в уровень НЕ сериализуется. Ассет обновляется
-импортом in-place (тот же UObject) → все размещённые акторы пересобирают
-derived-дерево по notify, без пересохранения уровней. Правка
-derived-компонентов вне Edit-режима не переживает ребилд —
-запечатанность, зеркальная инстансам Blender; кастомизация инстанса =
-только трансформ самого актора; отличающийся вариант = форк композита
-под новым именем. Уровень хранит одну строку на инстанс.
+Корень — объект РОВНО с полями `v` и `nodes` в этом каноническом порядке.
+`nodes` — массив, может быть пустым. Kinds обычного узла:
+`mesh|actor|composite|group|random`.
 
-Операции уровня (каждая — ровно одна undo-транзакция):
+- `kind` обязателен. `resource` обязателен для `mesh|actor|composite`,
+  запрещён для `group|random`. Resource token каноничен по §2.
+- `name` опционален: непустая display-only строка, identity не несёт.
+- `transform` опционален и содержит parent-local T/R/S: `translation_cm`
+  (ровно три числа), `rotation_quat` (ровно четыре числа `[x,y,z,w]`),
+  `scale` (ровно три числа). Дефолты identity:
+  `[0,0,0] / [0,0,0,1] / [1,1,1]`.
+- `children` опционален у любого обычного узла и является массивом узлов.
+  Порядок `nodes` и `children` значим и сохраняется.
+- `options` обязателен и разрешён ТОЛЬКО у `random`. Это непустой
+  упорядоченный массив объектов РОВНО с полями `kind`, `resource` где
+  применимо и `weight`. Kind option принадлежит
+  `mesh|actor|composite|empty`. У `mesh|actor|composite` resource
+  обязателен; у `empty` запрещён. `weight` обязателен, конечен и ≥ 0;
+  хотя бы один option имеет weight > 0. Option не имеет `transform`,
+  `children`, `options` или `name`: трансформ принадлежит random-узлу.
+  Порядок options значим, zero-weight option входит в source closure, но
+  никогда не выбирается.
+- При resolution выбранный `mesh|actor|composite` option материализуется в
+  transform random-узла; `empty` не создаёт leaf. `children` random-узла затем
+  обходятся всегда и наследуют тот же random-node transform независимо от
+  выбранного option. Selected composite разворачивается рекурсивно в этой
+  parent-local basis.
+- Все числа конечны; `MH_E_NAN_INF_VALUE` и `MH_E_INVALID_SCALE` сохраняют
+  семантику v4. Кватернион writer нормализует в float32 и приводит к
+  каноническому знаку v4; reader применяет тот же norm-admission v4.
+- Duplicate JSON key, неизвестное поле, неверный тип/арность, нарушение
+  resource/options/weight-правил и option-transform блокируют
+  `MH_E_COMPOSITE_GRAMMAR`. Отдельное семейство random-grammar кодов НЕ
+  вводится: это та же закрытая грамматика одного ресурса, а один стабильный
+  код не заставляет Python и C++ расходиться на порядке проверок. Семантические
+  отказы resolve/cycle/transform сохраняют отдельные доменные коды.
+- Неизвестный kind — `MH_E_UNSUPPORTED_NODE_KIND`. Нерезолвящийся
+  mesh/composite/actor option или обычный узел —
+  `MH_E_UNRESOLVED_COMPOSITE_REFERENCE`. Cycle detection обходит ВСЕ
+  composite-опции ВСЕХ random-узлов, не только выбранные seed'ом;
+  самовключение и предок — `MH_E_COMPOSITE_CYCLE`.
 
-- **Build Composite** — из выделенных объектов уровня. Сериализуемы
-  только: managed static meshes (LogicalName из receipt),
-  `AMHCompositeActor` (имя ассета) и акторы классов, находимых reverse
-  lookup'ом в `ActorClassRegistry`; любой иной объект — fail-closed
-  `MH_E_UNREPRESENTABLE_SCENE_OBJECT` (регистрируется в S6) со списком
-  причин. Диалог «папка + имя» (внутри `source_root`, каноничность,
-  duplicate fail-closed — семантика Adopt). Пивот нового композита =
-  центр мирового AABB выделения, ориентация identity; узлы получают
-  относительные трансформы. Операция пишет `.composite` штатным Publish
-  (tmp → read-back → atomic replace → self-publish token) и СИНХРОННО
-  импортирует; выделение заменяется одним `AMHCompositeActor`.
-- **Break Composite** — операция УРОВНЯ: файл и ассет не трогает.
-  Снимает один слой: mesh-узлы → StaticMeshActor'ы, composite-узлы →
-  запечатанные `AMHCompositeActor`'ы, actor-узлы → акторы реестра;
-  group-узлы растворяются СТРУКТУРНО (решение OPEN-V4-24): трансформы
-  узлов — document-world (§6), дети сохраняют свои world-значения
-  ДОСЛОВНО, никакой композиции не происходит, собственный трансформ
-  группы — организационный pivot и отбрасывается. Сам инстанс удаляется
-  из уровня; повторный Break — послойно. Прежняя поправка о
-  «представимости композиции» ОТОЗВАНА как основанная на неверной
-  parent-local посылке: при document-world значения узлов — T/R/S по
-  грамматике §6 и всегда представимы актором, shear на Break возникнуть
-  не может. Временный fail-closed блок Break для transform-bearing групп
-  снимается. Настоящий shear-рубеж — экспорт из Blender (§6).
-- **Edit Composite** — режим на выбранном инстансе: редактируются
-  ТОЛЬКО трансформы top-level узлов (глубже — открой вложенный композит;
-  то же правило, что в Blender); остальные инстансы во время режима не
-  следуют. Commit = штатный Publish Composite из отредактированного
-  состояния → реимпорт in-place → все инстансы пересобираются; Cancel =
-  ребилд из ассета без записи. Конкурентная правка Blender/UE — last
-  publish wins (полная перезапись, №11). Добавление объектов уровня в
-  редактируемый композит — later increment того же режима;
-  самовключение/предок — существующий `MH_E_COMPOSITE_CYCLE` на
-  publish-preflight.
-- **Rebuild** — принудительный recompile выбранных инстансов (или всех
-  инстансов ассета из Content Browser): переподхватывает восстановленные
-  same-name зависимости.
-- **Границы Undo и внешние side-effects (поправка owner).** Source tree
-  не имеет истории (аксиома; версии — дело VCS студии), поэтому
-  файловые side-effects операций §6.1 (запись/удаление payload,
-  каскадный реимпорт, ребилд инстансов) находятся ВНЕ undo-стека UE и
-  необратимы внутри редактора. Undo-транзакция каждой операции
-  заканчивается ДО первого файлового эффекта: Commit в Edit-режиме
-  закрывает и сбрасывает транзакцию редактирования, затем выполняет
-  publish → import → notify; Ctrl+Z после Commit НЕ воскрешает
-  pre-Commit состояние, и UI обязан говорить это явно (подтверждение
-  Commit: «перезапишет <name>.composite; откат — новой правкой либо
-  VCS»). Cancel — полный откат ребилдом из ассета, как ратифицировано.
-  Undo сценовой части Build (возврат исходных акторов) НЕ удаляет
-  созданный source-файл — ресурс продолжает существовать; удаление —
-  только явным `Delete resource`. Попытка «откатить» файл байтами из
-  памяти редактора — запрещённое теневое authority.
+Канонические байты сохраняют режим v4 §5: UTF-8, LF, финальный LF, отступ 2,
+float32-shortest, целые без дробной части, identity-поля опускаются.
+Порядок полей корня `v → nodes`; узла
+`kind → resource → name → transform → options → children`; transform
+`translation_cm → rotation_quat → scale`; option `kind → resource → weight`.
+Узлы и options не сортируются.
 
-**Удаление и потерянные зависимости.** Авто-Break при удалении ассета из
-Content Browser НЕ выполняется: незагруженные уровни немодифицируемы, а
-после удаления ассета дерево композита недоступно и Break невозможен в
-принципе. Вместо этого: (а) управляемое удаление — команда
-`Delete resource` (S6): предлагает Break инстансов в ЗАГРУЖЕННЫХ
-уровнях, затем удаляет source-файл и generated-ассет; удаление только
-ассета при живом source-файле удалением ресурса не является — следующий
-импорт пересоздаст его (source wins); (б) инстанс с мёртвой ссылкой на
-ассет рендерится placeholder'ом (красный bbox + имя) — зеркало
-Blender-правила выше; (в) отсутствие generated-зависимости отдельного
-узла при compile — per-node placeholder (bbox + имя) с
-`MH_W_UNRESOLVED_PLACEMENT` (общий код с Blender-стороной); compile НЕ
-блокируется — строгость остаётся на импорте source-файлов
-(`MH_E_UNRESOLVED_COMPOSITE_REFERENCE`), compile — это view.
-Восстановление: появление same-name ресурса + Rebuild/очередной notify
-заменяет placeholder полноценным узлом автоматически (name-keyed
-identity).
+### 6.2 Parent-local transform contract и shear
 
-**File-drop payload-файлов (решение OPEN-V4-23).** Drop файла ИЗНУТРИ
-`source_root` в Content Browser — штатный ручной импорт; CB-target
-НИКОГДА не влияет на generated path — identity определяет путь
-(`/Game/MH/Generated/<Kind>/<name>`). Drop ВНЕШНЕГО файла открывает
-Adopt-диалог (папка внутри `source_root` + имя, предзаполненное stem'ом):
-каноничная валидация, duplicate — fail-closed reject без overwrite,
-копирование sibling-tmp → atomic replace, затем штатный импорт; отмена =
-полный отказ без следов. Семантика единообразна для всех payload-kinds
-по мере реализации их file-drop UX (прецедент — Adopt материалов §5).
+Трансформ каждого узла — parent-local:
+
+```text
+World(node) = World(parent) × Local(node)
+World(top_level) = World(AMHCompositeActor) × Local(node)
+```
+
+Group — настоящий родительский transform. Его перенос, вращение и scale
+математически влияют на всех потомков. Полные матрицы в `.composite` не
+хранятся. Blender writer/reader выполняют зеркальную конверсию между Blender и
+UE-конвенциями из §4; UE-компилятор потребляет JSON T/R/S без изменения
+единиц/осей. Канонические числа и float32-shortest — как v4.
+
+Shear и любая матрица, не представимая без потерь контрактным T/R/S,
+отклоняются `MH_E_UNREPRESENTABLE_TRANSFORM` без decompose-аппроксимации,
+snapping или repair на трёх границах:
+
+1. Dagor import — lossless-conversion error с полным путём и именами узлов,
+   создавших непредставимую композицию;
+2. Blender Export Composite — preflight до staging с именами parent/child;
+3. UE compile/Build/Break/cook — до мутации уровня или создания компонентов.
+
+В частности, non-uniform parent scale × rotated child не может тихо менять
+форму. Численный predicate admission для float host-матриц не зафиксирован
+owner-контрактом; до ответа `OPEN-V5-5` соответствующая реализация имеет STOP.
+
+### 6.3 Placement profile `.placement`
+
+`<name>.placement` — новый ResourceKey kind `placement_profile`. Это
+типизированный JSON-ресурс, не текстовый препроцессор:
+
+```json
+{
+  "v": 1,
+  "kind": "placement_profile",
+  "offset_cm": [[0, 10], [0, 10], [0, 0]],
+  "rotation_deg": [[0, 0], [0, 0], [0, 180]],
+  "uniform_scale": [1, 0.1],
+  "vertical_scale": [1, 0.2]
+}
+```
+
+Каждая пара имеет форму `[base, deviation]` и задаёт закрытый диапазон
+`[base-deviation, base+deviation]`. Offset и rotation содержат по три пары
+X/Y/Z; uniform и vertical — по одной паре. Все числа конечны, deviation ≥ 0.
+Корень содержит обязательные `v` и `kind`; четыре parameter fields опциональны.
+Отсутствующее поле означает отсутствие соответствующей variation и не
+потребляет draw. `kind` обязан буквально равняться `placement_profile`, `v` —
+целому 1; другая версия даёт `MH_E_UNKNOWN_SCHEMA_VERSION`.
+Writer использует канонические байты §5 с порядком полей
+`v → kind → offset_cm → rotation_deg → uniform_scale → vertical_scale`.
+Неизвестное поле, duplicate key, неверный тип/арность или диапазон дают
+`MH_E_PLACEMENT_GRAMMAR`.
+
+Dagor `include` конвертируется importer'ом в такой профиль и typed reference.
+Произвольный textual include/preprocessor в MH запрещён. То, что нельзя
+перенести без потерь, — lossless-conversion error; importer не сохраняет
+непонятный текст как скрытую authority.
+
+Owner-контракт не определяет имя поля, которым composite/random node ссылается
+на profile, точный порядок применения offset/rotation/uniform/vertical к
+Local T/R/S и политику диапазона scale, пересекающего ноль. Это
+`OPEN-V5-2`; до решения parsing отдельного `.placement` допустим только как
+fixture/read-only исследование, а binding/sampling/export имеет STOP.
+
+### 6.4 Blender authoring и Dagor import
+
+В Blender seed не существует ни в каком виде: ни в PropertyGroup, ни в custom
+properties, ни в UI, ни в `TECH`. Blender готовит source asset и всегда
+загружает ВСЕ варианты ВСЕХ random-узлов; выбор делает только UE resolver.
+
+Допустимы строго четыре служебные сцены: `COMPOSITE`, `MESH`,
+`ACTOR_PLACEHOLDERS`, `TECH`. `TECH` содержит только preview helpers и никогда
+не является source authority.
+
+Random-node — Empty с `kind=random` в PropertyGroup `mh4blend`. Его дети-
+options — Empty с `instance_collection` на чистую resource Collection. На
+option-Empty находятся typed `weight` и `mh_option_index`; resource Collection
+о weight/index не знает. Option transform display-only и экспортом игнорируется.
+Export сортирует options по `mh_option_index`. Отсутствующий/не-int index,
+дубликат индекса или невалидный weight блокирует export; duplicate index имеет
+код `MH_E_DUPLICATE_RANDOM_OPTION_INDEX`. Автоматическая перенумерация и
+сортировка по Outliner/имени запрещены.
+
+Панель Options предоставляет Add / Remove / Up / Down / weight и меняет typed
+option data. Dagor importer читает `ent` и `weight:r`; отсутствие `weight:r`
+означает ровно 1 при Dagor→typed conversion. Импорт рекурсивен по всем options,
+поддерживает structure-only / LOD0 / full-LOD и явные reuse/refresh definitions.
+Неразрешённый option следует v4 Blender placeholder policy, но остаётся в
+source closure; ambiguous same-kind resource блокирует импорт.
+
+Обычный или option actor token Blender хранит lossless в
+`ACTOR_PLACEHOLDERS` и не сверяет с UE registry. Отсутствующий mesh/composite в
+Blender даёт `MH_W_UNRESOLVED_PLACEMENT` и видимый placeholder с сохранением
+token; ambiguous same-kind остаётся блоком. UE source validation обязана
+резолвить каждый обычный reference и все options через index/ActorClassRegistry;
+неразрешённый reference блокирует composite и dependents. Если уже применённая
+dependency позже исчезла, derived preview показывает per-leaf placeholder до
+восстановления same-name resource и dependency notify/Rebuild.
+
+### 6.5 Source closure, resolved plan и export
+
+Существуют два разных замыкания, смешивать их запрещено:
+
+- **Source closure** — root плюс все обычные зависимости и ВСЕ options ВСЕХ
+  random-узлов рекурсивно. Используется для validation, cycle detection,
+  Include-All export, cook dependency admission и Find Broken References.
+  Source closure никогда не строится из seed.
+- **Resolved plan** — один результат resolver'а для конкретного
+  (root composite, placement Seed, closure). Он содержит только выбранные
+  зависимости/leaves для preview, Break, thumbnail, runtime и cook flattening.
+
+Blender export-команды:
+
+1. `Export Composite` — только выбранный root;
+2. `Export Composite + Composite Closure` — root, полное nested-composite
+   closure и все referenced placement profiles; mesh/material payloads не
+   добавляет;
+3. `Export Composite Include All Stuff` — то же плюс meshes, materials и
+   опционально textures; обход всех random options обязателен.
+
+Batch сначала строит и валидирует полный source closure без записи. Существующий
+незагруженный managed source переиспользуется байт-в-байт без перезаписи;
+отсутствующий или unmanaged dependency блокирует preflight. Затем ВСЁ замыкание
+пишется в staging и read-back проверяется до первой публикации. Для batch без
+placement profiles Publish order: materials → meshes → leaf composites →
+parents → root LAST. Место `.placement` в publish order не задано и входит в
+`OPEN-V5-2`; batch, которому нужен profile, до ответа имеет STOP. Каждый replace
+получает batch self-publish token; watcher подавляет собственные события.
+После первого успешного replace общий rollback не обещается: ошибка сообщает
+точный published/unpublished set как `MH_E_PARTIAL_PUBLISH`; откат выполняет
+VCS, теневой transaction manifest запрещён.
+
+### 6.6 `mh.random_stream:1` и `FMHResolvedCompositePlan`
+
+Один кросс-hostовый RNG имеет tag `mh.random_stream:1`. Python reference V5-S1
+и C++ V5-S2 обязаны быть бит-идентичны. Запрещены `FMath::Rand`,
+`FRandomStream` и порядок hash/map/set контейнеров как источник результата.
+
+Один int32 `Seed` принадлежит `AMHCompositeActor` и рекурсивно определяет все
+вложенные random-узлы. Seed 0 валиден при явном значении; auto-seed при создании
+всегда non-zero. Перемещение/вращение/scale актора Seed не меняет. Duplicate по
+умолчанию создаёт новый seed; явная опция Keep Seed копирует старый.
+`InstanceSeed` не существует. Blender seed не хранит.
+
+Draw-order фиксирован:
+
+```text
+option selection
+offset X, Y, Z
+rotation X, Y, Z
+uniform scale
+vertical scale
+depth-first child traversal in source order
+```
+
+Отсутствующий profile-параметр draw не потребляет. Порядок options значим.
+Cycle/source-closure validation всегда предшествует resolution и обходит все
+options.
+
+Resolver возвращает ровно один immutable `FMHResolvedCompositePlan`:
+
+- decisions: NodePath, selected option index, raw draw/sample и веса;
+- leaves: kind, resource, world matrix и provenance;
+- SelectedDependencies;
+- ResolvedSignature = hash(closure hash + Seed + selected indices + samples +
+  resolver version).
+
+Editor preview, Show Resolved Choices, Show Decision Trace, Break, thumbnail,
+`AMHRuntimeCompositeActor`, PIE, packaged runtime и cook обязаны потреблять этот
+же plan. Random-selection внутри component spawning запрещён. Level Instance
+random не резолвит никогда; в будущем он допустим только как optional backend
+уже выбранного plan-варианта.
+
+Битовый алгоритм/инициализация stream, отображение int32 Seed в state, draw →
+`[0,1)`/weighted interval, stable NodePath encoding, closure-hash serialization,
+signature hash/tag и resolver-version token owner-контрактом не заданы.
+Это `OPEN-V5-1` и `OPEN-V5-3`; V5-S1 может подготовить Dagor parity probe, но не
+может объявить Python reference/golden expected values принятыми до ответа.
+
+### 6.7 UE editor, runtime и cook
+
+`AMHCompositeActor` — persisted level-placement: ссылка на
+`UMHCompositeAsset`, actor transform, int32 `Seed`, `bAutoSeed` и read-only
+derived `ResolvedSignature`. Компоненты и decision trace derived/transient.
+Dependency notify пересобирает plan и preview без пересохранения уровня.
+
+V5-S5 добавляет Reseed / Randomize Selected / Copy Seed / Paste Seed / Lock Seed /
+Keep Seed on Duplicate / Show Resolved Choices / Show Decision Trace.
+Build Composite сериализует parent-local T/R/S. Edit Composite публикует source
+и пересобирает все placements. Break потребляет resolved plan текущего Seed и
+полностью материализует его leaves: selected mesh leaves становятся
+StaticMeshActor, selected gameplay leaves — акторами, nested composites/groups
+растворяются; source и asset не меняются. Любая непредставимая итоговая
+матрица блокирует всю операцию
+`MH_E_UNREPRESENTABLE_TRANSFORM` до мутаций. Файловые side-effects и undo
+имеют строгую границу: UE transaction закрывается до Publish, Undo не
+восстанавливает source bytes, VCS — единственный rollback source.
+
+Основной runtime path — `AMHRuntimeCompositeActor`, использующий тот же plan:
+Editor = PIE = packaged по decision trace и ResolvedSignature. Только после
+этого V5-S7 строит cook flattening: каждый placed actor резолвится по своему Seed;
+static leaves материализуются в ISM/HISM/StaticMeshActor, gameplay leaves — в
+самостоятельные actors, groups/nested composites растворяются, wrapper
+удаляется. World Partition/OFPA validation и cook smoke обязательны.
+Level-Instance cache (V5-S8) запаркован и ничего не блокирует.
+
+### 6.8 Первый end-to-end golden GAZ-53
+
+Freeze fixture состоит из трёх v5 composite-файлов:
+
+```text
+gaz53_b_random_cmp.composite
+  -> composite:gaz53_b_body_cmp
+  -> composite:gaz53_body_bc_random_cmp
+       -> one random node, three ordered mesh options, weight 1 each
+```
+
+Обязательные проверки по мере срезов:
+
+- Dagor → Blender → MH → export сохраняет порядок и веса; implicit Dagor
+  weight=1 материализуется в явный canonical weight;
+- source closure содержит все три option resources, включая невыбранные;
+- parent 100 + child local 25 даёт world 125, движение parent двигает child;
+- shear отклоняется без TRS approximation;
+- Seed set `{0, 1, 2, 42, 123, 1024, 2147483647}` получает фиксированные
+  choices/traces/signatures;
+- Python reference = UE Automation = PIE = packaged;
+- placements независимы: seed 100 == seed 100, seed 100 != seed 200;
+  перемещение placement не меняет result.
+
+V5-S0 фиксирует topology/source fixtures. Пока owner не дал production option
+tokens/Dagor oracle (`OPEN-V5-6`), option resource names в fixture явно
+synthetic и не являются GAZ content authority. Expected seed traces/signatures
+заполняет V5-S1 только после ратификации `OPEN-V5-1`/`OPEN-V5-3`; подстановка
+случайных ожидаемых значений в V5-S0 запрещена.
 
 ## 7. Applied state в ассетах (поправка №9)
 
@@ -650,12 +773,16 @@ Adopt-диалог (папка внутри `source_root` + имя, предза
   текущих master/library roots. UE object path в поле не хранится.
   Список Asset Registry tags ниже не расширяется — `AppliedParent` в
   теги не выносится.
-- `UMHCompositeAsset` — applied state зеркалом §5 (решение OPEN-V4-10):
+- `UMHCompositeAsset` — applied state зеркалом §5 (решение OPEN-V4-10), но
+  canonical payload теперь строго v5 по §6:
   `SourceHash` (raw, §3) и `AppliedHash` — hash канонического JSON,
   извлечённого из применённого ассета тем же extractor'ом, что Publish
   Composite; детект локальной правки — как у материалов (re-extract vs
   `AppliedHash`; non-roundtrippable extract = локальная правка, warning).
   Аналога `AppliedParent` у композитов нет.
+- `AMHCompositeActor.ResolvedSignature` — derived результат resolver'а §6.6,
+  а не identity/source receipt/Asset Registry tag. Он пересчитывается из
+  closure+Seed и не меняет шесть тегов managed asset.
 - Asset Registry tags — РОВНО ШЕСТЬ (поправка owner, решение OPEN-V4-13):
   `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`, `MH.SourceHash` (raw,
   форма §3), `MH.AppliedHash`, `MH.Managed` — индекс строит
@@ -686,6 +813,10 @@ Adopt-диалог (папка внутри `source_root` + имя, предза
 - Commit applied state только после: build успешен → async compilation
   завершена → package сохранён.
 
+Carrier/generated-path/applied receipt для нового `placement_profile` не задан
+owner-контрактом. `OPEN-V5-4` запрещает до решения добавлять новый UAsset,
+седьмой tag или трактовать source-only profile как уже применённый asset.
+
 ## 8. Генерируемые пути UE
 
 Без префиксов типов (обобщение №5–№6):
@@ -699,6 +830,8 @@ Adopt-диалог (папка внутри `source_root` + имя, предза
 
 Путь детерминирован именем, не source-папкой: перемещение файла не двигает
 `.uasset`.
+
+Generated path для `placement_profile` не изобретается до `OPEN-V5-4`.
 
 ## 9. Политика UE-редактирования
 
@@ -726,25 +859,52 @@ Autodesk FBX SDK -> IMHGeometryTranslator -> FMHSceneIR
   -> UMHStaticMeshImportData
 ```
 
-Порядок импорта: textures → materials → static meshes → composites.
+Порядок импорта: textures → materials → static meshes → placement profiles →
+leaf composites → parents → root. Внутри composite source closure обходятся
+все random options; resolved plan не участвует в import-order.
 Resolver: `IMHSourceResolver::Resolve(FMHResourceKey)`.
 
-## 11. Миграция (поправка №12)
+## 11. Миграция
 
-**Миграции файлов нет**: на v2 экспортирован один тестовый ассет. UID-код
-(uid.py, arbitration, passport codecs, Carrier B consensus, node-uid repair,
-meshser, миграционные утилиты v1→v2) удаляется сразу, без dual-read и без
-migration release. Единственный тестовый ассет пересоздаётся заново.
+**Миграции и dual-read нет.** Все существующие `.composite` считаются
+временными. V5-S2 физически удаляет v4 document-world parser/writer/compiler
+paths, v4 composite goldens и тесты (включая решение OPEN-V4-24) и заменяет их
+v5. Owner удаляет старые source-файлы и переэкспортирует. Файл без `"v"` не
+чинится и не интерпретируется: `MH_E_COMPOSITE_LEGACY_GENERATION` с сообщением
+из §6. Материалы, meshes, textures, индекс и их applied state не мигрируют.
 
 ## 12. Судьба существующих нормативов
 
-| Документ | Судьба |
+| Документ/область | Судьба в v5 |
 |---|---|
-| 01/05 (bundle/source schema, embedded identity) | superseded (identity, passport, UID) |
-| 07 (UE import contract) | superseded в §§ identity/resolver/passport/Ledger/textures; выживают: master registry идея §6, reimport-in-place, Message Log/commandlets; texture rules §5 НЕ выживают — заменены §5 этого документа (решение OPEN-V4-2) |
-| ADR_V2 passport-first | superseded целиком |
-| ADR_V3 interchange hybrid | superseded целиком (слои состояния и демоция Ledger→Index пересказаны здесь) |
-| AMENDMENT_combined_lod | Combined-LOD (один FBX = все LOD, dense levels) выживает; passport/`mh_lod_level`/meshser части superseded |
-| AMENDMENT_node_hierarchy r2 | иерархия+parent closure+кости выживают; `mh_uid`/repair части superseded |
-| QUESTIONS | UID-вопросы закрываются как superseded |
-| C1 (PR #7) | seams выживают; resolver/detector реализации заменяются по v4 |
+| 08 §§1–5, 7–10 | перенесены сюда; identity, index, mesh, material, texture, applied-state и generated-path контракты выживают, кроме явно перечисленных аддитивных `.placement` пунктов |
+| 08 §§6, 6.1 и OPEN-V4-24 | superseded целиком: document-world, structural-only group и старые Build/Break assumptions физически удаляются в V5-S2 |
+| 08 §11 | заменён §11 этого документа: v4 composite не мигрирует и не dual-read'ится |
+| 09 S0–S6 | историческая карта завершённой реализации v4; не является порядком работ v5 |
+| ADR_V4_mh_asset_io / 09 S7 | отдельный parked backlog; v5 S0–S7 не блокирует и сам не меняет |
+| 00–07, ADR_V2/V3, оба AMENDMENT, RISK_RESULTS, ROADMAP | сохраняют прежние v4 supersede-баннеры; новая authority — этот документ, их surviving statements уже перенесены сюда |
+| QUESTIONS | OPEN-V4-24 остаётся историей отменённого document-world решения; OPEN-V4-1 перенесён в OPEN-V5-7; активные дыры — только `OPEN-V5-*` |
+| C0/C1 audit reports и receipts v4 | исторические квитанции, не норматив и не acceptance v5 |
+
+## 13. Неразрешённые owner-вопросы и STOP
+
+До owner-ответа действуют записи `QUESTIONS.md`:
+
+- `OPEN-V5-1` — bit contract RNG и weighted mapping; STOP accepted Python/C++
+  reference и seed expected vectors;
+- `OPEN-V5-2` — binding `.placement` и transform-profile application; STOP
+  profile sampling/import/export;
+- `OPEN-V5-3` — NodePath/closure hash/ResolvedSignature byte contract; STOP
+  accepted signatures и cross-host parity;
+- `OPEN-V5-4` — UE carrier/generated path/applied receipt placement profile;
+  STOP managed asset/import path для `.placement`;
+- `OPEN-V5-5` — численный exactness predicate TRS/shear на float hosts; STOP
+  production admission check.
+- `OPEN-V5-6` — authoritative GAZ option tokens/Dagor/profile oracle; не
+  блокирует topology freeze, блокирует field parity и финальный V5-S1 golden.
+- `OPEN-V5-7` — filesystem aliases reader paths; сохраняет прежний строгий
+  admission и блокирует только его будущее ослабление.
+
+V5-S0 может быть ратифицирован как freeze только вместе с owner-ответами либо с
+явным сохранением перечисленных STOP-гейтов. Следующий срез не начинает
+заблокированную часть и не заполняет её «разумным дефолтом».

@@ -1,0 +1,29 @@
+{
+  "v": 5,
+  "nodes": [
+    {
+      "kind": "group",
+      "name": "parent_local_probe",
+      "transform": {
+        "translation_cm": [
+          100,
+          0,
+          0
+        ]
+      },
+      "children": [
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_body",
+          "transform": {
+            "translation_cm": [
+              25,
+              0,
+              0
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

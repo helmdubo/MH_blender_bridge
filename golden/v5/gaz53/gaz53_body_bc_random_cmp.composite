@@ -1,0 +1,26 @@
+{
+  "v": 5,
+  "nodes": [
+    {
+      "kind": "random",
+      "name": "body_bc_variant",
+      "options": [
+        {
+          "kind": "mesh",
+          "resource": "gaz53_body_bc_option_0",
+          "weight": 1
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_body_bc_option_1",
+          "weight": 1
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_body_bc_option_2",
+          "weight": 1
+        }
+      ]
+    }
+  ]
+}

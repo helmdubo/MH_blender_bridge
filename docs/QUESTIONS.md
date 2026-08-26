@@ -1,14 +1,151 @@
-# QUESTIONS — открытые вопросы Source Protocol v4
+# QUESTIONS — открытые вопросы Source Protocol v5
 
-Статус: единственный действующий норматив —
-[`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md). Открытые
-вопросы не могут ослабить его инварианты; до решения действует указанное в
-вопросе fail-closed правило. Все прежние UID/passport/round-trip вопросы ниже
-сохранены как история и явно помечены `SUPERSEDED BY 08`.
+Статус: на ветке V5-S0 freeze candidate — `docs/10_source_protocol_v5_plan.md`
+и `docs/11_v5_agent_slices.md`; они становятся единственной authority только
+после owner merge/ratification V5-S0. До этого production-код v5 запрещён.
+После ratification открытый `OPEN-V5-*` не ослабляет 10: затронутая часть
+остаётся fail-closed STOP.
 
-Открыт один вопрос v4: filesystem aliases (`OPEN-V4-1`). Вопросы
-`OPEN-V4-2`–`OPEN-V4-23` (включая file-drop policy) решены owner — нормативный
-текст перенесён в 08 §§2–9 и 09 (S2/S3/S4/S5/S6).
+Активны `OPEN-V5-1`…`OPEN-V5-7` ниже. Решённые V4-вопросы — история;
+`OPEN-V4-1` перенесён в `OPEN-V5-7`, а `OPEN-V4-24` document-world прямо
+superseded parent-local контрактом v5.
+
+## OPEN-V5-1 — bit contract `mh.random_stream:1` и weighted selection
+
+**Контекст.** Owner зафиксировал один cross-host stream, int32 placement Seed,
+draw-order и запрет `FMath::Rand`/`FRandomStream`, но не выбрал PRNG algorithm,
+state width/constants, отображение signed int32 Seed в state, raw draw width,
+преобразование draw в `[0,1)` и правило границ weighted interval. Без этого два
+независимых корректных implementation дадут разные choices.
+
+**Вопрос.** Какой точный битовый алгоритм и wire/reference pseudocode имеет tag
+`mh.random_stream:1`? После Dagor parity probe owner выбирает A — bit-for-bit
+Dagor RNG либо B — собственный RNG с behavioral compatibility; нужны также
+правила zero-weight/endpoint и consumption при единственной positive option.
+
+**Временное fail-closed правило.** V5-S1 может построить fixture, извлечь
+Dagor observations и подготовить API, но не объявляет Python reference или seed
+expected vectors принятыми. C++ RNG и V5-S2 не начинаются.
+
+**Статус.** ОТКРЫТ; блокирует accepted random reference и весь V5-S2.
+
+## OPEN-V5-2 — binding и application contract `.placement`
+
+**Контекст.** Заданы resource `<name>.placement`, `kind=placement_profile`,
+`"v":1` и пары `[base,deviation]` для offset/rotation/uniform/vertical, но не
+задано поле ссылки из composite/random node. Также не определены порядок
+composition с authored Local T/R/S, rotation order/convention, vertical axis,
+умножение uniform×vertical, admission диапазона scale, пересекающего zero, и
+место `.placement` в batch publish order.
+
+**Вопрос.** Как называется и где разрешено profile-reference поле? Как
+математически из sample строится Local transform, какие profile ranges
+невалидны до sampling и когда profile публикуется относительно meshes/leaf
+composites/root?
+
+**Временное fail-closed правило.** Reader не принимает выдуманное reference
+field; Dagor `include`, profile binding, sampling и Publish с profile получают
+STOP. Отдельный `.placement` допускается только как документационный fixture,
+не как production-managed resource.
+
+**Статус.** ОТКРЫТ; блокирует profile-часть V5-S1/V5-S2/V5-S3/V5-S4.
+
+## OPEN-V5-3 — NodePath, closure hash и ResolvedSignature bytes
+
+**Контекст.** `FMHResolvedCompositePlan` обязан содержать NodePath/trace и
+`ResolvedSignature = hash(closure hash + seed + indices + samples + resolver
+version)`, но не заданы NodePath encoding через nested composites/options,
+canonical closure serialization, hash algorithm/domain tags, sample byte form
+и resolver-version token.
+
+**Вопрос.** Каковы exact byte preimage, ordering и self-describing output tag
+ResolvedSignature? Входит ли display-only name, raw source path или только
+ResourceKey/canonical payload hash?
+
+**Временное fail-closed правило.** До решения trace может существовать только
+как отладочная in-memory структура; signature не persist/cook/cache authority,
+cross-host signature golden не утверждается.
+
+**Статус.** ОТКРЫТ; блокирует accepted V5-S1 signatures и V5-S5+ cache/parity claims.
+
+## OPEN-V5-4 — UE carrier и applied state для `placement_profile`
+
+**Контекст.** Индекс v4 и шесть Asset Registry tags объявлены выжившими без
+изменений, но новый source kind должен участвовать в dependency/cook closure.
+Не указано, получает ли он UAsset/receipt/GeneratedAssets row и какой generated
+path, либо resolver читает canonical source через index без managed carrier.
+
+**Вопрос.** Каков UE carrier placement profile, его generated path, applied
+receipt/hash policy и место в import order? Если carrier отсутствует, как
+package/cook получает immutable profile data без source-tree runtime access?
+
+**Временное fail-closed правило.** Не добавлять новый UAsset, седьмой tag,
+generated path или source-at-runtime fallback. Index может документировать
+candidate kind/edge, но production import/compile profile STOP.
+
+**Статус.** ОТКРЫТ; блокирует UE `.placement` path V5-S2+.
+
+## OPEN-V5-5 — exact admission predicate для host TRS/shear
+
+**Контекст.** `MH_E_UNREPRESENTABLE_TRANSFORM` фиксирован на Dagor import,
+Blender export и UE compile; silent approximation запрещена. Однако host
+matrices имеют float precision, а owner не задал алгоритм/predicate и допуск,
+который отличает round-trip noise от shear. v4 tolerance относился к иному
+document-world контракту и не может быть молча унаследован.
+
+**Вопрос.** Какой exact/float32 predicate и сравниваемые величины одинаково
+реализуются Python и C++? Допускаются ли negative scales/reflections и какой
+canonical decomposition выбирается при нескольких эквивалентных T/R/S?
+
+**Временное fail-closed правило.** Production conversion/compile boundary с
+не-identity parent scale/rotation не реализуется; никакой epsilon/decompose
+repair не выбирается исполнителем. Fixture может только объявить expected
+reject.
+
+**Статус.** ОТКРЫТ; блокирует transform admission в
+V5-S2/V5-S3/V5-S5/V5-S7.
+
+## OPEN-V5-6 — authoritative GAZ-53 option resources и transform/profile data
+
+**Контекст.** Owner задал имена трёх composite-файлов, topology root→body+random
+и три options weight 1, но не передал authoritative option resource tokens,
+Dagor source fixture, authored transforms или placement profile values.
+Поиск в репозитории и локальных project docs этих файлов не обнаружил.
+
+**Вопрос.** Какие exact option resources и Dagor исходники являются oracle для
+первого end-to-end golden? Какие profile values должны давать ожидаемые
+transforms для seed set?
+
+**Временное fail-closed правило.** V5-S0 хранит topology-only fixture с явно
+synthetic canonical option tokens; он не является production GAZ content и не
+фиксирует seed expected traces/signatures. V5-S1 parity acceptance ждёт
+owner-provided/confirmed oracle.
+
+**Статус.** ОТКРЫТ; не блокирует documentation freeze, блокирует GAZ field
+parity и финальный V5-S1 golden.
+
+## OPEN-V5-7 — filesystem aliases на reader paths
+
+**Контекст.** Лексическая path-канонизация не доказывает, что junction/symlink
+под разрешённым каталогом физически не ведёт обратно в `source_root`. Это
+создаёт обход запрета записи source-файлов через report output и риск сканирования
+payload за физической границей root. V5 сохраняет v4 index/source-root contract,
+поэтому прежний `OPEN-V4-1` переносится без изменения сути.
+
+**Вопрос.** Разрешать ли явно настроенный alias самого `source_root` после
+physical-root canonicalization, либо aliases остаются полностью запрещены для
+source scan и diagnostic report output?
+
+**Временное fail-closed правило.** Diagnostic/commandlet report output разрешён
+только под `Saved/Mimir`; любой symlink/junction-компонент output или source path
+отклоняется. Scan отклоняет alias ниже границы настроенного `source_root`; сам
+root пока определяет boundary. `Saved/MimirBridge/ProjectIndex.sqlite` задан
+отдельно и этим ограничением report output не переопределяется.
+
+**Статус.** ОТКРЫТ; действует прежнее fail-closed правило. Не блокирует
+V5-S0/V5-S1 pure-contract work, блокирует ослабление path admission.
+
+---
 
 ## OPEN-V4-23 — ручной file-drop `.composite` вне `source_root`
 
@@ -1034,6 +1171,9 @@ asset mutation, watcher и `LedgerCommit` успешного импорта на
 
 ### OPEN-V4-1 (ранее UE-QUESTION-18) — filesystem aliases на reader paths
 
+**Статус. SUPERSEDED BY OPEN-V5-7.** Этот body сохранён как история; активный
+вопрос и fail-closed правило перенесены наверх без смены смысла.
+
 **Контекст.** Лексическая path-канонизация не доказывает, что junction/symlink
 под разрешённым каталогом физически не ведёт обратно в `source_root`. Это
 создаёт обход строгого запрета записи source-файлов через `-report` и риск
@@ -1053,7 +1193,7 @@ alias ниже границы настроенного `source_root`; сам roo
 `Saved/MimirBridge/ProjectIndex.sqlite` задан 08 §3 отдельно и этим временным
 ограничением report output не переопределяется.
 
-**Статус.** ОТКРЫТ; действует временное fail-closed правило. Упоминание его
+**Прежний статус.** ОТКРЫТ; действовало временное fail-closed правило. Упоминание его
 реализации в C1 является исторической квитанцией, а не приёмкой v4.
 
 ### OPEN-V4-24 — group transform: document-world или parent-local

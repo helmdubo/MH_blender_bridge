@@ -1,0 +1,299 @@
+# 11 — Срезы реализации Source Protocol v5 для внешнего агента
+
+Статус: **кандидат owner freeze V5-S0**. Аудитория — исполнитель без контекста
+сессии и внешний ai-аудитор. До любых правок прочитать целиком
+`docs/10_source_protocol_v5_plan.md`, этот файл и `README.md`. Owner merge
+V5-S0 означает ратификацию; до него production-код не меняется.
+
+## Инварианты для всех срезов
+
+1. **10 — единственная v5 authority после ратификации V5-S0.** Конфликт кода,
+   08/09, старых goldens или исторических questions с 10 решается в пользу 10.
+   Новое нормативное решение не импровизируется: реальная дыра оформляется в
+   `docs/QUESTIONS.md` как `OPEN-V5-*`:
+   Контекст → Вопрос → Временное fail-closed правило → Статус, после чего
+   затронутая часть получает STOP.
+2. **Срезы строго последовательны.** V5-S<N+1> не начинается, пока owner не
+   смержил/ратифицировал V5-S<N>. Отдельный внешний review не равен owner
+   acceptance. Один срез — одна ветка `v5/s<N>-<slug>`, один PR, одна квитанция
+   `docs/receipts/v5_s<N>.md`. PR мержит только owner.
+3. **Fail-closed.** Неоднозначность, неизвестное поле/версия, непредставимый
+   transform, неполное closure или divergent source блокируют ресурс и
+   dependents. Никаких tolerance-repair, snapping, mtime winner, legacy
+   fallback, dual-read или silent discard.
+4. **Коды диагностики.** Новый `MH_E_*`/`MH_W_*` регистрируется в
+   `addon/mh4blend/core/canonical.py::ERROR_CODES`, зеркальном C++ registry и
+   golden counts тем же срезом, который вводит первый call site. Фиксированный
+   код v5: `MH_E_UNREPRESENTABLE_TRANSFORM`. JSON random grammar расширяет
+   `MH_E_COMPOSITE_GRAMMAR`; отдельное random-grammar семейство не вводится.
+5. **Canonical bytes.** Python и C++ читают общие golden-файлы. Duplicate JSON
+   keys reject. Float32-shortest, field order, LF/final-LF и omission rules
+   определены 10. Контракты material/mesh/texture/index/applied state v4 не
+   получают version fields.
+6. **Source closure != resolved plan.** Closure всегда содержит все options и
+   никогда не зависит от seed. Все потребители конкретного результата получают
+   один `FMHResolvedCompositePlan`; random внутри component-spawning кода
+   запрещён.
+7. **Blender boundary.** Seed в Blender не существует. Scene authority —
+   `COMPOSITE`/`MESH`/`ACTOR_PLACEHOLDERS`; `TECH` только preview.
+   `reference/` read-only; `golden/` меняется только в явном scope среза.
+8. **UE boundary.** Engine не форкается и не изменяется. Плагин остаётся в
+   `ue/MimirComposite`. Любое неожиданное изменение Engine — STOP/receipt.
+   Level Instance random не резолвит.
+9. **C++ gate.** Каждый срез с C++ проходит stock UE 5.7.4:
+   guarded host/plugin build; `BuildPlugin -StrictIncludes` без unity/PCH;
+   force-unity с отключённым adaptive unity; `Automation RunTests Mimir`.
+   Недавно изменённые file-scope helpers имеют unique names/anonymous namespace.
+10. **Квитанция честная.** Разделять automated gates, Blender/UE field checks,
+    внешний audit и owner acceptance. WIP commit, focused test или STOP receipt
+    не являются acceptance следующего gate.
+
+---
+
+## V5-S0 — Freeze
+
+Цель: получить ратифицируемый, самодостаточный норматив v5 без production-code.
+
+Scope:
+
+1. Создать `docs/10_source_protocol_v5_plan.md`. Все выжившие части 08
+   перенести внутрь; composite/document-world часть заменить v5. Зафиксировать:
+   mandatory `"v": 5`, random/empty options, parent-local T/R/S, placement
+   profile, seed ownership, closure/plan separation, Blender model, export batch,
+   editor/runtime/cook paths и GAZ-53 acceptance.
+2. Создать этот файл с последовательностью V5-S0…S7 и parked S8.
+3. Добавить в 08/09 верхние supersede-баннеры с таблицами судьбы. Исторический
+   body сохранить.
+4. Обновить `README.md` и `KICKOFF_PROMPT.md` на 10/11. Старую v4 часть
+   оставить под явным archive/superseded banner.
+5. Добавить GAZ-53 source fixtures в `golden/v5/gaz53/`:
+   `gaz53_b_random_cmp.composite` → `gaz53_b_body_cmp.composite` +
+   `gaz53_body_bc_random_cmp.composite`; три ordered options weight 1;
+   parent-local probe 100+25=125. V5-S0 не подставляет выдуманные RNG expected
+   traces/signatures.
+6. Выбрать diagnostic naming. Решение freeze-candidate:
+   `MH_E_COMPOSITE_LEGACY_GENERATION`,
+   `MH_E_PLACEMENT_GRAMMAR`,
+   `MH_E_DUPLICATE_RANDOM_OPTION_INDEX`,
+   `MH_E_PARTIAL_PUBLISH` и фиксированный
+   `MH_E_UNREPRESENTABLE_TRANSFORM`; random JSON violations остаются
+   `MH_E_COMPOSITE_GRAMMAR`.
+7. Реальные дыры owner-контракта записать как `OPEN-V5-*` со STOP; кодов и
+   goldens для нератифицированной семантики не изобретать.
+8. Создать `docs/receipts/v5_s0.md` с base SHA, branch, changed paths,
+   проверками и явным `AWAITING OWNER RATIFICATION`.
+
+Acceptance:
+
+- production paths `addon/`, `ue/`, `tools/`, `reference/` не изменены;
+- 10/11/README/KICKOFF согласованы, 08/09 имеют v5 fate-table banners;
+- все v5 composite fixtures начинаются первым полем `"v": 5`;
+- fixture graph имеет все три options, closure expectation и parent-local probe;
+- JSON parse/duplicate-filename/Markdown link checks зелёные;
+- Python suite прогнан как regression, но не выдаётся за v5 implementation;
+- внешний auditor получил крупный freeze-срез; owner merge остаётся gate.
+
+---
+
+## V5-S1 — Cross-host random reference и Dagor parity probe
+
+Gate: только после owner merge V5-S0 и ответов на
+`OPEN-V5-1`/`OPEN-V5-2`/`OPEN-V5-3`, достаточных для bit/profile/signature
+reference. `OPEN-V5-6` может оставаться открытым во время Dagor probe, но должен
+быть закрыт owner'ом до acceptance полного GAZ golden.
+
+Python, bpy-free:
+
+1. Реализовать `mh.random_stream:1`: state/seed mapping, fixed draw,
+   weighted selection без bias, profile sampling, DFS recursion, decision trace,
+   SelectedDependencies и ResolvedSignature.
+2. Один API возвращает immutable semantic plan/reference result; resolver не
+   зависит от dict/set iteration.
+3. Golden seed set:
+   `0, 1, 2, 42, 123, 1024, 2147483647`. Зафиксировать raw draws, normalized
+   samples, option indices, sampled transforms, NodePath, selected deps и
+   signatures.
+4. Golden'ами доказать draw-order:
+   selection → offset X/Y/Z → rotation X/Y/Z → uniform → vertical → children;
+   отсутствующий profile field draw не потребляет.
+5. Source closure builder отдельно обходит все options/cycles и не принимает
+   Seed.
+
+Параллельный **Dagor Random Parity Probe**:
+
+- минимальный fixture с тремя равновесными options и transform ranges;
+- те же seeds;
+- ожидаемые choices/transforms извлекаются из reference source/наблюдаемого
+  Dagor поведения с provenance (файл/версия/команда), без копирования
+  лицензированного кода;
+- owner выбирает A — bit-for-bit Dagor RNG, либо B — behavioral compatibility с
+  собственным RNG. Выбор записывается в 10/QUESTIONS и только затем открывает
+  C++.
+
+Acceptance: bpy-free pytest + golden verifier; повторный run byte-identical;
+probe receipt отделяет измеренный Dagor факт от MH-норматива; owner decision
+A/B смержен. Без него V5-S2 STOP.
+
+---
+
+## V5-S2 — Codecs v5 и C++ random parity
+
+Gate: V5-S1 owner-accepted; `OPEN-V5-4` и `OPEN-V5-5` закрыты owner'ом до UE
+carrier/transform production work.
+
+Python и C++:
+
+1. Parser/writer `.composite` v5: first `"v": 5`, closed grammar,
+   random/options/empty, parent-local T/R/S, duplicate-key reject, canonical
+   bytes.
+2. Missing v → `MH_E_COMPOSITE_LEGACY_GENERATION` и обязательное сообщение;
+   wrong version → `MH_E_UNKNOWN_SCHEMA_VERSION`. Dual-read отсутствует.
+3. Parser/writer `.placement` v1 по ратифицированному binding/profile
+   контракту.
+4. C++ `mh.random_stream:1` бит-идентичен Python на всех общих vectors,
+   включая traces/signatures.
+5. Физически удалить v4 document-world parser/writer/compiler paths,
+   `composite_v4_vectors.json` и world-transform tests/goldens; заменить v5.
+   OPEN-V4-24 остаётся только historical docs.
+6. Cycle/dependency traversal проходит все options. Source closure и resolved
+   plan имеют разные APIs/types.
+7. Зарегистрировать коды и обновить точные E/W counts.
+
+Acceptance: Python/C++ canonical bytes и RNG traces byte-identical; v4 file
+без `v` отвергается без fallback; parent 100 + local 25 = world 125; shear
+negative vectors; полный Python gate и двойной UE unity gate.
+
+---
+
+## V5-S3 — Blender random authoring и Dagor import
+
+Gate: V5-S2 owner-accepted.
+
+1. PropertyGroup `mh4blend`: random kind, typed option weight/index/resource.
+   Resource collections остаются чистыми.
+2. Options panel: Add/Remove/Up/Down/weight. Reorder меняет indices явно.
+   Duplicate/missing invalid index fail-closed; option transforms display-only.
+3. Строго четыре scenes: `COMPOSITE`, `MESH`,
+   `ACTOR_PLACEHOLDERS`, `TECH`. Preview helpers не экспортируются.
+4. Dagor `ent`/`weight:r` → typed options; implicit weight=1; `include` →
+   typed placement profile. Непереносимое — lossless error с provenance.
+5. Recursive import грузит все variants; modes structure-only/LOD0/full-LOD;
+   explicit reuse/refresh definitions.
+6. Blender UI/data/fixtures не содержат seed/InstanceSeed.
+
+Acceptance: bpy field round-trip Dagor→Blender→MH→export; option display
+transforms не меняют bytes; reorder меняет только option order/index;
+unselected dependency загружается; grep seed/InstanceSeed по Blender production
+пуст, кроме явных запретных тестов/доков.
+
+---
+
+## V5-S4 — Full closure export
+
+Gate: V5-S3 owner-accepted.
+
+1. Реализовать три команды 10 §6.5.
+2. Walker строит полное source closure через все random options; seed parameter
+   отсутствует в API.
+3. Full preflight: loaded authoring resources либо existing managed source;
+   missing/unmanaged/ambiguous блокируют до staging.
+4. Staging всего замыкания, read-back каждого payload, затем materials →
+   meshes → placement profiles в ратифицированной `OPEN-V5-2` позиции → leaf
+   composites → parents → root LAST.
+5. Batch self-publish tokens/watcher suppression. После частичного replace
+   честный `MH_E_PARTIAL_PUBLISH` с published/unpublished sets; rollback — VCS.
+6. Receipt фиксирует crash/failure injection на каждом publish boundary.
+
+Acceptance: root не заменяется до всех dependencies; невыбранные options
+попадают в closure; existing unloaded source не переписывается; preflight error
+не оставляет файлов; injected partial failure сообщает точный набор.
+
+---
+
+## V5-S5 — UE Editor random
+
+Gate: V5-S4 owner-accepted.
+
+1. `AMHCompositeActor`: int32 `Seed`, `bAutoSeed`, derived read-only
+   `ResolvedSignature`. Auto create non-zero; manual 0 legal; transform actor не
+   меняет seed; duplicate default new seed, Keep Seed explicit.
+2. Один resolver строит `FMHResolvedCompositePlan`. Preview, Break, thumbnail,
+   Show Choices/Trace используют только plan.
+3. UI: Reseed / Randomize Selected / Copy/Paste/Lock Seed / Keep Seed /
+   Show Resolved Choices / Show Decision Trace. InstanceSeed отсутствует.
+4. Nested random и dependency-notify rebuild; source closure cook/find-broken
+   не зависит от current seed.
+5. UE compile применяет parent-local matrices и блокирует
+   `MH_E_UNREPRESENTABLE_TRANSFORM` до component mutation.
+6. Level Instance не резолвит.
+
+Acceptance: одинаковые root+closure+seed → одинаковый trace/signature; seed 100
+placements совпадают, seed 200 отличается на ratified golden; move actor не
+меняет resolution; dependency change rebuilds; preview/Break/thumbnail parity;
+двойной unity gate.
+
+---
+
+## V5-S6 — Runtime
+
+Gate: V5-S5 owner-accepted.
+
+1. `AMHRuntimeCompositeActor` в runtime module использует сериализуемый вход
+   того же resolver/plan; editor-only services не попадают в packaged path.
+2. Spawn materializes plan leaves; random draw в spawning запрещён.
+3. Cook dependency admission использует source closure, runtime result —
+   resolved plan.
+4. Cross-host trace/signature report доступен Automation/PIE/packaged smoke.
+
+Acceptance: Python reference = UE Automation = Editor preview = PIE = packaged
+по choices, samples, world transforms, SelectedDependencies и
+ResolvedSignature на seed set; двойной unity gate и packaged smoke.
+
+---
+
+## V5-S7 — Cook flattening
+
+Gate: V5-S6 owner-accepted.
+
+Build commandlet:
+
+1. Для каждого placed `AMHCompositeActor` строит plan по его Seed.
+2. Static leaves → ISM/HISM/StaticMeshActor по ратифицированной policy;
+   gameplay leaves → самостоятельные actors.
+3. Groups и nested composites растворяются; wrapper снимается. Никакого нового
+   random draw при materialization.
+4. World Partition/OFPA validation, stable actor naming/ownership и idempotent
+   rerun; source closure обеспечивает cook dependencies всех options.
+5. Failure до commit не оставляет half-flattened level/package.
+
+Acceptance: flattened world визуально/семантически равен plan; traces/signatures
+совпадают с V5-S6 до flatten; World Partition/OFPA и cook smoke зелёные; двойной
+unity gate.
+
+---
+
+## V5-S8 — Level-Instance cache (PARKED)
+
+Не входит в обязательную последовательность и ничего не блокирует. Level
+Instance никогда не выбирает random. Возможный будущий backend может кэшировать
+только уже разрешённый plan-вариант после отдельного owner ADR.
+
+Backlog `mh_asset_io`/`ufbx` остаётся отдельным по
+`ADR_V4_mh_asset_io.md` и не смешивается с V5-S0…S7.
+
+## Сводное end-to-end acceptance v5
+
+1. Missing `"v"`: legacy-generation error, no dual-read.
+2. Random option order/weights canonical и lossless; zero-weight не выбирается.
+3. Cycle в любом невыбранном option блокирует source closure.
+4. Parent 100 + local 25 = world 125; parent motion moves child.
+5. Shear reject на Dagor import, Blender export и UE compile.
+6. Source closure включает все options; resolved plan — только selected deps.
+7. Draw-order и absent-parameter no-draw совпадают Python/C++.
+8. Seed set имеет frozen choices/traces/signatures cross-host.
+9. Seed lives only on UE placement; Blender seed surface отсутствует.
+10. Two seed-100 placements equal; seed-200 differs; actor movement stable.
+11. Editor preview = Break = thumbnail = PIE = packaged = cook plan.
+12. Include-All batch stages closure and publishes root last.
+13. Runtime actor precedes cook flattening; Level Instance does not resolve.
+14. Engine and `reference/` unchanged; each C++ slice passes both unity gates.

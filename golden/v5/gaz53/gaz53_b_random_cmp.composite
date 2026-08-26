@@ -1,0 +1,13 @@
+{
+  "v": 5,
+  "nodes": [
+    {
+      "kind": "composite",
+      "resource": "gaz53_b_body_cmp"
+    },
+    {
+      "kind": "composite",
+      "resource": "gaz53_body_bc_random_cmp"
+    }
+  ]
+}
