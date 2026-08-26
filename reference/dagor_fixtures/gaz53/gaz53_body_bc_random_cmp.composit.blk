@@ -1,0 +1,9 @@
+className:t="composit"
+
+
+node{
+  ent{ name:t="gaz53_bread_b_cmp:composit";}
+  ent{ name:t="gaz53_wooden_b_cmp:composit";}
+  ent{ name:t="gaz53_wooden_c_cmp:composit";}
+  tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+}

@@ -1,0 +1,16 @@
+className:t="composit"
+
+
+node{
+  tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+
+  node{
+    name:t="gaz53_b_body_cmp:composit"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_body_bc_random_cmp:composit"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+}

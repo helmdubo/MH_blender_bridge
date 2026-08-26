@@ -1,0 +1,91 @@
+className:t="composit"
+
+node{
+  tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+
+  node{
+    name:t="gaz53_b_window_front_cmp:composit"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_body:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_bumper:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_door_left:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [1.78794, 0.624748, 0.794201]]
+  }
+
+  node{
+    name:t="gaz53_b_door_right:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [1.78794, 0.624748, -0.794201]]
+  }
+
+  node{
+    name:t="gaz53_b_doorstep_left:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_doorstep_right:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_headlight_big_left_base:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_headlight_big_left_glass:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_headlight_big_right_base:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_headlight_big_right_glass:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_headlight_small_right:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_hood:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [2.07504, 1.42497, 0.103072]]
+  }
+
+  node{
+    name:t="gaz53_b_mirror_left:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_mirror_right:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_wiper_left:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+  node{
+    name:t="gaz53_b_wiper_right:rendInst"
+    tm:m=[[1, 0, 0] [0, 1, 0] [0, 0, 1] [0, 0, 0]]
+  }
+
+}
