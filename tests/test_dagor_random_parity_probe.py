@@ -51,8 +51,8 @@ def test_pinned_source_facts_are_separate_and_disprove_stream_byte_identity():
     assert document["status"] == {
         "mh_normative": "frozen",
         "dagor_evidence": "pinned_public_source_derived",
-        "dagor_runtime_observation": "not_run",
-        "owner_a_or_b_decision": "pending",
+        "dagor_runtime_observation": "not_run_not_a_gate",
+        "owner_decision": "B_behavioral_compatibility",
     }
     assert document["provenance"]["commit"] == DAGOR_SOURCE_COMMIT
     assert document["comparison"]["stream_bytes_equal"] is False
@@ -60,7 +60,7 @@ def test_pinned_source_facts_are_separate_and_disprove_stream_byte_identity():
         0, 2, 123, 1024, 2147483647,
     ]
     assert document["comparison"]["transform_axis_binding"] == (
-        "requires_real_runtime_observation")
+        "unresolved_historical_not_a_gate")
     first = document["vectors"][0]
     assert first["mh_random_stream_1"]["selection"]["option"] == 1
     assert first["dagor_pinned_source"]["selection"] == {
@@ -89,9 +89,20 @@ def test_probe_and_gaz_generated_files_are_byte_identical():
 def test_runtime_template_never_claims_an_observation():
     template = json.loads(
         (PROBE_ROOT / "runtime_observation.template.json").read_text(encoding="utf-8"))
-    assert template["status"] == "not_measured"
+    assert template["status"] == "optional_historical_not_measured"
+    assert template["gate"] is False
+    assert template["owner_decision"] == "B_behavioral_compatibility"
     assert template["seed_observations"] == []
     assert all(value is None for value in template["provenance"].values())
+
+
+def test_hashed_reference_and_v5_golden_trees_are_physical_lf():
+    paths = tuple((REPO_ROOT / "reference" / "dagor_fixtures").rglob("*")) + tuple(
+        (REPO_ROOT / "golden" / "v5").rglob("*"))
+    files = tuple(path for path in paths if path.is_file())
+    assert files
+    for path in files:
+        assert b"\r\n" not in path.read_bytes(), path.relative_to(REPO_ROOT)
 
 
 def test_gaz_protocol_fixture_contains_no_synthetic_option_tokens():

@@ -3,8 +3,8 @@
   "status": {
     "mh_normative": "frozen",
     "dagor_evidence": "pinned_public_source_derived",
-    "dagor_runtime_observation": "not_run",
-    "owner_a_or_b_decision": "pending"
+    "dagor_runtime_observation": "not_run_not_a_gate",
+    "owner_decision": "B_behavioral_compatibility"
   },
   "provenance": {
     "repository": "https://github.com/GaijinEntertainment/DagorEngine",
@@ -167,7 +167,7 @@
           "option": 0
         },
         "transform_candidates": {
-          "binding_status": "runtime_observation_required",
+          "binding_status": "unresolved_historical_not_a_gate",
           "candidate_scope": "illustrative_non_exhaustive",
           "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
           "left_to_right_candidate": [
@@ -359,7 +359,7 @@
           "option": 1
         },
         "transform_candidates": {
-          "binding_status": "runtime_observation_required",
+          "binding_status": "unresolved_historical_not_a_gate",
           "candidate_scope": "illustrative_non_exhaustive",
           "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
           "left_to_right_candidate": [
@@ -551,7 +551,7 @@
           "option": 0
         },
         "transform_candidates": {
-          "binding_status": "runtime_observation_required",
+          "binding_status": "unresolved_historical_not_a_gate",
           "candidate_scope": "illustrative_non_exhaustive",
           "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
           "left_to_right_candidate": [
@@ -743,7 +743,7 @@
           "option": 1
         },
         "transform_candidates": {
-          "binding_status": "runtime_observation_required",
+          "binding_status": "unresolved_historical_not_a_gate",
           "candidate_scope": "illustrative_non_exhaustive",
           "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
           "left_to_right_candidate": [
@@ -935,7 +935,7 @@
           "option": 0
         },
         "transform_candidates": {
-          "binding_status": "runtime_observation_required",
+          "binding_status": "unresolved_historical_not_a_gate",
           "candidate_scope": "illustrative_non_exhaustive",
           "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
           "left_to_right_candidate": [
@@ -1127,7 +1127,7 @@
           "option": 0
         },
         "transform_candidates": {
-          "binding_status": "runtime_observation_required",
+          "binding_status": "unresolved_historical_not_a_gate",
           "candidate_scope": "illustrative_non_exhaustive",
           "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
           "left_to_right_candidate": [
@@ -1319,7 +1319,7 @@
           "option": 1
         },
         "transform_candidates": {
-          "binding_status": "runtime_observation_required",
+          "binding_status": "unresolved_historical_not_a_gate",
           "candidate_scope": "illustrative_non_exhaustive",
           "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
           "left_to_right_candidate": [
@@ -1437,6 +1437,6 @@
     "selection_equal_for_all_seeds": false,
     "stream_bytes_equal": false,
     "stream_bytes_reason": "Pinned Dagor source exposes a 32-bit LCG and 15-bit sample; mh.random_stream:1 is the owner-frozen uint64 splitmix stream.",
-    "transform_axis_binding": "requires_real_runtime_observation"
+    "transform_axis_binding": "unresolved_historical_not_a_gate"
   }
 }

@@ -4,7 +4,8 @@ The probe keeps three things distinct:
 
 * the normative ``mh.random_stream:1`` reference;
 * facts derived from one pinned public Dagor source revision;
-* a real Dagor runtime observation, which must be supplied separately.
+* an optional real Dagor runtime observation, retained only as historical
+  evidence after the owner selected behavioral compatibility (variant B).
 
 No Dagor source code is copied into this repository.  The small source-derived
 model below is an independent executable description of the observable PRNG and
@@ -46,6 +47,7 @@ DAGOR_COMPOSITE_SOURCE = (
 )
 PROBE_SCHEMA = "mh.dagor_random_parity_probe:1"
 GAZ_SCHEMA = "mh.gaz53_random_baseline:1"
+OWNER_DECISION = "B_behavioral_compatibility"
 
 _UINT32_MASK = (1 << 32) - 1
 _DAGOR_LCG_MUL = 0x41C64E6D
@@ -63,6 +65,13 @@ _P2 = re.compile(
 
 class DagorProbeError(ValueError):
     """Fail-closed malformed probe/reference fixture."""
+
+
+def _read_hashed_lf_bytes(path: Path) -> bytes:
+    payload = path.read_bytes()
+    if b"\r\n" in payload:
+        raise DagorProbeError(f"hashed fixture must use physical LF bytes: {path}")
+    return payload
 
 
 def _f32(value: int | float) -> float:
@@ -262,7 +271,7 @@ def _source_transform_candidates(fixture: DagorFixture, seed: int) -> dict:
         return result
 
     return {
-        "binding_status": "runtime_observation_required",
+        "binding_status": "unresolved_historical_not_a_gate",
         "candidate_scope": "illustrative_non_exhaustive",
         "reason": (
             "The pinned C++ source mutates one seed from function-call arguments "
@@ -324,7 +333,7 @@ def _mh_vector(fixture: DagorFixture, seed: int) -> dict:
 
 
 def parity_document(fixture_path: Path) -> dict:
-    payload = fixture_path.read_bytes()
+    payload = _read_hashed_lf_bytes(fixture_path)
     fixture = parse_dagor_random_fixture(payload)
     vectors = []
     mismatches = []
@@ -347,8 +356,8 @@ def parity_document(fixture_path: Path) -> dict:
         "status": {
             "mh_normative": "frozen",
             "dagor_evidence": "pinned_public_source_derived",
-            "dagor_runtime_observation": "not_run",
-            "owner_a_or_b_decision": "pending",
+            "dagor_runtime_observation": "not_run_not_a_gate",
+            "owner_decision": OWNER_DECISION,
         },
         "provenance": {
             "repository": DAGOR_SOURCE_REPOSITORY,
@@ -386,7 +395,7 @@ def parity_document(fixture_path: Path) -> dict:
                 "Pinned Dagor source exposes a 32-bit LCG and 15-bit sample; "
                 "mh.random_stream:1 is the owner-frozen uint64 splitmix stream."
             ),
-            "transform_axis_binding": "requires_real_runtime_observation",
+            "transform_axis_binding": "unresolved_historical_not_a_gate",
         },
     }
 
@@ -401,7 +410,7 @@ def gaz_baseline_document(source_directory: Path) -> dict:
     if {path.name for path in source_paths} != expected_names:
         raise DagorProbeError("GAZ oracle must contain exactly the three owner files")
     random_path = source_directory / "gaz53_body_bc_random_cmp.composit.blk"
-    payload = random_path.read_bytes()
+    payload = _read_hashed_lf_bytes(random_path)
     fixture = parse_dagor_random_fixture(payload)
     source_records = []
     closure_by_kind: dict[str, set[str]] = {
@@ -413,7 +422,7 @@ def gaz_baseline_document(source_directory: Path) -> dict:
         "actor": set(),
     }
     for path in source_paths:
-        source_payload = path.read_bytes()
+        source_payload = _read_hashed_lf_bytes(path)
         references = parse_dagor_references(source_payload)
         for kind, resource in references:
             resource_kind = "static_mesh" if kind == "mesh" else kind
@@ -451,7 +460,8 @@ def gaz_baseline_document(source_directory: Path) -> dict:
         "status": {
             "source_oracle": "bound",
             "mh_normative_choices": "frozen",
-            "dagor_runtime_observation": "not_run",
+            "dagor_runtime_observation": "not_run_not_a_gate",
+            "owner_decision": OWNER_DECISION,
             "resolved_signatures": "blocked_on_option_payload_closure",
         },
         "sources": source_records,

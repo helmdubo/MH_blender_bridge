@@ -3,13 +3,14 @@
   "status": {
     "source_oracle": "bound",
     "mh_normative_choices": "frozen",
-    "dagor_runtime_observation": "not_run",
+    "dagor_runtime_observation": "not_run_not_a_gate",
+    "owner_decision": "B_behavioral_compatibility",
     "resolved_signatures": "blocked_on_option_payload_closure"
   },
   "sources": [
     {
       "path": "reference/dagor_fixtures/gaz53/gaz53_b_body_cmp.composit.blk",
-      "raw_hash": "blake3-160:d3a04d2ea0c9aa9e67c7a8547469b4064750edcc",
+      "raw_hash": "blake3-160:23f86056c31d7c687ac57b9f9a68675339dafa03",
       "declared_references": [
         {
           "kind": "composite",
@@ -83,7 +84,7 @@
     },
     {
       "path": "reference/dagor_fixtures/gaz53/gaz53_b_random_cmp.composit.blk",
-      "raw_hash": "blake3-160:198de207c1f929220ba00f9a409ffd8df197df9f",
+      "raw_hash": "blake3-160:44a79410f3f166bd16657669ed2ba2914a83bdae",
       "declared_references": [
         {
           "kind": "composite",
@@ -97,7 +98,7 @@
     },
     {
       "path": "reference/dagor_fixtures/gaz53/gaz53_body_bc_random_cmp.composit.blk",
-      "raw_hash": "blake3-160:05d35f51bdea5a6498d3149e3803e5050b74a37e",
+      "raw_hash": "blake3-160:d3f262f1640855cc0fef0027a6f8d5ae9805e970",
       "declared_references": [
         {
           "kind": "composite",

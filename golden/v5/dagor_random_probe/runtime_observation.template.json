@@ -1,6 +1,8 @@
 {
   "schema": "mh.dagor_random_runtime_observation:1",
-  "status": "not_measured",
+  "status": "optional_historical_not_measured",
+  "gate": false,
+  "owner_decision": "B_behavioral_compatibility",
   "provenance": {
     "dagor_product": null,
     "dagor_version": null,
