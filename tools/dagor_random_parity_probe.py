@@ -29,9 +29,11 @@ from addon.mh4blend.core.canonical_json import narrow_float32
 from tools.mh_random_fixture import SEEDS
 from tools.mh_random_reference import (
     PlacementProfile,
+    RESOLVER_TAG,
     RandomOption,
     RandomStream,
     Range,
+    node_random_stream,
     raw_payload_hash,
     sample_placement_profile,
     select_weighted,
@@ -48,6 +50,9 @@ DAGOR_COMPOSITE_SOURCE = (
 PROBE_SCHEMA = "mh.dagor_random_parity_probe:1"
 GAZ_SCHEMA = "mh.gaz53_random_baseline:1"
 OWNER_DECISION = "B_behavioral_compatibility"
+GAZ_RANDOM_NODE_PATH = (
+    "gaz53_b_random_cmp:nodes[1]>gaz53_body_bc_random_cmp:nodes[0]"
+)
 
 _UINT32_MASK = (1 << 32) - 1
 _DAGOR_LCG_MUL = 0x41C64E6D
@@ -442,8 +447,8 @@ def gaz_baseline_document(source_directory: Path) -> dict:
     )
     for seed in SEEDS:
         decision = select_weighted(
-            RandomStream(seed),
-            "gaz53_body_bc_random_cmp:nodes[0]",
+            node_random_stream(seed, GAZ_RANDOM_NODE_PATH),
+            GAZ_RANDOM_NODE_PATH,
             options,
         )
         selected = fixture.options[decision.option]
@@ -457,6 +462,8 @@ def gaz_baseline_document(source_directory: Path) -> dict:
         })
     return {
         "schema": GAZ_SCHEMA,
+        "resolver": RESOLVER_TAG,
+        "node_path": GAZ_RANDOM_NODE_PATH,
         "status": {
             "source_oracle": "bound",
             "mh_normative_choices": "frozen",
