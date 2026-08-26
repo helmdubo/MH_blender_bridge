@@ -13,6 +13,8 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 from mh4blend.core.validate import MHValidationError  # noqa: E402
 from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
 from mh4blend.scene.import_fbx import (  # noqa: E402
+    LOAD_MODE_LOD0,
+    LOAD_MODE_STRUCTURE_ONLY,
     MeshImportTransaction,
     import_mesh_fbx,
     parse_mesh_fbx,
@@ -20,6 +22,7 @@ from mh4blend.scene.import_fbx import (  # noqa: E402
 from mh4blend.scene.resource_markers import (  # noqa: E402
     COLLECTION_KIND_KEY,
     COLLECTION_RESOURCE_KEY,
+    INCOMPLETE_IMPORT_KEY,
 )
 from mh4blend.ui import ops  # noqa: E402
 
@@ -175,6 +178,74 @@ def test_lods_restructure_without_rewriting_parsed_node_names(tmp_path):
     roundtrip = export_fbx_collection(
         root, roundtrip_dir, source_root=tmp_path)["filepath"]
     assert _semantic_plan(roundtrip) == source_plan
+
+
+def test_lod0_keeps_structure_and_marks_definition_incomplete(tmp_path):
+    source_path = _export_lods(tmp_path)
+    _reset_keep_sources()
+
+    report = import_mesh_fbx(
+        source_path, source_root=tmp_path, load_mode=LOAD_MODE_LOD0)
+    root = report["collection"]
+    assert report["lod_levels"] == [0]
+    assert root.get(INCOMPLETE_IMPORT_KEY) is True
+    assert [child.name for child in root.children] == ["vehicle.lod00"]
+    assert "body_lod00" in root.children["vehicle.lod00"].objects
+    assert "UCX_body" in root.children["vehicle.lod00"].objects
+    assert "SOCKET_grip" in root.children["vehicle.lod00"].objects
+    assert bpy.data.objects.get("body_low_lod01") is None
+
+
+def test_structure_only_creates_empty_definition_without_materials(tmp_path):
+    source_path = _export_lods(tmp_path)
+    _reset_keep_sources()
+
+    report = import_mesh_fbx(
+        source_path, source_root=tmp_path,
+        load_mode=LOAD_MODE_STRUCTURE_ONLY)
+    root = report["collection"]
+    assert root.name == "vehicle.lods"
+    assert root.get(INCOMPLETE_IMPORT_KEY) is True
+    assert len(root.objects) == 0
+    assert len(root.children) == 0
+    assert len(bpy.data.materials) == 0
+
+
+def test_reuse_preserves_complete_managed_definition_as_is(tmp_path):
+    source_path = _export_joined(tmp_path)
+    _reset_keep_sources()
+    first = import_mesh_fbx(source_path, source_root=tmp_path)
+    root = first["collection"]
+    marker = _empty("artist_note", root)
+    pointer = root.as_pointer()
+
+    second = import_mesh_fbx(source_path, source_root=tmp_path)
+    assert second["definition_action"] == "reuse"
+    assert second["collection"].as_pointer() == pointer
+    assert root.objects.get(marker.name) is marker
+
+
+def test_refresh_preserves_collection_pointer_and_replaces_contents(tmp_path):
+    source_path = _export_joined(tmp_path)
+    _reset_keep_sources()
+    root = import_mesh_fbx(source_path, source_root=tmp_path)["collection"]
+    old_body = bpy.data.objects["body"]
+    marker = _empty("artist_note", root)
+    marker_name = marker.name
+    placement = bpy.data.objects.new("external_placement", None)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = root
+    bpy.context.scene.collection.objects.link(placement)
+    pointer = root.as_pointer()
+
+    report = import_mesh_fbx(
+        source_path, source_root=tmp_path, definition_policy="refresh")
+    assert report["definition_action"] == "refresh"
+    assert report["collection"].as_pointer() == pointer
+    assert placement.instance_collection is root
+    assert root.objects.get(marker_name) is None
+    assert bpy.data.objects["body"] is not old_body
+    assert root.get(INCOMPLETE_IMPORT_KEY) is None
 
 
 def test_existing_canonical_material_is_reused_without_dot_duplicates(tmp_path):

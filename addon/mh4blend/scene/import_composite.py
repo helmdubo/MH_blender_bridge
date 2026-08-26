@@ -17,6 +17,7 @@ from ..core.composites import (
     validate_composite_cycles,
 )
 from ..core.model import Composite
+from ..core.placements import placement_json_bytes, read_placement_file
 from ..core.transforms import ue_to_blender_transform
 from ..core.validate import MHValidationError
 from .export_composite import (
@@ -29,15 +30,23 @@ from .export_composite import (
     _collection_instance_identity,
     _stamp_imported_transform,
 )
-from .resource_markers import stamp_resource_collection
+from .resource_markers import (
+    DEFINITION_REUSE,
+    stamp_resource_collection,
+)
 from .service_scenes import ensure_service_scenes
 from ..ui.composite_authoring import sync_typed_mirror
 from .import_fbx import (
+    LOAD_MODE_FULL_LOD,
+    LOAD_MODE_STRUCTURE_ONLY,
     MeshImportTransaction,
+    classify_resource_definition,
     import_mesh_fbx,
-    mesh_import_id_names,
+    mesh_import_id_names_for_mode,
     parse_mesh_fbx,
-    preflight_mesh_import_plan,
+    preflight_mesh_definition,
+    schedule_collection_refresh,
+    validate_refresh_ownership,
 )
 
 __all__ = [
@@ -165,30 +174,78 @@ def _authoring_object_count(document) -> int:
     )
 
 
-def _preflight(documents, source_root: Path | None, *, preloaded_resources=frozenset()):
-    collection_names = [f"{name}.composite" for name in documents]
-    placement_names = {
-        _placement_name(name, index)
-        for name, document in documents.items()
-        for index in range(_authoring_object_count(document))
-    }
-    object_names = list(placement_names)
-    mesh_names = []
-    for name in collection_names:
-        _validate_blender_id_name(name, "collection")
-    for name in placement_names:
-        _validate_blender_id_name(name, "object")
+def _preflight(
+        documents, source_root: Path | None, *,
+        preloaded_resources=frozenset(), load_mode=LOAD_MODE_FULL_LOD,
+        definition_policy=DEFINITION_REUSE,
+        preloaded_profiles=frozenset()):
     mesh_paths = {}
-    mesh_plans = {}
+    mesh_decisions = {}
     missing_meshes = set()
-    actor_collection_names = set()
+    actor_names = set()
+    composite_decisions = {}
+    desired_objects = []
+    desired_collections = []
+    desired_meshes = []
+
+    for profile_name in preloaded_profiles:
+        validate_resource_name(profile_name)
+    profile_names = {
+        node.profile
+        for document in documents.values()
+        for _index, node in _iter_nodes(document)
+        if node.profile is not None
+    }
+    for profile_name in sorted(profile_names - set(preloaded_profiles)):
+        if source_root is None:
+            raise MHValidationError(
+                "MH_E_INVALID_RESOURCE_SOURCE", [profile_name],
+                "typed placement profile requires Project Source Root or "
+                "explicit preloaded profile authority")
+        path = _resolve_source(
+            source_root, profile_name, ".placement", allow_missing=True)
+        if path is None:
+            raise MHValidationError(
+                "MH_E_INVALID_RESOURCE_SOURCE", [profile_name],
+                f"required placement profile '{profile_name}.placement' "
+                "was not found")
+        profile = read_placement_file(path)
+        if path.read_bytes() != placement_json_bytes(profile):
+            raise MHValidationError(
+                "MH_E_PLACEMENT_PROFILE_GRAMMAR", [str(path)],
+                "placement profile must use exact canonical UTF-8/LF bytes")
+
+    for name, document in documents.items():
+        target = f"{name}.composite"
+        _validate_blender_id_name(target, "collection")
+        decision = classify_resource_definition(
+            "composite", name, target,
+            definition_policy=definition_policy)
+        if decision.action == "refresh":
+            validate_refresh_ownership(decision.collection)
+        composite_decisions[name] = decision
+        if decision.action != "reuse":
+            desired_collections.append(target)
+            allowed = set()
+            if decision.action == "refresh":
+                allowed = {
+                    obj.as_pointer() for obj in decision.collection.all_objects}
+            for index in range(_authoring_object_count(document)):
+                object_name = _placement_name(name, index)
+                _validate_blender_id_name(object_name, "object")
+                desired_objects.append(object_name)
+                occupant = bpy.data.objects.get(object_name)
+                if occupant is not None and occupant.as_pointer() not in allowed:
+                    raise MHValidationError(
+                        "MH_E_IMPORT_TARGET_OCCUPIED",
+                        [f"object:{object_name}"],
+                        "composite refresh/create would require Blender ID "
+                        "auto-renaming")
+
     for document in documents.values():
         for _index, node in _iter_nodes(document):
             if node.profile is not None:
-                raise MHValidationError(
-                    "MH_E_COMPOSITE_GRAMMAR", [document.name],
-                    "STOP OPEN-V5-9: Blender profile authority and Dagor "
-                    "include identity require an owner decision")
+                validate_resource_name(node.profile)
         for name in iter_resource_references(document, kind="mesh"):
             if ("mesh", name) in preloaded_resources:
                 continue
@@ -205,52 +262,50 @@ def _preflight(documents, source_root: Path | None, *, preloaded_resources=froze
                 missing_meshes.add(name)
                 continue
             plan = parse_mesh_fbx(path)
-            preflight_mesh_import_plan(plan, source_root)
+            decision = preflight_mesh_definition(
+                plan, source_root, load_mode=load_mode,
+                definition_policy=definition_policy)
             mesh_paths[name] = path
-            mesh_plans[name] = plan
-            id_names = mesh_import_id_names(plan)
-            collection_names.extend(id_names["collections"])
-            object_names.extend(id_names["objects"])
-            mesh_names.extend(id_names["meshes"])
+            mesh_decisions[name] = decision
+            if decision.action != "reuse":
+                id_names = mesh_import_id_names_for_mode(plan, load_mode)
+                desired_collections.extend(id_names["collections"])
+                desired_objects.extend(id_names["objects"])
+                desired_meshes.extend(id_names["meshes"])
 
         for name in iter_resource_references(document, kind="actor"):
             if ("actor", name) not in preloaded_resources:
-                actor_collection_names.add(_actor_collection_name(name))
+                actor_names.add(name)
 
-    for name in sorted(actor_collection_names):
-        _validate_blender_id_name(name, "collection")
-        collection_names.append(name)
-
-    occupied_collections = sorted(
-        f"collection:{name}" for name in set(collection_names)
-        if bpy.data.collections.get(name) is not None)
-    occupied_objects = sorted(
-        f"object:{name}" for name in set(object_names)
-        if bpy.data.objects.get(name) is not None)
-    occupied_meshes = sorted(
-        f"mesh:{name}" for name in set(mesh_names)
-        if bpy.data.meshes.get(name) is not None)
+    actor_decisions = {}
+    for name in sorted(actor_names):
+        target = _actor_collection_name(name)
+        _validate_blender_id_name(target, "collection")
+        actor_decisions[name] = classify_resource_definition(
+            "actor", name, target, definition_policy=DEFINITION_REUSE)
+        if actor_decisions[name].action == "create":
+            desired_collections.append(target)
 
     # The closure itself must also fit Blender's global ID namespaces without
     # relying on automatic .001 repair.
     duplicate_names = []
     for namespace, names in (
-            ("collection", collection_names),
-            ("object", object_names),
-            ("mesh", mesh_names)):
+            ("collection", desired_collections),
+            ("object", desired_objects),
+            ("mesh", desired_meshes)):
         duplicate_names.extend(
             f"{namespace}:{name}"
             for name, count in Counter(names).items()
             if count > 1)
-    conflicts = (
-        occupied_collections + occupied_objects + occupied_meshes
-        + sorted(duplicate_names))
-    if conflicts:
+    if duplicate_names:
         raise MHValidationError(
-            "MH_E_IMPORT_TARGET_OCCUPIED", conflicts,
+            "MH_E_IMPORT_TARGET_OCCUPIED", sorted(duplicate_names),
             "composite closure cannot be materialized without Blender ID "
             "auto-renaming")
-    return mesh_paths, mesh_plans
+    return (
+        mesh_paths, mesh_decisions,
+        composite_decisions, actor_decisions,
+    )
 
 
 def _matrix_local(transform):
@@ -261,14 +316,19 @@ def _matrix_local(transform):
     return Matrix.Translation(translation) @ rotation @ scale_matrix
 
 
-def _build_definition(document, collection, resources, warnings) -> int:
+def _build_definition(
+        document, collection, resources, warnings, *, temporary=False):
     count = 0
+    renames = []
 
     def make_object(parent):
         nonlocal count
+        desired_name = _placement_name(document.name, count)
         obj = bpy.data.objects.new(
-            _placement_name(document.name, count), None)
+            ".__mh_refresh_placement" if temporary else desired_name, None)
         count += 1
+        if temporary:
+            renames.append((obj, desired_name))
         collection.objects.link(obj)
         if parent is not None:
             obj.parent = parent
@@ -298,14 +358,15 @@ def _build_definition(document, collection, resources, warnings) -> int:
         obj.instance_collection = resource
         obj.empty_display_type = "ARROWS" if kind == "actor" else "PLAIN_AXES"
 
-    def stamp_kind(obj, kind):
+    def stamp_kind(obj, kind, profile=None):
         obj.mh4blend.kind = kind
+        obj.mh4blend.profile = profile or ""
         sync_typed_mirror(obj)
 
     def build(nodes, parent=None):
         for node in nodes:
             obj = make_object(parent)
-            stamp_kind(obj, node.kind)
+            stamp_kind(obj, node.kind, node.profile)
             if node.name is not None:
                 obj[NODE_NAME_KEY] = node.name
             bind_resource(obj, node.kind, node.resource)
@@ -321,11 +382,12 @@ def _build_definition(document, collection, resources, warnings) -> int:
                     bind_resource(
                         option_obj, option.kind, option.resource)
                     option_obj.matrix_basis = Matrix.Identity(4)
+                    option_obj.mh4blend.profile = ""
                     sync_typed_mirror(option_obj)
             build(node.children, obj)
 
     build(document.nodes)
-    return count
+    return count, tuple(renames)
 
 
 def _validate_document_mapping(root_name, documents) -> dict:
@@ -359,23 +421,29 @@ def _validate_document_mapping(root_name, documents) -> dict:
 
 def materialize_composite_documents(
         documents, *, root_name, source_root, filepath=None,
-        resource_overrides=None) -> dict:
+        resource_overrides=None, load_mode=LOAD_MODE_FULL_LOD,
+        definition_policy=DEFINITION_REUSE, before_commit=None,
+        preloaded_profiles=frozenset()) -> dict:
     """Materialize validated DTOs behind one exact rollback boundary.
 
     ``resource_overrides`` is the explicit seam used by the dag4blend scene
     converter.  Existing collections are never stamped or otherwise mutated;
     they are linked into service scenes only after the transaction commits.
     """
+    if before_commit is not None and not callable(before_commit):
+        raise ValueError("before_commit must be callable or None")
     documents = _validate_document_mapping(root_name, documents)
     root = None if source_root is None else _resolved_root(source_root)
-    overrides = dict(resource_overrides or {})
+    requested_overrides = dict(resource_overrides or {})
+    overrides = {}
+    structure_only_inputs = set()
     referenced_override_keys = {
         ("mesh", dependency)
         for document in documents.values()
         for dependency in iter_resource_references(document, kind="mesh")
     }
     override_collections = {}
-    for key, collection in overrides.items():
+    for key, collection in requested_overrides.items():
         if (not isinstance(key, tuple) or len(key) != 2
                 or key[0] != "mesh"
                 or not isinstance(key[1], str)):
@@ -417,77 +485,174 @@ def materialize_composite_documents(
                 "one resource collection cannot represent multiple logical keys")
         override_collections[identity] = key
 
-    mesh_paths, _mesh_plans = _preflight(
-        documents, root, preloaded_resources=frozenset(overrides))
+        if not has_mh_identity:
+            if load_mode != LOAD_MODE_STRUCTURE_ONLY:
+                raise MHValidationError(
+                    "MH_E_INVALID_RESOURCE_SOURCE", [repr(key), collection.name],
+                    "unmanaged dag4blend definitions are conversion inputs, "
+                    "not reusable MH definitions; full-LOD/LOD0 requires a "
+                    "managed definition or canonical .mesh.fbx source")
+            structure_only_inputs.add(key)
+            continue
+        if definition_policy != DEFINITION_REUSE:
+            raise MHValidationError(
+                "MH_E_INVALID_RESOURCE_SOURCE", [repr(key), collection.name],
+                "explicit managed overrides can only be reused; Refresh "
+                "requires canonical source")
+        classify_resource_definition(
+            key[0], key[1], collection.name,
+            definition_policy=DEFINITION_REUSE)
+        overrides[key] = collection
 
-    override_links = []
-    try:
-        with MeshImportTransaction() as transaction:
-            service_scenes = ensure_service_scenes()
+    structure_decisions = {
+        name: classify_resource_definition(
+            "mesh", name, name, definition_policy=definition_policy)
+        for kind, name in sorted(structure_only_inputs)
+        if kind == "mesh"
+    }
 
-            def route(scene_name, collection):
-                target = service_scenes[scene_name].collection
-                if target.children.get(collection.name) is None:
-                    target.children.link(collection)
+    (mesh_paths, mesh_decisions,
+     composite_decisions, actor_decisions) = _preflight(
+        documents, root,
+        preloaded_resources=frozenset(overrides) | structure_only_inputs,
+        load_mode=load_mode, definition_policy=definition_policy,
+        preloaded_profiles=frozenset(preloaded_profiles))
 
-            resources = dict(overrides)
-            mesh_reports = []
-            for name, mesh_path in mesh_paths.items():
-                report = import_mesh_fbx(
-                    mesh_path, source_root=root, transaction=transaction)
-                collection = report["collection"]
-                stamp_resource_collection(collection, "mesh", name)
-                if bpy.context.scene.collection.children.get(
-                        collection.name) is not None:
-                    bpy.context.scene.collection.children.unlink(collection)
+    before_commit_result = None
+    with MeshImportTransaction() as transaction:
+        service_scenes = ensure_service_scenes()
+
+        def route(scene_name, collection, *, existing=False):
+            target = service_scenes[scene_name].collection
+            if target.children.get(collection.name) is collection:
+                return
+            if not existing:
+                target.children.link(collection)
+                return
+
+            def finalize_link():
+                if target.children.get(collection.name) is collection:
+                    return
+                target.children.link(collection)
+
+                def undo_link():
+                    if target.children.get(collection.name) is collection:
+                        target.children.unlink(collection)
+
+                transaction.add_rollback(undo_link)
+
+            transaction.add_finalize(finalize_link)
+
+        resources = dict(overrides)
+        mesh_reports = []
+        for name, decision in structure_decisions.items():
+            if decision.action == "reuse":
+                collection = decision.collection
+                route("MESH", collection, existing=True)
+            elif decision.action == "refresh":
+                replacement = bpy.data.collections.new(
+                    ".__mh_refresh_definition")
+                schedule_collection_refresh(
+                    transaction, decision.collection, replacement,
+                    kind="mesh", resource_name=name, target_name=name,
+                    incomplete=True)
+                collection = decision.collection
+                route("MESH", collection, existing=True)
+            else:
+                collection = bpy.data.collections.new(name)
+                stamp_resource_collection(
+                    collection, "mesh", name, incomplete=True)
                 route("MESH", collection)
-                resources[("mesh", name)] = collection
-                mesh_reports.append({key: value for key, value in report.items()
-                                     if key != "collection"})
+            resources[("mesh", name)] = collection
+            mesh_reports.append({
+                "ok": True, "resource_name": name,
+                "collection_name": collection.name,
+                "objects_imported": 0, "lod_levels": [], "materials": [],
+                "materials_reused": [], "materials_created": [],
+                "warnings": [], "decoder": "structure-only-conversion-input",
+                "load_mode": LOAD_MODE_STRUCTURE_ONLY,
+                "definition_action": decision.action,
+            })
+        for name, mesh_path in mesh_paths.items():
+            decision = mesh_decisions[name]
+            report = import_mesh_fbx(
+                mesh_path, source_root=root, transaction=transaction,
+                load_mode=load_mode, definition_policy=definition_policy,
+                _prepared=decision)
+            collection = report["collection"]
+            if decision.action == "create":
+                if bpy.context.scene.collection.children.get(
+                        collection.name) is collection:
+                    bpy.context.scene.collection.children.unlink(collection)
+            route("MESH", collection, existing=decision.action != "create")
+            resources[("mesh", name)] = collection
+            mesh_reports.append({key: value for key, value in report.items()
+                                 if key != "collection"})
 
-            composite_collections = {}
-            for name in documents:
+        composite_collections = {}
+        replacement_collections = {}
+        for name, decision in composite_decisions.items():
+            if decision.action == "reuse":
+                collection = decision.collection
+                route("COMPOSITE", collection, existing=True)
+            elif decision.action == "refresh":
+                collection = decision.collection
+                replacement_collections[name] = bpy.data.collections.new(
+                    ".__mh_refresh_composite")
+                route("COMPOSITE", collection, existing=True)
+            else:
                 collection = bpy.data.collections.new(f"{name}.composite")
                 stamp_resource_collection(collection, "composite", name)
                 route("COMPOSITE", collection)
-                composite_collections[name] = collection
-                resources[("composite", name)] = collection
+            composite_collections[name] = collection
+            resources[("composite", name)] = collection
 
-            actor_names = tuple(dict.fromkeys(
-                actor_name
-                for document in documents.values()
-                for actor_name in iter_resource_references(document, kind="actor")
-            ))
-            for name in actor_names:
-                if ("actor", name) in resources:
-                    continue
+        for name, decision in actor_decisions.items():
+            if ("actor", name) in resources:
+                continue
+            if decision.action == "reuse":
+                collection = decision.collection
+                route("ACTOR_PLACEHOLDERS", collection, existing=True)
+            else:
                 collection = bpy.data.collections.new(_actor_collection_name(name))
                 stamp_resource_collection(collection, "actor", name)
                 route("ACTOR_PLACEHOLDERS", collection)
-                resources[("actor", name)] = collection
+            resources[("actor", name)] = collection
 
-            node_count = 0
-            warnings = []
-            for name, document in documents.items():
-                node_count += _build_definition(
-                    document, composite_collections[name], resources, warnings)
+        node_count = 0
+        warnings = []
+        for name, document in documents.items():
+            decision = composite_decisions[name]
+            if decision.action == "reuse":
+                continue
+            destination = (
+                replacement_collections[name]
+                if decision.action == "refresh"
+                else composite_collections[name])
+            count, renames = _build_definition(
+                document, destination, resources, warnings,
+                temporary=decision.action == "refresh")
+            node_count += count
+            if decision.action == "refresh":
+                schedule_collection_refresh(
+                    transaction, decision.collection, destination,
+                    kind="composite", resource_name=name,
+                    target_name=f"{name}.composite", incomplete=False,
+                    renames=renames)
 
-            root_collection = composite_collections[root_name]
+        root_collection = composite_collections[root_name]
 
-            # Existing dag4blend definitions are external to the transaction,
-            # so every new link needs an explicit rollback journal.
-            scene_for_kind = {"mesh": "MESH"}
-            for (kind, _name), collection in overrides.items():
-                target = service_scenes[scene_for_kind[kind]].collection
-                if target.children.get(collection.name) is None:
-                    target.children.link(collection)
-                    override_links.append((target, collection))
-    except Exception:
-        for target, collection in reversed(override_links):
-            with contextlib.suppress(RuntimeError, ReferenceError):
-                if target.children.get(collection.name) is collection:
-                    target.children.unlink(collection)
-        raise
+        for (kind, _name), collection in overrides.items():
+            route("MESH", collection, existing=True)
+
+        if before_commit is not None:
+            before_commit_result = before_commit({
+                "documents": documents,
+                "root_collection": root_collection,
+                "resources": resources,
+                "service_scenes": service_scenes,
+                "transaction": transaction,
+            })
 
     # An explicit Composite import is an authoring action: reveal the
     # authoritative COMPOSITE scene only after the transaction has committed.
@@ -513,10 +678,16 @@ def materialize_composite_documents(
         "nodes": node_count,
         "service_scenes": list(service_scenes),
         "warnings": warnings,
+        "load_mode": load_mode,
+        "definition_policy": definition_policy,
+        "before_commit_result": before_commit_result,
     }
 
 
-def import_composite_file(filepath, *, source_root) -> dict:
+def import_composite_file(
+        filepath, *, source_root, load_mode=LOAD_MODE_FULL_LOD,
+        definition_policy=DEFINITION_REUSE, before_commit=None,
+        preloaded_profiles=frozenset()) -> dict:
     """Import one complete Composite closure with a single rollback boundary."""
     path = Path(bpy.path.abspath(os.fspath(filepath))).resolve(strict=True)
     root = _resolved_root(source_root)
@@ -534,4 +705,8 @@ def import_composite_file(filepath, *, source_root) -> dict:
         root_name=path.stem,
         source_root=root,
         filepath=path,
+        load_mode=load_mode,
+        definition_policy=definition_policy,
+        before_commit=before_commit,
+        preloaded_profiles=preloaded_profiles,
     )

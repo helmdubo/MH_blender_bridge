@@ -22,6 +22,7 @@ def test_register_exposes_only_v4_workflow_surfaces():
         for name in (
             "mh_fbx_collection", "mh_fbx_directory", "mh_fbx_import_path",
             "mh_fbx_export_materials",
+            "mh_import_load_mode", "mh_import_definition_policy",
             "mh_material", "mh_material_directory", "mh_composite_mode",
             "mh_composite_import_path", "mh_composite_export_collection",
             "mh_composite_export_directory", "mh_dagor_composite_import_path",
@@ -31,6 +32,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
         assert hasattr(bpy.types.Material, "mh4blend")
         assert hasattr(bpy.types.Object, "mh4blend")
         assert bpy.context.scene.mh_fbx_export_materials is False
+        assert bpy.context.scene.mh_import_load_mode == "FULL_LOD"
+        assert bpy.context.scene.mh_import_definition_policy == "REUSE"
         assert {cls.bl_idname for cls in ops.CLASSES} == {
             "mh.export_fbx", "mh.import_mesh_fbx", "mh.export_material",
             "mh.export_composite",
@@ -48,6 +51,7 @@ def test_register_exposes_only_v4_workflow_surfaces():
     for name in (
         "mh_fbx_collection", "mh_fbx_directory", "mh_fbx_import_path",
         "mh_fbx_export_materials",
+        "mh_import_load_mode", "mh_import_definition_policy",
         "mh_material", "mh_material_directory", "mh_composite_mode",
         "mh_composite_import_path", "mh_composite_export_collection",
         "mh_composite_export_directory", "mh_dagor_composite_import_path",
@@ -152,7 +156,11 @@ def test_mesh_import_operator_forwards_exact_source_path(tmp_path, monkeypatch):
             )[1],
         )
         assert bpy.ops.mh.import_mesh_fbx() == {"FINISHED"}
-        assert calls == [(str(source), {"source_root": str(tmp_path)})]
+        assert calls == [(str(source), {
+            "source_root": str(tmp_path),
+            "load_mode": "full-LOD",
+            "definition_policy": "reuse",
+        })]
     finally:
         mh4blend.unregister()
 
@@ -274,8 +282,8 @@ def test_dagor_conversion_operators_forward_explicit_sources(
         monkeypatch.setattr(
             ops,
             "import_dag4blend_composite_collection",
-            lambda value: (
-                calls.append(("scene", value)),
+            lambda value, **kwargs: (
+                calls.append(("scene", value, kwargs)),
                 {"ok": True},
             )[1],
         )
@@ -283,8 +291,17 @@ def test_dagor_conversion_operators_forward_explicit_sources(
         assert bpy.ops.mh.import_dagor_composite() == {"FINISHED"}
         assert bpy.ops.mh.convert_dag4blend_composite() == {"FINISHED"}
         assert calls == [
-            ("file", str(source), {"source_root": str(tmp_path)}),
-            ("scene", collection),
+            ("file", str(source), {
+                "source_root": str(tmp_path),
+                "output_dir": None,
+                "load_mode": "full-LOD",
+                "definition_policy": "reuse",
+            }),
+            ("scene", collection, {
+                "source_root": str(tmp_path),
+                "load_mode": "full-LOD",
+                "definition_policy": "reuse",
+            }),
         ]
     finally:
         mh4blend.unregister()

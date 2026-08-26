@@ -30,8 +30,7 @@ Resource Index и applied state сохраняют v4-контракты без 
   полный ратифицированный норматив v5;
 - [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md) — инварианты,
   последовательные V5-S0…S7 и parked follow-up slices;
-- [`docs/QUESTIONS.md`](docs/QUESTIONS.md) — активные `OPEN-V5-*` с
-  временными fail-closed STOP;
+- [`docs/QUESTIONS.md`](docs/QUESTIONS.md) — история вопросов и owner-решений;
 - `docs/receipts/` — квитанции срезов; automated checks не равны owner
   acceptance.
 
@@ -44,10 +43,10 @@ Resource Index и applied state сохраняют v4-контракты без 
 V5-S1 зафиксировал Python-reference `mh.random_stream:1`; принятый V5-S2
 заменил `.composite` на строгий v5 codec без dual-read, добавил `.placement`
 v1, parent-local T/R/S, source-only profile carrier/index edge, общий 8-ULP
-predicate и бит-идентичный C++ random resolver/plan. V5-S3 добавляет Blender
-typed random-authoring, четыре служебные сцены и два Dagor→MH пути. Seed в
-Blender по-прежнему отсутствует. Узкие недоопределённые части S3 перечислены
-как fail-closed `OPEN-V5-9/10`; остальная реализация и проверки продолжаются.
+predicate и бит-идентичный C++ random resolver/plan. Кандидат V5-S3 добавляет
+Blender typed random/profile-authoring, четыре служебные сцены, три geometry
+load mode, transactional reuse/refresh и два Dagor→MH пути с lossless
+`include`→`.placement`. Seed в Blender по-прежнему отсутствует.
 
 Python regression:
 

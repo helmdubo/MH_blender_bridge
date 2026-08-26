@@ -13,6 +13,7 @@ import bpy
 KIND_MIRROR_KEY = "mh_composite_kind"
 WEIGHT_MIRROR_KEY = "mh_random_weight"
 OPTION_INDEX_MIRROR_KEY = "mh_random_option_index"
+PROFILE_MIRROR_KEY = "mh_composite_profile"
 
 _OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty"})
 
@@ -63,6 +64,13 @@ def _update_option_index(self, _context):
         owner, WEIGHT_MIRROR_KEY, float(self.weight), present=is_option)
 
 
+def _update_profile(self, _context):
+    owner = self.id_data
+    value = self.profile
+    _set_or_remove_mirror(
+        owner, PROFILE_MIRROR_KEY, value, present=bool(value))
+
+
 class MHCompositeObjectProperties(bpy.types.PropertyGroup):
     """Authoritative per-object composite authoring state.
 
@@ -98,10 +106,18 @@ class MHCompositeObjectProperties(bpy.types.PropertyGroup):
         default=-1,
         update=_update_option_index,
     )
+    profile: bpy.props.StringProperty(
+        name="Placement Profile",
+        description=(
+            "Canonical Source Protocol placement-profile logical name; "
+            "empty means no profile"),
+        default="",
+        update=_update_profile,
+    )
 
 
 def sync_typed_mirror(obj):
-    """Project authoritative typed state to the three diagnostic ID keys."""
+    """Project authoritative typed state to diagnostic ID mirrors."""
 
     settings = obj.mh4blend
     _set_or_remove_mirror(
@@ -113,6 +129,9 @@ def sync_typed_mirror(obj):
     _set_or_remove_mirror(
         obj, OPTION_INDEX_MIRROR_KEY, int(settings.option_index),
         present=is_option)
+    _set_or_remove_mirror(
+        obj, PROFILE_MIRROR_KEY, settings.profile,
+        present=bool(settings.profile))
 
 
 def _grammar(message):
@@ -157,6 +176,10 @@ def _indexed_options(random_node, *, require_nonempty=True,
         if kind not in _OPTION_KINDS:
             raise _grammar(
                 f"random option {option.name!r} has invalid kind {kind!r}")
+        if settings.profile:
+            raise _grammar(
+                f"random option {option.name!r} cannot carry placement "
+                "profile authority")
         resource = option.instance_collection
         if kind == "empty" and resource is not None:
             raise _grammar(
@@ -341,6 +364,10 @@ def draw_random_options(layout, context):
     node = layout.row(align=True)
     node.label(text="Selected Node")
     node.prop(random_node.mh4blend, "kind", text="")
+    if not _is_random_option(random_node):
+        profile = layout.row(align=True)
+        profile.label(text="Placement Profile")
+        profile.prop(random_node.mh4blend, "profile", text="")
     if random_node.mh4blend.kind != "random":
         return
 

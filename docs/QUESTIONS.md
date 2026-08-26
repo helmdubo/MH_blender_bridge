@@ -5,19 +5,18 @@
 Открытый `OPEN-V5-*` не ослабляет 10: затронутая часть остаётся fail-closed
 STOP до owner-решения.
 
-`OPEN-V5-1`…`OPEN-V5-8` РЕШЕНЫ owner — нормативный текст в 10 §13.
-`OPEN-V5-9` и `OPEN-V5-10` открыты узко для Blender-carrier/profile-name при
-Dagor `include` и точной семантики import modes/reuse-refresh; остальной V5-S3
-этими STOP не блокируется.
+`OPEN-V5-1`…`OPEN-V5-10` РЕШЕНЫ owner — нормативный текст в 10 §§6.3, 6.4,
+13. Открытых нормативных вопросов нет.
 Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
 `OPEN-V4-24` document-world прямо superseded parent-local контрактом v5.
 
 ## OPEN-V5-9 — Blender carrier и identity для Dagor `include` → placement profile
 
-**Статус. ОТКРЫТ; STOP только для materialization/export profile-ссылки в
-Blender и Dagor `include` conversion.** Random/options authoring, direct Dagor
-graph conversion без `include`, конвертация уже импортированной dag4blend-сцены
-без profile-параметров и остальные gates V5-S3 продолжаются.
+**Статус. РЕШЕНО OWNER — нормативно в 10 §6.3.** Authority — typed
+`mh4blend.profile` плюс неавторитетное зеркало `mh_composite_profile`; identity
+include — дословный stem без нормализации; содержимое публикуется как sibling
+`.placement`, exact-byte equal collision переиспользуется, divergent collision
+блокируется.
 
 **Контекст.** 10 §§6.3/6.4 требуют lossless-конвертацию Dagor `include` в
 `<name>.placement` и typed reference узла, но закреплённый Blender PropertyGroup
@@ -43,12 +42,20 @@ PropertyGroup field, basename-normalization, generated profile identity или
 блокироваться до owner-решения. Новый диагностический код не вводится: единственный
 новый код V5-S3 остаётся `MH_E_DUPLICATE_RANDOM_OPTION_INDEX`.
 
+**Решение owner.** Добавляется ровно typed поле `profile` (`[a-z0-9_]+` или
+пусто) и его диагностическое зеркало. Stem include является identity дословно;
+неканоничное имя даёт `MH_E_NONCANONICAL_RESOURCE_NAME` с исходным путём.
+Конвертированные canonical bytes публикуются атомарно рядом с `.composite`;
+совпадающий существующий профиль переиспользуется без записи, расходящийся даёт
+`MH_E_AMBIGUOUS_RESOURCE_NAME` с обоими путями. Нормализация и перезапись
+запрещены.
+
 ## OPEN-V5-10 — observable semantics import modes и reuse/refresh definitions
 
-**Статус. ОТКРЫТ; STOP только для claims/UI/API
-`structure-only|LOD0|full-LOD` и `reuse|refresh`.** Create-only импорт полного
-определения, при котором занятый target блокируется до мутаций, и остальная
-random-конвертация V5-S3 продолжаются.
+**Статус. РЕШЕНО OWNER — нормативно в 10 §6.4.** Placement tree всегда полный;
+режимы меняют только геометрию. `reuse` по умолчанию принимает только полное
+managed-определение; `refresh` сохраняет Collection datablock in-place; весь
+closure имеет одну rollback-границу.
 
 **Контекст.** 10 §6.4 и 11 V5-S3 перечисляют три режима рекурсивного импорта и
 явный выбор reuse/refresh, но не задают их наблюдаемый результат. Не определено,
@@ -73,6 +80,14 @@ datablock in-place, какие users/artist edits переживают опер�
 использует существующую полную create-only семантику: любой занятый target
 блокируется до первой мутации, silent reuse/clear/replace запрещены. Новый
 диагностический код не вводится.
+
+**Решение owner.** `full-LOD` импортирует §4.1 полностью; `LOD0` — только lod00,
+но сохраняет collision/socket/group structure и материалы; `structure-only` —
+пустые stamped Collections без материалов. Два неполных режима получают
+`mh_incomplete_import = True`; mesh-export и `reuse` для них блокируются.
+`reuse` не мутирует полное managed-определение, а placeholder/unmanaged collision
+блокирует. `refresh` заменяет только contents существующего Collection и обязан
+откатить весь mixed closure при любой ошибке.
 
 ## OPEN-V5-8 — durable applied receipt инлайненного placement profile
 

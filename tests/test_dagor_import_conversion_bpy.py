@@ -13,7 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh4blend.core.composites import composite_json_bytes  # noqa: E402
-from mh4blend.core.dagor_composites import parse_dagor_composite  # noqa: E402
+from mh4blend.core.dagor_composites import (  # noqa: E402
+    parse_dagor_composite,
+    parse_dagor_placement_include,
+)
+from mh4blend.core.placements import placement_json_bytes  # noqa: E402
+from mh4blend.scene import export_composite as export_composite_module  # noqa: E402
+from mh4blend.scene import import_dagor_composite as import_dagor_module  # noqa: E402
 from mh4blend.scene.export_composite import export_composite_collection  # noqa: E402
 from mh4blend.scene.import_dagor_composite import (  # noqa: E402
     _option_weight,
@@ -22,6 +28,7 @@ from mh4blend.scene.import_dagor_composite import (  # noqa: E402
     convert_dagor_composite,
     import_dag4blend_composite_collection,
     import_dagor_composite_file,
+    load_dagor_composite_bundle,
     load_dagor_composite_documents,
 )
 from mh4blend.ui import composite_authoring, ops  # noqa: E402
@@ -107,10 +114,14 @@ node{ tm:m=[[1,0,0] [0,1,0] [0,0,1] [0,0,0]] }
     report = import_dagor_composite_file(
         root_path,
         source_root=tmp_path,
+        load_mode="structure-only",
+        definition_policy="reuse",
         resource_overrides={
             ("mesh", "crate"): mesh,
         },
     )
+    assert report["load_mode"] == "structure-only"
+    assert report["definition_policy"] == "reuse"
     assert report["composites"] == ["truck", "truck_random", "truck_variant"]
     random_collection = bpy.data.collections["truck_random.composite"]
     random_node = next(
@@ -119,7 +130,8 @@ node{ tm:m=[[1,0,0] [0,1,0] [0,0,1] [0,0,0]] }
     options = sorted(random_node.children, key=lambda obj: obj.mh4blend.option_index)
     assert [obj.mh4blend.kind for obj in options] == ["mesh", "actor", "composite"]
     assert [obj.mh4blend.weight for obj in options] == pytest.approx([0.25, 1.0, 0.5])
-    assert options[0].instance_collection is mesh
+    assert options[0].instance_collection is bpy.data.collections["crate"]
+    assert options[0].instance_collection is not mesh
     assert options[1].instance_collection is bpy.data.collections["driver.actor"]
     assert options[2].instance_collection is bpy.data.collections[
         "truck_variant.composite"]
@@ -219,6 +231,219 @@ def test_direct_dagor_root_ambiguity_blocks_selected_duplicate(tmp_path):
     assert _counts() == before
 
 
+def test_direct_include_requires_explicit_output_and_publishes_profile_sidecar(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    output = tmp_path / "mh"
+    output.mkdir()
+    include = _write(tmp_path / "vehicle_scatter.blk", '''\
+offset_x:p2=10,1
+offset_y:p2=0,2
+offset_z:p2=3,0
+rot_x:p2=0,0
+rot_y:p2=0,0
+rot_z:p2=0,180
+scale:p2=1,0.1
+yScale:p2=1,0.2
+''')
+    source = _write(tmp_path / "profiled.composit.blk", '''\
+className:t="composit"
+node{
+  include "vehicle_scatter.blk"
+}
+''')
+
+    bundle = load_dagor_composite_bundle(source, source_root=tmp_path)
+    assert bundle.documents["profiled"].nodes[0].profile == "vehicle_scatter"
+    assert list(bundle.profiles) == ["vehicle_scatter"]
+    before = _counts()
+    with pytest.raises(ValueError, match="explicit output_dir"):
+        import_dagor_composite_file(source, source_root=tmp_path)
+    assert _counts() == before
+    assert not (output / "vehicle_scatter.placement").exists()
+
+    report = import_dagor_composite_file(
+        source, source_root=tmp_path, output_dir=output)
+    assert report["placement_profiles"] == [{
+        "name": "vehicle_scatter",
+        "filepath": str(output / "vehicle_scatter.placement"),
+        "include_path": str(include),
+        "bytes": len(bundle.profiles["vehicle_scatter"].canonical_bytes),
+        "written": True,
+        "reused": False,
+    }]
+    placement = output / "vehicle_scatter.placement"
+    assert placement.read_bytes() == bundle.profiles[
+        "vehicle_scatter"].canonical_bytes
+    node = next(iter(bpy.data.collections["profiled.composite"].objects))
+    assert node.mh4blend.profile == "vehicle_scatter"
+    assert node["mh_composite_profile"] == "vehicle_scatter"
+
+    node["mh_composite_profile"] = "artist_mirror_edit"
+    real_publish = export_composite_module.atomic_publish_bytes
+
+    def fail_publish(*_args, **_kwargs):
+        raise RuntimeError("injected publish failure")
+
+    monkeypatch.setattr(
+        export_composite_module, "atomic_publish_bytes", fail_publish)
+    with pytest.raises(RuntimeError, match="injected publish failure"):
+        export_composite_collection(
+            bpy.data.collections["profiled.composite"], output,
+            source_root=tmp_path)
+    assert node["mh_composite_profile"] == "artist_mirror_edit"
+    monkeypatch.setattr(
+        export_composite_module, "atomic_publish_bytes", real_publish)
+
+    exported = export_composite_collection(
+        bpy.data.collections["profiled.composite"], output,
+        source_root=tmp_path)
+    assert node["mh_composite_profile"] == "vehicle_scatter"
+    assert Path(exported["filepath"]).read_bytes() == composite_json_bytes(
+        bundle.documents["profiled"])
+
+    profile_bytes = placement.read_bytes()
+    placement.write_bytes(b" " + profile_bytes)
+    with pytest.raises(ValueError, match="exact canonical bytes"):
+        export_composite_collection(
+            bpy.data.collections["profiled.composite"], output,
+            source_root=tmp_path)
+    placement.write_bytes(profile_bytes)
+
+    duplicate_dir = tmp_path / "other"
+    duplicate_dir.mkdir()
+    duplicate = duplicate_dir / placement.name
+    duplicate.write_bytes(profile_bytes)
+    with pytest.raises(ValueError, match="MH_E_AMBIGUOUS_RESOURCE_NAME"):
+        export_composite_collection(
+            bpy.data.collections["profiled.composite"], output,
+            source_root=tmp_path)
+    duplicate.unlink()
+
+    placement.unlink()
+    with pytest.raises(ValueError, match="required source resource"):
+        export_composite_collection(
+            bpy.data.collections["profiled.composite"], output,
+            source_root=tmp_path)
+    placement.write_bytes(profile_bytes)
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    reused = import_dagor_composite_file(
+        source, source_root=tmp_path, output_dir=output)
+    assert reused["placement_profiles"][0]["written"] is False
+    assert reused["placement_profiles"][0]["reused"] is True
+
+
+def test_random_option_typed_profile_is_never_silently_ignored():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = bpy.data.collections.new("option_profile_test")
+    random_node = _empty("random", collection)
+    random_node.mh4blend.kind = "random"
+    option = _empty("option", collection, parent=random_node)
+    option.mh4blend.kind = "empty"
+    option.mh4blend.option_index = 0
+    option.mh4blend.profile = "forbidden_profile"
+    with pytest.raises(ValueError, match="cannot carry placement profile"):
+        composite_authoring.validate_random_options(random_node)
+
+
+def test_direct_include_collision_noncanonical_and_duplicate_files_fail_closed(
+        tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    output = tmp_path / "mh"
+    output.mkdir()
+    include = _write(tmp_path / "scatter.blk", '''\
+offset_x:p2=0,0
+offset_y:p2=0,0
+offset_z:p2=0,0
+''')
+    source = _write(tmp_path / "profiled.composit.blk", '''\
+className:t="composit"
+node{ include "scatter.blk" }
+''')
+    first = import_dagor_composite_file(
+        source, source_root=tmp_path, output_dir=output)
+    assert first["placement_profiles"][0]["written"] is True
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    _write(include, '''\
+offset_x:p2=1,0
+offset_y:p2=0,0
+offset_z:p2=0,0
+''')
+    before = _counts()
+    with pytest.raises(ValueError, match="MH_E_AMBIGUOUS_RESOURCE_NAME") as caught:
+        import_dagor_composite_file(
+            source, source_root=tmp_path, output_dir=output)
+    assert str(include) in caught.value.subjects
+    assert str(output / "scatter.placement") in caught.value.subjects
+    assert _counts() == before
+
+    _write(include, '''\
+offset_x:p2=0,0
+offset_y:p2=0,0
+offset_z:p2=0,0
+''')
+    duplicate_dir = tmp_path / "duplicate"
+    duplicate_dir.mkdir()
+    (duplicate_dir / "scatter.placement").write_bytes(
+        (output / "scatter.placement").read_bytes())
+    with pytest.raises(ValueError, match="MH_E_AMBIGUOUS_RESOURCE_NAME"):
+        import_dagor_composite_file(
+            source, source_root=tmp_path, output_dir=output)
+
+    noncanonical = _write(tmp_path / "Bad Profile.blk", "scale:p2=1,0\n")
+    bad_source = _write(tmp_path / "bad.composit.blk", '''\
+className:t="composit"
+node{ include "Bad Profile.blk" }
+''')
+    with pytest.raises(
+            ValueError, match="MH_E_NONCANONICAL_RESOURCE_NAME") as bad:
+        import_dagor_composite_file(
+            bad_source, source_root=tmp_path, output_dir=output)
+    assert str(noncanonical) in bad.value.subjects
+
+
+def test_profile_publication_failure_rolls_back_blender_transaction(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    output = tmp_path / "mh"
+    output.mkdir()
+    _write(tmp_path / "scatter.blk", "scale:p2=1,0\n")
+    source = _write(tmp_path / "profiled.composit.blk", '''\
+className:t="composit"
+node{ include "scatter.blk" }
+''')
+    before = _counts()
+    real_publish = import_dagor_module.atomic_publish_bytes
+
+    def fail_publish(*_args, **_kwargs):
+        raise RuntimeError("profile publication failed")
+
+    monkeypatch.setattr(
+        import_dagor_module, "atomic_publish_bytes", fail_publish)
+    with pytest.raises(RuntimeError, match="profile publication failed"):
+        import_dagor_composite_file(
+            source, source_root=tmp_path, output_dir=output)
+    assert _counts() == before
+    assert bpy.data.collections.get("profiled.composite") is None
+    assert not (output / "scatter.placement").exists()
+
+    def inject_racing_identity(target, payload, **kwargs):
+        Path(target).write_bytes(payload)
+        return real_publish(target, payload, **kwargs)
+
+    monkeypatch.setattr(
+        import_dagor_module, "atomic_publish_bytes", inject_racing_identity)
+    with pytest.raises(ValueError, match="race overwrite"):
+        import_dagor_composite_file(
+            source, source_root=tmp_path, output_dir=output)
+    assert _counts() == before
+    assert bpy.data.collections.get("profiled.composite") is None
+    # The independently arrived file remains; the importer did not replace it.
+    assert (output / "scatter.placement").is_file()
+
+
 def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority(
         tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -265,7 +490,8 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
 
     closure_documents, _closure_overrides = (
         convert_dag4blend_collection_closure(source))
-    report = import_dag4blend_composite_collection(source)
+    report = import_dag4blend_composite_collection(
+        source, load_mode="structure-only")
     assert report["composites"] == ["legacy_vehicle", "nested_variant"]
     target = report["collection"]
     converted_randoms = [
@@ -276,7 +502,7 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
         key=lambda obj: obj.mh4blend.option_index,
     )
     assert [obj.instance_collection for obj in lifted] == [
-        mesh, bpy.data.collections["driver.actor"],
+        bpy.data.collections["wheel"], bpy.data.collections["driver.actor"],
         bpy.data.collections["nested_variant.composite"]]
     assert lifted[1].instance_collection is not actor
     nested_target = bpy.data.collections["nested_variant.composite"]
@@ -284,7 +510,7 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
         obj for obj in nested_target.objects if obj.mh4blend.kind == "random")
     nested_lifted = list(converted_nested_random.children)
     assert len(nested_lifted) == 1
-    assert nested_lifted[0].instance_collection is mesh
+    assert nested_lifted[0].instance_collection is bpy.data.collections["wheel"]
     assert all(obj.instance_collection not in {named_helper, marker_helper}
                for obj in target.objects)
     tech = bpy.data.scenes["TECH"].collection
@@ -335,6 +561,37 @@ def test_dag4blend_requires_explicit_resource_type_and_direct_mapping():
     document = convert_dagor_composite(graph)
     assert document.nodes[0].kind == "mesh"
     assert document.nodes[0].resource == "crate"
+
+
+def test_dag4blend_p2_preview_never_silently_replaces_profile_authority(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    source = _dagor_resource_collection(
+        "legacy_profile", "legacy_profile", "composit")
+    node = _empty("scatter_preview", source)
+    node["offset_x:p2"] = [10.0, 2.0]
+    node["mh_composite_profile"] = "mirror_is_not_authority"
+    with pytest.raises(ValueError, match="lossless dag4blend conversion") as caught:
+        convert_dag4blend_collection(source)
+    assert "collection:legacy_profile/object:scatter_preview" in str(caught.value)
+    assert "offset_x:p2" in str(caught.value)
+
+    node.mh4blend.profile = "vehicle_scatter"
+    document, _overrides = convert_dag4blend_collection(source)
+    assert document.nodes[0].profile == "vehicle_scatter"
+
+    canonical = placement_json_bytes(parse_dagor_placement_include(
+        "scale:p2=1,0", source="vehicle_scatter.blk",
+        name="vehicle_scatter"))
+    (tmp_path / "vehicle_scatter.placement").write_bytes(canonical)
+    before = _counts()
+    with pytest.raises(ValueError, match="Project Source Root"):
+        import_dag4blend_composite_collection(source)
+    assert _counts() == before
+
+    report = import_dag4blend_composite_collection(
+        source, source_root=tmp_path)
+    converted = next(iter(report["collection"].objects))
+    assert converted.mh4blend.profile == "vehicle_scatter"
 
 
 def test_dag4blend_same_composite_name_from_two_collections_is_ambiguous():

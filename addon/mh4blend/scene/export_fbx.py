@@ -18,7 +18,7 @@ from ..core.canonical import validate_resource_name
 from ..core.mesh_nodes import validate_node_markers
 from ..core.payload_publish_v2 import payload_lock
 from ..core.validate import MHValidationError
-from .resource_markers import stamp_resource_collection
+from .resource_markers import INCOMPLETE_IMPORT_KEY, stamp_resource_collection
 
 __all__ = [
     "FBX_EXPORT_KWARGS",
@@ -604,6 +604,11 @@ def export_fbx_collection(
     """
     if collection is None:
         raise ValueError("collection is required")
+    if bool(collection.get(INCOMPLETE_IMPORT_KEY, False)):
+        raise MHValidationError(
+            "MH_E_INVALID_RESOURCE_SOURCE", [collection.name],
+            "mesh definitions imported in LOD0 or structure-only mode are "
+            "incomplete and cannot be exported")
     if not isinstance(output_dir, (str, os.PathLike)) or not str(output_dir).strip():
         raise ValueError("output_dir is required")
 

@@ -23,7 +23,11 @@ from mh4blend.scene.import_composite import (  # noqa: E402
     import_composite_file,
     materialize_composite_documents,
 )
-from mh4blend.scene.resource_markers import stamp_resource_collection  # noqa: E402
+from mh4blend.scene.import_fbx import LOAD_MODE_STRUCTURE_ONLY  # noqa: E402
+from mh4blend.scene.resource_markers import (  # noqa: E402
+    INCOMPLETE_IMPORT_KEY,
+    stamp_resource_collection,
+)
 from mh4blend.scene.service_scenes import (  # noqa: E402
     SERVICE_SCENE_NAMES,
     ensure_service_scenes,
@@ -227,13 +231,17 @@ def test_dag4blend_resource_override_is_explicit_and_routed_after_commit(
         root_name=source.name,
         source_root=None,
         resource_overrides={("mesh", "variant_mesh"): resource},
+        load_mode=LOAD_MODE_STRUCTURE_ONLY,
     )
     random_node = next(
         obj for obj in report["collection"].objects
         if obj.mh4blend.kind == "random")
     option = _option_objects(random_node)[0]
-    assert option.instance_collection is resource
-    assert bpy.data.scenes["MESH"].collection.children.get(resource.name) is resource
+    managed = option.instance_collection
+    assert managed is not resource
+    assert managed.get(INCOMPLETE_IMPORT_KEY) is True
+    assert len(managed.objects) == 0
+    assert bpy.data.scenes["MESH"].collection.children.get(managed.name) is managed
 
     decoded_path = export_composite_collection(
         report["collection"], tmp_path, source_root=tmp_path)
@@ -257,6 +265,7 @@ def test_failed_materialization_does_not_link_existing_override():
             root_name=source.name,
             source_root=None,
             resource_overrides={("mesh", "variant_mesh"): resource},
+            load_mode=LOAD_MODE_STRUCTURE_ONLY,
         )
     assert bpy.data.scenes.get("MESH") is None
 
@@ -326,8 +335,9 @@ def test_external_resource_routes_roll_back_lifo_on_second_link_failure(
     overrides = {}
     for name in ("mesh_a", "mesh_b"):
         collection = bpy.data.collections.new(f"legacy_{name}")
-        collection["type"] = "rendinst"
-        collection["name"] = name
+        mesh = bpy.data.meshes.new(f"{name}_geometry")
+        collection.objects.link(bpy.data.objects.new(f"{name}_render", mesh))
+        stamp_resource_collection(collection, "mesh", name)
         bpy.context.scene.collection.children.link(collection)
         overrides[("mesh", name)] = collection
     source = Composite("rollback_root", [Node(
@@ -372,3 +382,77 @@ def test_external_resource_routes_roll_back_lifo_on_second_link_failure(
     assert bpy.data.collections.get("rollback_root.composite") is None
     assert all(bpy.data.scenes.get(name) is service_scenes[name]
                for name in SERVICE_SCENE_NAMES)
+
+
+def test_full_lod_rejects_unmanaged_dag4blend_override():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    resource = bpy.data.collections.new("legacy_mesh")
+    resource["type"] = "rendinst"
+    resource["name"] = "variant_mesh"
+    source = Composite("unmanaged_full", [
+        Node("mesh", resource="variant_mesh"),
+    ])
+
+    with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+        materialize_composite_documents(
+            {source.name: source}, root_name=source.name,
+            source_root=None,
+            resource_overrides={("mesh", "variant_mesh"): resource})
+    assert bpy.data.collections.get("unmanaged_full.composite") is None
+
+
+def test_mixed_refresh_create_before_commit_failure_restores_exact_snapshot():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    child = Composite("refresh_child", [Node("empty")])
+    root_document = Composite("refresh_root", [
+        Node("composite", resource="refresh_child"),
+    ])
+    documents = {
+        root_document.name: root_document,
+        child.name: child,
+    }
+    first = materialize_composite_documents(
+        documents, root_name=root_document.name, source_root=None)
+    root = first["collection"]
+    root["artist_state"] = "keep"
+    pointer = root.as_pointer()
+    external = bpy.data.objects.new("external_root_user", None)
+    external.instance_type = "COLLECTION"
+    external.instance_collection = root
+    bpy.context.scene.collection.objects.link(external)
+
+    child_collection = bpy.data.collections["refresh_child.composite"]
+    bpy.data.batch_remove([*tuple(child_collection.objects), child_collection])
+    assert bpy.data.collections.get("refresh_child.composite") is None
+    old_objects = tuple(
+        (obj.name, obj.as_pointer(), obj.instance_collection)
+        for obj in root.objects)
+    old_children = tuple(
+        (collection.name, collection.as_pointer())
+        for collection in root.children)
+    old_properties = dict(root.items())
+
+    def fail_publication(context):
+        def fail_after_refresh_swap():
+            raise RuntimeError("injected before-commit failure")
+
+        context["transaction"].add_finalize(fail_after_refresh_swap)
+
+    with pytest.raises(RuntimeError, match="injected before-commit failure"):
+        materialize_composite_documents(
+            documents, root_name=root_document.name, source_root=None,
+            definition_policy="refresh", before_commit=fail_publication)
+
+    assert root.as_pointer() == pointer
+    assert external.instance_collection is root
+    assert dict(root.items()) == old_properties
+    assert tuple(
+        (obj.name, obj.as_pointer(), obj.instance_collection)
+        for obj in root.objects) == old_objects
+    assert tuple(
+        (collection.name, collection.as_pointer())
+        for collection in root.children) == old_children
+    assert bpy.data.collections.get("refresh_child.composite") is None
+    assert not any(
+        collection.name.startswith(".__mh_refresh")
+        for collection in bpy.data.collections)

@@ -17,13 +17,32 @@ from ..scene.import_dagor_composite import (
     import_dag4blend_composite_collection,
     import_dagor_composite_file,
 )
-from ..scene.import_fbx import import_mesh_fbx
+from ..scene.import_fbx import (
+    LOAD_MODE_FULL_LOD,
+    LOAD_MODE_LOD0,
+    LOAD_MODE_STRUCTURE_ONLY,
+    import_mesh_fbx,
+)
 from ..scene.project_textures import (
     copy_all_dagor_textures_to_project,
     remap_all_dagor_textures_to_project,
 )
 
 LOG_TEXT_NAME = "mh_export_log"
+
+_LOAD_MODE_VALUES = {
+    "FULL_LOD": LOAD_MODE_FULL_LOD,
+    "LOD0": LOAD_MODE_LOD0,
+    "STRUCTURE_ONLY": LOAD_MODE_STRUCTURE_ONLY,
+}
+
+
+def _load_mode(scene):
+    return _LOAD_MODE_VALUES[scene.mh_import_load_mode]
+
+
+def _definition_policy(scene):
+    return scene.mh_import_definition_policy.lower()
 
 
 def _json_default(value):
@@ -43,6 +62,12 @@ def _directory(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Choose an output folder")
     return os.path.abspath(bpy.path.abspath(value))
+
+
+def _optional_directory(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _directory(value)
 
 
 def _composite_filepath(value):
@@ -135,6 +160,8 @@ class MH_OT_import_mesh_fbx(bpy.types.Operator):
             report = import_mesh_fbx(
                 _mesh_filepath(context.scene.mh_fbx_import_path),
                 source_root=_directory(preferences.source_root),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene),
             )
         except (OSError, RuntimeError, ValueError) as exc:
             _log("import_mesh_fbx", {"ok": False, "error": str(exc)})
@@ -381,7 +408,9 @@ class MH_OT_import_composite(bpy.types.Operator):
             preferences = prefs_mod.get_prefs(context)
             report = import_composite_file(
                 _composite_filepath(context.scene.mh_composite_import_path),
-                source_root=_directory(preferences.source_root))
+                source_root=_directory(preferences.source_root),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene))
         except (OSError, RuntimeError, ValueError) as exc:
             _log("import_composite", {"ok": False, "error": str(exc)})
             self.report({"ERROR"}, str(exc))
@@ -408,6 +437,10 @@ class MH_OT_import_dagor_composite(bpy.types.Operator):
                 _dagor_composite_filepath(
                     context.scene.mh_dagor_composite_import_path),
                 source_root=_directory(preferences.source_root),
+                output_dir=_optional_directory(
+                    context.scene.mh_composite_export_directory),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene),
             )
         except (OSError, RuntimeError, ValueError) as exc:
             _log("import_dagor_composite", {"ok": False, "error": str(exc)})
@@ -430,7 +463,12 @@ class MH_OT_convert_dag4blend_composite(bpy.types.Operator):
             self.report({"ERROR"}, "Choose a dag4blend composite collection")
             return {"CANCELLED"}
         try:
-            report = import_dag4blend_composite_collection(collection)
+            preferences = prefs_mod.get_prefs(context)
+            report = import_dag4blend_composite_collection(
+                collection,
+                source_root=_directory(preferences.source_root),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene))
         except (OSError, RuntimeError, ValueError) as exc:
             _log("convert_dag4blend_composite", {
                 "ok": False, "error": str(exc)})
@@ -476,6 +514,21 @@ def register():
         name="Output Folder", subtype="DIR_PATH", default="")
     bpy.types.Scene.mh_fbx_import_path = bpy.props.StringProperty(
         name="Mesh FBX", subtype="FILE_PATH", default="")
+    bpy.types.Scene.mh_import_load_mode = bpy.props.EnumProperty(
+        name="Load Mode",
+        items=(
+            ("FULL_LOD", "Full LOD", "Import every authored LOD"),
+            ("LOD0", "LOD0", "Import lod00 plus collisions, sockets and groups"),
+            ("STRUCTURE_ONLY", "Structure Only", "Create empty definitions"),
+        ),
+        default="FULL_LOD")
+    bpy.types.Scene.mh_import_definition_policy = bpy.props.EnumProperty(
+        name="Definitions",
+        items=(
+            ("REUSE", "Reuse", "Reuse only complete managed definitions"),
+            ("REFRESH", "Refresh", "Replace contents and preserve Collection IDs"),
+        ),
+        default="REUSE")
     bpy.types.Scene.mh_fbx_export_materials = bpy.props.BoolProperty(
         name="Export Materials",
         description="Write every material used by the exported mesh resource",
@@ -509,6 +562,7 @@ def unregister():
         "mh_composite_export_directory", "mh_composite_export_collection",
         "mh_dag4blend_composite_collection", "mh_dagor_composite_import_path",
         "mh_composite_import_path", "mh_composite_mode",
+        "mh_import_definition_policy", "mh_import_load_mode",
         "mh_fbx_export_materials", "mh_fbx_import_path",
         "mh_fbx_directory", "mh_fbx_collection",
         "mh_material_directory", "mh_material",

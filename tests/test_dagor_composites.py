@@ -11,7 +11,12 @@ from addon.mh4blend.core.dagor_composites import (
     DagorOption,
     iter_resource_tokens,
     parse_dagor_composite,
+    parse_dagor_placement_include,
     read_dagor_composite,
+)
+from addon.mh4blend.core.placements import (
+    parse_placement_profile,
+    placement_json_bytes,
 )
 
 
@@ -142,17 +147,78 @@ def test_resource_node_preserves_ordinary_children():
         ("mesh", "child")]
 
 
-@pytest.mark.parametrize("construct", [
-    'include "random_profile.blk"',
-    'offset_x:p2=10, 1',
-    'node{ offset_x:p2=10, 1 }',
+def test_node_include_is_retained_but_other_carriers_and_inline_p2_fail_closed():
+    document = parse_dagor_composite(
+        'className:t="composit"\nnode{ include "profiles/random_car.blk"; }',
+        source="profile.composit.blk",
+        name="profile",
+    )
+    include = document.nodes[0].include
+    assert include.path == "profiles/random_car.blk"
+    assert include.provenance.path == "$.nodes[0].profile"
+    assert include.provenance.line == 2
+
+    constructs = (
+        'include "random_profile.blk"',
+        'offset_x:p2=10, 1',
+        'node{ offset_x:p2=10, 1 }',
+        'node{ ent{ include "random_profile.blk"; name:t="a:composit"; } }',
+    )
+    for construct in constructs:
+        payload = f'className:t="composit"\n{construct}\n'
+        with pytest.raises(DagorCompositeError, match="lossless conversion") as caught:
+            parse_dagor_composite(payload, source="profile.composit.blk")
+        assert caught.value.code == "MH_E_COMPOSITE_GRAMMAR"
+        assert "profile.composit.blk:2:" in str(caught.value)
+
+
+def test_admitted_include_p2_subset_maps_to_canonical_placement_profile():
+    profile = parse_dagor_placement_include(
+        '''\
+// Source order is irrelevant to the typed profile.
+rot_z:p2=[15,30]
+offset_x:p2=10,1
+offset_y:p2=-2, 0.5
+offset_z:p2=0,0
+rot_x:p2=5,10
+rot_y:p2=-5,20
+scale:p2=1,0.25
+yScale:p2=[1,0.1]
+''',
+        source="scatter_profile.blk",
+        name="scatter_profile",
+    )
+    canonical = placement_json_bytes(profile)
+    assert parse_placement_profile(canonical, name="scatter_profile") == profile
+    assert [[item.base, item.deviation] for item in profile.offset_cm] == [
+        [10.0, 1.0], [-2.0, 0.5], [0.0, 0.0]]
+    assert [[item.base, item.deviation] for item in profile.rotation_deg] == [
+        [5.0, 10.0], [-5.0, 20.0], [15.0, 30.0]]
+    assert (profile.uniform_scale.base,
+            profile.uniform_scale.deviation) == (1.0, 0.25)
+    assert (profile.vertical_scale.base,
+            profile.vertical_scale.deviation) == pytest.approx((1.0, 0.1))
+
+
+@pytest.mark.parametrize("payload, match", [
+    ("offset_x:p2=1,0", "complete offset_x/offset_y/offset_z"),
+    ("mystery:p2=1,0", "unsupported Dagor placement parameter"),
+    ("scale:p2=1,0; scale:p2=1,0", "duplicate Dagor placement parameter"),
+    ("scale:p2=0.5,0.5", "base - deviation"),
+    ("offset_x:p2=0,-1; offset_y:p2=0,0; offset_z:p2=0,0",
+     "deviation"),
 ])
-def test_include_and_p2_stop_at_unratified_lossless_profile_seam(construct):
-    payload = f'className:t="composit"\n{construct}\n'
-    with pytest.raises(DagorCompositeError, match="STOP OPEN-V5-9") as caught:
-        parse_dagor_composite(payload, source="profile.composit.blk")
-    assert caught.value.code == "MH_E_COMPOSITE_GRAMMAR"
-    assert "profile.composit.blk:2:" in str(caught.value)
+def test_admitted_include_rejects_lossy_or_invalid_parameters(payload, match):
+    with pytest.raises(DagorCompositeError, match=match):
+        parse_dagor_placement_include(
+            payload, source="bad_profile.blk", name="bad_profile")
+
+
+def test_include_profile_name_is_exact_and_never_normalized():
+    with pytest.raises(
+            DagorCompositeError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
+        parse_dagor_placement_include(
+            "scale:p2=1,0", source="Bad Profile.blk", name="Bad Profile")
 
 
 def test_matrix_shape_duplicates_non_finite_and_wrong_class_are_rejected():

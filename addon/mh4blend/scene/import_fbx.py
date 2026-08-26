@@ -8,7 +8,7 @@ on guesses about names produced by Blender's importer.  Stage 2 is the pinned
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import re
@@ -21,16 +21,328 @@ from ..core.materials import resolve_texture_reference
 from ..core.mesh_nodes import MeshImportPlan, MeshNode, build_mesh_import_plan
 from ..core.validate import MHValidationError
 from .export_material import apply_material_resource, read_material_file
-from .resource_markers import stamp_resource_collection
+from .resource_markers import (
+    COLLECTION_KIND_KEY,
+    COLLECTION_RESOURCE_KEY,
+    DEFINITION_POLICIES,
+    DEFINITION_REFRESH,
+    DEFINITION_REUSE,
+    INCOMPLETE_IMPORT_KEY,
+    managed_resource_collections,
+    stamp_resource_collection,
+)
 
 __all__ = [
     "FBX_IMPORT_KWARGS",
+    "LOAD_MODE_FULL_LOD",
+    "LOAD_MODE_LOD0",
+    "LOAD_MODE_STRUCTURE_ONLY",
     "MeshImportTransaction",
+    "classify_resource_definition",
     "import_mesh_fbx",
     "mesh_import_id_names",
+    "mesh_import_id_names_for_mode",
+    "preflight_mesh_definition",
     "parse_mesh_fbx",
     "preflight_mesh_import_plan",
 ]
+
+
+LOAD_MODE_FULL_LOD = "full-LOD"
+LOAD_MODE_LOD0 = "LOD0"
+LOAD_MODE_STRUCTURE_ONLY = "structure-only"
+LOAD_MODES = frozenset({
+    LOAD_MODE_FULL_LOD, LOAD_MODE_LOD0, LOAD_MODE_STRUCTURE_ONLY,
+})
+
+
+@dataclass(frozen=True)
+class ResourceDefinitionDecision:
+    action: str
+    collection: object | None
+
+
+def _validate_load_mode(load_mode: str) -> str:
+    if load_mode not in LOAD_MODES:
+        raise ValueError(
+            f"load_mode must be one of {sorted(LOAD_MODES)!r}, got {load_mode!r}")
+    return load_mode
+
+
+def _validate_definition_policy(definition_policy: str) -> str:
+    if definition_policy not in DEFINITION_POLICIES:
+        raise ValueError(
+            "definition_policy must be 'reuse' or 'refresh', got "
+            f"{definition_policy!r}")
+    return definition_policy
+
+
+def _collection_has_mesh_geometry(collection) -> bool:
+    if any(obj.type == "MESH" and obj.data is not None
+           for obj in collection.objects):
+        return True
+    return any(
+        _collection_has_mesh_geometry(child) for child in collection.children)
+
+
+def classify_resource_definition(
+        kind: str, resource_name: str, target_name: str, *,
+        definition_policy=DEFINITION_REUSE) -> ResourceDefinitionDecision:
+    """Resolve create/reuse/refresh before the first scene mutation.
+
+    Identity comes only from the exact managed stamps.  A datablock name is
+    used solely as the collision boundary which prevents Blender's implicit
+    ``.001`` repair.
+    """
+
+    _validate_definition_policy(definition_policy)
+    malformed = []
+    for collection in bpy.data.collections:
+        has_kind = COLLECTION_KIND_KEY in collection
+        has_name = COLLECTION_RESOURCE_KEY in collection
+        touches_key = (
+            collection.name == target_name
+            or collection.get(COLLECTION_RESOURCE_KEY) == resource_name
+            or (collection.get(COLLECTION_KIND_KEY) == kind and not has_name)
+        )
+        if has_kind != has_name and touches_key:
+            malformed.append(collection.name)
+        elif has_kind and has_name:
+            claimed_kind = collection.get(COLLECTION_KIND_KEY)
+            claimed_name = collection.get(COLLECTION_RESOURCE_KEY)
+            if (not isinstance(claimed_kind, str)
+                    or claimed_kind not in {"mesh", "actor", "composite"}
+                    or not isinstance(claimed_name, str)):
+                if touches_key:
+                    malformed.append(collection.name)
+            else:
+                try:
+                    validate_resource_name(claimed_name)
+                except (TypeError, ValueError):
+                    if touches_key:
+                        malformed.append(collection.name)
+    if malformed:
+        raise MHValidationError(
+            "MH_E_IMPORT_TARGET_OCCUPIED",
+            [f"collection:{name}" for name in sorted(set(malformed))],
+            "malformed or partial MH resource marker claim blocks definition "
+            "reuse/refresh")
+    candidates = managed_resource_collections(kind, resource_name)
+    if len(candidates) > 1:
+        raise MHValidationError(
+            "MH_E_AMBIGUOUS_RESOURCE_NAME",
+            [f"{kind}:{resource_name}", *(row.name for row in candidates)],
+            "multiple managed Collections claim one ResourceKey")
+    existing = candidates[0] if candidates else None
+    occupant = bpy.data.collections.get(target_name)
+    if occupant is not None and occupant is not existing:
+        raise MHValidationError(
+            "MH_E_IMPORT_TARGET_OCCUPIED", [f"collection:{target_name}"],
+            "an unmanaged or differently stamped Collection occupies the "
+            "canonical resource definition name")
+    if existing is None:
+        return ResourceDefinitionDecision("create", None)
+    if definition_policy == DEFINITION_REFRESH:
+        return ResourceDefinitionDecision("refresh", existing)
+    if bool(existing.get(INCOMPLETE_IMPORT_KEY, False)):
+        raise MHValidationError(
+            "MH_E_IMPORT_TARGET_OCCUPIED", [f"collection:{existing.name}"],
+            "reuse requires a complete managed definition; choose Refresh")
+    if kind == "mesh" and not _collection_has_mesh_geometry(existing):
+        raise MHValidationError(
+            "MH_E_IMPORT_TARGET_OCCUPIED", [f"collection:{existing.name}"],
+            "reuse rejects a mesh placeholder without geometry; choose Refresh")
+    return ResourceDefinitionDecision("reuse", existing)
+
+
+def mesh_plan_for_load_mode(plan: MeshImportPlan, load_mode: str) -> MeshImportPlan:
+    """Return the authored subset materialized for one approved load mode."""
+
+    _validate_load_mode(load_mode)
+    if load_mode == LOAD_MODE_FULL_LOD:
+        return plan
+    if load_mode == LOAD_MODE_STRUCTURE_ONLY:
+        return replace(plan, nodes=(), lod_levels=(), material_names=())
+    by_name = {node.name: node for node in plan.nodes}
+    selected = {
+        node.name for node in plan.nodes
+        if node.kind != "render" or node.lod_level == 0
+    }
+    pending = list(selected)
+    while pending:
+        parent = by_name[pending.pop()].parent
+        if parent is not None and parent not in selected:
+            selected.add(parent)
+            pending.append(parent)
+    nodes = []
+    for node in plan.nodes:
+        if node.name not in selected:
+            continue
+        if node.kind == "render" and node.lod_level != 0:
+            node = replace(
+                node, node_type="NULL", kind="group", lod_level=None,
+                material_slots=(), geometry_name=None)
+        nodes.append(node)
+    nodes = tuple(nodes)
+    materials = tuple(dict.fromkeys(
+        material
+        for node in nodes
+        for material in node.material_slots
+    ))
+    return replace(plan, nodes=nodes, lod_levels=(0,), material_names=materials)
+
+
+def _collection_tree(root) -> tuple:
+    rows = []
+
+    def visit(collection):
+        if collection in rows:
+            return
+        rows.append(collection)
+        for child in collection.children:
+            visit(child)
+
+    visit(root)
+    return tuple(rows)
+
+
+def _owned_definition_ids(root) -> tuple[tuple, tuple, tuple]:
+    collections = _collection_tree(root)
+    objects = tuple(dict.fromkeys(
+        obj for collection in collections for obj in collection.objects))
+    data = tuple(dict.fromkeys(
+        obj.data for obj in objects if obj.data is not None))
+    return collections, objects, data
+
+
+def validate_refresh_ownership(root) -> None:
+    """Reject a refresh which would delete content shared outside the root."""
+
+    collections, objects, data = _owned_definition_ids(root)
+    collection_ids = {_identity(row) for row in collections}
+    object_ids = {_identity(row) for row in objects}
+    conflicts = []
+    for obj in objects:
+        external = [
+            row.name for row in obj.users_collection
+            if _identity(row) not in collection_ids
+        ]
+        if external:
+            conflicts.append(f"object:{obj.name}:external={','.join(external)}")
+    for datum in data:
+        internal_users = sum(
+            1 for obj in objects
+            if obj.data is datum and _identity(obj) in object_ids)
+        if datum.users > internal_users:
+            conflicts.append(f"data:{datum.name}:shared-users={datum.users}")
+    for child in collections[1:]:
+        external_parents = [
+            parent.name for parent in bpy.data.collections
+            if _identity(parent) not in collection_ids
+            and parent.children.get(child.name) is child
+        ]
+        external_scenes = [
+            scene.name for scene in bpy.data.scenes
+            if scene.collection.children.get(child.name) is child
+        ]
+        external_instances = [
+            obj.name for obj in bpy.data.objects
+            if obj.instance_collection is child
+        ]
+        if external_parents or external_scenes or external_instances:
+            conflicts.append(
+                f"collection:{child.name}:external="
+                f"{','.join(external_parents + external_scenes + external_instances)}")
+    if conflicts:
+        raise MHValidationError(
+            "MH_E_IMPORT_TARGET_OCCUPIED", sorted(conflicts),
+            "refresh would destroy definition content shared outside its "
+            "managed root Collection")
+
+
+def _temporary_id_name(data_block, phase: str) -> str:
+    return f".__mh_{phase}_{_identity(data_block):x}"
+
+
+def schedule_collection_refresh(
+        transaction: "MeshImportTransaction", existing, replacement, *,
+        kind: str, resource_name: str, target_name: str, incomplete: bool,
+        renames=()) -> None:
+    """Schedule the only mutation of an existing definition at commit time."""
+
+    validate_refresh_ownership(existing)
+    old_collections, old_objects, old_data = _owned_definition_ids(existing)
+    old_direct_objects = tuple(existing.objects)
+    old_direct_children = tuple(existing.children)
+    new_direct_objects = tuple(replacement.objects)
+    new_direct_children = tuple(replacement.children)
+    old_names = tuple(
+        (row, row.name)
+        for row in (*old_collections, *old_objects, *old_data)
+    )
+    old_properties = dict(existing.items())
+
+    def finalize():
+        def undo_swap():
+            for obj in tuple(existing.objects):
+                if obj in new_direct_objects:
+                    existing.objects.unlink(obj)
+                    if replacement.objects.get(obj.name) is None:
+                        replacement.objects.link(obj)
+            for child in tuple(existing.children):
+                if child in new_direct_children:
+                    existing.children.unlink(child)
+                    if replacement.children.get(child.name) is None:
+                        replacement.children.link(child)
+            for obj in old_direct_objects:
+                if existing.objects.get(obj.name) is None:
+                    existing.objects.link(obj)
+            for child in old_direct_children:
+                if existing.children.get(child.name) is None:
+                    existing.children.link(child)
+            for key in tuple(existing.keys()):
+                del existing[key]
+            for key, value in old_properties.items():
+                existing[key] = value
+            for data_block, _desired_name in renames:
+                data_block.name = _temporary_id_name(
+                    data_block, "rollback_stage")
+            for data_block, old_name in old_names:
+                data_block.name = old_name
+
+        # Register before the first mutation so even an injected failure in a
+        # rename/link/stamp step restores the exact old snapshot.
+        transaction.add_rollback(undo_swap)
+        for data_block, _name in old_names:
+            data_block.name = _temporary_id_name(data_block, "old")
+        for obj in old_direct_objects:
+            existing.objects.unlink(obj)
+        for child in old_direct_children:
+            existing.children.unlink(child)
+        for obj in new_direct_objects:
+            replacement.objects.unlink(obj)
+            existing.objects.link(obj)
+        for child in new_direct_children:
+            replacement.children.unlink(child)
+            existing.children.link(child)
+        for data_block, desired_name in renames:
+            data_block.name = desired_name
+            if data_block.name != desired_name:
+                raise MHValidationError(
+                    "MH_E_IMPORT_TARGET_OCCUPIED",
+                    [f"{type(data_block).__name__}:{desired_name}"],
+                    "refresh could not restore an exact canonical ID name")
+        existing.name = target_name
+        if existing.name != target_name:
+            raise MHValidationError(
+                "MH_E_IMPORT_TARGET_OCCUPIED", [f"collection:{target_name}"],
+                "refresh could not preserve the canonical Collection name")
+        stamp_resource_collection(
+            existing, kind, resource_name, incomplete=incomplete)
+        transaction.retire_on_commit(
+            replacement, *old_collections[1:], *old_objects, *old_data)
+
+    transaction.add_finalize(finalize)
 
 
 FBX_IMPORT_KWARGS = dict(
@@ -96,6 +408,9 @@ class MeshImportTransaction:
         self._active = False
         self._rolled_back = False
         self._interaction = None
+        self._rollback_actions = []
+        self._finalize_actions = []
+        self._retired_ids = []
 
     @property
     def active(self) -> bool:
@@ -129,6 +444,9 @@ class MeshImportTransaction:
     def rollback(self) -> None:
         if not self._active or self._rolled_back:
             return
+        for action in reversed(self._rollback_actions):
+            with contextlib.suppress(RuntimeError, ReferenceError):
+                action()
         new_ids = []
         # Objects/collections first makes ownership explicit even though
         # batch_remove resolves dependencies for the combined set.
@@ -138,6 +456,35 @@ class MeshImportTransaction:
             bpy.data.batch_remove(new_ids)
         self._restore_interaction()
         self._rolled_back = True
+
+    def add_rollback(self, action) -> None:
+        if not self._active:
+            raise RuntimeError("MeshImportTransaction is not active")
+        self._rollback_actions.append(action)
+
+    def add_finalize(self, action) -> None:
+        """Defer an in-place swap until every failure-prone stage succeeds."""
+
+        if not self._active:
+            raise RuntimeError("MeshImportTransaction is not active")
+        self._finalize_actions.append(action)
+
+    def retire_on_commit(self, *data_blocks) -> None:
+        if not self._active:
+            raise RuntimeError("MeshImportTransaction is not active")
+        self._retired_ids.extend(data_blocks)
+
+    def _commit(self) -> None:
+        seen = set()
+        live = []
+        for data_block in self._retired_ids:
+            with contextlib.suppress(ReferenceError):
+                identity = _identity(data_block)
+                if identity not in seen:
+                    seen.add(identity)
+                    live.append(data_block)
+        if live:
+            bpy.data.batch_remove(live)
 
     def _restore_interaction(self) -> None:
         if self._interaction is None:
@@ -168,6 +515,14 @@ class MeshImportTransaction:
         try:
             if exc_type is not None:
                 self.rollback()
+            else:
+                try:
+                    for action in self._finalize_actions:
+                        action()
+                    self._commit()
+                except Exception:
+                    self.rollback()
+                    raise
         finally:
             self._active = False
         return False
@@ -356,6 +711,18 @@ def mesh_import_id_names(plan: MeshImportPlan) -> dict[str, frozenset[str]]:
     }
 
 
+def mesh_import_id_names_for_mode(
+        plan: MeshImportPlan, load_mode: str) -> dict[str, frozenset[str]]:
+    effective = mesh_plan_for_load_mode(plan, load_mode)
+    if load_mode == LOAD_MODE_STRUCTURE_ONLY:
+        return {
+            "collections": frozenset({effective.target_collection_name}),
+            "objects": frozenset(),
+            "meshes": frozenset(),
+        }
+    return mesh_import_id_names(effective)
+
+
 def _validate_blender_id_name(name: str, subject: str) -> None:
     """Reject names Blender would silently truncate in an ID namespace."""
     if (not isinstance(name, str)
@@ -394,22 +761,69 @@ def preflight_mesh_import_plan(plan: MeshImportPlan, source_root: Path) -> None:
             _validate_blender_id_name(texture_path.name, "image")
 
 
-def _preflight_scene(plan: MeshImportPlan) -> None:
+def _preflight_scene(
+        plan: MeshImportPlan, decision: ResourceDefinitionDecision, *,
+        load_mode: str) -> None:
+    if decision.action == "reuse":
+        return
     conflicts = []
-    id_names = mesh_import_id_names(plan)
+    id_names = mesh_import_id_names_for_mode(plan, load_mode)
+    if load_mode != LOAD_MODE_STRUCTURE_ONLY:
+        collections = set(id_names["collections"])
+        if decision.action == "refresh":
+            collections.discard(_staging_name(plan.resource_name))
+        id_names = {
+            "collections": frozenset(collections),
+            # The black-box decoder creates the complete transport briefly,
+            # even though LOD0 discards higher render geometry afterwards.
+            "objects": frozenset(node.name for node in plan.nodes),
+            "meshes": frozenset(
+                node.geometry_name for node in plan.nodes
+                if node.geometry_name is not None),
+        }
+    allowed_collections = set()
+    allowed_objects = set()
+    allowed_meshes = set()
+    if decision.action == "refresh":
+        validate_refresh_ownership(decision.collection)
+        collections, objects, data = _owned_definition_ids(decision.collection)
+        allowed_collections = {_identity(row) for row in collections}
+        allowed_objects = {_identity(row) for row in objects}
+        allowed_meshes = {_identity(row) for row in data}
     conflicts.extend(
         f"collection:{name}" for name in sorted(id_names["collections"])
-        if bpy.data.collections.get(name) is not None)
+        if (bpy.data.collections.get(name) is not None
+            and _identity(bpy.data.collections[name]) not in allowed_collections))
     conflicts.extend(
         f"object:{name}" for name in sorted(id_names["objects"])
-        if bpy.data.objects.get(name) is not None)
+        if (bpy.data.objects.get(name) is not None
+            and _identity(bpy.data.objects[name]) not in allowed_objects))
     conflicts.extend(
         f"mesh:{name}" for name in sorted(id_names["meshes"])
-        if bpy.data.meshes.get(name) is not None)
+        if (bpy.data.meshes.get(name) is not None
+            and _identity(bpy.data.meshes[name]) not in allowed_meshes))
     if conflicts:
         raise MHValidationError(
             "MH_E_IMPORT_TARGET_OCCUPIED", conflicts,
             "mesh import target is occupied: " + ", ".join(conflicts))
+
+
+def preflight_mesh_definition(
+        plan: MeshImportPlan, source_root: Path, *,
+        load_mode=LOAD_MODE_FULL_LOD,
+        definition_policy=DEFINITION_REUSE) -> ResourceDefinitionDecision:
+    """Build the immutable action for one ResourceKey without mutation."""
+
+    _validate_load_mode(load_mode)
+    _validate_definition_policy(definition_policy)
+    decision = classify_resource_definition(
+        "mesh", plan.resource_name, plan.target_collection_name,
+        definition_policy=definition_policy)
+    if decision.action != "reuse":
+        preflight_mesh_import_plan(
+            mesh_plan_for_load_mode(plan, load_mode), source_root)
+    _preflight_scene(plan, decision, load_mode=load_mode)
+    return decision
 
 
 def _material_candidates(root: Path, logical_name: str) -> list[Path]:
@@ -497,16 +911,70 @@ def _bind_parsed_nodes(
         plan: MeshImportPlan,
         imported_objects: list,
         materials: dict[str, object],
-) -> dict[str, object]:
-    by_name = {obj.name: obj for obj in imported_objects}
+        *, allow_temporary_names=False, material_node_names=None,
+) -> tuple[dict[str, object], tuple]:
     expected = {node.name for node in plan.nodes}
-    if set(by_name) != expected or len(by_name) != len(imported_objects):
-        missing = sorted(expected - set(by_name))
-        extra = sorted(set(by_name) - expected)
-        raise RuntimeError(
-            "FBX importer did not preserve parsed Model names literally; "
-            f"missing={missing}, extra={extra}")
+    if not allow_temporary_names:
+        by_name = {obj.name: obj for obj in imported_objects}
+        if set(by_name) != expected or len(by_name) != len(imported_objects):
+            missing = sorted(expected - set(by_name))
+            extra = sorted(set(by_name) - expected)
+            raise RuntimeError(
+                "FBX importer did not preserve parsed Model names literally; "
+                f"missing={missing}, extra={extra}")
+    else:
+        def compatible(actual, desired):
+            if actual == desired:
+                return True
+            match = _BLENDER_AUTO_SUFFIX_RE.search(actual)
+            return match is not None and desired.startswith(actual[:-4])
 
+        candidates = {}
+        for obj in imported_objects:
+            rows = []
+            for node in plan.nodes:
+                expected_type = "MESH" if node.node_type == "MESH" else "EMPTY"
+                if obj.type != expected_type or not compatible(obj.name, node.name):
+                    continue
+                if node.node_type == "MESH" and (
+                        obj.data is None
+                        or not compatible(obj.data.name, node.geometry_name)):
+                    continue
+                rows.append(node.name)
+            candidates[_identity(obj)] = rows
+        solutions = []
+
+        def solve(remaining, used, mapping):
+            if len(solutions) > 1:
+                return
+            if not remaining:
+                solutions.append(dict(mapping))
+                return
+            obj = min(
+                remaining,
+                key=lambda row: len([
+                    name for name in candidates[_identity(row)]
+                    if name not in used]),
+            )
+            available = [
+                name for name in candidates[_identity(obj)] if name not in used]
+            for name in available:
+                solve(
+                    [row for row in remaining if row is not obj],
+                    used | {name},
+                    {**mapping, name: obj},
+                )
+
+        solve(list(imported_objects), set(), {})
+        if len(solutions) != 1 or set(solutions[0]) != expected:
+            raise MHValidationError(
+                "MH_E_IMPORT_TARGET_OCCUPIED",
+                sorted(obj.name for obj in imported_objects),
+                "refresh staging could not recover one unambiguous FBX Model "
+                "identity after Blender assigned temporary ID suffixes")
+        by_name = solutions[0]
+
+    renames = []
     for node in plan.nodes:
         obj = by_name[node.name]
         expected_type = "MESH" if node.node_type == "MESH" else "EMPTY"
@@ -515,19 +983,35 @@ def _bind_parsed_nodes(
                 f"parsed node '{node.name}' expected {expected_type}, got {obj.type}")
         if node.node_type != "MESH":
             continue
-        if obj.data is None or obj.data.name != node.geometry_name:
+        geometry_name_ok = (
+            obj.data is not None
+            and (obj.data.name == node.geometry_name
+                 or (allow_temporary_names
+                     and _BLENDER_AUTO_SUFFIX_RE.search(obj.data.name)
+                     and node.geometry_name.startswith(obj.data.name[:-4])))
+        )
+        if not geometry_name_ok:
             actual = None if obj.data is None else obj.data.name
             raise RuntimeError(
                 f"FBX importer did not preserve Geometry name for '{node.name}': "
                 f"expected '{node.geometry_name}', got '{actual}'")
-        obj.data.materials.clear()
-        for slot_name in node.material_slots:
-            obj.data.materials.append(materials[slot_name])
-        if [slot.material.name for slot in obj.material_slots] != list(
-                node.material_slots):
-            raise RuntimeError(
-                f"material slot binding diverged for parsed node '{node.name}'")
-    return by_name
+        if material_node_names is None or node.name in material_node_names:
+            obj.data.materials.clear()
+            for slot_name in node.material_slots:
+                obj.data.materials.append(materials[slot_name])
+            if [slot.material.name for slot in obj.material_slots] != list(
+                    node.material_slots):
+                raise RuntimeError(
+                    f"material slot binding diverged for parsed node '{node.name}'")
+        if allow_temporary_names:
+            renames.append((obj.data, node.geometry_name))
+    if allow_temporary_names:
+        for node in plan.nodes:
+            obj = by_name[node.name]
+            renames.append((obj, node.name))
+        for data_block, _desired_name in renames:
+            data_block.name = _temporary_id_name(data_block, "stage")
+    return by_name, tuple(renames)
 
 
 def _remove_placeholder_data(stage2_snapshot) -> None:
@@ -539,17 +1023,24 @@ def _remove_placeholder_data(stage2_snapshot) -> None:
         bpy.data.batch_remove(placeholders)
 
 
-def _stage_restructure(plan: MeshImportPlan, staging, by_name):
+def _stage_restructure(
+        plan: MeshImportPlan, staging, by_name, *, temporary=False):
     scene_root = bpy.context.scene.collection
-    target = bpy.data.collections.new(plan.target_collection_name)
+    target = bpy.data.collections.new(
+        ".__mh_refresh_definition" if temporary
+        else plan.target_collection_name)
     scene_root.children.link(target)
     destinations = {}
+    renames = []
     if plan.uses_lod_collections:
         for level in plan.lod_levels:
+            desired_name = f"{plan.resource_name}.lod{level:02d}"
             child = bpy.data.collections.new(
-                f"{plan.resource_name}.lod{level:02d}")
+                ".__mh_refresh_lod" if temporary else desired_name)
             target.children.link(child)
             destinations[level] = child
+            if temporary:
+                renames.append((child, desired_name))
 
     for node in plan.nodes:
         obj = by_name[node.name]
@@ -566,7 +1057,7 @@ def _stage_restructure(plan: MeshImportPlan, staging, by_name):
         if obj.name in staging.objects:
             staging.objects.unlink(obj)
     bpy.data.collections.remove(staging)
-    return target
+    return target, tuple(renames)
 
 
 def _resolved_source_root(source_root) -> Path:
@@ -587,17 +1078,74 @@ def _inside(root: Path, path: Path) -> bool:
         return False
 
 
-def _execute_import(filepath: Path, source_root: Path, transaction):
-    # Stage 0: parsed-model validation and every occupation check are pure.
+def _execute_import(
+        filepath: Path, source_root: Path, transaction, *,
+        load_mode, definition_policy, prepared=None):
+    # Stage 0: full transport parsing is mandatory in every load mode.
     plan = parse_mesh_fbx(filepath)
-    preflight_mesh_import_plan(plan, source_root)
-    _preflight_scene(plan)
+    effective = mesh_plan_for_load_mode(plan, load_mode)
+    decision = prepared or preflight_mesh_definition(
+        plan, source_root, load_mode=load_mode,
+        definition_policy=definition_policy)
+
+    if decision.action == "reuse":
+        return {
+            "ok": True,
+            "filepath": str(filepath),
+            "resource_name": plan.resource_name,
+            "collection_name": decision.collection.name,
+            "collection": decision.collection,
+            "objects_imported": 0,
+            "lod_levels": list(plan.lod_levels),
+            "materials": [],
+            "materials_reused": [],
+            "materials_created": [],
+            "warnings": [],
+            "decoder": "reused-managed-definition",
+            "load_mode": load_mode,
+            "definition_action": "reuse",
+        }
+
+    incomplete = load_mode != LOAD_MODE_FULL_LOD
+    temporary = decision.action == "refresh"
+    if load_mode == LOAD_MODE_STRUCTURE_ONLY:
+        collection = bpy.data.collections.new(
+            ".__mh_refresh_definition" if temporary
+            else plan.target_collection_name)
+        bpy.context.scene.collection.children.link(collection)
+        if temporary:
+            schedule_collection_refresh(
+                transaction, decision.collection, collection,
+                kind="mesh", resource_name=plan.resource_name,
+                target_name=plan.target_collection_name,
+                incomplete=True)
+            result_collection = decision.collection
+        else:
+            stamp_resource_collection(
+                collection, "mesh", plan.resource_name, incomplete=True)
+            result_collection = collection
+        return {
+            "ok": True,
+            "filepath": str(filepath),
+            "resource_name": plan.resource_name,
+            "collection_name": result_collection.name,
+            "collection": result_collection,
+            "objects_imported": 0,
+            "lod_levels": [],
+            "materials": [],
+            "materials_reused": [],
+            "materials_created": [],
+            "warnings": [],
+            "decoder": "structure-only",
+            "load_mode": load_mode,
+            "definition_action": decision.action,
+        }
 
     # Stage 1: canonical materials exist before the black-box decoder runs.
     images_before_materials = {
         _identity(image) for image in bpy.data.images
     }
-    materials, reused, created = _stage_materials(plan, source_root)
+    materials, reused, created = _stage_materials(effective, source_root)
     renamed_images = sorted(
         image.name for image in bpy.data.images
         if _identity(image) not in images_before_materials
@@ -608,7 +1156,9 @@ def _execute_import(filepath: Path, source_root: Path, transaction):
             "material dependency images would survive with Blender .001 names")
 
     # Stage 2: isolate all importer output in a staging collection.
-    staging = bpy.data.collections.new(_staging_name(plan.resource_name))
+    staging = bpy.data.collections.new(
+        ".__mh_refresh_fbx" if temporary
+        else _staging_name(plan.resource_name))
     bpy.context.scene.collection.children.link(staging)
     stage2_snapshot = _data_snapshot()
     _stage_geometry(filepath, staging)
@@ -616,33 +1166,82 @@ def _execute_import(filepath: Path, source_root: Path, transaction):
 
     # Stage 3: bind names and ordered slots from parse truth, then discard
     # the black-box importer's material/image placeholders.
-    by_name = _bind_parsed_nodes(plan, imported_objects, materials)
+    effective_names = {node.name for node in effective.nodes}
+    by_name, _temporary_renames = _bind_parsed_nodes(
+        plan, imported_objects, materials,
+        allow_temporary_names=temporary,
+        material_node_names=effective_names)
     _remove_placeholder_data(stage2_snapshot)
 
+    # LOD0 still decodes the full transport so malformed higher LOD cannot
+    # hide, then discards geometry outside the approved authored subset.
+    effective_by_name = {node.name: node for node in effective.nodes}
+    discard = []
+    for name, obj in tuple(by_name.items()):
+        wanted = effective_by_name.get(name)
+        if wanted is None:
+            if obj.data is not None:
+                discard.append(obj.data)
+            discard.append(obj)
+            del by_name[name]
+        elif wanted.node_type == "NULL" and obj.type == "MESH":
+            datum = obj.data
+            obj.data = None
+            if datum is not None:
+                discard.append(datum)
+    if discard:
+        bpy.data.batch_remove(discard)
+
     # Stage 4: restore dag4blend-compatible authoring collections.
-    collection = _stage_restructure(plan, staging, by_name)
-    stamp_resource_collection(collection, "mesh", plan.resource_name)
+    collection, collection_renames = _stage_restructure(
+        effective, staging, by_name, temporary=temporary)
+    if temporary:
+        content_renames = []
+        for node in effective.nodes:
+            obj = by_name[node.name]
+            content_renames.append((obj, node.name))
+            if node.geometry_name is not None:
+                content_renames.append((obj.data, node.geometry_name))
+        schedule_collection_refresh(
+            transaction, decision.collection, collection,
+            kind="mesh", resource_name=plan.resource_name,
+            target_name=plan.target_collection_name,
+            incomplete=incomplete,
+            renames=(*collection_renames, *content_renames))
+        result_collection = decision.collection
+    else:
+        stamp_resource_collection(
+            collection, "mesh", plan.resource_name, incomplete=incomplete)
+        result_collection = collection
     return {
         "ok": True,
         "filepath": str(filepath),
         "resource_name": plan.resource_name,
-        "collection_name": collection.name,
-        "collection": collection,
+        "collection_name": result_collection.name,
+        "collection": result_collection,
         "objects_imported": len(by_name),
-        "lod_levels": list(plan.lod_levels),
-        "materials": list(plan.material_names),
+        "lod_levels": list(effective.lod_levels),
+        "materials": list(effective.material_names),
         "materials_reused": reused,
         "materials_created": created,
         "warnings": [],
         "decoder": "io_scene_fbx",
+        "load_mode": load_mode,
+        "definition_action": decision.action,
     }
 
 
-def import_mesh_fbx(filepath, *, source_root, transaction=None) -> dict:
+def import_mesh_fbx(
+        filepath, *, source_root, transaction=None,
+        load_mode=LOAD_MODE_FULL_LOD,
+        definition_policy=DEFINITION_REUSE,
+        _prepared=None) -> dict:
     """Import one ``*.mesh.fbx`` as a complete transactional working copy."""
 
     path = Path(bpy.path.abspath(os.fspath(filepath))).resolve(strict=True)
     root = _resolved_source_root(source_root)
+    _validate_load_mode(load_mode)
+    _validate_definition_policy(definition_policy)
     if not path.is_file():
         raise ValueError(f"Mesh FBX source is not a file: {path}")
     if not _inside(root, path):
@@ -651,7 +1250,11 @@ def import_mesh_fbx(filepath, *, source_root, transaction=None) -> dict:
             "mesh FBX source must be inside Project Source Root")
     if transaction is None:
         with MeshImportTransaction() as owned:
-            return _execute_import(path, root, owned)
+            return _execute_import(
+                path, root, owned, load_mode=load_mode,
+                definition_policy=definition_policy, prepared=_prepared)
     if not isinstance(transaction, MeshImportTransaction) or not transaction.active:
         raise ValueError("transaction must be an active MeshImportTransaction")
-    return _execute_import(path, root, transaction)
+    return _execute_import(
+        path, root, transaction, load_mode=load_mode,
+        definition_policy=definition_policy, prepared=_prepared)

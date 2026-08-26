@@ -13,11 +13,13 @@ from ..core.canonical import validate_resource_name
 from ..core.canonical_json import canonical_json_bytes, parse_json
 from ..core.composites import (
     composite_json_bytes,
+    iter_profile_references,
     iter_resource_references,
     parse_composite,
     read_composite_file,
     validate_composite_cycles,
 )
+from ..core.placements import placement_json_bytes, read_placement_file
 from ..core.model import Composite, CompositeTransform, Node, RandomOption
 from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.transforms import (
@@ -33,6 +35,7 @@ from .resource_markers import (
 )
 from ..ui.composite_authoring import (
     OPTION_INDEX_MIRROR_KEY,
+    PROFILE_MIRROR_KEY,
     WEIGHT_MIRROR_KEY,
     sync_typed_mirror,
     validate_random_options,
@@ -205,6 +208,26 @@ def _preflight_dependencies(root: Path, candidate: Composite) -> None:
         for dependency in iter_resource_references(document, kind="mesh"):
             _resolve_dependency(
                 root, dependency, ".mesh.fbx", allow_missing=True)
+        for profile_name in iter_profile_references(document):
+            profile_path = _resolve_dependency(
+                root, profile_name, ".placement", allow_missing=False)
+            raw = profile_path.read_bytes()
+            try:
+                canonical = placement_json_bytes(read_placement_file(profile_path))
+            except ValueError as exc:
+                raise MHValidationError(
+                    getattr(exc, "code", None)
+                    or "MH_E_PLACEMENT_PROFILE_GRAMMAR",
+                    [profile_name, str(profile_path)],
+                    f"referenced placement profile is invalid: {exc}",
+                ) from exc
+            if raw != canonical:
+                raise MHValidationError(
+                    "MH_E_PLACEMENT_PROFILE_GRAMMAR",
+                    [profile_name, str(profile_path)],
+                    "referenced placement profile must already contain exact "
+                    "canonical bytes; export never normalizes source",
+                )
 
 
 def _collection_instance_identity(instance) -> tuple[str, str]:
@@ -359,6 +382,10 @@ def _random_option(option, child_objects) -> RandomOption:
             "MH_E_COMPOSITE_GRAMMAR", [option.name],
             "resolved random option requires instance_collection")
     settings = option.mh4blend
+    if settings.profile:
+        raise MHValidationError(
+            "MH_E_COMPOSITE_GRAMMAR", [option.name, settings.profile],
+            "random options cannot carry placement profiles")
     weight = settings.weight
     if (isinstance(weight, bool) or not isinstance(weight, (int, float))
             or not math.isfinite(float(weight)) or weight < 0.0):
@@ -440,6 +467,16 @@ def _extract_composite(collection) -> Composite:
 
     def build(obj) -> Node:
         kind, resource = _node_kind_and_resource(obj)
+        profile = obj.mh4blend.profile or None
+        if profile is not None:
+            try:
+                validate_resource_name(profile)
+            except (TypeError, ValueError) as exc:
+                raise MHValidationError(
+                    "MH_E_NONCANONICAL_RESOURCE_NAME",
+                    [obj.name, repr(profile)],
+                    "typed mh4blend.profile must match [a-z0-9_]+ exactly",
+                ) from exc
         display_name = obj.get(NODE_NAME_KEY)
         if display_name == "":
             display_name = None
@@ -475,6 +512,7 @@ def _extract_composite(collection) -> Composite:
             resource=resource,
             name=display_name,
             transform=_object_transform(obj),
+            profile=profile,
             options=options,
             children=[build(child) for child in authored_children],
         )
@@ -515,7 +553,9 @@ def export_composite_collection(collection, output_dir, *, source_root) -> dict:
                 "MH_E_COMPOSITE_GRAMMAR: staged composite failed canonical "
                 "read-back")
 
-    mirror_keys = (NODE_KIND_KEY, WEIGHT_MIRROR_KEY, OPTION_INDEX_MIRROR_KEY)
+    mirror_keys = (
+        NODE_KIND_KEY, WEIGHT_MIRROR_KEY, OPTION_INDEX_MIRROR_KEY,
+        PROFILE_MIRROR_KEY)
     mirror_snapshot = [
         (obj, {
             key: (key in obj, obj.get(key))

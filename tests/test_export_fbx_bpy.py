@@ -16,6 +16,7 @@ from mh4blend.scene.import_fbx import parse_mesh_fbx  # noqa: E402
 from mh4blend.scene.resource_markers import (  # noqa: E402
     COLLECTION_KIND_KEY,
     COLLECTION_RESOURCE_KEY,
+    INCOMPLETE_IMPORT_KEY,
 )
 
 export_fbx_module = importlib.import_module("mh4blend.scene.export_fbx")
@@ -80,6 +81,21 @@ def _build_lods(base="garage"):
         "socket": socket,
         "ignored": (ignored_collision, ignored_socket),
     }
+
+
+def test_incomplete_import_cannot_overwrite_mesh_source(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("incomplete_mesh")
+    _mesh_object("body", collection)
+    collection[INCOMPLETE_IMPORT_KEY] = True
+    target = tmp_path / "incomplete_mesh.mesh.fbx"
+    target.write_bytes(b"existing-authority")
+
+    with pytest.raises(
+            MHValidationError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+
+    assert target.read_bytes() == b"existing-authority"
 
 
 def test_collision_material_slots_are_writer_validated_and_reader_compatible(

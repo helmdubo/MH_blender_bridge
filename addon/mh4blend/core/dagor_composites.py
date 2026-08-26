@@ -2,8 +2,9 @@
 
 The reader deliberately stops at the lossless conversion boundary.  It keeps
 Dagor's source-order hierarchy, typed resource tokens, and raw 3x4 transform
-columns; it does not decompose matrices or interpret textual placement
-directives.  Blender construction belongs to the scene layer.
+columns; it does not decompose matrices.  Admitted node ``include`` directives
+retain exact provenance, while their closed ``p2`` grammar is decoded into
+placement-profile DTOs by this bpy-free module.
 """
 
 from __future__ import annotations
@@ -14,9 +15,13 @@ from pathlib import Path
 import re
 from typing import Iterator
 
+from .model import PlacementProfile, PlacementRange
+from .placements import parse_placement_profile, placement_json_bytes
+
 __all__ = [
     "DagorComposite",
     "DagorCompositeError",
+    "DagorInclude",
     "DagorMatrix3x4",
     "DagorNode",
     "DagorOption",
@@ -24,6 +29,7 @@ __all__ = [
     "DagorResourceToken",
     "iter_resource_tokens",
     "parse_dagor_composite",
+    "parse_dagor_placement_include",
     "read_dagor_composite",
 ]
 
@@ -32,6 +38,7 @@ _GRAMMAR_CODE = "MH_E_COMPOSITE_GRAMMAR"
 _SOURCE_CODE = "MH_E_INVALID_RESOURCE_SOURCE"
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _RESOURCE_NAME = re.compile(r"[A-Za-z0-9_]+")
+_PROFILE_NAME = re.compile(r"[a-z0-9_]+")
 _NUMBER = re.compile(
     r"[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?"
 )
@@ -103,6 +110,14 @@ class DagorOption:
 
 
 @dataclass(frozen=True)
+class DagorInclude:
+    """One node-scoped placement include, before filesystem resolution."""
+
+    path: str
+    provenance: DagorProvenance
+
+
+@dataclass(frozen=True)
 class DagorNode:
     """One node with interleaved source-order node/ent members preserved."""
 
@@ -111,6 +126,7 @@ class DagorNode:
     transform: DagorMatrix3x4 | None
     members: tuple[DagorNode | DagorOption, ...]
     provenance: DagorProvenance
+    include: DagorInclude | None = None
 
     @property
     def children(self) -> tuple[DagorNode, ...]:
@@ -275,7 +291,8 @@ class _Parser:
         return self._error(
             token,
             path,
-            f"lossless conversion STOP OPEN-V5-9: {construct} is not admitted",
+            f"lossless conversion error: {construct} has no admitted "
+            "placement-profile carrier",
         )
 
     def parse(self) -> DagorComposite:
@@ -288,7 +305,7 @@ class _Parser:
             key = self._take("IDENT", "$", "expected root statement")
             folded = key.value.casefold()
             if folded == "include":
-                raise self._lossless_stop(key, "$", "Dagor include")
+                raise self._lossless_stop(key, "$", "root Dagor include")
             if folded == "node" and self._peek("{"):
                 nodes.append(self._node(key, f"$.nodes[{len(nodes)}]"))
                 continue
@@ -316,6 +333,7 @@ class _Parser:
         self._take("{", path)
         resource: DagorResourceToken | None = None
         transform: DagorMatrix3x4 | None = None
+        include: DagorInclude | None = None
         members: list[DagorNode | DagorOption] = []
         while not self._peek("}"):
             self._accept(";")
@@ -326,7 +344,21 @@ class _Parser:
             key = self._take("IDENT", path, "expected node statement")
             folded = key.value.casefold()
             if folded == "include":
-                raise self._lossless_stop(key, path, "Dagor include")
+                if include is not None:
+                    raise self._error(
+                        key, f"{path}.profile", "duplicate Dagor include")
+                include_path = self._take(
+                    "STRING", f"{path}.profile",
+                    "Dagor include requires one quoted path").value
+                if not include_path:
+                    raise self._error(
+                        key, f"{path}.profile", "Dagor include path is empty")
+                include = DagorInclude(
+                    include_path,
+                    self._provenance(key, f"{path}.profile"),
+                )
+                self._accept(";")
+                continue
             if folded == "node" and self._peek("{"):
                 child_index = sum(isinstance(item, DagorNode) for item in members)
                 members.append(self._node(key, f"{path}.children[{child_index}]"))
@@ -372,7 +404,8 @@ class _Parser:
                     start, f"{path}.options", "random option total must be positive")
         kind = "random" if options else (resource.kind if resource is not None else "group")
         return DagorNode(
-            kind, resource, transform, tuple(members), self._provenance(start, path))
+            kind, resource, transform, tuple(members),
+            self._provenance(start, path), include)
 
     def _option(self, start: _Token, path: str) -> DagorOption:
         self._take("{", path)
@@ -387,7 +420,8 @@ class _Parser:
                 raise self._error(start, path, "unterminated ent block")
             key = self._take("IDENT", path, "expected ent statement")
             if key.value.casefold() == "include":
-                raise self._lossless_stop(key, path, "Dagor include")
+                raise self._lossless_stop(
+                    key, path, "random-option Dagor include")
             if key.value == "name":
                 if resource is not None:
                     raise self._error(key, f"{path}.name", "duplicate name")
@@ -490,6 +524,120 @@ class _Parser:
             (columns[0], columns[1], columns[2], columns[3]),
             self._provenance(start, path),
         )
+
+
+class _PlacementIncludeParser(_Parser):
+    """Closed reader for the owner-admitted Dagor ``p2`` subset."""
+
+    _FIELDS = frozenset({
+        "offset_x", "offset_y", "offset_z",
+        "rot_x", "rot_y", "rot_z",
+        "scale", "yScale",
+    })
+
+    def parse_profile(self) -> PlacementProfile:
+        values: dict[str, PlacementRange] = {}
+        provenance: dict[str, DagorProvenance] = {}
+        while not self._peek("EOF"):
+            self._accept(";")
+            if self._peek("EOF"):
+                break
+            key = self._take("IDENT", "$", "expected Dagor p2 assignment")
+            path = f"$.{key.value}"
+            if key.value not in self._FIELDS:
+                raise self._error(
+                    key, path,
+                    f"unsupported Dagor placement parameter {key.value!r}")
+            if key.value in values:
+                raise self._error(key, path, "duplicate Dagor placement parameter")
+            self._take(":", path)
+            type_token = self._take(
+                "IDENT", path, "missing Dagor placement parameter type")
+            if type_token.value.casefold() != "p2":
+                raise self._error(
+                    type_token, path,
+                    f"placement parameter {key.value!r} requires :p2")
+            self._take("=", path)
+            bracketed = self._accept("[") is not None
+            base_token = self._take(
+                "NUMBER", f"{path}[0]", "p2 base must be a number")
+            self._take(",", path, "p2 requires base,deviation")
+            deviation_token = self._take(
+                "NUMBER", f"{path}[1]", "p2 deviation must be a number")
+            if bracketed:
+                self._take("]", path, "bracketed p2 requires closing ]")
+            values[key.value] = PlacementRange(
+                self._finite(base_token, f"{path}[0]"),
+                self._finite(deviation_token, f"{path}[1]"),
+            )
+            provenance[key.value] = self._provenance(key, path)
+            self._accept(";")
+        self._take("EOF", "$")
+
+        def triple(prefix: str):
+            names = tuple(f"{prefix}_{axis}" for axis in "xyz")
+            present = tuple(name in values for name in names)
+            if any(present) and not all(present):
+                first = next(name for name in names if name in values)
+                raise DagorCompositeError(
+                    _GRAMMAR_CODE,
+                    provenance[first],
+                    f"lossless conversion requires the complete {prefix}_x/"
+                    f"{prefix}_y/{prefix}_z p2 triple",
+                )
+            return tuple(values[name] for name in names) if all(present) else None
+
+        profile = PlacementProfile(
+            self._name,
+            offset_cm=triple("offset"),
+            rotation_deg=triple("rot"),
+            uniform_scale=values.get("scale"),
+            vertical_scale=values.get("yScale"),
+        )
+        try:
+            # Round-trip through the normative codec once: this both validates
+            # scale ranges and fixes the returned values to canonical float32.
+            return parse_placement_profile(
+                placement_json_bytes(profile), name=self._name)
+        except ValueError as exc:
+            token = next(iter(provenance.values()), DagorProvenance(
+                self._source, 1, 1, "$"))
+            code = getattr(exc, "code", None) or "MH_E_PLACEMENT_PROFILE_GRAMMAR"
+            raise DagorCompositeError(
+                code, token,
+                f"Dagor placement include cannot be represented losslessly: {exc}",
+            ) from exc
+
+
+def parse_dagor_placement_include(
+    payload: bytes | str,
+    *,
+    source: str = "<memory>",
+    name: str,
+) -> PlacementProfile:
+    """Parse one admitted Dagor include into a canonical placement profile."""
+
+    if _PROFILE_NAME.fullmatch(name) is None:
+        raise DagorCompositeError(
+            "MH_E_NONCANONICAL_RESOURCE_NAME",
+            DagorProvenance(source, 1, 1, "$"),
+            "Dagor include stem must match [a-z0-9_]+ exactly",
+        )
+    if isinstance(payload, bytes):
+        try:
+            text = payload.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise DagorCompositeError(
+                _SOURCE_CODE,
+                DagorProvenance(source, 1, 1, "$"),
+                "Dagor placement include must be UTF-8",
+            ) from exc
+    elif isinstance(payload, str):
+        text = payload
+    else:
+        raise TypeError("Dagor placement include payload must be bytes or str")
+    tokens = _Lexer(text, source).tokens()
+    return _PlacementIncludeParser(tokens, source, name).parse_profile()
 
 
 def parse_dagor_composite(
