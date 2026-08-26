@@ -1,0 +1,230 @@
+{
+  "schema": "mh.gaz53_random_baseline:1",
+  "status": {
+    "source_oracle": "bound",
+    "mh_normative_choices": "frozen",
+    "dagor_runtime_observation": "not_run",
+    "resolved_signatures": "blocked_on_option_payload_closure"
+  },
+  "sources": [
+    {
+      "path": "reference/dagor_fixtures/gaz53/gaz53_b_body_cmp.composit.blk",
+      "raw_hash": "blake3-160:d3a04d2ea0c9aa9e67c7a8547469b4064750edcc",
+      "declared_references": [
+        {
+          "kind": "composite",
+          "resource": "gaz53_b_window_front_cmp"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_body"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_bumper"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_door_left"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_door_right"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_doorstep_left"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_doorstep_right"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_headlight_big_left_base"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_headlight_big_left_glass"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_headlight_big_right_base"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_headlight_big_right_glass"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_headlight_small_right"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_hood"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_mirror_left"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_mirror_right"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_wiper_left"
+        },
+        {
+          "kind": "mesh",
+          "resource": "gaz53_b_wiper_right"
+        }
+      ]
+    },
+    {
+      "path": "reference/dagor_fixtures/gaz53/gaz53_b_random_cmp.composit.blk",
+      "raw_hash": "blake3-160:198de207c1f929220ba00f9a409ffd8df197df9f",
+      "declared_references": [
+        {
+          "kind": "composite",
+          "resource": "gaz53_b_body_cmp"
+        },
+        {
+          "kind": "composite",
+          "resource": "gaz53_body_bc_random_cmp"
+        }
+      ]
+    },
+    {
+      "path": "reference/dagor_fixtures/gaz53/gaz53_body_bc_random_cmp.composit.blk",
+      "raw_hash": "blake3-160:05d35f51bdea5a6498d3149e3803e5050b74a37e",
+      "declared_references": [
+        {
+          "kind": "composite",
+          "resource": "gaz53_bread_b_cmp"
+        },
+        {
+          "kind": "composite",
+          "resource": "gaz53_wooden_b_cmp"
+        },
+        {
+          "kind": "composite",
+          "resource": "gaz53_wooden_c_cmp"
+        }
+      ]
+    }
+  ],
+  "source_declared_closure": {
+    "composite": [
+      "gaz53_b_body_cmp",
+      "gaz53_b_random_cmp",
+      "gaz53_b_window_front_cmp",
+      "gaz53_body_bc_random_cmp",
+      "gaz53_bread_b_cmp",
+      "gaz53_wooden_b_cmp",
+      "gaz53_wooden_c_cmp"
+    ],
+    "static_mesh": [
+      "gaz53_b_body",
+      "gaz53_b_bumper",
+      "gaz53_b_door_left",
+      "gaz53_b_door_right",
+      "gaz53_b_doorstep_left",
+      "gaz53_b_doorstep_right",
+      "gaz53_b_headlight_big_left_base",
+      "gaz53_b_headlight_big_left_glass",
+      "gaz53_b_headlight_big_right_base",
+      "gaz53_b_headlight_big_right_glass",
+      "gaz53_b_headlight_small_right",
+      "gaz53_b_hood",
+      "gaz53_b_mirror_left",
+      "gaz53_b_mirror_right",
+      "gaz53_b_wiper_left",
+      "gaz53_b_wiper_right"
+    ]
+  },
+  "options": [
+    {
+      "kind": "composite",
+      "resource": "gaz53_bread_b_cmp",
+      "weight": 1.0
+    },
+    {
+      "kind": "composite",
+      "resource": "gaz53_wooden_b_cmp",
+      "weight": 1.0
+    },
+    {
+      "kind": "composite",
+      "resource": "gaz53_wooden_c_cmp",
+      "weight": 1.0
+    }
+  ],
+  "seed_set": [
+    0,
+    1,
+    2,
+    42,
+    123,
+    1024,
+    2147483647
+  ],
+  "mh_random_stream_1_choices": [
+    {
+      "seed": 0,
+      "raw_u32": 2802244911,
+      "unit_f64": 0.6524484863039106,
+      "target_f64": 1.9573454589117318,
+      "option": 1,
+      "resource": "gaz53_wooden_b_cmp"
+    },
+    {
+      "seed": 1,
+      "raw_u32": 1581361928,
+      "unit_f64": 0.36818951554596424,
+      "target_f64": 1.1045685466378927,
+      "option": 1,
+      "resource": "gaz53_wooden_b_cmp"
+    },
+    {
+      "seed": 2,
+      "raw_u32": 1684556879,
+      "unit_f64": 0.3922164624091238,
+      "target_f64": 1.1766493872273713,
+      "option": 1,
+      "resource": "gaz53_wooden_b_cmp"
+    },
+    {
+      "seed": 42,
+      "raw_u32": 1474427578,
+      "unit_f64": 0.34329192200675607,
+      "target_f64": 1.0298757660202682,
+      "option": 1,
+      "resource": "gaz53_wooden_b_cmp"
+    },
+    {
+      "seed": 123,
+      "raw_u32": 3763380899,
+      "unit_f64": 0.8762303970288485,
+      "target_f64": 2.6286911910865456,
+      "option": 2,
+      "resource": "gaz53_wooden_c_cmp"
+    },
+    {
+      "seed": 1024,
+      "raw_u32": 2781839491,
+      "unit_f64": 0.6476974792312831,
+      "target_f64": 1.9430924376938492,
+      "option": 1,
+      "resource": "gaz53_wooden_b_cmp"
+    },
+    {
+      "seed": 2147483647,
+      "raw_u32": 181848196,
+      "unit_f64": 0.04233983252197504,
+      "target_f64": 0.12701949756592512,
+      "option": 0,
+      "resource": "gaz53_bread_b_cmp"
+    }
+  ]
+}

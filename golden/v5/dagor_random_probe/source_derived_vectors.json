@@ -1,0 +1,1442 @@
+{
+  "schema": "mh.dagor_random_parity_probe:1",
+  "status": {
+    "mh_normative": "frozen",
+    "dagor_evidence": "pinned_public_source_derived",
+    "dagor_runtime_observation": "not_run",
+    "owner_a_or_b_decision": "pending"
+  },
+  "provenance": {
+    "repository": "https://github.com/GaijinEntertainment/DagorEngine",
+    "commit": "75723669297e48e200a0dc67b18c1629e0975daf",
+    "prng_source": "prog/gameLibs/publicInclude/gameMath/objgenPrng.h",
+    "prng_symbol": "objgenerator::rnd/frnd",
+    "composite_source": "prog/tools/sceneTools/daEditorX/services/compositMgr/compositMgrService.cpp",
+    "selection_symbol": "CompositEntityPool::Component::selectEnt",
+    "transform_symbol": "CompositEntityPool::getTm/getRandom",
+    "fixture": "golden/v5/dagor_random_probe/random_parity_probe.composit.blk",
+    "fixture_raw_hash": "blake3-160:1350b196fcdac543373e9c5fcbc10d29f5ffc035",
+    "regeneration_command": "python tools/dagor_random_parity_probe.py"
+  },
+  "fixture": {
+    "options": [
+      {
+        "kind": "composite",
+        "resource": "mh_probe_a_cmp",
+        "weight": 1.0
+      },
+      {
+        "kind": "composite",
+        "resource": "mh_probe_b_cmp",
+        "weight": 1.0
+      },
+      {
+        "kind": "composite",
+        "resource": "mh_probe_c_cmp",
+        "weight": 1.0
+      }
+    ],
+    "ranges": {
+      "offset_x": [
+        10.0,
+        1.0
+      ],
+      "offset_y": [
+        20.0,
+        2.0
+      ],
+      "offset_z": [
+        30.0,
+        3.0
+      ],
+      "rot_x": [
+        5.0,
+        10.0
+      ],
+      "rot_y": [
+        -5.0,
+        20.0
+      ],
+      "rot_z": [
+        15.0,
+        30.0
+      ],
+      "scale": [
+        1.0,
+        0.25
+      ],
+      "vertical_scale": [
+        1.0,
+        0.10000000149011612
+      ]
+    }
+  },
+  "seed_set": [
+    0,
+    1,
+    2,
+    42,
+    123,
+    1024,
+    2147483647
+  ],
+  "vectors": [
+    {
+      "seed": 0,
+      "mh_random_stream_1": {
+        "selection": {
+          "raw_u32": 2802244911,
+          "unit_f64": 0.6524484863039106,
+          "target_f64": 1.9573454589117318,
+          "option": 1
+        },
+        "profile": {
+          "offset_cm": [
+            10.402423858642578,
+            19.54849624633789,
+            30.9384822845459
+          ],
+          "rotation_deg": [
+            10.758569717407227,
+            -19.15061378479004,
+            31.7191162109375
+          ],
+          "uniform_scale": 0.882559061050415,
+          "vertical_scale": 0.9750480055809021
+        },
+        "draws": [
+          {
+            "role": "offset_x",
+            "raw_u32": 3011683077,
+            "unit_f64": 0.7012121092993766,
+            "sample_f32": 10.402423858642578
+          },
+          {
+            "role": "offset_y",
+            "raw_u32": 1662685524,
+            "unit_f64": 0.3871241407468915,
+            "sample_f32": 19.54849624633789
+          },
+          {
+            "role": "offset_z",
+            "raw_u32": 2819275404,
+            "unit_f64": 0.6564137069508433,
+            "sample_f32": 30.9384822845459
+          },
+          {
+            "role": "rotation_x",
+            "raw_u32": 3384126992,
+            "unit_f64": 0.7879284657537937,
+            "sample_f32": 10.758569717407227
+          },
+          {
+            "role": "rotation_y",
+            "raw_u32": 628073065,
+            "unit_f64": 0.1462346559856087,
+            "sample_f32": -19.15061378479004
+          },
+          {
+            "role": "rotation_z",
+            "raw_u32": 3344284588,
+            "unit_f64": 0.7786519331857562,
+            "sample_f32": 31.7191162109375
+          },
+          {
+            "role": "uniform_scale",
+            "raw_u32": 1138673854,
+            "unit_f64": 0.2651181663386524,
+            "sample_f32": 0.882559061050415
+          },
+          {
+            "role": "vertical_scale",
+            "raw_u32": 1611643093,
+            "unit_f64": 0.37523989868350327,
+            "sample_f32": 0.9750480055809021
+          }
+        ]
+      },
+      "dagor_pinned_source": {
+        "selection": {
+          "raw15": 0,
+          "unit_f32": 0.0,
+          "normalized_weights_f32": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "option": 0
+        },
+        "transform_candidates": {
+          "binding_status": "runtime_observation_required",
+          "candidate_scope": "illustrative_non_exhaustive",
+          "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
+          "left_to_right_candidate": [
+            {
+              "role": "rotation_x",
+              "raw15": 0,
+              "unit_f32": 0.0,
+              "sample_f32": -5.0
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 21468,
+              "unit_f32": 0.6551513671875,
+              "sample_f32": 1.2060546875
+            },
+            {
+              "role": "rotation_z",
+              "raw15": 9988,
+              "unit_f32": 0.3048095703125,
+              "sample_f32": 3.28857421875
+            },
+            {
+              "role": "offset_x",
+              "raw15": 22117,
+              "unit_f32": 0.674957275390625,
+              "sample_f32": 10.34991455078125
+            },
+            {
+              "role": "offset_y",
+              "raw15": 3498,
+              "unit_f32": 0.10675048828125,
+              "sample_f32": 18.427001953125
+            },
+            {
+              "role": "offset_z",
+              "raw15": 16927,
+              "unit_f32": 0.516571044921875,
+              "sample_f32": 30.09942626953125
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 16045,
+              "unit_f32": 0.489654541015625,
+              "sample_f32": 0.9948272705078125
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 19741,
+              "unit_f32": 0.602447509765625,
+              "sample_f32": 1.0204894542694092
+            }
+          ],
+          "right_to_left_axes_candidate": [
+            {
+              "role": "rotation_z",
+              "raw15": 0,
+              "unit_f32": 0.0,
+              "sample_f32": -15.0
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 21468,
+              "unit_f32": 0.6551513671875,
+              "sample_f32": 1.2060546875
+            },
+            {
+              "role": "rotation_x",
+              "raw15": 9988,
+              "unit_f32": 0.3048095703125,
+              "sample_f32": 1.09619140625
+            },
+            {
+              "role": "offset_z",
+              "raw15": 22117,
+              "unit_f32": 0.674957275390625,
+              "sample_f32": 31.04974365234375
+            },
+            {
+              "role": "offset_y",
+              "raw15": 3498,
+              "unit_f32": 0.10675048828125,
+              "sample_f32": 18.427001953125
+            },
+            {
+              "role": "offset_x",
+              "raw15": 16927,
+              "unit_f32": 0.516571044921875,
+              "sample_f32": 10.03314208984375
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 16045,
+              "unit_f32": 0.489654541015625,
+              "sample_f32": 0.9948272705078125
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 19741,
+              "unit_f32": 0.602447509765625,
+              "sample_f32": 1.0204894542694092
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seed": 1,
+      "mh_random_stream_1": {
+        "selection": {
+          "raw_u32": 1581361928,
+          "unit_f64": 0.36818951554596424,
+          "target_f64": 1.1045685466378927,
+          "option": 1
+        },
+        "profile": {
+          "offset_cm": [
+            10.887128829956055,
+            18.181028366088867,
+            31.664621353149414
+          ],
+          "rotation_deg": [
+            -0.6176974177360535,
+            5.975966930389404,
+            22.57599639892578
+          ],
+          "uniform_scale": 0.8734825849533081,
+          "vertical_scale": 0.9353817701339722
+        },
+        "draws": [
+          {
+            "role": "offset_x",
+            "raw_u32": 4052577513,
+            "unit_f64": 0.9435642308089882,
+            "sample_f32": 10.887128829956055
+          },
+          {
+            "role": "offset_y",
+            "raw_u32": 194377325,
+            "unit_f64": 0.045256997691467404,
+            "sample_f32": 18.181028366088867
+          },
+          {
+            "role": "offset_z",
+            "raw_u32": 3339066139,
+            "unit_f64": 0.7774369183462113,
+            "sample_f32": 31.664621353149414
+          },
+          {
+            "role": "rotation_x",
+            "raw_u32": 941092317,
+            "unit_f64": 0.21911512990482152,
+            "sample_f32": -0.6176974177360535
+          },
+          {
+            "role": "rotation_y",
+            "raw_u32": 3326019116,
+            "unit_f64": 0.7743991715833545,
+            "sample_f32": 5.975966930389404
+          },
+          {
+            "role": "rotation_z",
+            "raw_u32": 2689794580,
+            "unit_f64": 0.6262666033580899,
+            "sample_f32": 22.57599639892578
+          },
+          {
+            "role": "uniform_scale",
+            "raw_u32": 1060707466,
+            "unit_f64": 0.24696520203724504,
+            "sample_f32": 0.8734825849533081
+          },
+          {
+            "role": "vertical_scale",
+            "raw_u32": 759817222,
+            "unit_f64": 0.17690873285755515,
+            "sample_f32": 0.9353817701339722
+          }
+        ]
+      },
+      "dagor_pinned_source": {
+        "selection": {
+          "raw15": 16838,
+          "unit_f32": 0.51385498046875,
+          "normalized_weights_f32": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "option": 1
+        },
+        "transform_candidates": {
+          "binding_status": "runtime_observation_required",
+          "candidate_scope": "illustrative_non_exhaustive",
+          "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
+          "left_to_right_candidate": [
+            {
+              "role": "rotation_x",
+              "raw15": 16838,
+              "unit_f32": 0.51385498046875,
+              "sample_f32": 5.277099609375
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 5758,
+              "unit_f32": 0.17572021484375,
+              "sample_f32": -17.97119140625
+            },
+            {
+              "role": "rotation_z",
+              "raw15": 10113,
+              "unit_f32": 0.308624267578125,
+              "sample_f32": 3.5174560546875
+            },
+            {
+              "role": "offset_x",
+              "raw15": 17515,
+              "unit_f32": 0.534515380859375,
+              "sample_f32": 10.06903076171875
+            },
+            {
+              "role": "offset_y",
+              "raw15": 31051,
+              "unit_f32": 0.947601318359375,
+              "sample_f32": 21.7904052734375
+            },
+            {
+              "role": "offset_z",
+              "raw15": 5627,
+              "unit_f32": 0.171722412109375,
+              "sample_f32": 28.03033447265625
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 23010,
+              "unit_f32": 0.70220947265625,
+              "sample_f32": 1.101104736328125
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 7419,
+              "unit_f32": 0.226409912109375,
+              "sample_f32": 0.945281982421875
+            }
+          ],
+          "right_to_left_axes_candidate": [
+            {
+              "role": "rotation_z",
+              "raw15": 16838,
+              "unit_f32": 0.51385498046875,
+              "sample_f32": 15.831298828125
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 5758,
+              "unit_f32": 0.17572021484375,
+              "sample_f32": -17.97119140625
+            },
+            {
+              "role": "rotation_x",
+              "raw15": 10113,
+              "unit_f32": 0.308624267578125,
+              "sample_f32": 1.1724853515625
+            },
+            {
+              "role": "offset_z",
+              "raw15": 17515,
+              "unit_f32": 0.534515380859375,
+              "sample_f32": 30.20709228515625
+            },
+            {
+              "role": "offset_y",
+              "raw15": 31051,
+              "unit_f32": 0.947601318359375,
+              "sample_f32": 21.7904052734375
+            },
+            {
+              "role": "offset_x",
+              "raw15": 5627,
+              "unit_f32": 0.171722412109375,
+              "sample_f32": 9.34344482421875
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 23010,
+              "unit_f32": 0.70220947265625,
+              "sample_f32": 1.101104736328125
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 7419,
+              "unit_f32": 0.226409912109375,
+              "sample_f32": 0.945281982421875
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seed": 2,
+      "mh_random_stream_1": {
+        "selection": {
+          "raw_u32": 1684556879,
+          "unit_f64": 0.3922164624091238,
+          "target_f64": 1.1766493872273713,
+          "option": 1
+        },
+        "profile": {
+          "offset_cm": [
+            9.16942310333252,
+            21.36884117126465,
+            30.342992782592773
+          ],
+          "rotation_deg": [
+            14.053471565246582,
+            7.642257213592529,
+            -12.607202529907227
+          ],
+          "uniform_scale": 0.8607591986656189,
+          "vertical_scale": 1.0938845872879028
+        },
+        "draws": [
+          {
+            "role": "offset_x",
+            "raw_u32": 363833036,
+            "unit_f64": 0.08471147995442152,
+            "sample_f32": 9.16942310333252
+          },
+          {
+            "role": "offset_y",
+            "raw_u32": 3617266589,
+            "unit_f64": 0.8422105081845075,
+            "sample_f32": 21.36884117126465
+          },
+          {
+            "role": "offset_z",
+            "raw_u32": 2393007312,
+            "unit_f64": 0.5571654327213764,
+            "sample_f32": 30.342992782592773
+          },
+          {
+            "role": "rotation_x",
+            "raw_u32": 4091701917,
+            "unit_f64": 0.9526735909748822,
+            "sample_f32": 14.053471565246582
+          },
+          {
+            "role": "rotation_y",
+            "raw_u32": 3504935701,
+            "unit_f64": 0.8160564352292567,
+            "sample_f32": 7.642257213592529
+          },
+          {
+            "role": "rotation_z",
+            "raw_u32": 171283101,
+            "unit_f64": 0.03987995465286076,
+            "sample_f32": -12.607202529907227
+          },
+          {
+            "role": "uniform_scale",
+            "raw_u32": 951414169,
+            "unit_f64": 0.2215183733496815,
+            "sample_f32": 0.8607591986656189
+          },
+          {
+            "role": "vertical_scale",
+            "raw_u32": 4163638529,
+            "unit_f64": 0.9694226386491209,
+            "sample_f32": 1.0938845872879028
+          }
+        ]
+      },
+      "dagor_pinned_source": {
+        "selection": {
+          "raw15": 908,
+          "unit_f32": 0.0277099609375,
+          "normalized_weights_f32": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "option": 0
+        },
+        "transform_candidates": {
+          "binding_status": "runtime_observation_required",
+          "candidate_scope": "illustrative_non_exhaustive",
+          "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
+          "left_to_right_candidate": [
+            {
+              "role": "rotation_x",
+              "raw15": 908,
+              "unit_f32": 0.0277099609375,
+              "sample_f32": -4.44580078125
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 22817,
+              "unit_f32": 0.696319580078125,
+              "sample_f32": 2.852783203125
+            },
+            {
+              "role": "rotation_z",
+              "raw15": 10239,
+              "unit_f32": 0.312469482421875,
+              "sample_f32": 3.7481689453125
+            },
+            {
+              "role": "offset_x",
+              "raw15": 12914,
+              "unit_f32": 0.39410400390625,
+              "sample_f32": 9.7882080078125
+            },
+            {
+              "role": "offset_y",
+              "raw15": 25837,
+              "unit_f32": 0.788482666015625,
+              "sample_f32": 21.1539306640625
+            },
+            {
+              "role": "offset_z",
+              "raw15": 27095,
+              "unit_f32": 0.826873779296875,
+              "sample_f32": 31.96124267578125
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 29976,
+              "unit_f32": 0.914794921875,
+              "sample_f32": 1.2073974609375
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 27865,
+              "unit_f32": 0.850372314453125,
+              "sample_f32": 1.070074439048767
+            }
+          ],
+          "right_to_left_axes_candidate": [
+            {
+              "role": "rotation_z",
+              "raw15": 908,
+              "unit_f32": 0.0277099609375,
+              "sample_f32": -13.33740234375
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 22817,
+              "unit_f32": 0.696319580078125,
+              "sample_f32": 2.852783203125
+            },
+            {
+              "role": "rotation_x",
+              "raw15": 10239,
+              "unit_f32": 0.312469482421875,
+              "sample_f32": 1.2493896484375
+            },
+            {
+              "role": "offset_z",
+              "raw15": 12914,
+              "unit_f32": 0.39410400390625,
+              "sample_f32": 29.3646240234375
+            },
+            {
+              "role": "offset_y",
+              "raw15": 25837,
+              "unit_f32": 0.788482666015625,
+              "sample_f32": 21.1539306640625
+            },
+            {
+              "role": "offset_x",
+              "raw15": 27095,
+              "unit_f32": 0.826873779296875,
+              "sample_f32": 10.65374755859375
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 29976,
+              "unit_f32": 0.914794921875,
+              "sample_f32": 1.2073974609375
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 27865,
+              "unit_f32": 0.850372314453125,
+              "sample_f32": 1.070074439048767
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seed": 42,
+      "mh_random_stream_1": {
+        "selection": {
+          "raw_u32": 1474427578,
+          "unit_f64": 0.34329192200675607,
+          "target_f64": 1.0298757660202682,
+          "option": 1
+        },
+        "profile": {
+          "offset_cm": [
+            10.911493301391602,
+            19.945398330688477,
+            27.40414810180664
+          ],
+          "rotation_deg": [
+            8.538314819335938,
+            -22.29958724975586,
+            -3.2789063453674316
+          ],
+          "uniform_scale": 1.117360234260559,
+          "vertical_scale": 0.9222766757011414
+        },
+        "draws": [
+          {
+            "role": "offset_x",
+            "raw_u32": 4104900931,
+            "unit_f64": 0.9557467259000987,
+            "sample_f32": 10.911493301391602
+          },
+          {
+            "role": "offset_y",
+            "raw_u32": 2088855352,
+            "unit_f64": 0.4863495361059904,
+            "sample_f32": 19.945398330688477
+          },
+          {
+            "role": "offset_z",
+            "raw_u32": 289299948,
+            "unit_f64": 0.06735789310187101,
+            "sample_f32": 27.40414810180664
+          },
+          {
+            "role": "rotation_x",
+            "raw_u32": 2907330960,
+            "unit_f64": 0.6769157387316227,
+            "sample_f32": 8.538314819335938
+          },
+          {
+            "role": "rotation_y",
+            "raw_u32": 289954712,
+            "unit_f64": 0.0675103422254324,
+            "sample_f32": -22.29958724975586
+          },
+          {
+            "role": "rotation_z",
+            "raw_u32": 839028560,
+            "unit_f64": 0.19535155966877937,
+            "sample_f32": -3.2789063453674316
+          },
+          {
+            "role": "uniform_scale",
+            "raw_u32": 3155600340,
+            "unit_f64": 0.7347204582765698,
+            "sample_f32": 1.117360234260559
+          },
+          {
+            "role": "vertical_scale",
+            "raw_u32": 478387602,
+            "unit_f64": 0.11138329328969121,
+            "sample_f32": 0.9222766757011414
+          }
+        ]
+      },
+      "dagor_pinned_source": {
+        "selection": {
+          "raw15": 19081,
+          "unit_f32": 0.582305908203125,
+          "normalized_weights_f32": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "option": 1
+        },
+        "transform_candidates": {
+          "binding_status": "runtime_observation_required",
+          "candidate_scope": "illustrative_non_exhaustive",
+          "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
+          "left_to_right_candidate": [
+            {
+              "role": "rotation_x",
+              "raw15": 19081,
+              "unit_f32": 0.582305908203125,
+              "sample_f32": 6.6461181640625
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 17033,
+              "unit_f32": 0.519805908203125,
+              "sample_f32": -4.207763671875
+            },
+            {
+              "role": "rotation_z",
+              "raw15": 15269,
+              "unit_f32": 0.465972900390625,
+              "sample_f32": 12.9583740234375
+            },
+            {
+              "role": "offset_x",
+              "raw15": 25461,
+              "unit_f32": 0.777008056640625,
+              "sample_f32": 10.55401611328125
+            },
+            {
+              "role": "offset_y",
+              "raw15": 13856,
+              "unit_f32": 0.4228515625,
+              "sample_f32": 19.69140625
+            },
+            {
+              "role": "offset_z",
+              "raw15": 1093,
+              "unit_f32": 0.033355712890625,
+              "sample_f32": 27.20013427734375
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 13677,
+              "unit_f32": 0.417388916015625,
+              "sample_f32": 0.9586944580078125
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 26500,
+              "unit_f32": 0.8087158203125,
+              "sample_f32": 1.061743140220642
+            }
+          ],
+          "right_to_left_axes_candidate": [
+            {
+              "role": "rotation_z",
+              "raw15": 19081,
+              "unit_f32": 0.582305908203125,
+              "sample_f32": 19.9383544921875
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 17033,
+              "unit_f32": 0.519805908203125,
+              "sample_f32": -4.207763671875
+            },
+            {
+              "role": "rotation_x",
+              "raw15": 15269,
+              "unit_f32": 0.465972900390625,
+              "sample_f32": 4.3194580078125
+            },
+            {
+              "role": "offset_z",
+              "raw15": 25461,
+              "unit_f32": 0.777008056640625,
+              "sample_f32": 31.66204833984375
+            },
+            {
+              "role": "offset_y",
+              "raw15": 13856,
+              "unit_f32": 0.4228515625,
+              "sample_f32": 19.69140625
+            },
+            {
+              "role": "offset_x",
+              "raw15": 1093,
+              "unit_f32": 0.033355712890625,
+              "sample_f32": 9.06671142578125
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 13677,
+              "unit_f32": 0.417388916015625,
+              "sample_f32": 0.9586944580078125
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 26500,
+              "unit_f32": 0.8087158203125,
+              "sample_f32": 1.061743140220642
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seed": 123,
+      "mh_random_stream_1": {
+        "selection": {
+          "raw_u32": 3763380899,
+          "unit_f64": 0.8762303970288485,
+          "target_f64": 2.6286911910865456,
+          "option": 2
+        },
+        "profile": {
+          "offset_cm": [
+            10.190695762634277,
+            19.938697814941406,
+            30.050580978393555
+          ],
+          "rotation_deg": [
+            -4.405478000640869,
+            -19.33342170715332,
+            8.09219741821289
+          ],
+          "uniform_scale": 1.0178003311157227,
+          "vertical_scale": 0.9936922192573547
+        },
+        "draws": [
+          {
+            "role": "offset_x",
+            "raw_u32": 2557000099,
+            "unit_f64": 0.5953479788731784,
+            "sample_f32": 10.190695762634277
+          },
+          {
+            "role": "offset_y",
+            "raw_u32": 2081661665,
+            "unit_f64": 0.48467462533153594,
+            "sample_f32": 19.938697814941406
+          },
+          {
+            "role": "offset_z",
+            "raw_u32": 2183691298,
+            "unit_f64": 0.508430250454694,
+            "sample_f32": 30.050580978393555
+          },
+          {
+            "role": "rotation_x",
+            "raw_u32": 127672596,
+            "unit_f64": 0.02972609270364046,
+            "sample_f32": -4.405478000640869
+          },
+          {
+            "role": "rotation_y",
+            "raw_u32": 608444127,
+            "unit_f64": 0.1416644377168268,
+            "sample_f32": -19.33342170715332
+          },
+          {
+            "role": "rotation_z",
+            "raw_u32": 1653003866,
+            "unit_f64": 0.38486995408311486,
+            "sample_f32": 8.09219741821289
+          },
+          {
+            "role": "uniform_scale",
+            "raw_u32": 2300387182,
+            "unit_f64": 0.5356006282381713,
+            "sample_f32": 1.0178003311157227
+          },
+          {
+            "role": "vertical_scale",
+            "raw_u32": 2012025213,
+            "unit_f64": 0.46846112539060414,
+            "sample_f32": 0.9936922192573547
+          }
+        ]
+      },
+      "dagor_pinned_source": {
+        "selection": {
+          "raw15": 6727,
+          "unit_f32": 0.205291748046875,
+          "normalized_weights_f32": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "option": 0
+        },
+        "transform_candidates": {
+          "binding_status": "runtime_observation_required",
+          "candidate_scope": "illustrative_non_exhaustive",
+          "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
+          "left_to_right_candidate": [
+            {
+              "role": "rotation_x",
+              "raw15": 6727,
+              "unit_f32": 0.205291748046875,
+              "sample_f32": -0.8941650390625
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 22524,
+              "unit_f32": 0.6873779296875,
+              "sample_f32": 2.4951171875
+            },
+            {
+              "role": "rotation_z",
+              "raw15": 25453,
+              "unit_f32": 0.776763916015625,
+              "sample_f32": 31.6058349609375
+            },
+            {
+              "role": "offset_x",
+              "raw15": 13188,
+              "unit_f32": 0.4024658203125,
+              "sample_f32": 9.804931640625
+            },
+            {
+              "role": "offset_y",
+              "raw15": 17448,
+              "unit_f32": 0.532470703125,
+              "sample_f32": 20.1298828125
+            },
+            {
+              "role": "offset_z",
+              "raw15": 3325,
+              "unit_f32": 0.101470947265625,
+              "sample_f32": 27.60882568359375
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 20812,
+              "unit_f32": 0.6351318359375,
+              "sample_f32": 1.06756591796875
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 11448,
+              "unit_f32": 0.349365234375,
+              "sample_f32": 0.9698730707168579
+            }
+          ],
+          "right_to_left_axes_candidate": [
+            {
+              "role": "rotation_z",
+              "raw15": 6727,
+              "unit_f32": 0.205291748046875,
+              "sample_f32": -2.6824951171875
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 22524,
+              "unit_f32": 0.6873779296875,
+              "sample_f32": 2.4951171875
+            },
+            {
+              "role": "rotation_x",
+              "raw15": 25453,
+              "unit_f32": 0.776763916015625,
+              "sample_f32": 10.5352783203125
+            },
+            {
+              "role": "offset_z",
+              "raw15": 13188,
+              "unit_f32": 0.4024658203125,
+              "sample_f32": 29.414794921875
+            },
+            {
+              "role": "offset_y",
+              "raw15": 17448,
+              "unit_f32": 0.532470703125,
+              "sample_f32": 20.1298828125
+            },
+            {
+              "role": "offset_x",
+              "raw15": 3325,
+              "unit_f32": 0.101470947265625,
+              "sample_f32": 9.20294189453125
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 20812,
+              "unit_f32": 0.6351318359375,
+              "sample_f32": 1.06756591796875
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 11448,
+              "unit_f32": 0.349365234375,
+              "sample_f32": 0.9698730707168579
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seed": 1024,
+      "mh_random_stream_1": {
+        "selection": {
+          "raw_u32": 2781839491,
+          "unit_f64": 0.6476974792312831,
+          "target_f64": 1.9430924376938492,
+          "option": 1
+        },
+        "profile": {
+          "offset_cm": [
+            9.88486385345459,
+            18.076993942260742,
+            30.44473648071289
+          ],
+          "rotation_deg": [
+            1.1642191410064697,
+            -8.319649696350098,
+            42.6737060546875
+          ],
+          "uniform_scale": 1.1877830028533936,
+          "vertical_scale": 1.0265084505081177
+        },
+        "draws": [
+          {
+            "role": "offset_x",
+            "raw_u32": 1900229855,
+            "unit_f64": 0.44243174022994936,
+            "sample_f32": 9.88486385345459
+          },
+          {
+            "role": "offset_y",
+            "raw_u32": 82672423,
+            "unit_f64": 0.019248673459514976,
+            "sample_f32": 18.076993942260742
+          },
+          {
+            "role": "offset_z",
+            "raw_u32": 2465838523,
+            "unit_f64": 0.5741227704565972,
+            "sample_f32": 30.44473648071289
+          },
+          {
+            "role": "rotation_x",
+            "raw_u32": 1323755991,
+            "unit_f64": 0.30821095942519605,
+            "sample_f32": 1.1642191410064697
+          },
+          {
+            "role": "rotation_y",
+            "raw_u32": 1791038999,
+            "unit_f64": 0.41700876294635236,
+            "sample_f32": -8.319649696350098
+          },
+          {
+            "role": "rotation_z",
+            "raw_u32": 4128444596,
+            "unit_f64": 0.9612284125760198,
+            "sample_f32": 42.6737060546875
+          },
+          {
+            "role": "uniform_scale",
+            "raw_u32": 3760527097,
+            "unit_f64": 0.8755659444723278,
+            "sample_f32": 1.1877830028533936
+          },
+          {
+            "role": "vertical_scale",
+            "raw_u32": 2716747207,
+            "unit_f64": 0.6325420008506626,
+            "sample_f32": 1.0265084505081177
+          }
+        ]
+      },
+      "dagor_pinned_source": {
+        "selection": {
+          "raw15": 6457,
+          "unit_f32": 0.197052001953125,
+          "normalized_weights_f32": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "option": 0
+        },
+        "transform_candidates": {
+          "binding_status": "runtime_observation_required",
+          "candidate_scope": "illustrative_non_exhaustive",
+          "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
+          "left_to_right_candidate": [
+            {
+              "role": "rotation_x",
+              "raw15": 6457,
+              "unit_f32": 0.197052001953125,
+              "sample_f32": -1.0589599609375
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 24133,
+              "unit_f32": 0.736480712890625,
+              "sample_f32": 4.459228515625
+            },
+            {
+              "role": "rotation_z",
+              "raw15": 7670,
+              "unit_f32": 0.23406982421875,
+              "sample_f32": -0.955810546875
+            },
+            {
+              "role": "offset_x",
+              "raw15": 28769,
+              "unit_f32": 0.877960205078125,
+              "sample_f32": 10.75592041015625
+            },
+            {
+              "role": "offset_y",
+              "raw15": 4811,
+              "unit_f32": 0.146820068359375,
+              "sample_f32": 18.5872802734375
+            },
+            {
+              "role": "offset_z",
+              "raw15": 13183,
+              "unit_f32": 0.402313232421875,
+              "sample_f32": 29.41387939453125
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 5113,
+              "unit_f32": 0.156036376953125,
+              "sample_f32": 0.8280181884765625
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 17562,
+              "unit_f32": 0.53594970703125,
+              "sample_f32": 1.0071899890899658
+            }
+          ],
+          "right_to_left_axes_candidate": [
+            {
+              "role": "rotation_z",
+              "raw15": 6457,
+              "unit_f32": 0.197052001953125,
+              "sample_f32": -3.1768798828125
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 24133,
+              "unit_f32": 0.736480712890625,
+              "sample_f32": 4.459228515625
+            },
+            {
+              "role": "rotation_x",
+              "raw15": 7670,
+              "unit_f32": 0.23406982421875,
+              "sample_f32": -0.318603515625
+            },
+            {
+              "role": "offset_z",
+              "raw15": 28769,
+              "unit_f32": 0.877960205078125,
+              "sample_f32": 32.26776123046875
+            },
+            {
+              "role": "offset_y",
+              "raw15": 4811,
+              "unit_f32": 0.146820068359375,
+              "sample_f32": 18.5872802734375
+            },
+            {
+              "role": "offset_x",
+              "raw15": 13183,
+              "unit_f32": 0.402313232421875,
+              "sample_f32": 9.80462646484375
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 5113,
+              "unit_f32": 0.156036376953125,
+              "sample_f32": 0.8280181884765625
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 17562,
+              "unit_f32": 0.53594970703125,
+              "sample_f32": 1.0071899890899658
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seed": 2147483647,
+      "mh_random_stream_1": {
+        "selection": {
+          "raw_u32": 181848196,
+          "unit_f64": 0.04233983252197504,
+          "target_f64": 0.12701949756592512,
+          "option": 0
+        },
+        "profile": {
+          "offset_cm": [
+            9.143245697021484,
+            20.981164932250977,
+            30.984451293945312
+          ],
+          "rotation_deg": [
+            -4.760067939758301,
+            -7.490076541900635,
+            4.441464424133301
+          ],
+          "uniform_scale": 1.2248806953430176,
+          "vertical_scale": 0.9405294060707092
+        },
+        "draws": [
+          {
+            "role": "offset_x",
+            "raw_u32": 307618334,
+            "unit_f64": 0.07162297470495105,
+            "sample_f32": 9.143245697021484
+          },
+          {
+            "role": "offset_y",
+            "raw_u32": 3201002182,
+            "unit_f64": 0.7452913983725011,
+            "sample_f32": 20.981164932250977
+          },
+          {
+            "role": "offset_z",
+            "raw_u32": 2852180966,
+            "unit_f64": 0.6640751301310956,
+            "sample_f32": 30.984451293945312
+          },
+          {
+            "role": "rotation_x",
+            "raw_u32": 51525048,
+            "unit_f64": 0.011996610090136528,
+            "sample_f32": -4.760067939758301
+          },
+          {
+            "role": "rotation_y",
+            "raw_u32": 1880113693,
+            "unit_f64": 0.43774808128364384,
+            "sample_f32": -7.490076541900635
+          },
+          {
+            "role": "rotation_z",
+            "raw_u32": 1391674228,
+            "unit_f64": 0.3240244062617421,
+            "sample_f32": 4.441464424133301
+          },
+          {
+            "role": "uniform_scale",
+            "raw_u32": 4079193910,
+            "unit_f64": 0.9497613436542451,
+            "sample_f32": 1.2248806953430176
+          },
+          {
+            "role": "vertical_scale",
+            "raw_u32": 870362587,
+            "unit_f64": 0.2026470813434571,
+            "sample_f32": 0.9405294060707092
+          }
+        ]
+      },
+      "dagor_pinned_source": {
+        "selection": {
+          "raw15": 15929,
+          "unit_f32": 0.486114501953125,
+          "normalized_weights_f32": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "option": 1
+        },
+        "transform_candidates": {
+          "binding_status": "runtime_observation_required",
+          "candidate_scope": "illustrative_non_exhaustive",
+          "reason": "The pinned C++ source mutates one seed from function-call arguments whose evaluation order is not a portable axis-order contract.",
+          "left_to_right_candidate": [
+            {
+              "role": "rotation_x",
+              "raw15": 15929,
+              "unit_f32": 0.486114501953125,
+              "sample_f32": 4.7222900390625
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 4409,
+              "unit_f32": 0.134552001953125,
+              "sample_f32": -19.617919921875
+            },
+            {
+              "role": "rotation_z",
+              "raw15": 9862,
+              "unit_f32": 0.30096435546875,
+              "sample_f32": 3.057861328125
+            },
+            {
+              "role": "offset_x",
+              "raw15": 26718,
+              "unit_f32": 0.81536865234375,
+              "sample_f32": 10.6307373046875
+            },
+            {
+              "role": "offset_y",
+              "raw15": 8713,
+              "unit_f32": 0.265899658203125,
+              "sample_f32": 19.0635986328125
+            },
+            {
+              "role": "offset_z",
+              "raw15": 28226,
+              "unit_f32": 0.86138916015625,
+              "sample_f32": 32.1683349609375
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 9080,
+              "unit_f32": 0.277099609375,
+              "sample_f32": 0.8885498046875
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 32063,
+              "unit_f32": 0.978485107421875,
+              "sample_f32": 1.095697045326233
+            }
+          ],
+          "right_to_left_axes_candidate": [
+            {
+              "role": "rotation_z",
+              "raw15": 15929,
+              "unit_f32": 0.486114501953125,
+              "sample_f32": 14.1668701171875
+            },
+            {
+              "role": "rotation_y",
+              "raw15": 4409,
+              "unit_f32": 0.134552001953125,
+              "sample_f32": -19.617919921875
+            },
+            {
+              "role": "rotation_x",
+              "raw15": 9862,
+              "unit_f32": 0.30096435546875,
+              "sample_f32": 1.019287109375
+            },
+            {
+              "role": "offset_z",
+              "raw15": 26718,
+              "unit_f32": 0.81536865234375,
+              "sample_f32": 31.8922119140625
+            },
+            {
+              "role": "offset_y",
+              "raw15": 8713,
+              "unit_f32": 0.265899658203125,
+              "sample_f32": 19.0635986328125
+            },
+            {
+              "role": "offset_x",
+              "raw15": 28226,
+              "unit_f32": 0.86138916015625,
+              "sample_f32": 10.7227783203125
+            },
+            {
+              "role": "uniform_scale",
+              "raw15": 9080,
+              "unit_f32": 0.277099609375,
+              "sample_f32": 0.8885498046875
+            },
+            {
+              "role": "dagor_y_scale",
+              "raw15": 32063,
+              "unit_f32": 0.978485107421875,
+              "sample_f32": 1.095697045326233
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "comparison": {
+    "selection_mismatch_seeds": [
+      0,
+      2,
+      123,
+      1024,
+      2147483647
+    ],
+    "selection_equal_for_all_seeds": false,
+    "stream_bytes_equal": false,
+    "stream_bytes_reason": "Pinned Dagor source exposes a 32-bit LCG and 15-bit sample; mh.random_stream:1 is the owner-frozen uint64 splitmix stream.",
+    "transform_axis_binding": "requires_real_runtime_observation"
+  }
+}

@@ -1,0 +1,15 @@
+className:t="composit"
+
+node{
+  ent{ name:t="mh_probe_a_cmp:composit"; weight:r=1; }
+  ent{ name:t="mh_probe_b_cmp:composit"; weight:r=1; }
+  ent{ name:t="mh_probe_c_cmp:composit"; weight:r=1; }
+  offset_x:p2=10, 1
+  offset_y:p2=20, 2
+  offset_z:p2=30, 3
+  rot_x:p2=5, 10
+  rot_y:p2=-5, 20
+  rot_z:p2=15, 30
+  scale:p2=1, 0.25
+  yScale:p2=1, 0.1
+}

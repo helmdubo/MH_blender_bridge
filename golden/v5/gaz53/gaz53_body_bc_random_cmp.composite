@@ -6,18 +6,18 @@
       "name": "body_bc_variant",
       "options": [
         {
-          "kind": "mesh",
-          "resource": "gaz53_body_bc_option_0",
+          "kind": "composite",
+          "resource": "gaz53_bread_b_cmp",
           "weight": 1
         },
         {
-          "kind": "mesh",
-          "resource": "gaz53_body_bc_option_1",
+          "kind": "composite",
+          "resource": "gaz53_wooden_b_cmp",
           "weight": 1
         },
         {
-          "kind": "mesh",
-          "resource": "gaz53_body_bc_option_2",
+          "kind": "composite",
+          "resource": "gaz53_wooden_c_cmp",
           "weight": 1
         }
       ]
