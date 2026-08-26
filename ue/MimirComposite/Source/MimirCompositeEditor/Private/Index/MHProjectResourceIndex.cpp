@@ -88,6 +88,7 @@ struct FCandidateKeyTransitions
 {
     TSet<FMHResourceKey> Disappeared;
     TSet<FMHResourceKey> Appeared;
+    TSet<FMHResourceKey> UniqueValidChanged;
 };
 
 bool ResourceKeyLess(const FMHResourceKey& A, const FMHResourceKey& B)
@@ -325,9 +326,52 @@ bool ReadCandidateKeys(
     }
 }
 
+bool ReadUniqueValidCandidateHashes(
+    FSQLiteDatabase& Database,
+    TMap<FMHResourceKey, FString>& OutHashes,
+    FString& OutError)
+{
+    OutHashes.Reset();
+    FSQLitePreparedStatement Statement = Database.PrepareStatement(
+        TEXT("SELECT kind,name,MIN(raw_hash) FROM ResourceCandidates ")
+        TEXT("WHERE kind IS NOT NULL AND name IS NOT NULL ")
+        TEXT("GROUP BY kind,name HAVING COUNT(*)=1 AND MIN(parse_status)='ok' ")
+        TEXT("AND MIN(raw_hash) IS NOT NULL ORDER BY kind,name;"));
+    if (!Statement.IsValid())
+    {
+        OutError = Database.GetLastError();
+        return false;
+    }
+    while (true)
+    {
+        const ESQLitePreparedStatementStepResult Step = Statement.Step();
+        if (Step == ESQLitePreparedStatementStepResult::Done)
+        {
+            return true;
+        }
+        FString Kind;
+        FString RawHash;
+        FMHResourceKey Key;
+        if (Step != ESQLitePreparedStatementStepResult::Row ||
+            !Statement.GetColumnValueByIndex(0, Kind) ||
+            !Statement.GetColumnValueByIndex(1, Key.LogicalName) ||
+            !Statement.GetColumnValueByIndex(2, RawHash) ||
+            !MHResourceKindFromLabel(Kind, Key.Kind) ||
+            !Key.IsCanonical() ||
+            !MHIsCanonicalRawPayloadHash(RawHash))
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: malformed unique candidate hash set");
+            return false;
+        }
+        OutHashes.Add(MoveTemp(Key), MoveTemp(RawHash));
+    }
+}
+
 FCandidateKeyTransitions CandidateKeyTransitions(
     const TSet<FMHResourceKey>& Before,
-    const TSet<FMHResourceKey>& After)
+    const TSet<FMHResourceKey>& After,
+    const TMap<FMHResourceKey, FString>& HashesBefore,
+    const TMap<FMHResourceKey, FString>& HashesAfter)
 {
     FCandidateKeyTransitions Result;
     for (const FMHResourceKey& Key : Before)
@@ -342,6 +386,21 @@ FCandidateKeyTransitions CandidateKeyTransitions(
         if (!Before.Contains(Key))
         {
             Result.Appeared.Add(Key);
+        }
+    }
+    for (const TPair<FMHResourceKey, FString>& Pair : HashesBefore)
+    {
+        const FString* CurrentHash = HashesAfter.Find(Pair.Key);
+        if (CurrentHash == nullptr || *CurrentHash != Pair.Value)
+        {
+            Result.UniqueValidChanged.Add(Pair.Key);
+        }
+    }
+    for (const TPair<FMHResourceKey, FString>& Pair : HashesAfter)
+    {
+        if (!HashesBefore.Contains(Pair.Key))
+        {
+            Result.UniqueValidChanged.Add(Pair.Key);
         }
     }
     return Result;
@@ -457,8 +516,10 @@ public:
     {
         OutResult = FMHProjectIndexUpdateResult();
         TSet<FMHResourceKey> CandidateKeysBefore;
+        TMap<FMHResourceKey, FString> CandidateHashesBefore;
         if (!EnsureOpen(OutError) ||
-            !ReadCandidateKeys(*Database, CandidateKeysBefore, OutError))
+            !ReadCandidateKeys(*Database, CandidateKeysBefore, OutError) ||
+            !ReadUniqueValidCandidateHashes(*Database, CandidateHashesBefore, OutError))
         {
             return false;
         }
@@ -484,14 +545,20 @@ public:
             return false;
         }
         TSet<FMHResourceKey> CandidateKeysAfter;
+        TMap<FMHResourceKey, FString> CandidateHashesAfter;
         if (!Execute(TEXT("DELETE FROM Dependencies;"), OutError) ||
             !Execute(TEXT("DELETE FROM ResourceCandidates;"), OutError) ||
             !Execute(TEXT("DELETE FROM GeneratedAssets;"), OutError) ||
             !InsertCandidates(Candidates, NextGeneration, OutError) ||
             !InsertGeneratedRows(GeneratedRows, NextGeneration, OutError) ||
             !ReadCandidateKeys(*Database, CandidateKeysAfter, OutError) ||
+            !ReadUniqueValidCandidateHashes(*Database, CandidateHashesAfter, OutError) ||
             !RecomputeDerivedState(
-                CandidateKeyTransitions(CandidateKeysBefore, CandidateKeysAfter),
+                CandidateKeyTransitions(
+                    CandidateKeysBefore,
+                    CandidateKeysAfter,
+                    CandidateHashesBefore,
+                    CandidateHashesAfter),
                 OutError) ||
             !WriteGeneration(NextGeneration, OutError) ||
             !CommitTransaction(OutError))
@@ -519,7 +586,9 @@ public:
             return false;
         }
         TSet<FMHResourceKey> CandidateKeysBefore;
-        if (!ReadCandidateKeys(*Database, CandidateKeysBefore, OutError))
+        TMap<FMHResourceKey, FString> CandidateHashesBefore;
+        if (!ReadCandidateKeys(*Database, CandidateKeysBefore, OutError) ||
+            !ReadUniqueValidCandidateHashes(*Database, CandidateHashesBefore, OutError))
         {
             return false;
         }
@@ -587,10 +656,16 @@ public:
             }
         }
         TSet<FMHResourceKey> CandidateKeysAfter;
+        TMap<FMHResourceKey, FString> CandidateHashesAfter;
         if (!InsertCandidates(Candidates, NextGeneration, OutError) ||
             !ReadCandidateKeys(*Database, CandidateKeysAfter, OutError) ||
+            !ReadUniqueValidCandidateHashes(*Database, CandidateHashesAfter, OutError) ||
             !RecomputeDerivedState(
-                CandidateKeyTransitions(CandidateKeysBefore, CandidateKeysAfter),
+                CandidateKeyTransitions(
+                    CandidateKeysBefore,
+                    CandidateKeysAfter,
+                    CandidateHashesBefore,
+                    CandidateHashesAfter),
                 OutError) ||
             !WriteGeneration(NextGeneration, OutError) ||
             !CommitTransaction(OutError))
@@ -1651,6 +1726,51 @@ bool FMHProjectResourceIndex::FImpl::RecomputeDerivedState(
         return false;
     }
 
+    TSet<FMHResourceKey> ProfileStaleCompositeKeys;
+    FSQLitePreparedStatement ReadProfileDependents = Database->PrepareStatement(
+        TEXT("SELECT DISTINCT owner_name FROM Dependencies ")
+        TEXT("WHERE owner_kind='composite' AND target_kind='placement_profile' ")
+        TEXT("AND target_name=?1 AND role='profile' ORDER BY owner_name;"));
+    if (!ReadProfileDependents.IsValid())
+    {
+        OutError = Database->GetLastError();
+        return false;
+    }
+    TArray<FMHResourceKey> ChangedKeys = CandidateTransitions.UniqueValidChanged.Array();
+    ChangedKeys.Sort(ResourceKeyLess);
+    for (const FMHResourceKey& ChangedKey : ChangedKeys)
+    {
+        if (ChangedKey.Kind != EMHResourceKind::PlacementProfile)
+        {
+            continue;
+        }
+        if (!ReadProfileDependents.SetBindingValueByIndex(1, ChangedKey.LogicalName))
+        {
+            OutError = Database->GetLastError();
+            return false;
+        }
+        while (true)
+        {
+            const ESQLitePreparedStatementStepResult Step = ReadProfileDependents.Step();
+            if (Step == ESQLitePreparedStatementStepResult::Done)
+            {
+                break;
+            }
+            FMHResourceKey CompositeKey;
+            CompositeKey.Kind = EMHResourceKind::Composite;
+            if (Step != ESQLitePreparedStatementStepResult::Row ||
+                !ReadProfileDependents.GetColumnValueByIndex(0, CompositeKey.LogicalName) ||
+                !CompositeKey.IsCanonical())
+            {
+                OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: malformed placement profile dependent");
+                return false;
+            }
+            ProfileStaleCompositeKeys.Add(MoveTemp(CompositeKey));
+        }
+        ReadProfileDependents.Reset();
+        ReadProfileDependents.ClearBindings();
+    }
+
     struct FGeneratedStatusWork
     {
         FString ObjectPath;
@@ -1771,6 +1891,17 @@ bool FMHProjectResourceIndex::FImpl::RecomputeDerivedState(
             {
                 OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: unknown source resolution status");
                 return false;
+            }
+        }
+        if (Status == EMHGeneratedAssetStatus::Applied &&
+            Item.Kind == MHResourceKindLabel(EMHResourceKind::Composite))
+        {
+            FMHResourceKey CompositeKey;
+            CompositeKey.Kind = EMHResourceKind::Composite;
+            CompositeKey.LogicalName = Item.Name;
+            if (ProfileStaleCompositeKeys.Contains(CompositeKey))
+            {
+                Status = EMHGeneratedAssetStatus::Stale;
             }
         }
         if (!WriteStatus.SetBindingValueByIndex(
@@ -2891,7 +3022,9 @@ void FMHProjectIndexChangeDetector::DetectChanges(
 
         if (Assets.IsEmpty())
         {
-            Entry.Change = EMHSourceChange::Create;
+            Entry.Change = Key.Kind == EMHResourceKind::PlacementProfile
+                ? EMHSourceChange::NoChange
+                : EMHSourceChange::Create;
             continue;
         }
         if (Assets.Num() != 1)

@@ -25,6 +25,13 @@ namespace
 
 constexpr const TCHAR* GeneratedCompositeRoot = TEXT("/Game/MH/Generated/Composites");
 
+struct FInlinedProfileSourceSnapshot
+{
+    FString LogicalName;
+    FString PayloadPath;
+    TArray<uint8> Bytes;
+};
+
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void()> GBeforeCompositeSourceCommitTestHook;
 #endif
@@ -49,12 +56,14 @@ bool LoadInlinedProfiles(
     const FMHCompositeDocument& Document,
     IMHSourceResolver& Resolver,
     TArray<FMHPlacementProfile>& OutProfiles,
+    TArray<FInlinedProfileSourceSnapshot>& OutSnapshots,
     FString& OutError)
 {
     TArray<FString> Names;
     TSet<FString> Seen;
     CollectProfileNames(Document.Nodes, Names, Seen);
     OutProfiles.Reset(Names.Num());
+    OutSnapshots.Reset(Names.Num());
     for (const FString& Name : Names)
     {
         FMHResourceKey Key;
@@ -85,6 +94,29 @@ bool LoadInlinedProfiles(
         FMHPlacementProfile& Profile = OutProfiles.AddDefaulted_GetRef();
         Profile.LogicalName = Name;
         if (!MHParsePlacementProfileV1(Bytes, Profile, OutError)) return false;
+        FInlinedProfileSourceSnapshot& Snapshot = OutSnapshots.AddDefaulted_GetRef();
+        Snapshot.LogicalName = Name;
+        Snapshot.PayloadPath = Outcome.PayloadPath;
+        Snapshot.Bytes = MoveTemp(Bytes);
+    }
+    return true;
+}
+
+bool RevalidateInlinedProfileSources(
+    const TArray<FInlinedProfileSourceSnapshot>& Snapshots,
+    FString& OutError)
+{
+    for (const FInlinedProfileSourceSnapshot& Snapshot : Snapshots)
+    {
+        TArray<uint8> FinalBytes;
+        if (!FFileHelper::LoadFileToArray(FinalBytes, *Snapshot.PayloadPath) ||
+            FinalBytes != Snapshot.Bytes)
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: placement_profile:%s changed before generated-asset mutation"),
+                *Snapshot.LogicalName);
+            return false;
+        }
     }
     return true;
 }
@@ -263,8 +295,9 @@ FMHCompositeOperationResult MHImportCompositeV5(
     }
     TArray<uint8> CanonicalSource;
     TArray<FMHPlacementProfile> InlinedProfiles;
+    TArray<FInlinedProfileSourceSnapshot> InlinedProfileSnapshots;
     if (!MHWriteCanonicalCompositeV5(Document, CanonicalSource, Result.Error) ||
-        !LoadInlinedProfiles(Document, Resolver, InlinedProfiles, Result.Error) ||
+        !LoadInlinedProfiles(Document, Resolver, InlinedProfiles, InlinedProfileSnapshots, Result.Error) ||
         !MHProbeCompositeBuildV5(Entry.Key.LogicalName, Document, Resolver, Settings, Result.Error))
     {
         return Result;
@@ -284,6 +317,7 @@ FMHCompositeOperationResult MHImportCompositeV5(
         Result.Error = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: composite bytes changed before generated-asset mutation");
         return Result;
     }
+    if (!RevalidateInlinedProfileSources(InlinedProfileSnapshots, Result.Error)) return Result;
 
     const FString PackageName = FString(GeneratedCompositeRoot) + TEXT("/") + Entry.Key.LogicalName;
     const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;

@@ -6,13 +6,14 @@ namespace UE::MimirComposite
 {
 
 inline constexpr const TCHAR* MHRandomStream1Tag = TEXT("mh.random_stream:1");
-inline constexpr const TCHAR* MHRandomResolver1Tag = TEXT("mh.random_resolver:1");
+inline constexpr const TCHAR* MHRandomResolverTag = TEXT("mh.random_resolver:2");
 
 /** Frozen cross-host SplitMix64 stream for Source Protocol v5. */
 class MIMIRCOMPOSITERUNTIME_API FMHRandomStream1
 {
 public:
     explicit FMHRandomStream1(int32 Seed);
+    static FMHRandomStream1 FromInitialState(uint64 InitialState);
 
     uint64 GetInitialState() const { return InitialState; }
     uint64 GetState() const { return State; }
@@ -21,9 +22,17 @@ public:
     double NextUnit();
 
 private:
+    FMHRandomStream1() = default;
+
     uint64 State = 0;
     uint64 InitialState = 0;
 };
+
+/** BLAKE3-256 UTF-8 NodePath prefix interpreted as little-endian uint64 (§13.8). */
+MIMIRCOMPOSITERUNTIME_API uint64 MHRandomPathHash64(const FString& NodePath);
+
+/** Open the independent mh.random_stream:1 stream assigned to one canonical NodePath. */
+MIMIRCOMPOSITERUNTIME_API FMHRandomStream1 MHMakeNodeRandomStream(int32 Seed, const FString& NodePath);
 
 struct MIMIRCOMPOSITERUNTIME_API FMHRandomRange
 {

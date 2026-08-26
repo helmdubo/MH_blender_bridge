@@ -430,7 +430,9 @@ void AppendTrs(const FMHRandomTrs& Trs, const int32 Indent, FString& Out)
 
 void BuildSignaturePreimage(FMHResolvedCompositePlan& Plan)
 {
-    FString Text = TEXT("{\n  \"v\": 1,\n  \"resolver\": \"mh.random_resolver:1\",\n  \"seed\": ");
+    FString Text = TEXT("{\n  \"v\": 1,\n  \"resolver\": \"");
+    Text += MHRandomResolverTag;
+    Text += TEXT("\",\n  \"seed\": ");
     Text += LexToString(Plan.Seed);
     Text += TEXT(",\n  \"closure\": ");
     AppendQuoted(Plan.Closure.ClosureHash, Text);
@@ -474,6 +476,36 @@ FMHRandomStream1::FMHRandomStream1(const int32 Seed)
     uint64 SeedBits = static_cast<uint32>(Seed);
     InitialState = SplitMix64Step(SeedBits);
     State = InitialState;
+}
+
+FMHRandomStream1 FMHRandomStream1::FromInitialState(const uint64 InInitialState)
+{
+    FMHRandomStream1 Stream;
+    Stream.InitialState = InInitialState;
+    Stream.State = InInitialState;
+    return Stream;
+}
+
+uint64 MHRandomPathHash64(const FString& NodePath)
+{
+    checkf(!NodePath.IsEmpty(), TEXT("canonical NodePath must be non-empty"));
+    const FTCHARToUTF8 Utf8(*NodePath, NodePath.Len());
+    const FIoHash Hash = FIoHash::HashBuffer(Utf8.Get(), static_cast<uint64>(Utf8.Length()));
+    const uint8* Bytes = Hash.GetBytes();
+    uint64 Result = 0;
+    for (int32 Index = 0; Index < 8; ++Index)
+    {
+        Result |= static_cast<uint64>(Bytes[Index]) << (Index * 8);
+    }
+    return Result;
+}
+
+FMHRandomStream1 MHMakeNodeRandomStream(const int32 Seed, const FString& NodePath)
+{
+    const FMHRandomStream1 PlacementStream(Seed);
+    uint64 MixedState = PlacementStream.GetInitialState() ^ MHRandomPathHash64(NodePath);
+    const uint64 NodeInitialState = SplitMix64Step(MixedState);
+    return FMHRandomStream1::FromInitialState(NodeInitialState);
 }
 
 uint64 FMHRandomStream1::NextU64()
@@ -690,7 +722,6 @@ bool MHResolveCompositePlan(
     OutPlan = FMHResolvedCompositePlan();
     OutPlan.Seed = Seed;
     if (!MHBuildRandomSourceClosure(Graph, OutPlan.Closure, OutError)) return false;
-    FMHRandomStream1 Stream(Seed);
     TSet<FString> SelectedSeen;
 
     TFunction<void(const FString&)> AddSelected = [&](const FString& Value)
@@ -737,11 +768,16 @@ bool MHResolveCompositePlan(
     };
     WalkNode = [&](const FMHRandomNode& Node, const FMHRandomTrs& Parent, const FString& NodePath)
     {
+        TOptional<FMHRandomStream1> NodeStream;
+        if (Node.Kind == EMHRandomSemanticKind::Random || !Node.Profile.IsEmpty())
+        {
+            NodeStream.Emplace(MHMakeNodeRandomStream(Seed, NodePath));
+        }
         int32 SelectedIndex = INDEX_NONE;
         if (Node.Kind == EMHRandomSemanticKind::Random)
         {
             FMHResolvedCompositeDecision Decision;
-            if (!MHSelectWeightedOption(Stream, NodePath, Node.Options, Decision, OutError)) return false;
+            if (!MHSelectWeightedOption(NodeStream.GetValue(), NodePath, Node.Options, Decision, OutError)) return false;
             SelectedIndex = Decision.OptionIndex;
             OutPlan.Decisions.Add(Decision);
             FMHResolvedCompositeDraw& Draw = OutPlan.Draws.AddDefaulted_GetRef();
@@ -764,7 +800,7 @@ bool MHResolveCompositePlan(
             }
             AddSelectedResource(TEXT("placement_profile:") + Node.Profile);
             FSampledProfile Sample;
-            if (!SampleProfile(Stream, NodePath, *Profile, OutPlan.Draws, Sample, OutError) ||
+            if (!SampleProfile(NodeStream.GetValue(), NodePath, *Profile, OutPlan.Draws, Sample, OutError) ||
                 !ApplyProfile(Local, Sample, Local, OutError)) return false;
         }
         FMHRandomTrs World;

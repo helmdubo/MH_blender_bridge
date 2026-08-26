@@ -237,7 +237,7 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
     FString StreamTag;
     FString ResolverTag;
     bool bPassed = TestTrue(TEXT("stream tag"), Root->TryGetStringField(TEXT("stream"), StreamTag) && StreamTag == MHRandomStream1Tag);
-    bPassed &= TestTrue(TEXT("resolver tag"), Root->TryGetStringField(TEXT("resolver"), ResolverTag) && ResolverTag == MHRandomResolver1Tag);
+    bPassed &= TestTrue(TEXT("resolver tag"), Root->TryGetStringField(TEXT("resolver"), ResolverTag) && ResolverTag == MHRandomResolverTag);
     bPassed &= TestEqual(TEXT("exact registered MH_E count"), MHRegisteredErrorCodes().Num(), 50);
     bPassed &= TestEqual(TEXT("exact registered MH_W count"), MHRegisteredWarningCodes().Num(), 14);
     bPassed &= TestTrue(TEXT("placement grammar code registered"),
@@ -266,6 +266,42 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
             const uint64 ActualU64 = Stream.NextU64();
             bPassed &= TestEqual(*FString::Printf(TEXT("seed %d u64"), Seed), ActualU64, U64);
             bPassed &= TestEqual(*FString::Printf(TEXT("seed %d u32"), Seed), static_cast<uint32>(ActualU64 >> 32), static_cast<uint32>(U32));
+        }
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* NodeStreamVectors = nullptr;
+    if (!Root->TryGetArrayField(TEXT("node_stream_vectors"), NodeStreamVectors) || NodeStreamVectors == nullptr) return false;
+    for (const TSharedPtr<FJsonValue>& VectorValue : *NodeStreamVectors)
+    {
+        const TSharedPtr<FJsonObject> Vector = VectorValue->AsObject();
+        int32 Seed = 0;
+        FString NodePath;
+        uint64 PlacementState = 0;
+        uint64 PathHash64 = 0;
+        uint64 MixedState = 0;
+        uint64 InitialState = 0;
+        if (!ReadInt32(Vector, TEXT("seed"), Seed) || !Vector->TryGetStringField(TEXT("path"), NodePath) ||
+            !ReadUint64(Vector, TEXT("placement_state"), PlacementState) ||
+            !ReadUint64(Vector, TEXT("path_hash64"), PathHash64) ||
+            !ReadUint64(Vector, TEXT("mixed_state"), MixedState) ||
+            !ReadUint64(Vector, TEXT("initial_state"), InitialState)) return false;
+        const FMHRandomStream1 PlacementStream(Seed);
+        bPassed &= TestEqual(*FString::Printf(TEXT("seed %d placement state"), Seed), PlacementStream.GetInitialState(), PlacementState);
+        bPassed &= TestEqual(*FString::Printf(TEXT("seed %d path hash %s"), Seed, *NodePath), MHRandomPathHash64(NodePath), PathHash64);
+        bPassed &= TestEqual(*FString::Printf(TEXT("seed %d mixed state %s"), Seed, *NodePath), PlacementState ^ PathHash64, MixedState);
+        FMHRandomStream1 Stream = MHMakeNodeRandomStream(Seed, NodePath);
+        bPassed &= TestEqual(*FString::Printf(TEXT("seed %d node initial state %s"), Seed, *NodePath), Stream.GetInitialState(), InitialState);
+        const TArray<TSharedPtr<FJsonValue>>* Draws = nullptr;
+        if (!Vector->TryGetArrayField(TEXT("draws"), Draws) || Draws == nullptr) return false;
+        for (const TSharedPtr<FJsonValue>& DrawValue : *Draws)
+        {
+            const TSharedPtr<FJsonObject> Draw = DrawValue->AsObject();
+            uint64 U64 = 0;
+            uint64 U32 = 0;
+            if (!ReadUint64(Draw, TEXT("u64"), U64) || !ReadUint64(Draw, TEXT("u32"), U32)) return false;
+            const uint64 ActualU64 = Stream.NextU64();
+            bPassed &= TestEqual(*FString::Printf(TEXT("seed %d node u64 %s"), Seed, *NodePath), ActualU64, U64);
+            bPassed &= TestEqual(*FString::Printf(TEXT("seed %d node u32 %s"), Seed, *NodePath), static_cast<uint32>(ActualU64 >> 32), static_cast<uint32>(U32));
         }
     }
 

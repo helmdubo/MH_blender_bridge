@@ -517,6 +517,42 @@ bool FMHCompositeSourceRaceNoGhostTest::RunTest(const FString& Parameters)
         TEXT("/Game/MH/Generated/Composites/%s.%s"), *Token, *Token);
     bPassed &= TestNull(TEXT("source race creates no generated asset"),
         StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath));
+
+    const FString ProfileToken = FString::Printf(TEXT("profile_race_%08x"), FPlatformTime::Cycles());
+    const FString ProfileSourcePath = FPaths::Combine(SourceRoot, ProfileToken + TEXT(".composite"));
+    const FString PlacementPath = FPaths::Combine(SourceRoot, TEXT("race_profile.placement"));
+    const TArray<uint8> ProfileCompositeBytes = Utf8Composite(
+        TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"group\",\"profile\":\"race_profile\"}]}"));
+    const TArray<uint8> InitialPlacementBytes = Utf8Composite(
+        TEXT("{\"v\":1,\"kind\":\"placement_profile\",\"offset_cm\":[[0,1],[0,1],[0,1]]}"));
+    FFileHelper::SaveArrayToFile(ProfileCompositeBytes, *ProfileSourcePath);
+    FFileHelper::SaveArrayToFile(InitialPlacementBytes, *PlacementPath);
+    FMHSourceAnalysisEntry ProfileEntry;
+    ProfileEntry.Key = CompositeTestKey(EMHResourceKind::Composite, ProfileToken);
+    ProfileEntry.PayloadPath = ProfileSourcePath;
+    ProfileEntry.SourcePath = ProfileToken + TEXT(".composite");
+    ProfileEntry.RawHash = MHRawPayloadHash(ProfileCompositeBytes);
+    ProfileEntry.Change = EMHSourceChange::Create;
+    FCompositeTestResolver ProfileResolver;
+    ProfileResolver.AddResolved(
+        CompositeTestKey(EMHResourceKind::PlacementProfile, TEXT("race_profile")),
+        PlacementPath,
+        MHRawPayloadHash(InitialPlacementBytes));
+    MHSetBeforeCompositeSourceCommitTestHook([PlacementPath]()
+    {
+        FFileHelper::SaveStringToFile(
+            TEXT("{\"v\":1,\"kind\":\"placement_profile\",\"offset_cm\":[[0,2],[0,1],[0,1]]}"),
+            *PlacementPath);
+    });
+    const FMHCompositeOperationResult ProfileRace = MHImportCompositeV5(
+        ProfileEntry, ProfileResolver, SourceRoot, *Settings);
+    bPassed &= TestFalse(TEXT("placement profile race blocks import"), ProfileRace.Succeeded());
+    bPassed &= TestTrue(TEXT("placement profile race code"),
+        StartsWithCode(ProfileRace.Error, TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED")));
+    const FString ProfileObjectPath = FString::Printf(
+        TEXT("/Game/MH/Generated/Composites/%s.%s"), *ProfileToken, *ProfileToken);
+    bPassed &= TestNull(TEXT("placement profile race creates no generated asset"),
+        StaticFindObject(UObject::StaticClass(), nullptr, *ProfileObjectPath));
     return bPassed;
 }
 

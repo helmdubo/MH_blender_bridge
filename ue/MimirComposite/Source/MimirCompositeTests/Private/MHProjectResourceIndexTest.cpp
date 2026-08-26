@@ -400,20 +400,60 @@ bool FMHProjectIndexPlacementProfileDependencyTest::RunTest(const FString& Param
     bPassed &= WriteProjectIndexUtf8(
         CompositePath,
         TEXT("{\n  \"v\": 5,\n  \"nodes\": [\n    {\n      \"kind\": \"group\",\n      \"profile\": \"scatter\"\n    }\n  ]\n}\n"));
+    const FMHResourceKey ProfileKey =
+        ProjectIndexTestKey(EMHResourceKind::PlacementProfile, TEXT("scatter"));
+    const FMHResourceKey CompositeKey =
+        ProjectIndexTestKey(EMHResourceKind::Composite, TEXT("root"));
+    const FMHGeneratedAssetTagClaim CompositeClaim = Claim(
+        EMHResourceKind::Composite,
+        TEXT("root"),
+        TEXT("composites/root.composite"),
+        FileHash(CompositePath));
     FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
     if (!OpenIndex(Index, *this)) return false;
     FMHProjectIndexUpdateResult Update;
     FString Error;
-    bPassed &= TestTrue(TEXT("profile/composite scan succeeds"), Index.FullScan({}, Update, Error));
+    bPassed &= TestTrue(
+        TEXT("profile/composite scan succeeds"),
+        Index.FullScan({}, Update, Error));
     if (!Error.IsEmpty()) AddError(Error);
     bPassed &= TestEqual(
         TEXT("placement profile resolves as source-only resource"),
-        Index.Resolve(ProjectIndexTestKey(EMHResourceKind::PlacementProfile, TEXT("scatter"))).Status,
+        Index.Resolve(ProfileKey).Status,
         EMHResolveStatus::Resolved);
     bPassed &= TestEqual(
         TEXT("composite resolves through profile"),
-        Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Composite, TEXT("root"))).Status,
+        Index.Resolve(CompositeKey).Status,
         EMHResolveStatus::Resolved);
+    FMHProjectIndexResolver Resolver(Index);
+    FMHProjectIndexChangeDetector Detector(Index);
+    FMHSourceAnalysis Analysis;
+    Detector.DetectChanges(Resolver, Fixture.Root, Analysis);
+    const FMHSourceAnalysisEntry* ProfileEntry = Analysis.Find(ProfileKey);
+    bPassed &= TestNotNull(TEXT("source-only profile analysis entry"), ProfileEntry);
+    if (ProfileEntry != nullptr)
+    {
+        bPassed &= TestEqual(
+            TEXT("resolved source-only profile has no phantom create"),
+            ProfileEntry->Change,
+            EMHSourceChange::NoChange);
+    }
+    bPassed &= TestTrue(
+        TEXT("register applied profile carrier"),
+        Index.ReplaceGeneratedAssets({CompositeClaim}, Update, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    TArray<FMHProjectIndexGeneratedAssetState> CompositeAssets;
+    bPassed &= TestTrue(
+        TEXT("read applied profile carrier"),
+        Index.GetGeneratedAssets(CompositeKey, CompositeAssets, Error));
+    bPassed &= TestEqual(TEXT("one managed profile carrier"), CompositeAssets.Num(), 1);
+    if (CompositeAssets.Num() == 1)
+    {
+        bPassed &= TestEqual(
+            TEXT("profile carrier starts applied"),
+            CompositeAssets[0].Status,
+            EMHGeneratedAssetStatus::Applied);
+    }
     FString Dump;
     bPassed &= TestTrue(TEXT("profile dependency dump builds"), Index.BuildNormalizedDump(Dump, Error));
     bPassed &= TestTrue(
@@ -422,6 +462,76 @@ bool FMHProjectIndexPlacementProfileDependencyTest::RunTest(const FString& Param
     bPassed &= TestFalse(
         TEXT("placement profile has no generated asset path"),
         Dump.Contains(TEXT("GeneratedAssets\tplacement_profile")));
+    bPassed &= WriteProjectIndexUtf8(
+        ProfilePath,
+        TEXT("{\n  \"v\": 1,\n  \"kind\": \"placement_profile\",\n  \"uniform_scale\": [\n    1,\n    0.2\n  ]\n}\n"));
+    bPassed &= TestTrue(
+        TEXT("changed valid placement profile upsert succeeds"),
+        Index.UpsertPaths({ProfilePath}, Update, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    CompositeAssets.Reset();
+    bPassed &= TestTrue(
+        TEXT("read carrier after profile source change"),
+        Index.GetGeneratedAssets(CompositeKey, CompositeAssets, Error));
+    bPassed &= TestEqual(TEXT("one carrier remains after profile change"), CompositeAssets.Num(), 1);
+    if (CompositeAssets.Num() == 1)
+    {
+        bPassed &= TestEqual(
+            TEXT("profile raw hash change makes applied carrier stale"),
+            CompositeAssets[0].Status,
+            EMHGeneratedAssetStatus::Stale);
+    }
+    bPassed &= TestTrue(
+        TEXT("refresh carrier receipt before profile ambiguity probe"),
+        Index.ReplaceGeneratedAssets({CompositeClaim}, Update, Error));
+    const FString DuplicateProfilePath =
+        FPaths::Combine(Fixture.Root, TEXT("duplicate/scatter.placement"));
+    bPassed &= WriteProjectIndexUtf8(
+        DuplicateProfilePath,
+        TEXT("{\n  \"v\": 1,\n  \"kind\": \"placement_profile\",\n  \"uniform_scale\": [\n    1,\n    0.3\n  ]\n}\n"));
+    bPassed &= TestTrue(
+        TEXT("duplicate profile upsert succeeds"),
+        Index.UpsertPaths({DuplicateProfilePath}, Update, Error));
+    bPassed &= TestEqual(
+        TEXT("duplicate profile is ambiguous"),
+        Index.Resolve(ProfileKey).Status,
+        EMHResolveStatus::Ambiguous);
+    CompositeAssets.Reset();
+    bPassed &= TestTrue(
+        TEXT("read carrier after unique profile removal"),
+        Index.GetGeneratedAssets(CompositeKey, CompositeAssets, Error));
+    if (CompositeAssets.Num() == 1)
+    {
+        bPassed &= TestEqual(
+            TEXT("loss of unique-valid profile makes carrier stale"),
+            CompositeAssets[0].Status,
+            EMHGeneratedAssetStatus::Stale);
+    }
+    bPassed &= TestTrue(
+        TEXT("refresh carrier receipt before profile recovery probe"),
+        Index.ReplaceGeneratedAssets({CompositeClaim}, Update, Error));
+    bPassed &= TestTrue(
+        TEXT("remove duplicate profile"),
+        IFileManager::Get().Delete(*DuplicateProfilePath, false, true, true));
+    bPassed &= TestTrue(
+        TEXT("upsert recovered unique profile"),
+        Index.UpsertPaths({DuplicateProfilePath}, Update, Error));
+    bPassed &= TestEqual(
+        TEXT("profile recovers to unique"),
+        Index.Resolve(ProfileKey).Status,
+        EMHResolveStatus::Resolved);
+    CompositeAssets.Reset();
+    bPassed &= TestTrue(
+        TEXT("read carrier after profile recovery"),
+        Index.GetGeneratedAssets(CompositeKey, CompositeAssets, Error));
+    bPassed &= TestEqual(TEXT("one carrier remains after recovery"), CompositeAssets.Num(), 1);
+    if (CompositeAssets.Num() == 1)
+    {
+        bPassed &= TestEqual(
+            TEXT("recovery to unique-valid profile makes carrier stale"),
+            CompositeAssets[0].Status,
+            EMHGeneratedAssetStatus::Stale);
+    }
     Index.Close();
     bool bRecreated = false;
     bPassed &= TestTrue(TEXT("index with profile edge reopens"), Index.Open(bRecreated, Error));
