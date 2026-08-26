@@ -19,8 +19,8 @@ bl_info = {
 
 def _bpy_modules():
     from . import prefs
-    from .ui import ops, panels
-    return (prefs, ops, panels)
+    from .ui import composite_authoring, ops, panels
+    return (prefs, ops, composite_authoring, panels)
 
 
 def register():

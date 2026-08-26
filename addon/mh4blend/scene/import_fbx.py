@@ -27,6 +27,7 @@ __all__ = [
     "FBX_IMPORT_KWARGS",
     "MeshImportTransaction",
     "import_mesh_fbx",
+    "mesh_import_id_names",
     "parse_mesh_fbx",
     "preflight_mesh_import_plan",
 ]
@@ -57,7 +58,7 @@ FBX_IMPORT_KWARGS = dict(
 )
 
 _TRACKED_DATA = (
-    "objects", "collections", "meshes", "materials", "images",
+    "objects", "collections", "scenes", "meshes", "materials", "images",
     "node_groups", "actions", "curves", "armatures", "cameras", "lights",
 )
 _BLENDER_AUTO_SUFFIX_RE = re.compile(r"\.\d{3}$")
@@ -335,6 +336,26 @@ def _staging_name(resource_name: str) -> str:
     return f".__mh_mesh_import__{resource_name}"
 
 
+def mesh_import_id_names(plan: MeshImportPlan) -> dict[str, frozenset[str]]:
+    """Return the exact Blender ID namespaces one mesh plan will create."""
+
+    collection_names = {
+        plan.target_collection_name,
+        _staging_name(plan.resource_name),
+    }
+    if plan.uses_lod_collections:
+        collection_names.update(
+            f"{plan.resource_name}.lod{level:02d}"
+            for level in plan.lod_levels)
+    return {
+        "collections": frozenset(collection_names),
+        "objects": frozenset(node.name for node in plan.nodes),
+        "meshes": frozenset(
+            node.geometry_name for node in plan.nodes
+            if node.geometry_name is not None),
+    }
+
+
 def _validate_blender_id_name(name: str, subject: str) -> None:
     """Reject names Blender would silently truncate in an ID namespace."""
     if (not isinstance(name, str)
@@ -347,20 +368,13 @@ def _validate_blender_id_name(name: str, subject: str) -> None:
 
 def preflight_mesh_import_plan(plan: MeshImportPlan, source_root: Path) -> None:
     """Validate every exact Blender ID before any datablock mutation."""
-    collection_names = {
-        plan.target_collection_name,
-        _staging_name(plan.resource_name),
-    }
-    if plan.uses_lod_collections:
-        collection_names.update(
-            f"{plan.resource_name}.lod{level:02d}"
-            for level in plan.lod_levels)
-    for name in collection_names:
+    id_names = mesh_import_id_names(plan)
+    for name in id_names["collections"]:
         _validate_blender_id_name(name, "collection")
-    for node in plan.nodes:
-        _validate_blender_id_name(node.name, "object")
-        if node.geometry_name is not None:
-            _validate_blender_id_name(node.geometry_name, "mesh")
+    for name in id_names["objects"]:
+        _validate_blender_id_name(name, "object")
+    for name in id_names["meshes"]:
+        _validate_blender_id_name(name, "mesh")
     for name in plan.material_names:
         _validate_blender_id_name(name, "material")
         if bpy.data.materials.get(name) is not None:
@@ -382,24 +396,16 @@ def preflight_mesh_import_plan(plan: MeshImportPlan, source_root: Path) -> None:
 
 def _preflight_scene(plan: MeshImportPlan) -> None:
     conflicts = []
-    collection_names = {
-        plan.resource_name,
-        f"{plan.resource_name}.lods",
-        _staging_name(plan.resource_name),
-    }
-    if plan.uses_lod_collections:
-        collection_names.update(
-            f"{plan.resource_name}.lod{level:02d}" for level in plan.lod_levels)
+    id_names = mesh_import_id_names(plan)
     conflicts.extend(
-        f"collection:{name}" for name in sorted(collection_names)
+        f"collection:{name}" for name in sorted(id_names["collections"])
         if bpy.data.collections.get(name) is not None)
     conflicts.extend(
-        f"object:{node.name}" for node in plan.nodes
-        if bpy.data.objects.get(node.name) is not None)
+        f"object:{name}" for name in sorted(id_names["objects"])
+        if bpy.data.objects.get(name) is not None)
     conflicts.extend(
-        f"mesh:{node.geometry_name}" for node in plan.nodes
-        if node.geometry_name is not None
-        and bpy.data.meshes.get(node.geometry_name) is not None)
+        f"mesh:{name}" for name in sorted(id_names["meshes"])
+        if bpy.data.meshes.get(name) is not None)
     if conflicts:
         raise MHValidationError(
             "MH_E_IMPORT_TARGET_OCCUPIED", conflicts,

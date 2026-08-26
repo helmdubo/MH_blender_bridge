@@ -24,10 +24,12 @@ def test_register_exposes_only_v4_workflow_surfaces():
             "mh_fbx_export_materials",
             "mh_material", "mh_material_directory", "mh_composite_mode",
             "mh_composite_import_path", "mh_composite_export_collection",
-            "mh_composite_export_directory",
+            "mh_composite_export_directory", "mh_dagor_composite_import_path",
+            "mh_dag4blend_composite_collection",
         ):
             assert hasattr(scene_type, name)
         assert hasattr(bpy.types.Material, "mh4blend")
+        assert hasattr(bpy.types.Object, "mh4blend")
         assert bpy.context.scene.mh_fbx_export_materials is False
         assert {cls.bl_idname for cls in ops.CLASSES} == {
             "mh.export_fbx", "mh.import_mesh_fbx", "mh.export_material",
@@ -36,6 +38,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
             "mh.material_texture_remove", "mh.material_param_add",
             "mh.material_param_remove", "mh.copy_all_textures_to_project",
             "mh.remap_all_textures_to_project",
+            "mh.import_dagor_composite",
+            "mh.convert_dag4blend_composite",
         }
         assert {cls.bl_category for cls in panels.CLASSES} == {"MH"}
     finally:
@@ -46,9 +50,11 @@ def test_register_exposes_only_v4_workflow_surfaces():
         "mh_fbx_export_materials",
         "mh_material", "mh_material_directory", "mh_composite_mode",
         "mh_composite_import_path", "mh_composite_export_collection",
-        "mh_composite_export_directory",
+        "mh_composite_export_directory", "mh_dagor_composite_import_path",
+        "mh_dag4blend_composite_collection",
     ):
         assert not hasattr(bpy.types.Scene, name)
+    assert not hasattr(bpy.types.Object, "mh4blend")
 
 
 def test_material_export_option_is_forwarded_to_fbx_workflow(tmp_path, monkeypatch):
@@ -238,3 +244,47 @@ def test_composite_picker_does_not_accept_uppercase_extension(tmp_path):
     path.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="MH_E_NONCANONICAL_RESOURCE_NAME"):
         ops._filepath(str(path))
+
+
+def test_dagor_conversion_operators_forward_explicit_sources(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        source = tmp_path / "vehicle.composit.blk"
+        source.write_text('className:t="composit"\n', encoding="utf-8")
+        scene = bpy.context.scene
+        scene.mh_dagor_composite_import_path = str(source)
+        collection = bpy.data.collections.new("dag4blend_source")
+        scene.mh_dag4blend_composite_collection = collection
+        monkeypatch.setattr(
+            ops.prefs_mod,
+            "get_prefs",
+            lambda _context: SimpleNamespace(source_root=str(tmp_path)),
+        )
+        calls = []
+        monkeypatch.setattr(
+            ops,
+            "import_dagor_composite_file",
+            lambda path, **kwargs: (
+                calls.append(("file", path, kwargs)),
+                {"ok": True},
+            )[1],
+        )
+        monkeypatch.setattr(
+            ops,
+            "import_dag4blend_composite_collection",
+            lambda value: (
+                calls.append(("scene", value)),
+                {"ok": True},
+            )[1],
+        )
+
+        assert bpy.ops.mh.import_dagor_composite() == {"FINISHED"}
+        assert bpy.ops.mh.convert_dag4blend_composite() == {"FINISHED"}
+        assert calls == [
+            ("file", str(source), {"source_root": str(tmp_path)}),
+            ("scene", collection),
+        ]
+    finally:
+        mh4blend.unregister()

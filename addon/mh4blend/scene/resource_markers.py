@@ -12,7 +12,7 @@ COLLECTION_RESOURCE_KEY = "mh_resource_name"
 
 
 def stamp_resource_collection(collection, kind: str, resource_name: str) -> None:
-    if kind not in {"mesh", "composite"}:
+    if kind not in {"mesh", "actor", "composite"}:
         raise ValueError(f"collection resource kind is unsupported: {kind!r}")
     validate_resource_name(resource_name)
     collection[COLLECTION_KIND_KEY] = kind

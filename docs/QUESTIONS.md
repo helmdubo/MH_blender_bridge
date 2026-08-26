@@ -6,8 +6,73 @@
 STOP до owner-решения.
 
 `OPEN-V5-1`…`OPEN-V5-8` РЕШЕНЫ owner — нормативный текст в 10 §13.
+`OPEN-V5-9` и `OPEN-V5-10` открыты узко для Blender-carrier/profile-name при
+Dagor `include` и точной семантики import modes/reuse-refresh; остальной V5-S3
+этими STOP не блокируется.
 Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
 `OPEN-V4-24` document-world прямо superseded parent-local контрактом v5.
+
+## OPEN-V5-9 — Blender carrier и identity для Dagor `include` → placement profile
+
+**Статус. ОТКРЫТ; STOP только для materialization/export profile-ссылки в
+Blender и Dagor `include` conversion.** Random/options authoring, direct Dagor
+graph conversion без `include`, конвертация уже импортированной dag4blend-сцены
+без profile-параметров и остальные gates V5-S3 продолжаются.
+
+**Контекст.** 10 §§6.3/6.4 требуют lossless-конвертацию Dagor `include` в
+`<name>.placement` и typed reference узла, но закреплённый Blender PropertyGroup
+на объекте перечисляет только `kind`, `weight`, `option_index`. Норматив не
+задаёт Blender-carrier для `Node.profile`, не задаёт, как из произвольного
+include-token/path получить каноничный logical name `[a-z0-9_]+`, и не содержит
+fixture с допустимой include-формой. Выбор basename/stem, скрытого custom
+property или автоматически сгенерированного имени был бы новой identity и
+authority, которую исполнитель не вправе изобретать.
+
+**Вопрос.** Какое точное typed поле/датаблок является Blender-authority для
+profile-reference? Как Dagor include-token однозначно отображается в
+`placement_profile:<logical_name>` и где берутся canonical `.placement` bytes:
+include уже обязан ссылаться на существующий managed profile, либо importer
+конвертирует содержимое include и получает имя по отдельному явному правилу?
+Нужны также collision/reuse правила для уже существующего одноимённого profile.
+
+**Временное fail-closed правило.** Не добавлять скрытый ID key, новый
+PropertyGroup field, basename-normalization, generated profile identity или
+произвольный textual preprocessor. Direct Dagor parser сохраняет provenance и
+отклоняет `include`/profile-параметры существующим
+`MH_E_COMPOSITE_GRAMMAR`; Blender import/export узла с `profile` продолжает
+блокироваться до owner-решения. Новый диагностический код не вводится: единственный
+новый код V5-S3 остаётся `MH_E_DUPLICATE_RANDOM_OPTION_INDEX`.
+
+## OPEN-V5-10 — observable semantics import modes и reuse/refresh definitions
+
+**Статус. ОТКРЫТ; STOP только для claims/UI/API
+`structure-only|LOD0|full-LOD` и `reuse|refresh`.** Create-only импорт полного
+определения, при котором занятый target блокируется до мутаций, и остальная
+random-конвертация V5-S3 продолжаются.
+
+**Контекст.** 10 §6.4 и 11 V5-S3 перечисляют три режима рекурсивного импорта и
+явный выбор reuse/refresh, но не задают их наблюдаемый результат. Не определено,
+создаёт ли `structure-only` чистые resource Collections или per-placement
+placeholders; загружает ли материалы; что именно отбрасывает `LOD0` при
+collision/socket/group данных; обязан ли `refresh` сохранять identity
+существующего Collection datablock и его внешних users; как смешиваются
+existing/new definitions в рекурсивном closure и какова rollback-boundary при
+ошибке после частичной refresh. Текущий импортёр всегда строит полное новое
+определение и fail-closed отклоняет занятые Blender IDs, поэтому готового
+семантического oracle в коде нет.
+
+**Вопрос.** Каков точный postcondition каждого из трёх load modes? Для
+`reuse` какая проверка доказывает пригодность существующей definition и может
+ли она быть неполной/placeholder? Для `refresh` сохраняется ли сам Collection
+datablock in-place, какие users/artist edits переживают операцию и должен ли
+весь рекурсивный refresh быть атомарным? Что происходит при смешанном closure,
+где часть definitions существует, часть отсутствует, а одна refresh падает?
+
+**Временное fail-closed правило.** Не добавлять названные enum/API/UI и не
+объявлять create-only поведение одним из режимов. До owner-решения импорт
+использует существующую полную create-only семантику: любой занятый target
+блокируется до первой мутации, silent reuse/clear/replace запрещены. Новый
+диагностический код не вводится.
 
 ## OPEN-V5-8 — durable applied receipt инлайненного placement profile
 

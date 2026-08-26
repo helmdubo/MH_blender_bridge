@@ -6,6 +6,7 @@ import bpy
 
 from .. import prefs as prefs_mod
 from ..scene.export_material import material_class_for_export
+from .composite_authoring import draw_random_options
 
 
 _TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
@@ -43,12 +44,25 @@ class MH_PT_source_tools(bpy.types.Panel):
         if scene.mh_composite_mode == "IMPORT":
             box.prop(scene, "mh_composite_import_path", text="File")
             box.operator("mh.import_composite", icon="IMPORT")
+            dagor = box.box()
+            dagor.label(text="Dagor → MH", icon="FILE_REFRESH")
+            dagor.prop(
+                scene, "mh_dagor_composite_import_path", text=".composit.blk")
+            dagor.operator("mh.import_dagor_composite", icon="IMPORT")
+            dagor.separator()
+            dagor.prop(
+                scene, "mh_dag4blend_composite_collection",
+                text="dag4blend Collection")
+            dagor.operator(
+                "mh.convert_dag4blend_composite",
+                icon="OUTLINER_COLLECTION")
         else:
             box.prop(
                 scene, "mh_composite_export_collection", text="Collection")
             box.prop(
                 scene, "mh_composite_export_directory", text="Folder")
             box.operator("mh.export_composite", icon="EXPORT")
+        draw_random_options(box, context)
 
         materials = layout.box()
         materials.label(text="Materials", icon="MATERIAL")

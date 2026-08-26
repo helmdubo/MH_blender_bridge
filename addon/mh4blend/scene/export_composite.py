@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 from pathlib import Path
 
 import bpy
@@ -17,7 +18,7 @@ from ..core.composites import (
     read_composite_file,
     validate_composite_cycles,
 )
-from ..core.model import Composite, CompositeTransform, Node
+from ..core.model import Composite, CompositeTransform, Node, RandomOption
 from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.transforms import (
     blender_to_ue_transform,
@@ -29,6 +30,12 @@ from .resource_markers import (
     COLLECTION_KIND_KEY,
     COLLECTION_RESOURCE_KEY,
     stamp_resource_collection,
+)
+from ..ui.composite_authoring import (
+    OPTION_INDEX_MIRROR_KEY,
+    WEIGHT_MIRROR_KEY,
+    sync_typed_mirror,
+    validate_random_options,
 )
 
 __all__ = [
@@ -61,14 +68,17 @@ def _matrix_signature(matrix) -> str:
 def _stamp_imported_transform(obj, transform: CompositeTransform) -> None:
     obj[_IMPORTED_TRANSFORM_KEY] = canonical_json_bytes(
         transform.disk_dict()).decode("utf-8")
-    obj[_IMPORTED_MATRIX_KEY] = _matrix_signature(obj.matrix_local)
+    # matrix_basis is the authored parent-local value and is available even
+    # while the definition lives in a non-active service scene. matrix_local
+    # is depsgraph-derived and reports identity until that scene is evaluated.
+    obj[_IMPORTED_MATRIX_KEY] = _matrix_signature(obj.matrix_basis)
 
 
 def _stored_imported_transform(obj) -> CompositeTransform | None:
     encoded = obj.get(_IMPORTED_TRANSFORM_KEY)
     snapshot = obj.get(_IMPORTED_MATRIX_KEY)
     if (not isinstance(encoded, str) or not isinstance(snapshot, str)
-            or snapshot != _matrix_signature(obj.matrix_local)):
+            or snapshot != _matrix_signature(obj.matrix_basis)):
         return None
     try:
         document = parse_json(encoded)
@@ -199,10 +209,19 @@ def _preflight_dependencies(root: Path, candidate: Composite) -> None:
 
 def _collection_instance_identity(instance) -> tuple[str, str]:
     """Infer one resource placement without asking the artist to restate it."""
+    leaked_option_keys = tuple(
+        key for key in (WEIGHT_MIRROR_KEY, OPTION_INDEX_MIRROR_KEY)
+        if key in instance)
+    if leaked_option_keys:
+        raise MHValidationError(
+            "MH_E_COMPOSITE_GRAMMAR", [instance.name, *leaked_option_keys],
+            "resource definition collections must not carry random-option "
+            "weight or index properties")
+
     marker_kind = instance.get(COLLECTION_KIND_KEY)
     marker_resource = instance.get(COLLECTION_RESOURCE_KEY)
     if marker_kind is not None or marker_resource is not None:
-        if marker_kind not in {"mesh", "composite"}:
+        if marker_kind not in {"mesh", "actor", "composite"}:
             raise MHValidationError(
                 "MH_E_COMPOSITE_GRAMMAR", [instance.name],
                 f"instance collection has invalid {COLLECTION_KIND_KEY}="
@@ -213,6 +232,29 @@ def _collection_instance_identity(instance) -> tuple[str, str]:
                 f"instance collection is missing {COLLECTION_RESOURCE_KEY}")
         validate_resource_name(marker_resource)
         return marker_kind, marker_resource
+
+    # An already imported dag4blend definition carries explicit, lossless
+    # collection identity.  Never infer a Dagor resource type from its name.
+    dagor_type = instance.get("type")
+    dagor_name = instance.get("name")
+    if dagor_type is not None or dagor_name is not None:
+        if not isinstance(dagor_type, str) or not isinstance(dagor_name, str):
+            raise MHValidationError(
+                "MH_E_COMPOSITE_GRAMMAR", [instance.name],
+                "dag4blend resource collection requires string type/name")
+        kind = {
+            "composit": "composite",
+            "composite": "composite",
+            "rendinst": "mesh",
+            "prefab": "mesh",
+            "gameobj": "actor",
+        }.get(dagor_type.casefold())
+        if kind is None:
+            raise MHValidationError(
+                "MH_E_COMPOSITE_GRAMMAR", [instance.name, dagor_type],
+                "dag4blend resource collection has unsupported explicit type")
+        validate_resource_name(dagor_name)
+        return kind, dagor_name
 
     if instance.name.endswith(".composite"):
         resource = instance.name[:-len(".composite")]
@@ -234,8 +276,22 @@ def _collection_instance_identity(instance) -> tuple[str, str]:
         "established automatically")
 
 
-def _node_kind_and_resource(obj) -> tuple[str, str | None]:
-    explicit_kind = obj.get(NODE_KIND_KEY)
+def _typed_kind(obj) -> str:
+    settings = getattr(obj, "mh4blend", None)
+    kind = None if settings is None else settings.kind
+    if kind == "unset":
+        kind = None
+    if kind is None:
+        raise MHValidationError(
+            "MH_E_COMPOSITE_GRAMMAR", [obj.name],
+            f"placement object {obj.name!r} has no typed mh4blend.kind; "
+            f"the ID property {NODE_KIND_KEY!r} is only a diagnostic mirror")
+    return kind
+
+
+def _node_kind_and_resource(
+        obj, *, option=False) -> tuple[str, str | None]:
+    explicit_kind = _typed_kind(obj)
     explicit_resource = obj.get(NODE_RESOURCE_KEY)
     instance = getattr(obj, "instance_collection", None)
     instance_kind = None
@@ -243,26 +299,43 @@ def _node_kind_and_resource(obj) -> tuple[str, str | None]:
     if instance is not None:
         instance_kind, instance_resource = _collection_instance_identity(instance)
 
-    kind = explicit_kind or instance_kind
-    if kind is None and obj.type == "EMPTY" and instance is None:
-        kind = "group"
-    if kind not in {"mesh", "actor", "composite", "group"}:
+    kind = explicit_kind
+    allowed = (
+        {"mesh", "actor", "composite", "empty"}
+        if option else
+        {"mesh", "actor", "composite", "group", "random"}
+    )
+    if kind not in allowed:
         instance_name = getattr(instance, "name", None)
         raise MHValidationError(
             "MH_E_COMPOSITE_GRAMMAR", [obj.name],
             f"placement object {obj.name!r} (type={obj.type!r}, "
             f"instance_collection={instance_name!r}) has "
-            f"{NODE_KIND_KEY}={explicit_kind!r} and inherited "
-            f"kind={instance_kind!r}; Composite collections accept collection "
-            "instances as resource placements and plain Empty objects as "
-            "groups")
+            f"typed mh4blend.kind={explicit_kind!r} and collection "
+            f"kind={instance_kind!r}")
 
+    if instance_kind is not None and instance_kind != kind:
+        raise MHValidationError(
+            "MH_E_RESOURCE_KIND_MISMATCH", [obj.name, instance.name],
+            f"typed kind {kind!r} disagrees with resource collection kind "
+            f"{instance_kind!r}")
+
+    if (explicit_resource is not None and instance_resource is not None
+            and explicit_resource != instance_resource):
+        raise MHValidationError(
+            "MH_E_RESOURCE_KIND_MISMATCH", [obj.name, instance.name],
+            f"{NODE_RESOURCE_KEY}={explicit_resource!r} disagrees with "
+            f"resource collection identity {instance_resource!r}")
     resource = explicit_resource or instance_resource
-    if kind == "group":
+    if kind in {"group", "random", "empty"}:
         if resource not in {None, ""}:
             raise MHValidationError(
                 "MH_E_COMPOSITE_GRAMMAR", [obj.name],
-                "group placement cannot carry a resource")
+                f"{kind} cannot carry a resource")
+        if instance is not None:
+            raise MHValidationError(
+                "MH_E_COMPOSITE_GRAMMAR", [obj.name],
+                f"{kind} cannot instance a resource collection")
         return kind, None
     if not isinstance(resource, str) or not resource:
         raise MHValidationError(
@@ -270,7 +343,29 @@ def _node_kind_and_resource(obj) -> tuple[str, str | None]:
             f"{kind} placement object {obj.name!r} requires a logical "
             f"resource token in {NODE_RESOURCE_KEY}; current value is "
             f"{resource!r}")
+    validate_resource_name(resource)
     return kind, resource
+
+
+def _random_option(option, child_objects) -> RandomOption:
+    if child_objects:
+        raise MHValidationError(
+            "MH_E_COMPOSITE_GRAMMAR", [option.name],
+            "random option Empty cannot have children")
+    kind, resource = _node_kind_and_resource(option, option=True)
+    if (kind != "empty" and option.instance_collection is None
+            and not bool(option.get(UNRESOLVED_PLACEMENT_KEY, False))):
+        raise MHValidationError(
+            "MH_E_COMPOSITE_GRAMMAR", [option.name],
+            "resolved random option requires instance_collection")
+    settings = option.mh4blend
+    weight = settings.weight
+    if (isinstance(weight, bool) or not isinstance(weight, (int, float))
+            or not math.isfinite(float(weight)) or weight < 0.0):
+        raise MHValidationError(
+            "MH_E_COMPOSITE_GRAMMAR", [option.name],
+            "random option weight must be a finite number >= 0")
+    return RandomOption(kind=kind, resource=resource, weight=float(weight))
 
 
 def _object_transform(obj):
@@ -325,6 +420,24 @@ def _extract_composite(collection) -> Composite:
                 "composite placement parent is outside the selected collection")
         children[parent.as_pointer()].append(obj)
 
+    def has_option_index(obj) -> bool:
+        settings = getattr(obj, "mh4blend", None)
+        if settings is None:
+            return False
+        checker = getattr(settings, "is_property_set", None)
+        return checker is None or checker("option_index")
+
+    for obj in ordered:
+        if not has_option_index(obj):
+            continue
+        parent = obj.parent
+        if (parent is None or parent.as_pointer() not in identities
+                or _typed_kind(parent) != "random"):
+            raise MHValidationError(
+                "MH_E_COMPOSITE_GRAMMAR", [obj.name],
+                "typed option_index is valid only on a direct child of a "
+                "typed random node in the selected collection")
+
     def build(obj) -> Node:
         kind, resource = _node_kind_and_resource(obj)
         display_name = obj.get(NODE_NAME_KEY)
@@ -334,12 +447,36 @@ def _extract_composite(collection) -> Composite:
             raise MHValidationError(
                 "MH_E_COMPOSITE_GRAMMAR", [obj.name],
                 "display-only composite node name must be a string")
+        authored_children = children[obj.as_pointer()]
+        options = []
+        if kind == "random":
+            option_objects = validate_random_options(obj)
+            external_options = [
+                option.name for option in option_objects
+                if option.as_pointer() not in identities
+            ]
+            if external_options:
+                raise MHValidationError(
+                    "MH_E_PARENT_OUTSIDE_RESOURCE",
+                    [obj.name, *external_options],
+                    "random options must belong to the selected composite "
+                    "collection")
+            option_ids = {option.as_pointer() for option in option_objects}
+            options = [
+                _random_option(option, children[option.as_pointer()])
+                for option in option_objects
+            ]
+            authored_children = [
+                child for child in authored_children
+                if child.as_pointer() not in option_ids
+            ]
         return Node(
             kind=kind,
             resource=resource,
             name=display_name,
             transform=_object_transform(obj),
-            children=[build(child) for child in children[obj.as_pointer()]],
+            options=options,
+            children=[build(child) for child in authored_children],
         )
 
     return Composite(name=name, nodes=[build(obj) for obj in roots])
@@ -349,6 +486,16 @@ def export_composite_collection(collection, output_dir, *, source_root) -> dict:
     """Publish one complete composite through sibling tmp/read-back/replace."""
     if collection is None:
         raise ValueError("collection is required")
+    linked_ids = [
+        datablock.name
+        for datablock in (collection, *tuple(collection.objects))
+        if datablock.library is not None
+    ]
+    if linked_ids:
+        raise MHValidationError(
+            "MH_E_INVALID_RESOURCE_SOURCE", linked_ids,
+            "linked read-only Blender datablocks cannot be exported as MH "
+            "authoring authority")
     root = _resolved_root(source_root)
     output = Path(bpy.path.abspath(os.fspath(output_dir))).resolve(strict=False)
     if not _inside(root, output):
@@ -368,12 +515,31 @@ def export_composite_collection(collection, output_dir, *, source_root) -> dict:
                 "MH_E_COMPOSITE_GRAMMAR: staged composite failed canonical "
                 "read-back")
 
-    receipt = atomic_publish_bytes(
-        target,
-        payload,
-        source_root=root,
-        read_back_validator=validate_read_back,
-    )
+    mirror_keys = (NODE_KIND_KEY, WEIGHT_MIRROR_KEY, OPTION_INDEX_MIRROR_KEY)
+    mirror_snapshot = [
+        (obj, {
+            key: (key in obj, obj.get(key))
+            for key in mirror_keys
+        })
+        for obj in collection.objects
+    ]
+    try:
+        for obj in collection.objects:
+            sync_typed_mirror(obj)
+        receipt = atomic_publish_bytes(
+            target,
+            payload,
+            source_root=root,
+            read_back_validator=validate_read_back,
+        )
+    except Exception:
+        for obj, snapshot in mirror_snapshot:
+            for key, (present, value) in snapshot.items():
+                if present:
+                    obj[key] = value
+                elif key in obj:
+                    del obj[key]
+        raise
     stamp_resource_collection(collection, "composite", resource.name)
     return {
         "ok": True,

@@ -3,8 +3,8 @@
 > **ACTIVE AUTHORITY: MH SOURCE PROTOCOL V5.** Норматив —
 > [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
 > порядок срезов — [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md).
-> V5-S0 и V5-S1 приняты owner'ом; текущая ветка реализует V5-S2 и остаётся
-> кандидатом до отдельного owner merge.
+> V5-S0…V5-S2 приняты owner'ом; текущая ветка реализует V5-S3 и остаётся
+> кандидатом до отдельного owner review/merge.
 
 ## Source Protocol v5 в одном экране
 
@@ -29,7 +29,7 @@ Resource Index и applied state сохраняют v4-контракты без 
 - [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md) —
   полный ратифицированный норматив v5;
 - [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md) — инварианты,
-  последовательные V5-S0…S7 и parked S8;
+  последовательные V5-S0…S7 и parked follow-up slices;
 - [`docs/QUESTIONS.md`](docs/QUESTIONS.md) — активные `OPEN-V5-*` с
   временными fail-closed STOP;
 - `docs/receipts/` — квитанции срезов; automated checks не равны owner
@@ -41,11 +41,13 @@ Resource Index и applied state сохраняют v4-контракты без 
 
 ## Текущее состояние реализации
 
-V5-S1 зафиксировал Python-reference `mh.random_stream:1`. Кандидат V5-S2
-заменяет `.composite` на строгий v5 codec без dual-read, добавляет `.placement`
+V5-S1 зафиксировал Python-reference `mh.random_stream:1`; принятый V5-S2
+заменил `.composite` на строгий v5 codec без dual-read, добавил `.placement`
 v1, parent-local T/R/S, source-only profile carrier/index edge, общий 8-ULP
-predicate и бит-идентичный C++ random resolver/plan. Blender random authoring и
-seed UI намеренно остаются закрыты до следующих срезов.
+predicate и бит-идентичный C++ random resolver/plan. V5-S3 добавляет Blender
+typed random-authoring, четыре служебные сцены и два Dagor→MH пути. Seed в
+Blender по-прежнему отсутствует. Узкие недоопределённые части S3 перечислены
+как fail-closed `OPEN-V5-9/10`; остальная реализация и проверки продолжаются.
 
 Python regression:
 
