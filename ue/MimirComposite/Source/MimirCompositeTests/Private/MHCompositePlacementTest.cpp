@@ -17,18 +17,14 @@
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
-#include "Misc/App.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
-#include "Misc/ObjectThumbnail.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
-#include "ThumbnailRendering/ThumbnailManager.h"
-#include "ThumbnailRendering/ThumbnailRenderer.h"
 #include "UObject/UnrealType.h"
 
 namespace UE::MimirComposite::Tests
@@ -452,75 +448,15 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHCompositeThumbnailRegistrationTest,
-    "Mimir.V4.Composite.ThumbnailRegistration",
+    FMHCompositeThumbnailRenderingDisabledTest,
+    "Mimir.V4.Composite.ThumbnailRenderingDisabled",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHCompositeThumbnailRegistrationTest::RunTest(const FString& Parameters)
+bool FMHCompositeThumbnailRenderingDisabledTest::RunTest(const FString& Parameters)
 {
-    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-    Asset->LogicalName = TEXT("s6_thumbnail_registration");
-    UE::MimirComposite::FMHCompositeDocument Document;
-    FString Error;
-    bool bPassed = TestTrue(
-        TEXT("thumbnail fixture applies"),
-        MHApplyCompositeV4(*Asset, Document, Error));
-
-    UClass* RendererClass = FindObject<UClass>(
-        nullptr,
-        TEXT("/Script/MimirCompositeEditor.MHCompositeThumbnailRenderer"));
-    bPassed &= TestNotNull(TEXT("private thumbnail renderer class is registered"), RendererClass);
-    UThumbnailRenderer* Renderer = nullptr;
-    if (FApp::CanEverRender())
-    {
-        FThumbnailRenderingInfo* RenderInfo = UThumbnailManager::Get().GetRenderingInfo(Asset);
-        bPassed &= TestNotNull(TEXT("composite class has registered thumbnail info"), RenderInfo);
-        if (RenderInfo != nullptr)
-        {
-            bPassed &= TestNotNull(TEXT("composite thumbnail renderer exists"), RenderInfo->Renderer.Get());
-            bPassed &= TestTrue(
-                TEXT("composite uses the live placement thumbnail renderer"),
-                RenderInfo->Renderer != nullptr &&
-                    RendererClass != nullptr &&
-                    RenderInfo->Renderer->IsA(RendererClass));
-            Renderer = RenderInfo->Renderer;
-        }
-    }
-    else
-    {
-        // UThumbnailManager intentionally leaves renderer objects null under
-        // NullRHI; validate the class contract without requesting a scene.
-        if (RendererClass != nullptr)
-        {
-            Renderer = NewObject<UThumbnailRenderer>(GetTransientPackage(), RendererClass);
-        }
-    }
-    if (Renderer != nullptr)
-    {
-        bPassed &= TestTrue(TEXT("renderer visualizes a composite asset"), Renderer->CanVisualizeAsset(Asset));
-        bPassed &= TestEqual(
-            TEXT("thumbnail refreshes on managed asset edits"),
-            Renderer->GetThumbnailRenderFrequency(Asset),
-            EThumbnailRenderFrequency::OnPropertyChange);
-    }
-    if (FApp::CanEverRender())
-    {
-        FObjectThumbnail Thumbnail;
-        ThumbnailTools::RenderThumbnail(
-            Asset,
-            128,
-            128,
-            ThumbnailTools::EThumbnailTextureFlushMode::AlwaysFlush,
-            nullptr,
-            &Thumbnail);
-        bPassed &= TestEqual(TEXT("rendered thumbnail width"), Thumbnail.GetImageWidth(), 128);
-        bPassed &= TestEqual(TEXT("rendered thumbnail height"), Thumbnail.GetImageHeight(), 128);
-        bPassed &= TestEqual(
-            TEXT("rendered thumbnail BGRA byte count"),
-            Thumbnail.GetUncompressedImageData().Num(),
-            128 * 128 * 4);
-    }
-    return bPassed;
+    return TestNull(
+        TEXT("Mimir composite custom thumbnail renderer is disabled"),
+        FindObject<UClass>(nullptr, TEXT("/Script/MimirCompositeEditor.MHCompositeThumbnailRenderer")));
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

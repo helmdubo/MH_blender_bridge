@@ -15,6 +15,6 @@ private:
 
     FDelegateHandle AssetRegistryTagsHandle;
     FDelegateHandle ObjectModifiedHandle;
-    FDelegateHandle PreExitHandle;
+    FDelegateHandle EnginePreExitHandle;
     bool bOwnsToolMenusRegistration = false;
 };
