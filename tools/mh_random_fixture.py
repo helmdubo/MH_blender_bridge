@@ -21,6 +21,9 @@ from tools.mh_random_reference import (
     ResourceKey,
     TRS,
     build_source_closure,
+    node_random_stream,
+    path_hash64,
+    placement_state,
     raw_payload_hash,
     resolve_composite,
 )
@@ -28,6 +31,12 @@ from tools.mh_random_reference import (
 
 SEEDS = (0, 1, 2, 42, 123, 1024, 2147483647)
 STREAM_DRAW_COUNT = 16
+NODE_STREAM_DRAW_COUNT = 4
+NODE_STREAM_PATHS = (
+    "root_cmp:nodes[1]",
+    "root_cmp:nodes[1]/children[0]",
+    "root_cmp:nodes[1]/options[2]>variant_b_cmp:nodes[0]",
+)
 GOLDEN_SCHEMA = "mh.random_stream_vectors:1"
 SYNTHETIC_PAYLOAD_DOMAIN = "mh.random_reference_fixture:1"
 
@@ -200,6 +209,31 @@ def _stream_vector(seed: int) -> dict:
     }
 
 
+def _node_stream_vector(seed: int, node_path: str) -> dict:
+    stream = node_random_stream(seed, node_path)
+    draws = []
+    for index in range(NODE_STREAM_DRAW_COUNT):
+        raw_u64 = stream.next_u64()
+        raw_u32 = raw_u64 >> 32
+        draws.append({
+            "index": index,
+            "u64": raw_u64,
+            "u32": raw_u32,
+            "unit": raw_u32 * 2.0 ** -32,
+        })
+    state = placement_state(seed)
+    path_hash = path_hash64(node_path)
+    return {
+        "seed": seed,
+        "path": node_path,
+        "placement_state": state,
+        "path_hash64": path_hash,
+        "mixed_state": state ^ path_hash,
+        "initial_state": stream.initial_state,
+        "draws": draws,
+    }
+
+
 def _decision_document(decision) -> dict:
     return {
         "path": decision.path,
@@ -253,6 +287,7 @@ def golden_document() -> dict:
         "resolver": RESOLVER_TAG,
         "seed_set": list(SEEDS),
         "stream_draw_count": STREAM_DRAW_COUNT,
+        "node_stream_draw_count": NODE_STREAM_DRAW_COUNT,
         "fixture": _fixture_document(root, composites, profiles, raw_hashes),
         "closure": {
             "resources": [str(key) for key in closure.resources],
@@ -264,6 +299,11 @@ def golden_document() -> dict:
             "closure_hash": closure.closure_hash,
         },
         "stream_vectors": [_stream_vector(seed) for seed in SEEDS],
+        "node_stream_vectors": [
+            _node_stream_vector(seed, node_path)
+            for seed in SEEDS
+            for node_path in NODE_STREAM_PATHS
+        ],
         "plan_vectors": [
             _plan_vector(seed, root, composites, profiles, raw_hashes)
             for seed in SEEDS

@@ -3,8 +3,8 @@
 This module is the executable reference for ``mh.random_stream:1``.  It is
 deliberately outside the Blender extension: placement seeds and resolution are
 not Blender authoring state.  The implementation follows docs/10 sections
-13.1--13.3 and exposes immutable graph, closure, trace, and plan values for the
-shared Python/C++ golden vectors.
+13.1--13.3 and 13.8 and exposes immutable graph, closure, trace, and plan values
+for the shared Python/C++ golden vectors.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from addon.mh4blend.core.canonical_json import (
 
 
 RANDOM_STREAM_TAG = "mh.random_stream:1"
-RESOLVER_TAG = "mh.random_resolver:1"
+RESOLVER_TAG = "mh.random_resolver:2"
 
 _MASK64 = (1 << 64) - 1
 _INT32_MIN = -(1 << 31)
@@ -156,18 +156,38 @@ def _splitmix64_step(state: int) -> tuple[int, int]:
     return state, value & _MASK64
 
 
+def placement_state(seed: int) -> int:
+    """Return the frozen §13.1 initial state for one int32 placement seed."""
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise RandomReferenceError("seed must be an int32")
+    if seed < _INT32_MIN or seed > _INT32_MAX:
+        raise RandomReferenceError("seed must be an int32")
+    _, initial_state = _splitmix64_step(seed & 0xFFFFFFFF)
+    return initial_state
+
+
+def path_hash64(node_path: str) -> int:
+    """Hash one canonical NodePath per §13.8 (BLAKE3 prefix, little-endian)."""
+    if not isinstance(node_path, str) or not node_path:
+        raise RandomReferenceError("NodePath must be a non-empty string")
+    prefix = blake3(node_path.encode("utf-8")).digest()[:8]
+    return int.from_bytes(prefix, byteorder="little", signed=False)
+
+
 class RandomStream:
     """Mutable uint64 stream with the frozen ``mh.random_stream:1`` bytes."""
 
     def __init__(self, seed: int):
-        if isinstance(seed, bool) or not isinstance(seed, int):
-            raise RandomReferenceError("seed must be an int32")
-        if seed < _INT32_MIN or seed > _INT32_MAX:
-            raise RandomReferenceError("seed must be an int32")
-        seed_bits = seed & 0xFFFFFFFF
-        _, initial_state = _splitmix64_step(seed_bits)
+        initial_state = placement_state(seed)
         self._state = initial_state
         self._initial_state = initial_state
+
+    @classmethod
+    def _from_initial_state(cls, initial_state: int) -> "RandomStream":
+        stream = cls.__new__(cls)
+        stream._state = initial_state & _MASK64
+        stream._initial_state = stream._state
+        return stream
 
     @property
     def state(self) -> int:
@@ -186,6 +206,13 @@ class RandomStream:
 
     def next_unit(self) -> float:
         return self.next_u32() * _UINT32_SCALE
+
+
+def node_random_stream(seed: int, node_path: str) -> RandomStream:
+    """Open the independent §13.8 stream for one canonical NodePath."""
+    mixed_state = placement_state(seed) ^ path_hash64(node_path)
+    _, initial_state = _splitmix64_step(mixed_state)
+    return RandomStream._from_initial_state(initial_state)
 
 
 @dataclass(frozen=True, order=True)
@@ -658,7 +685,6 @@ def resolve_composite(
         raw_hashes,
         dependencies,
     )
-    stream = RandomStream(seed)
     decisions: list[SelectionDecision] = []
     draws: list[DrawTraceEntry] = []
     leaves: list[ResolvedLeaf] = []
@@ -702,8 +728,14 @@ def resolve_composite(
             add_leaf(option.kind, resource, world, option_path)
 
     def walk_node(node: Node, parent: TRS, node_path: str) -> None:
+        stream = (
+            node_random_stream(seed, node_path)
+            if node.kind == "random" or node.profile is not None
+            else None
+        )
         selected: SelectionDecision | None = None
         if node.kind == "random":
+            assert stream is not None
             selected = select_weighted(stream, node_path, node.options)
             decisions.append(selected)
             draws.append(DrawTraceEntry(
@@ -716,6 +748,7 @@ def resolve_composite(
 
         local = node.transform
         if node.profile is not None:
+            assert stream is not None
             profile = profiles[node.profile]
             add_selected_resource(ResourceKey("placement_profile", profile.name))
             local = _apply_profile(
@@ -785,6 +818,9 @@ __all__ = [
     "TRS",
     "build_source_closure",
     "compose_trs",
+    "node_random_stream",
+    "path_hash64",
+    "placement_state",
     "raw_payload_hash",
     "resolve_composite",
     "sample_placement_profile",

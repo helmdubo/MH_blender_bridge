@@ -82,6 +82,21 @@ def test_probe_and_gaz_generated_files_are_byte_identical():
     gaz = json.loads((
         REPO_ROOT / "golden" / "v5" / "gaz53" /
         "baseline_rng_choices.json").read_text(encoding="utf-8"))
+    assert gaz["resolver"] == "mh.random_resolver:2"
+    assert gaz["node_path"] == (
+        "gaz53_b_random_cmp:nodes[1]>gaz53_body_bc_random_cmp:nodes[0]")
+    assert [
+        (entry["seed"], entry["option"], entry["resource"])
+        for entry in gaz["mh_random_stream_1_choices"]
+    ] == [
+        (0, 2, "gaz53_wooden_c_cmp"),
+        (1, 0, "gaz53_bread_b_cmp"),
+        (2, 2, "gaz53_wooden_c_cmp"),
+        (42, 2, "gaz53_wooden_c_cmp"),
+        (123, 1, "gaz53_wooden_b_cmp"),
+        (1024, 1, "gaz53_wooden_b_cmp"),
+        (2147483647, 2, "gaz53_wooden_c_cmp"),
+    ]
     assert len(gaz["source_declared_closure"]["composite"]) == 7
     assert len(gaz["source_declared_closure"]["static_mesh"]) == 16
 

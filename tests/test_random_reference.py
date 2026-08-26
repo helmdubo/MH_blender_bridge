@@ -11,6 +11,7 @@ from tools.mh_random_reference import (
     Composite,
     Node,
     PlacementProfile,
+    RESOLVER_TAG,
     RandomOption,
     RandomReferenceError,
     RandomStream,
@@ -18,6 +19,9 @@ from tools.mh_random_reference import (
     ResourceKey,
     TRS,
     build_source_closure,
+    node_random_stream,
+    path_hash64,
+    placement_state,
     raw_payload_hash,
     resolve_composite,
     select_weighted,
@@ -53,6 +57,21 @@ def test_seed_domain_is_exact_int32():
     for invalid in (True, 1.0, -(1 << 31) - 1, 1 << 31):
         with pytest.raises(RandomReferenceError, match="int32"):
             RandomStream(invalid)
+
+
+def test_path_derived_stream_contract_has_frozen_hash_state_and_draws():
+    node_path = "root_cmp:nodes[1]/options[2]>variant_b_cmp:nodes[0]"
+    assert RESOLVER_TAG == "mh.random_resolver:2"
+    assert placement_state(42) == 13679457532755275413
+    assert path_hash64(node_path) == 17679296295052330425
+    stream = node_random_stream(42, node_path)
+    assert stream.initial_state == 6646601583332992347
+    assert tuple(stream.next_u32() for _ in range(4)) == (
+        868233470,
+        2386588500,
+        4091317401,
+        72510459,
+    )
 
 
 def test_quaternion_sign_uses_v4_w_then_xyz_canonical_rule():
@@ -177,7 +196,7 @@ def test_cycle_in_zero_weight_unselected_option_blocks_before_resolution():
 
 def test_draw_order_absent_fields_and_single_positive_selection_are_frozen():
     root, composites, profiles, hashes = synthetic_fixture()
-    plan_b = resolve_composite(root, 0, composites, profiles, hashes)
+    plan_b = resolve_composite(root, 2147483647, composites, profiles, hashes)
     assert [entry.role for entry in plan_b.draws] == [
         "selection",
         "offset_x", "offset_y", "offset_z",
@@ -187,7 +206,7 @@ def test_draw_order_absent_fields_and_single_positive_selection_are_frozen():
         "selection",
         "offset_x", "offset_y", "offset_z",
     ]
-    plan_a = resolve_composite(root, 2147483647, composites, profiles, hashes)
+    plan_a = resolve_composite(root, 0, composites, profiles, hashes)
     assert [entry.role for entry in plan_a.draws] == [
         "selection",
         "offset_x", "offset_y", "offset_z",
@@ -200,9 +219,130 @@ def test_draw_order_absent_fields_and_single_positive_selection_are_frozen():
     assert plan_a.decisions[-1].option == 0
 
 
+def _path_locality_fixture(
+    *,
+    extra_left=False,
+    left_without_profile=False,
+    insert_before_right=False,
+):
+    profile = PlacementProfile(
+        "jitter",
+        offset_cm=(Range(0, 5), Range(0, 3), Range(0, 1)),
+    )
+
+    def random_node(*, with_profile=True):
+        return Node(
+            "random",
+            profile=profile.name if with_profile else None,
+            options=(
+                RandomOption("empty", weight=1),
+                RandomOption("empty", weight=1),
+            ),
+        )
+
+    left_children = [random_node(with_profile=not left_without_profile)]
+    if extra_left:
+        left_children.append(random_node())
+    nodes = [Node("group", children=tuple(left_children))]
+    if insert_before_right:
+        nodes.append(Node("group"))
+    nodes.append(Node("group", children=(random_node(),)))
+    composites = {"locality": Composite("locality", tuple(nodes))}
+    profiles = {profile.name: profile}
+    keys = (
+        ResourceKey("composite", "locality"),
+        ResourceKey("placement_profile", profile.name),
+    )
+    hashes = {
+        key: raw_payload_hash(f"locality\n{key}\n".encode("ascii"))
+        for key in keys
+    }
+    return composites, profiles, hashes
+
+
+def _path_decision(plan, path):
+    return next(decision for decision in plan.decisions if decision.path == path)
+
+
+def _path_draws(plan, path):
+    return tuple(draw for draw in plan.draws if draw.path == path)
+
+
+def test_edit_or_addition_in_one_branch_does_not_reshuffle_other_branch():
+    base = _path_locality_fixture()
+    edited = _path_locality_fixture(left_without_profile=True)
+    added = _path_locality_fixture(extra_left=True)
+    base_plan = resolve_composite("locality", 42, *base)
+    edited_plan = resolve_composite("locality", 42, *edited)
+    added_plan = resolve_composite("locality", 42, *added)
+    right_path = "locality:nodes[1]/children[0]"
+
+    for candidate in (edited_plan, added_plan):
+        assert _path_decision(base_plan, right_path) == _path_decision(
+            candidate, right_path)
+        assert _path_draws(base_plan, right_path) == _path_draws(
+            candidate, right_path)
+    left_path = "locality:nodes[0]/children[0]"
+    assert _path_draws(base_plan, left_path) != _path_draws(
+        edited_plan, left_path)
+    assert any(
+        draw.path == "locality:nodes[0]/children[1]"
+        for draw in added_plan.draws
+    )
+    assert base_plan.resolved_signature != added_plan.resolved_signature
+
+
+def test_insertion_before_sibling_changes_shifted_subtree_path_and_samples():
+    base = _path_locality_fixture()
+    shifted = _path_locality_fixture(insert_before_right=True)
+    base_plan = resolve_composite("locality", 42, *base)
+    shifted_plan = resolve_composite("locality", 42, *shifted)
+    old_path = "locality:nodes[1]/children[0]"
+    shifted_path = "locality:nodes[2]/children[0]"
+
+    assert _path_decision(base_plan, old_path).raw_u32 != _path_decision(
+        shifted_plan, shifted_path).raw_u32
+    assert _path_draws(base_plan, old_path) != _path_draws(
+        shifted_plan, shifted_path)
+    stable_left = "locality:nodes[0]/children[0]"
+    assert _path_draws(base_plan, stable_left) == _path_draws(
+        shifted_plan, stable_left)
+
+
+def test_profile_only_node_opens_its_own_path_derived_stream():
+    profile = PlacementProfile(
+        "profile_only",
+        offset_cm=(Range(0, 1), Range(0, 2), Range(0, 3)),
+    )
+    composites = {
+        "root": Composite("root", (
+            Node("mesh", resource="mesh_a", profile=profile.name),
+        )),
+    }
+    profiles = {profile.name: profile}
+    keys = (
+        ResourceKey("composite", "root"),
+        ResourceKey("placement_profile", profile.name),
+        ResourceKey("static_mesh", "mesh_a"),
+    )
+    hashes = {
+        key: raw_payload_hash(f"profile-only\n{key}\n".encode("ascii"))
+        for key in keys
+    }
+    plan = resolve_composite("root", 123, composites, profiles, hashes)
+    node_path = "root:nodes[0]"
+    expected_stream = node_random_stream(123, node_path)
+
+    assert plan.decisions == ()
+    assert [draw.role for draw in plan.draws] == [
+        "offset_x", "offset_y", "offset_z",
+    ]
+    assert plan.draws[0].raw_u32 == expected_stream.next_u32()
+
+
 def test_parent_local_world_trs_nodepaths_selected_dependencies_and_signature():
     root, composites, profiles, hashes = synthetic_fixture()
-    plan = resolve_composite(root, 2147483647, composites, profiles, hashes)
+    plan = resolve_composite(root, 0, composites, profiles, hashes)
     anchor = next(leaf for leaf in plan.leaves if leaf.resource == "anchor_mesh")
     assert anchor.world_trs.translation_cm == (125.0, 0.0, 0.0)
     assert anchor.origin == "root_cmp:nodes[0]/children[0]"
@@ -214,10 +354,10 @@ def test_parent_local_world_trs_nodepaths_selected_dependencies_and_signature():
     assert "composite:variant_b_cmp" not in plan.selected_dependencies
     assert "placement_profile:offset_only" in plan.selected_dependencies
     assert plan.resolved_signature == (
-        "blake3-160:58e1b0845d995636f0623a13f90b0dc35f64f308")
+        "blake3-160:80a8cbbfa943eb6e3eb2f276cda128f3ec946596")
     assert plan.signature_preimage.endswith(b"\n")
-    assert b'"resolver": "mh.random_resolver:1"' in plan.signature_preimage
-    assert b'"draw": 181848196' in plan.signature_preimage
+    assert b'"resolver": "mh.random_resolver:2"' in plan.signature_preimage
+    assert b'"draw": 472868437' in plan.signature_preimage
 
 
 def test_plan_is_immutable_and_mapping_iteration_cannot_change_result():
@@ -257,7 +397,7 @@ def test_option_order_changes_result_without_changing_closure_membership():
     original_plan = resolve_composite(root, 2147483647, composites, profiles, hashes)
     swapped_plan = resolve_composite(root, 2147483647, swapped, profiles, hashes)
     assert original_plan.closure.closure_hash == swapped_plan.closure.closure_hash
-    assert original_plan.decisions[0].option == swapped_plan.decisions[0].option == 1
+    assert original_plan.decisions[0].option == swapped_plan.decisions[0].option == 2
     assert original_plan.leaves != swapped_plan.leaves
     assert original_plan.resolved_signature != swapped_plan.resolved_signature
 

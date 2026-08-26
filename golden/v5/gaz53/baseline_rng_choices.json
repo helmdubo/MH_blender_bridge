@@ -1,5 +1,7 @@
 {
   "schema": "mh.gaz53_random_baseline:1",
+  "resolver": "mh.random_resolver:2",
+  "node_path": "gaz53_b_random_cmp:nodes[1]>gaz53_body_bc_random_cmp:nodes[0]",
   "status": {
     "source_oracle": "bound",
     "mh_normative_choices": "frozen",
@@ -173,59 +175,59 @@
   "mh_random_stream_1_choices": [
     {
       "seed": 0,
-      "raw_u32": 2802244911,
-      "unit_f64": 0.6524484863039106,
-      "target_f64": 1.9573454589117318,
-      "option": 1,
-      "resource": "gaz53_wooden_b_cmp"
-    },
-    {
-      "seed": 1,
-      "raw_u32": 1581361928,
-      "unit_f64": 0.36818951554596424,
-      "target_f64": 1.1045685466378927,
-      "option": 1,
-      "resource": "gaz53_wooden_b_cmp"
-    },
-    {
-      "seed": 2,
-      "raw_u32": 1684556879,
-      "unit_f64": 0.3922164624091238,
-      "target_f64": 1.1766493872273713,
-      "option": 1,
-      "resource": "gaz53_wooden_b_cmp"
-    },
-    {
-      "seed": 42,
-      "raw_u32": 1474427578,
-      "unit_f64": 0.34329192200675607,
-      "target_f64": 1.0298757660202682,
-      "option": 1,
-      "resource": "gaz53_wooden_b_cmp"
-    },
-    {
-      "seed": 123,
-      "raw_u32": 3763380899,
-      "unit_f64": 0.8762303970288485,
-      "target_f64": 2.6286911910865456,
+      "raw_u32": 3630688962,
+      "unit_f64": 0.8453356479294598,
+      "target_f64": 2.5360069437883794,
       "option": 2,
       "resource": "gaz53_wooden_c_cmp"
     },
     {
+      "seed": 1,
+      "raw_u32": 538388333,
+      "unit_f64": 0.1253533021081239,
+      "target_f64": 0.3760599063243717,
+      "option": 0,
+      "resource": "gaz53_bread_b_cmp"
+    },
+    {
+      "seed": 2,
+      "raw_u32": 3285661599,
+      "unit_f64": 0.7650027049239725,
+      "target_f64": 2.2950081147719175,
+      "option": 2,
+      "resource": "gaz53_wooden_c_cmp"
+    },
+    {
+      "seed": 42,
+      "raw_u32": 3956417545,
+      "unit_f64": 0.9211752435658127,
+      "target_f64": 2.763525730697438,
+      "option": 2,
+      "resource": "gaz53_wooden_c_cmp"
+    },
+    {
+      "seed": 123,
+      "raw_u32": 2536244639,
+      "unit_f64": 0.5905154717620462,
+      "target_f64": 1.7715464152861387,
+      "option": 1,
+      "resource": "gaz53_wooden_b_cmp"
+    },
+    {
       "seed": 1024,
-      "raw_u32": 2781839491,
-      "unit_f64": 0.6476974792312831,
-      "target_f64": 1.9430924376938492,
+      "raw_u32": 2333555948,
+      "unit_f64": 0.5433233333751559,
+      "target_f64": 1.6299700001254678,
       "option": 1,
       "resource": "gaz53_wooden_b_cmp"
     },
     {
       "seed": 2147483647,
-      "raw_u32": 181848196,
-      "unit_f64": 0.04233983252197504,
-      "target_f64": 0.12701949756592512,
-      "option": 0,
-      "resource": "gaz53_bread_b_cmp"
+      "raw_u32": 3757975569,
+      "unit_f64": 0.874971870565787,
+      "target_f64": 2.624915611697361,
+      "option": 2,
+      "resource": "gaz53_wooden_c_cmp"
     }
   ]
 }
