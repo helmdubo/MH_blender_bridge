@@ -14,7 +14,7 @@ document-world прямо superseded parent-local контрактом v5.
 
 ## OPEN-V5-1 — bit contract `mh.random_stream:1` и weighted selection
 
-**Статус. РЕШЕНО OWNER — нормативно в 10 §13.1.** Baseline-битконтракт зафиксирован (splitmix64 uint64-state, seed через bit-cast+один шаг, `next_u32` из старших битов, `next_unit = u32 * 2^-32`, weighted selection по float64-кумуляте в порядке опций со строгим `>`); random-узел всегда потребляет ровно один selection-draw; отсутствующий параметр профиля draw не потребляет. Dagor probe обязательна, но её результат может изменить байты только новым тегом `mh.random_stream:2`.
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.1.** Baseline-битконтракт зафиксирован (splitmix64 uint64-state, seed через bit-cast+один шаг, `next_u32` из старших битов, `next_unit = u32 * 2^-32`, weighted selection по float64-кумуляте в порядке опций со строгим `>`); random-узел всегда потребляет ровно один selection-draw; отсутствующий параметр профиля draw не потребляет. Probe ВЫПОЛНЕНА (V5-S1): Dagor — 32-битный LCG с 15-битной выборкой, расхождение на 5 seed'ах из 7, рантайм не наблюдался; **owner выбрал вариант B** — совместимость поведенческая, байты `mh.random_stream:1` окончательны, заявления «тот же seed, что в Dagor» запрещены (10 §13.1).
 
 **Контекст.** Owner зафиксировал один cross-host stream, int32 placement Seed,
 draw-order и запрет `FMath::Rand`/`FRandomStream`, но не выбрал PRNG algorithm,
