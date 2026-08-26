@@ -886,25 +886,124 @@ v5. Owner удаляет старые source-файлы и переэкспор�
 | QUESTIONS | OPEN-V4-24 остаётся историей отменённого document-world решения; OPEN-V4-1 перенесён в OPEN-V5-7; активные дыры — только `OPEN-V5-*` |
 | C0/C1 audit reports и receipts v4 | исторические квитанции, не норматив и не acceptance v5 |
 
-## 13. Неразрешённые owner-вопросы и STOP
+## 13. Решения owner по вопросам freeze (OPEN-V5-1…7)
 
-До owner-ответа действуют записи `QUESTIONS.md`:
+Все семь вопросов, поднятых V5-S0, решены. STOP-гейты сняты, кроме явно
+названного ниже ожидания GAZ-oracle.
 
-- `OPEN-V5-1` — bit contract RNG и weighted mapping; STOP accepted Python/C++
-  reference и seed expected vectors;
-- `OPEN-V5-2` — binding `.placement` и transform-profile application; STOP
-  profile sampling/import/export;
-- `OPEN-V5-3` — NodePath/closure hash/ResolvedSignature byte contract; STOP
-  accepted signatures и cross-host parity;
-- `OPEN-V5-4` — UE carrier/generated path/applied receipt placement profile;
-  STOP managed asset/import path для `.placement`;
-- `OPEN-V5-5` — численный exactness predicate TRS/shear на float hosts; STOP
-  production admission check.
-- `OPEN-V5-6` — authoritative GAZ option tokens/Dagor/profile oracle; не
-  блокирует topology freeze, блокирует field parity и финальный V5-S1 golden.
-- `OPEN-V5-7` — filesystem aliases reader paths; сохраняет прежний строгий
-  admission и блокирует только его будущее ослабление.
+### 13.1 `mh.random_stream:1` — битовый контракт (OPEN-V5-1)
 
-V5-S0 может быть ратифицирован как freeze только вместе с owner-ответами либо с
-явным сохранением перечисленных STOP-гейтов. Следующий срез не начинает
-заблокированную часть и не заполняет её «разумным дефолтом».
+Baseline фиксируется СЕЙЧАС, чтобы V5-S1 строил и тестировал реальный
+reference; probe может его заменить только явным owner-решением (вариант A).
+
+- State: `uint64`, вся арифметика — по модулю 2^64.
+- Инициализация из int32 Seed: `state = splitmix64(uint64(uint32(seed)))`
+  (bit-cast signed→unsigned, затем один шаг ниже).
+- `next_u64()` — splitmix64:
+  `state += 0x9E3779B97F4A7C15; z = state;`
+  `z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;`
+  `z = (z ^ (z >> 27)) * 0x94D049BB133111EB;`
+  `return z ^ (z >> 31);`
+- `next_u32() = uint32(next_u64() >> 32)` (старшие биты).
+- `next_unit() = next_u32() * 2^-32` — float64 в `[0, 1)`.
+- Weighted selection: `total` — последовательная float64-сумма весов В ПОРЯДКЕ
+  опций; `target = next_unit() * total`; идём по кумулятивной сумме в том же
+  порядке и берём ПЕРВУЮ опцию с `cumulative > target` (строго больше).
+  Нулевые веса не увеличивают сумму и не выбираются никогда; `next_unit() < 1`
+  гарантирует, что последняя положительная опция всегда ловит остаток.
+- Random-узел ВСЕГДА потребляет ровно один selection-draw, даже при единственной
+  положительной опции: позиция потока не зависит от содержимого данных.
+- Отсутствующий параметр профиля draw НЕ потребляет (подтверждение прежнего
+  решения); порядок draw — как в §6.6.
+- Sample диапазона: `value = base + (next_unit() * 2 - 1) * deviation` во
+  float64, затем округление до float32 при записи в план.
+- Dagor parity probe (V5-S1) остаётся обязательной. Если probe покажет, что
+  bit-for-bit воспроизведение `objgenerator::rnd` достижимо малой ценой, owner
+  отдельным решением поднимает тег до `mh.random_stream:2` — молчаливая подмена
+  байтов под тем же тегом запрещена.
+
+### 13.2 Binding и применение `.placement` (OPEN-V5-2)
+
+- Поле ссылки — `"profile": "<name>"`, допустимо на УЗЛЕ любого kind
+  (`mesh|actor|composite|group|random`); на опции random-узла — запрещено
+  (опция не имеет собственного трансформа, §6.1).
+- Применение — покомпонентно НАД authored Local T/R/S, без матричного
+  умножения (домен остаётся T/R/S, shear не возникает):
+  `translation = t_authored + offset_sample`;
+  `rotation = r_authored * q_sample`, где
+  `q_sample = qZ * qY * qX` из `rotation_deg` (углы X/Y/Z, UE-конвенция);
+  `scale = s_authored * (u, u, u * v)`, где `u` — `uniform_scale` sample,
+  `v` — `vertical_scale` sample (вертикаль — ось Z UE).
+- Невалидно ДО сэмплинга (fail-closed при парсе профиля,
+  `MH_E_PLACEMENT_PROFILE_GRAMMAR`, регистрируется в V5-S2): `deviation < 0`;
+  нефинитные числа; `base - deviation <= 0` у любого scale-диапазона (правило
+  «scale ≤ 0 запрещён» переносится из v4).
+- Порядок публикации батча: **профили публикуются первыми**, до материалов —
+  они листья зависимостей композитов; далее прежний порядок §6.5.
+
+### 13.3 NodePath, closure hash и `ResolvedSignature` (OPEN-V5-3)
+
+- NodePath: сегменты `nodes[i]`, `children[j]`, `options[k]`, соединённые `/`;
+  пересечение границы вложенного композита обозначается `>` и логическим
+  именем: `root_cmp:nodes[1]/options[2]>variant_cmp:nodes[0]`.
+- `closure_hash` = BLAKE3-160 конкатенации raw payload hashes ВСЕХ ресурсов
+  source closure (все опции всех random-узлов, §6.5), отсортированных по
+  `ResourceKey.ToString()`; форма — `blake3-160:<40 hex>`.
+- Прообраз подписи — канонический JSON (та же машинерия §5) фиксированной
+  структуры: `{"v":1,"resolver":"mh.random_resolver:1","seed":<int32>,`
+  `"closure":"<closure_hash>","decisions":[{"path","option","total","draw"}...],`
+  `"leaves":[{"kind","resource","trs"}...]}`, элементы — в порядке резолва,
+  числа — float32 shortest round-trip.
+- Display-only `name`, любые файловые пути и абсолютные локации в прообраз НЕ
+  входят: подпись — функция identity и геометрии, не презентации.
+- `ResolvedSignature` = `blake3-160:<40 hex>` от прообраза.
+
+### 13.4 UE carrier профиля (OPEN-V5-4)
+
+Отдельного UAsset у `placement_profile` НЕТ; седьмой Asset Registry tag и
+generated path не вводятся. Значения профиля **инлайнятся в
+`UMHCompositeAsset`** при импорте композита, который на них ссылается — это
+applied state внутри ассета (§7), поэтому cook и runtime никогда не читают
+source tree. Индекс хранит ребро `composite→placement_profile: "profile"`
+(закрытая роль добавляется к §3), поэтому правка `.placement` помечает
+dependent-композиты `stale` и вызывает их реимпорт обычным порядком. Kind
+`placement_profile` участвует в scan/resolve как обычный source-ресурс
+(duplicate/ambiguous — стандартная политика §2), но GeneratedAssets-строки не
+имеет.
+
+### 13.5 Predicate представимости TRS/shear (OPEN-V5-5)
+
+Единый предикат для Python и C++ (реализация уже принята в v4 S6.1 и
+переносится дословно): матрица `M` допустима ⟺ её host-декомпозиция в T/R/S,
+собранная обратно в `M'`, совпадает с `M` поэлементно в float32 с допуском
+`8 ULP` относительно `max(1, |M[i][j]|, |M'[i][j]|)`; любое нефинитное значение
+— отказ. Отрицательные scale/отражения ДОПУСТИМЫ, если проходят этот тест
+(`FTransform` их представляет). Вопрос «какая из эквивалентных декомпозиций
+каноническая» не возникает: используется штатная декомпозиция хоста
+(`matrix_world.decompose()` / `FTransform(FMatrix)`), а принимается результат
+только при совпадении реконструкции. Отказ — `MH_E_UNREPRESENTABLE_TRANSFORM`
+с именем объекта/узла; epsilon-починка и приближение запрещены.
+
+### 13.6 GAZ-53 oracle (OPEN-V5-6)
+
+Единственный вопрос, где решение зависит от owner-данных, а не от контракта.
+Topology-фикстура V5-S0 принимается как есть; её option-токены помечены
+synthetic и в acceptance parity не участвуют. Owner передаёт три исходных
+`*.composit.blk` (root/body/random) в `reference/dagor_fixtures/gaz53/`; после
+этого V5-S1 строит oracle из них, заменяет synthetic токены реальными
+(`gaz53_bread_b_cmp`, `gaz53_wooden_b_cmp`, `gaz53_wooden_c_cmp` — это
+composite-опции, а не mesh) и фиксирует seed-векторы. До передачи файлов
+блокируется ТОЛЬКО финальный GAZ-parity acceptance V5-S1; вся остальная работа
+V5-S1 (reference implementation, synthetic-фикстуры, probe-инфраструктура) идёт
+без ожидания.
+
+### 13.7 Filesystem aliases (OPEN-V5-7, бывший OPEN-V4-1)
+
+Вопрос закрывается физической канонизацией: `source_root` и КАЖДЫЙ сканируемый
+путь приводятся к физической форме (разрешение symlink/junction по всей цепочке)
+до любой проверки принадлежности; путь, физическая форма которого лежит вне
+физического `source_root`, отклоняется fail-closed. Явно настроенный alias
+самого `source_root` тем самым допустим автоматически — после канонизации обе
+стороны совпадают. Diagnostic/report output остаётся только под `Saved/Mimir`
+с той же физической проверкой. Отдельного кода не вводится: нарушение —
+`MH_E_INVALID_RESOURCE_SOURCE` с обеими формами пути в сообщении.

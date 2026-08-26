@@ -1,16 +1,20 @@
 # QUESTIONS — открытые вопросы Source Protocol v5
 
-Статус: на ветке V5-S0 freeze candidate — `docs/10_source_protocol_v5_plan.md`
-и `docs/11_v5_agent_slices.md`; они становятся единственной authority только
-после owner merge/ratification V5-S0. До этого production-код v5 запрещён.
-После ratification открытый `OPEN-V5-*` не ослабляет 10: затронутая часть
-остаётся fail-closed STOP.
+Статус: V5-S0 ратифицирован owner'ом; единственная authority —
+`docs/10_source_protocol_v5_plan.md`, порядок работ — `docs/11_v5_agent_slices.md`.
+Открытый `OPEN-V5-*` не ослабляет 10: затронутая часть остаётся fail-closed
+STOP до owner-решения.
 
-Активны `OPEN-V5-1`…`OPEN-V5-7` ниже. Решённые V4-вопросы — история;
-`OPEN-V4-1` перенесён в `OPEN-V5-7`, а `OPEN-V4-24` document-world прямо
-superseded parent-local контрактом v5.
+`OPEN-V5-1`…`OPEN-V5-7` РЕШЕНЫ owner — нормативный текст в 10 §13.
+Открытых нормативных вопросов нет; единственное ожидание — owner передаёт
+исходные GAZ `*.composit.blk` в `reference/dagor_fixtures/gaz53/`, что
+блокирует только финальный GAZ-parity acceptance V5-S1 (10 §13.6). Решённые
+V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а `OPEN-V4-24`
+document-world прямо superseded parent-local контрактом v5.
 
 ## OPEN-V5-1 — bit contract `mh.random_stream:1` и weighted selection
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.1.** Baseline-битконтракт зафиксирован (splitmix64 uint64-state, seed через bit-cast+один шаг, `next_u32` из старших битов, `next_unit = u32 * 2^-32`, weighted selection по float64-кумуляте в порядке опций со строгим `>`); random-узел всегда потребляет ровно один selection-draw; отсутствующий параметр профиля draw не потребляет. Dagor probe обязательна, но её результат может изменить байты только новым тегом `mh.random_stream:2`.
 
 **Контекст.** Owner зафиксировал один cross-host stream, int32 placement Seed,
 draw-order и запрет `FMath::Rand`/`FRandomStream`, но не выбрал PRNG algorithm,
@@ -27,9 +31,11 @@ Dagor RNG либо B — собственный RNG с behavioral compatibility;
 Dagor observations и подготовить API, но не объявляет Python reference или seed
 expected vectors принятыми. C++ RNG и V5-S2 не начинаются.
 
-**Статус.** ОТКРЫТ; блокирует accepted random reference и весь V5-S2.
+**Прежний статус.** ОТКРЫТ; блокировал accepted random reference и весь V5-S2.
 
 ## OPEN-V5-2 — binding и application contract `.placement`
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.2.** Поле `"profile"` на узле любого kind (на опции — запрещено); применение покомпонентно над authored T/R/S (`t+offset`, `r*q_sample` с `qZ*qY*qX`, `s*(u,u,u*v)`, вертикаль — Z); невалидные диапазоны (`deviation<0`, нефинитное, `base-dev<=0`) — fail-closed при парсе; профили публикуются первыми в батче.
 
 **Контекст.** Заданы resource `<name>.placement`, `kind=placement_profile`,
 `"v":1` и пары `[base,deviation]` для offset/rotation/uniform/vertical, но не
@@ -48,9 +54,11 @@ field; Dagor `include`, profile binding, sampling и Publish с profile полу
 STOP. Отдельный `.placement` допускается только как документационный fixture,
 не как production-managed resource.
 
-**Статус.** ОТКРЫТ; блокирует profile-часть V5-S1/V5-S2/V5-S3/V5-S4.
+**Прежний статус.** ОТКРЫТ; блокировал profile-часть V5-S1/V5-S2/V5-S3/V5-S4.
 
 ## OPEN-V5-3 — NodePath, closure hash и ResolvedSignature bytes
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.3.** NodePath `nodes[i]/children[j]/options[k]` с `>` на границе вложенного композита; `closure_hash` — BLAKE3-160 конкатенации raw-хэшей всего closure в порядке `ResourceKey`; прообраз подписи — канонический JSON фиксированной структуры без display-имён и путей; выход — `blake3-160:<40 hex>`.
 
 **Контекст.** `FMHResolvedCompositePlan` обязан содержать NodePath/trace и
 `ResolvedSignature = hash(closure hash + seed + indices + samples + resolver
@@ -66,9 +74,11 @@ ResourceKey/canonical payload hash?
 как отладочная in-memory структура; signature не persist/cook/cache authority,
 cross-host signature golden не утверждается.
 
-**Статус.** ОТКРЫТ; блокирует accepted V5-S1 signatures и V5-S5+ cache/parity claims.
+**Прежний статус.** ОТКРЫТ; блокировал accepted V5-S1 signatures и V5-S5+ cache/parity claims.
 
 ## OPEN-V5-4 — UE carrier и applied state для `placement_profile`
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.4.** Отдельного UAsset и седьмого тега нет: значения профиля инлайнятся в `UMHCompositeAsset` как applied state, cook/runtime source не читают; индекс получает закрытое ребро `composite→placement_profile: "profile"`; kind сканируется как обычный ресурс, но строки GeneratedAssets не имеет.
 
 **Контекст.** Индекс v4 и шесть Asset Registry tags объявлены выжившими без
 изменений, но новый source kind должен участвовать в dependency/cook closure.
@@ -83,9 +93,11 @@ package/cook получает immutable profile data без source-tree runtime 
 generated path или source-at-runtime fallback. Index может документировать
 candidate kind/edge, но production import/compile profile STOP.
 
-**Статус.** ОТКРЫТ; блокирует UE `.placement` path V5-S2+.
+**Прежний статус.** ОТКРЫТ; блокировал UE `.placement` path V5-S2+.
 
 ## OPEN-V5-5 — exact admission predicate для host TRS/shear
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.5.** Предикат — реконструкция host-декомпозиции с допуском 8 ULP float32 относительно `max(1,|a|,|b|)` по всем 16 элементам, нефинитное — отказ; отрицательные scale/отражения допустимы, если проходят тест; каноничность декомпозиции не требуется, принимается только совпадение реконструкции; отказ — `MH_E_UNREPRESENTABLE_TRANSFORM`.
 
 **Контекст.** `MH_E_UNREPRESENTABLE_TRANSFORM` фиксирован на Dagor import,
 Blender export и UE compile; silent approximation запрещена. Однако host
@@ -102,10 +114,12 @@ canonical decomposition выбирается при нескольких экв�
 repair не выбирается исполнителем. Fixture может только объявить expected
 reject.
 
-**Статус.** ОТКРЫТ; блокирует transform admission в
+**Прежний статус.** ОТКРЫТ; блокировал transform admission в
 V5-S2/V5-S3/V5-S5/V5-S7.
 
 ## OPEN-V5-6 — authoritative GAZ-53 option resources и transform/profile data
+
+**Статус. ЧАСТИЧНО РЕШЕНО OWNER — нормативно в 10 §13.6.** Topology-фикстура принята; synthetic-токены в parity не участвуют. Owner передаёт три `*.composit.blk` в `reference/dagor_fixtures/gaz53/`; до передачи блокируется ТОЛЬКО финальный GAZ-parity acceptance V5-S1, остальная работа среза идёт.
 
 **Контекст.** Owner задал имена трёх composite-файлов, topology root→body+random
 и три options weight 1, но не передал authoritative option resource tokens,
@@ -121,10 +135,12 @@ synthetic canonical option tokens; он не является production GAZ con
 фиксирует seed expected traces/signatures. V5-S1 parity acceptance ждёт
 owner-provided/confirmed oracle.
 
-**Статус.** ОТКРЫТ; не блокирует documentation freeze, блокирует GAZ field
+**Прежний статус.** ОТКРЫТ; не блокировал documentation freeze, блокирует GAZ field
 parity и финальный V5-S1 golden.
 
 ## OPEN-V5-7 — filesystem aliases на reader paths
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.7.** Физическая канонизация `source_root` и каждого сканируемого пути до проверки принадлежности; путь вне физического root — fail-closed; явно настроенный alias самого root тем самым допустим; report output — только под `Saved/Mimir` с той же проверкой; код — `MH_E_INVALID_RESOURCE_SOURCE`.
 
 **Контекст.** Лексическая path-канонизация не доказывает, что junction/symlink
 под разрешённым каталогом физически не ведёт обратно в `source_root`. Это
@@ -142,8 +158,7 @@ source scan и diagnostic report output?
 root пока определяет boundary. `Saved/MimirBridge/ProjectIndex.sqlite` задан
 отдельно и этим ограничением report output не переопределяется.
 
-**Статус.** ОТКРЫТ; действует прежнее fail-closed правило. Не блокирует
-V5-S0/V5-S1 pure-contract work, блокирует ослабление path admission.
+**Прежний статус.** ОТКРЫТ; действовало прежнее fail-closed правило.
 
 ---
 

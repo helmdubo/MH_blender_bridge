@@ -97,10 +97,12 @@ Acceptance:
 
 ## V5-S1 — Cross-host random reference и Dagor parity probe
 
-Gate: только после owner merge V5-S0 и ответов на
-`OPEN-V5-1`/`OPEN-V5-2`/`OPEN-V5-3`, достаточных для bit/profile/signature
-reference. `OPEN-V5-6` может оставаться открытым во время Dagor probe, но должен
-быть закрыт owner'ом до acceptance полного GAZ golden.
+Gate: ОТКРЫТ. V5-S0 ратифицирован, `OPEN-V5-1`/`-2`/`-3` решены в 10 §§13.1–13.3
+(baseline-битконтракт, применение профиля, байты подписи) — реализуй их дословно.
+Единственное ожидание — `OPEN-V5-6`: пока owner не положил исходные GAZ
+`*.composit.blk` в `reference/dagor_fixtures/gaz53/`, финальный GAZ-parity
+acceptance не закрывается; вся остальная работа среза (reference, synthetic
+golden, probe-инфраструктура) идёт без ожидания.
 
 Python, bpy-free:
 
@@ -138,8 +140,12 @@ A/B смержен. Без него V5-S2 STOP.
 
 ## V5-S2 — Codecs v5 и C++ random parity
 
-Gate: V5-S1 owner-accepted; `OPEN-V5-4` и `OPEN-V5-5` закрыты owner'ом до UE
-carrier/transform production work.
+Gate: V5-S1 owner-accepted. `OPEN-V5-4` и `OPEN-V5-5` решены в 10 §§13.4–13.5:
+профиль инлайнится в `UMHCompositeAsset` (ни UAsset, ни седьмого тега, ни
+generated path; ребро индекса `composite→placement_profile: "profile"`),
+predicate представимости — 8 ULP float32 по всем 16 элементам. Новые коды
+среза: `MH_E_PLACEMENT_PROFILE_GRAMMAR`, `MH_E_UNREPRESENTABLE_TRANSFORM`
+(+ golden counts).
 
 Python и C++:
 
@@ -197,8 +203,8 @@ Gate: V5-S3 owner-accepted.
    отсутствует в API.
 3. Full preflight: loaded authoring resources либо existing managed source;
    missing/unmanaged/ambiguous блокируют до staging.
-4. Staging всего замыкания, read-back каждого payload, затем materials →
-   meshes → placement profiles в ратифицированной `OPEN-V5-2` позиции → leaf
+4. Staging всего замыкания, read-back каждого payload, затем
+   placement profiles (первыми, 10 §13.2) → materials → meshes → leaf
    composites → parents → root LAST.
 5. Batch self-publish tokens/watcher suppression. После частичного replace
    честный `MH_E_PARTIAL_PUBLISH` с published/unpublished sets; rollback — VCS.
