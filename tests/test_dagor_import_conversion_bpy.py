@@ -17,9 +17,11 @@ from mh4blend.core.dagor_composites import (  # noqa: E402
     parse_dagor_composite,
     parse_dagor_placement_include,
 )
+from mh4blend.core import (  # noqa: E402
+    placement_publication as placement_publication_module,
+)
 from mh4blend.core.placements import placement_json_bytes  # noqa: E402
 from mh4blend.scene import export_composite as export_composite_module  # noqa: E402
-from mh4blend.scene import import_dagor_composite as import_dagor_module  # noqa: E402
 from mh4blend.scene.export_composite import export_composite_collection  # noqa: E402
 from mh4blend.scene.import_dagor_composite import (  # noqa: E402
     _option_weight,
@@ -415,13 +417,13 @@ className:t="composit"
 node{ include "scatter.blk" }
 ''')
     before = _counts()
-    real_publish = import_dagor_module.atomic_publish_bytes
+    real_publish = placement_publication_module.atomic_publish_bytes
 
     def fail_publish(*_args, **_kwargs):
         raise RuntimeError("profile publication failed")
 
     monkeypatch.setattr(
-        import_dagor_module, "atomic_publish_bytes", fail_publish)
+        placement_publication_module, "atomic_publish_bytes", fail_publish)
     with pytest.raises(RuntimeError, match="profile publication failed"):
         import_dagor_composite_file(
             source, source_root=tmp_path, output_dir=output)
@@ -434,7 +436,8 @@ node{ include "scatter.blk" }
         return real_publish(target, payload, **kwargs)
 
     monkeypatch.setattr(
-        import_dagor_module, "atomic_publish_bytes", inject_racing_identity)
+        placement_publication_module, "atomic_publish_bytes",
+        inject_racing_identity)
     with pytest.raises(ValueError, match="race overwrite"):
         import_dagor_composite_file(
             source, source_root=tmp_path, output_dir=output)

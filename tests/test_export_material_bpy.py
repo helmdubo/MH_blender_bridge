@@ -406,7 +406,7 @@ def test_reader_preflights_all_texture_refs_before_property_mutation(tmp_path):
     assert len(settings.textures) == 0
 
 
-def test_fbx_export_updates_every_unique_touched_material(tmp_path, monkeypatch):
+def test_fbx_export_updates_every_unique_touched_material(tmp_path):
     existing_wall = tmp_path / "authored" / "wall.material"
     existing_wall.parent.mkdir()
     existing_wall.write_bytes(b"old wall")
@@ -414,10 +414,6 @@ def test_fbx_export_updates_every_unique_touched_material(tmp_path, monkeypatch)
     bpy.context.scene.collection.children.link(collection)
     _mesh("Wall", collection, _class_material("wall"))
     _mesh("Roof", collection, _class_material("roof"))
-    monkeypatch.setattr(
-        export_fbx_module, "_export_selected_fbx",
-        lambda path: Path(path).write_bytes(b"staged fbx"))
-
     report = export_fbx_collection(
         collection, tmp_path, source_root=tmp_path, export_materials=True)
 

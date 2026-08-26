@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from pathlib import PurePosixPath
+import tempfile
 
 import bpy
 from mathutils import Matrix, Quaternion
@@ -28,12 +29,13 @@ from ..core.dagor_composites import (
     read_dagor_composite,
 )
 from ..core.model import Composite, Node, PlacementProfile, RandomOption
-from ..core.payload_publish_v2 import atomic_publish_bytes
-from ..core.placements import (
-    parse_placement_profile,
-    placement_json_bytes,
-    read_placement_file,
+from ..core.placement_publication import (
+    PlacementPublicationRequest,
+    plan_placement_publications,
+    publish_placement_publications,
+    stage_placement_publications,
 )
+from ..core.placements import placement_json_bytes
 from ..core.transforms import (
     blender_to_ue_transform,
     matrix_reconstructs_as_float32_trs,
@@ -412,156 +414,38 @@ def load_dagor_composite_documents(filepath, *, source_root) -> dict[str, Compos
         filepath, source_root=source_root).documents
 
 
-def _scan_placement_candidates(root: Path, name: str) -> list[Path]:
-    expected = f"{name}.placement"
-    matches: dict[str, Path] = {}
-    for candidate in root.rglob("*"):
-        if not candidate.is_file() or candidate.name.casefold() != expected.casefold():
-            continue
-        if candidate.name != expected:
-            _raise(
-                "MH_E_NONCANONICAL_RESOURCE_NAME", [candidate],
-                f"placement filename must be exactly {expected!r}")
-        physical = candidate.resolve(strict=True)
-        if not _inside(root, physical):
-            _raise(
-                "MH_E_INVALID_RESOURCE_SOURCE", [candidate, physical],
-                "placement source resolves outside Project Source Root")
-        matches[os.path.normcase(str(physical))] = physical
-    return sorted(matches.values(), key=lambda value: str(value).replace("\\", "/"))
-
-
 def _preflight_profile_publication(
         bundle: DagorConversionBundle, root: Path, output: Path):
-    plans = []
-    for name, source in bundle.profiles.items():
-        matches = _scan_placement_candidates(root, name)
-        if len(matches) > 1:
-            _raise(
-                "MH_E_AMBIGUOUS_RESOURCE_NAME",
-                [name, *(str(path) for path in matches), source.include_path],
-                "multiple physical placement profiles share one logical name")
-        if matches:
-            existing_path = matches[0]
-            raw = existing_path.read_bytes()
-            try:
-                canonical = placement_json_bytes(
-                    read_placement_file(existing_path))
-            except ValueError as exc:
-                _raise(
-                    getattr(exc, "code", None)
-                    or "MH_E_PLACEMENT_PROFILE_GRAMMAR",
-                    [existing_path, source.include_path],
-                    f"existing placement profile is invalid: {exc}")
-            if raw != canonical:
-                _raise(
-                    "MH_E_PLACEMENT_PROFILE_GRAMMAR",
-                    [existing_path, source.include_path],
-                    "existing placement profile is not exact canonical bytes; "
-                    "Dagor conversion never normalizes it")
-            if raw != source.canonical_bytes:
-                _raise(
-                    "MH_E_AMBIGUOUS_RESOURCE_NAME",
-                    [name, existing_path, source.include_path],
-                    "existing placement profile and Dagor include differ; "
-                    "overwrite/winner selection is forbidden")
-            plans.append((name, source, existing_path, False))
-            continue
-        target = output / f"{name}.placement"
-        if target.exists():
-            _raise(
-                "MH_E_INVALID_RESOURCE_SOURCE", [target, source.include_path],
-                "placement target exists but is not a regular candidate file")
-        plans.append((name, source, target, True))
-    return plans
+    return plan_placement_publications((
+        PlacementPublicationRequest(
+            name=name,
+            canonical_bytes=source.canonical_bytes,
+            provenance=source.include_path,
+        )
+        for name, source in bundle.profiles.items()
+    ), source_root=root, output_dir=output)
 
 
 def _publish_profiles(plans, root: Path):
-    # Revalidate the whole identity set at the final transaction edge before
-    # the first replace.  This covers reuse races as well as new-target races;
-    # per-target guards below repeat the absence check under the payload lock.
-    for name, source, target, should_write in plans:
-        matches = _scan_placement_candidates(root, name)
-        if should_write:
-            if matches:
-                _raise(
-                    "MH_E_AMBIGUOUS_RESOURCE_NAME",
-                    [name, *(str(path) for path in matches),
-                     source.include_path],
-                    "placement identity changed after preflight; refusing "
-                    "race publication")
-            continue
-        if len(matches) != 1 or matches[0] != target:
-            _raise(
-                "MH_E_AMBIGUOUS_RESOURCE_NAME",
-                [name, target, *(str(path) for path in matches),
-                 source.include_path],
-                "reused placement identity changed after preflight")
-        raw = target.read_bytes()
-        try:
-            canonical = placement_json_bytes(read_placement_file(target))
-        except ValueError as exc:
-            _raise(
-                getattr(exc, "code", None)
-                or "MH_E_PLACEMENT_PROFILE_GRAMMAR",
-                [target, source.include_path],
-                f"reused placement profile became invalid: {exc}")
-        if raw != canonical:
-            _raise(
-                "MH_E_PLACEMENT_PROFILE_GRAMMAR",
-                [target, source.include_path],
-                "reused placement profile ceased to be exact canonical bytes")
-        if raw != source.canonical_bytes:
-            _raise(
-                "MH_E_AMBIGUOUS_RESOURCE_NAME",
-                [name, target, source.include_path],
-                "reused placement profile diverged after preflight")
-
+    # Stage the complete profile set before revalidating or replacing the
+    # first authoritative file.  The Blender transaction owns this finalizer,
+    # so any failure still rolls its materialized delta back as one unit.
+    with tempfile.TemporaryDirectory(prefix="mh-placement-stage-") as directory:
+        staged = stage_placement_publications(
+            plans, staging_dir=directory, source_root=root)
+        results = publish_placement_publications(staged, source_root=root)
     reports = []
-    for name, source, target, should_write in plans:
-        if not should_write:
-            reports.append({
-                "name": name,
-                "filepath": str(target),
-                "include_path": str(source.include_path),
-                "written": False,
-                "reused": True,
-            })
-            continue
-
-        def guard(profile_name=name):
-            raced = _scan_placement_candidates(root, profile_name)
-            if raced:
-                _raise(
-                    "MH_E_AMBIGUOUS_RESOURCE_NAME",
-                    [profile_name, *(str(path) for path in raced),
-                     source.include_path],
-                    "placement identity changed after preflight; refusing "
-                    "race overwrite")
-
-        def validate_read_back(payload, profile_name=name):
-            decoded = parse_placement_profile(payload, name=profile_name)
-            if placement_json_bytes(decoded) != source.canonical_bytes:
-                _raise(
-                    "MH_E_PLACEMENT_PROFILE_GRAMMAR",
-                    [profile_name, source.include_path],
-                    "staged placement profile failed canonical read-back")
-
-        receipt = atomic_publish_bytes(
-            target,
-            source.canonical_bytes,
-            source_root=root,
-            read_back_validator=validate_read_back,
-            pre_replace_guard=guard,
-        )
-        reports.append({
-            "name": name,
-            "filepath": str(target),
-            "include_path": str(source.include_path),
-            "bytes": receipt["bytes"],
-            "written": True,
-            "reused": False,
-        })
+    for result in results:
+        row = {
+            "name": result.name,
+            "filepath": str(result.target),
+            "include_path": str(result.provenance),
+            "written": result.written,
+            "reused": result.reused,
+        }
+        if result.byte_count is not None:
+            row["bytes"] = result.byte_count
+        reports.append(row)
     return reports
 
 
