@@ -1,5 +1,6 @@
-# Tooling for stage A (golden scene, canonical-form tests).
+# Tooling for golden generation and canonical protocol tests.
 # Blender itself: 4.5+ (either a blender binary for `blender -b -P`, or the
 # pip `bpy` module for running the same scripts with plain python).
 pytest>=8
 xxhash>=3.4
+blake3>=1.0,<2

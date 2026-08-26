@@ -1,0 +1,16 @@
+{
+  "schema": "mh.dagor_random_runtime_observation:1",
+  "status": "optional_historical_not_measured",
+  "gate": false,
+  "owner_decision": "B_behavioral_compatibility",
+  "provenance": {
+    "dagor_product": null,
+    "dagor_version": null,
+    "executable_hash": null,
+    "command": null,
+    "host": null,
+    "captured_utc": null
+  },
+  "fixture_raw_hash": null,
+  "seed_observations": []
+}

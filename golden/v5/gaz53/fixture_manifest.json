@@ -1,36 +1,48 @@
 {
   "schema": "mh.v5_gaz53_freeze_fixture",
-  "status": "topology_only_open_v5_6",
+  "status": "gaz_source_bound_declared_closure_frontier_only",
   "root": "gaz53_b_random_cmp",
   "composite_files": [
     "gaz53_b_random_cmp.composite",
     "gaz53_b_body_cmp.composite",
     "gaz53_body_bc_random_cmp.composite"
   ],
-  "synthetic_option_resources": [
-    "gaz53_body_bc_option_0",
-    "gaz53_body_bc_option_1",
-    "gaz53_body_bc_option_2"
+  "source_oracle_files": [
+    "reference/dagor_fixtures/gaz53/gaz53_b_random_cmp.composit.blk",
+    "reference/dagor_fixtures/gaz53/gaz53_b_body_cmp.composit.blk",
+    "reference/dagor_fixtures/gaz53/gaz53_body_bc_random_cmp.composit.blk"
   ],
-  "expected_source_closure": {
+  "ordered_option_resources": [
+    "gaz53_bread_b_cmp",
+    "gaz53_wooden_b_cmp",
+    "gaz53_wooden_c_cmp"
+  ],
+  "protocol_fixture_closure": {
     "composite": [
       "gaz53_b_body_cmp",
       "gaz53_b_random_cmp",
-      "gaz53_body_bc_random_cmp"
+      "gaz53_body_bc_random_cmp",
+      "gaz53_bread_b_cmp",
+      "gaz53_wooden_b_cmp",
+      "gaz53_wooden_c_cmp"
     ],
     "static_mesh": [
-      "gaz53_b_body",
-      "gaz53_body_bc_option_0",
-      "gaz53_body_bc_option_1",
-      "gaz53_body_bc_option_2"
+      "gaz53_b_body"
     ]
   },
+  "dagor_source_declared_closure": "baseline_rng_choices.json#/source_declared_closure",
+  "unresolved_random_option_payloads": [
+    "gaz53_bread_b_cmp.composite",
+    "gaz53_wooden_b_cmp.composite",
+    "gaz53_wooden_c_cmp.composite"
+  ],
   "parent_local_probe": {
     "parent_translation_cm_x": 100,
     "child_local_translation_cm_x": 25,
     "expected_child_world_translation_cm_x": 125
   },
-  "seed_set_pending_open_v5_1_and_open_v5_3": [
+  "baseline_rng_choices": "baseline_rng_choices.json",
+  "seed_set": [
     0,
     1,
     2,
