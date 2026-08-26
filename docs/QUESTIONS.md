@@ -89,6 +89,42 @@ datablock in-place, какие users/artist edits переживают опер�
 блокирует. `refresh` заменяет только contents существующего Collection и обязан
 откатить весь mixed closure при любой ошибке.
 
+## OPEN-V5-11 — self-publish token между Blender и UE watcher
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.9 и §6.5.** Предпосылка вопроса была ошибкой формулировки §6.5, а не дырой контракта. Self-publish token — механизм ВНУТРИ UE и только для собственных записей UE в source tree (`Adopt`, `Delete resource`); он content-keyed (`path`, `raw_hash`, `generation`) и потому по построению инертен для чужого писателя. Blender — внешний publisher: токенов не выпускает, его события watcher не подавляет никогда. Cross-process транспорт (marker/lock/sentinel) ЗАПРЕЩЁН как fail-open. Консистентность в середине батча даёт зависимостный publish order: любой префикс замкнут. Первый replace разблокирован; V5-S4 по этому пункту не реализует ничего.
+
+**Контекст.** §6.5 писала «каждый replace получает batch self-publish token; watcher подавляет собственные события». В v5 source tree пишет Blender, а watcher живёт в UE — это разные процессы, и process-local токен Blender'а физически недостижим для UE.
+
+**Вопрос.** Является ли Blender внешним publisher'ом, чьи события watcher не подавляет, или требуется определить cross-process транспорт токена?
+
+**Временное fail-closed правило.** До ответа первый replace батча запрещён; UI-команды, `MH_E_PARTIAL_PUBLISH`, registry counts, publication-boundary injection, UE-гейты, квитанция и PR не создаются.
+
+**Прежний статус.** ОТКРЫТ; блокировал публикующую часть V5-S4.
+
+## OPEN-V5-12 — authority и publish-фаза optional textures
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.10 и §6.5.** У текстуры нет authored содержимого на стороне Blender, поэтому публиковать нечего: composite/material/mesh Blender порождает, текстура — готовый файл художника в Source Root. Формулировка «опционально textures» в §6.5 — черновой артефакт v4-редакции, ОТМЕНЯЕТСЯ; дельта третьей команды над второй — meshes и materials. Текстуры участвуют только как preflight-зависимости через `resolve_texture_reference` (`MH_E_UNRESOLVED_TEXTURE_REFERENCE` / `MH_E_AMBIGUOUS_RESOURCE_NAME` / `MH_E_NONCANONICAL_RESOURCE_NAME` / `MH_E_TEXTURE_OUTSIDE_ROOT`, всё до staging). Батч никогда не копирует внешнее изображение в Source Root — это скрытое решение об identity; внесение остаётся явными `mh.copy_all_textures_to_project` / `mh.remap_all_textures_to_project`. Новых кодов и новой фазы publish order нет.
+
+**Контекст.** Третья команда §6.5 описана как «то же плюс meshes, materials и опционально textures», но не сказано, что является authority текстуры, что означает «опционально» и в какой фазе publish order текстуры оказываются.
+
+**Вопрос.** Кто authority optional textures и в какой момент батч их публикует?
+
+**Временное fail-closed правило.** До ответа третья команда не публикует текстуры и не копирует изображения в Source Root.
+
+**Прежний статус.** ОТКРЫТ; блокировал `Export Composite Include All Stuff`.
+
+## OPEN-V5-13 — исключённые mesh/material dependencies и existing managed source
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.11 и §6.5.** Ратифицирована ровно временная реализация исполнителя. Исключение из ПУБЛИКУЕМОГО набора не есть исключение из ЗАМЫКАНИЯ: mesh, material и texture зависимости, которые команда не публикует, обязаны разрешаться в существующий canonical managed source. Иначе — `MH_E_RESOURCE_NOT_FOUND` (существующий код), unmanaged — `MH_E_INVALID_RESOURCE_SOURCE`, неоднозначность — `MH_E_AMBIGUOUS_RESOURCE_NAME`; блокируется весь батч до staging, без частично записанных файлов. Диагностика обязана называть ResourceKey, ссылающийся композит и команду, которая закрыла бы дыру (`Export Composite Include All Stuff`); автоматического повышения команды до Include-All нет.
+
+**Контекст.** §6.5 уже говорила «отсутствующий или unmanaged dependency блокирует preflight», но фраза «mesh/material payloads не добавляет» допускала прочтение «mesh/material вообще вне замыкания».
+
+**Вопрос.** Обязаны ли невключённые mesh/material зависимости иметь existing managed source, или допустим мягкий режим с висячей ссылкой?
+
+**Временное fail-closed правило.** Требовать existing managed source (реализовано именно так).
+
+**Прежний статус.** ОТКРЫТ; уточнял acceptance V5-S4.
+
 ## OPEN-V5-8 — durable applied receipt инлайненного placement profile
 
 **Статус. РЕШЕНО OWNER — нормативно в 10 §13.4.1, вариант A.**

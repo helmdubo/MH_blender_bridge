@@ -212,23 +212,31 @@ unselected dependency загружается; grep seed/InstanceSeed по Blende
 
 ## V5-S4 — Full closure export
 
-Gate: V5-S3 owner-accepted.
+Gate: V5-S3 owner-accepted. `OPEN-V5-11`/`-12`/`-13`, поднятые на STOP внутри
+среза, решены в 10 §§13.9–13.11 и внесены в §6.5 — реализуй их дословно.
 
 1. Реализовать три команды 10 §6.5.
 2. Walker строит полное source closure через все random options; seed parameter
    отсутствует в API.
 3. Full preflight: loaded authoring resources либо existing managed source;
-   missing/unmanaged/ambiguous блокируют до staging.
+   missing/unmanaged/ambiguous блокируют до staging. Зависимости, которые
+   команда НЕ публикует, остаются в замыкании и проверяются наравне с
+   публикуемыми (10 §13.11).
 4. Staging всего замыкания, read-back каждого payload, затем
    placement profiles (первыми, 10 §13.2) → materials → meshes → leaf
-   composites → parents → root LAST.
-5. Batch self-publish tokens/watcher suppression. После частичного replace
-   честный `MH_E_PARTIAL_PUBLISH` с published/unpublished sets; rollback — VCS.
+   composites → parents → root LAST. Textures фазы не имеют вовсе
+   (10 §13.10): только preflight-зависимость, копирования батчем нет.
+5. Blender токенов не выпускает и watcher его событий не подавляет
+   (10 §13.9); self-publish token остаётся UE-internal. После частичного
+   replace честный `MH_E_PARTIAL_PUBLISH` с published/unpublished sets;
+   rollback — VCS.
 6. Receipt фиксирует crash/failure injection на каждом publish boundary.
 
 Acceptance: root не заменяется до всех dependencies; невыбранные options
 попадают в closure; existing unloaded source не переписывается; preflight error
-не оставляет файлов; injected partial failure сообщает точный набор.
+не оставляет файлов; injected partial failure сообщает точный набор; отсутствие
+существующего source у непубликуемой зависимости блокирует батч и называет
+ResourceKey, ссылающийся композит и команду-исправление.
 
 ---
 
