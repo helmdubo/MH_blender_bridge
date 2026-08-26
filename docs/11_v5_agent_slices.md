@@ -181,6 +181,15 @@ negative vectors; полный Python gate и двойной UE unity gate.
 
 ## V5-S3 — Blender random authoring и Dagor import
 
+Контракт свойств и конвертации Dagor→MH закреплён в 10 §6.4: typed
+PropertyGroup `mh4blend` как authority, неавторитетное зеркало в ID custom
+properties (`mh_composite_kind` / `mh_random_weight` /
+`mh_random_option_index`), два обязательных источника конвертации (прямой
+разбор `.composit.blk` — авторитетный; конвертация уже импортированной
+dag4blend-сцены — рабочий), два признака распознавания random-узла, подъём
+вариантов из helper-коллекции `TECH_STUFF` в дети узла. Разбор референсного
+overlay-патча dag4blend — `docs/reference_notes/dag4blend_random_overlay.md`.
+
 Gate: V5-S2 owner-accepted.
 
 1. PropertyGroup `mh4blend`: random kind, typed option weight/index/resource.
