@@ -5,107 +5,10 @@
 Открытый `OPEN-V5-*` не ослабляет 10: затронутая часть остаётся fail-closed
 STOP до owner-решения.
 
-`OPEN-V5-1`…`OPEN-V5-10` РЕШЕНЫ owner — нормативный текст в 10 §§6.3, 6.4,
-13. `OPEN-V5-11` открыт узко для транспорта batch self-publish token между
-Blender-exporter и UE watcher; `OPEN-V5-12` — для места и authority optional
-textures в publish batch; `OPEN-V5-13` — для loaded-only mesh/material в
-Composite-Closure режиме, который эти payloads не публикует.
-Walker/preflight/staging V5-S4 без texture-публикации этими STOP не блокируются.
+`OPEN-V5-1`…`OPEN-V5-13` РЕШЕНЫ owner — нормативный текст в 10 §§6.3, 6.4,
+13. Открытых нормативных вопросов v5 нет.
 Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
 `OPEN-V4-24` document-world прямо superseded parent-local контрактом v5.
-
-## OPEN-V5-11 — Blender batch self-publish token и UE watcher
-
-**Статус. ОТКРЫТ; STOP только для replace-фазы новых batch export-команд
-V5-S4.** Source-closure walker, полный preflight и stage/read-back всего батча
-продолжаются. Существующий single-root `mh.export_composite` не меняется.
-
-**Контекст.** 10 §6.5 и 11 §V5-S4 требуют, чтобы каждый replace Blender batch
-получал self-publish token, а watcher подавлял собственное событие. Однако
-ратифицированный token из 10 §3 — process-local in-memory tuple
-`{absolute path, raw_hash, generation}` внутри C++
-`FMHProjectResourceIndex`; его регистрирует только UE publisher строго после
-своего atomic replace и до синхронного `UpsertPaths`. Blender-addon не имеет
-Project Resource Index, watcher, IPC с запущенным UE Editor или API регистрации
-этого token. Его запись для UE является внешним source-изменением и должна быть
-увидена UE watcher'ом для импорта. Придуманный token-файл/manifest нарушил бы
-запрет теневого transaction manifest и session-only семантику §3; попытка
-подавить UE event без последующего in-process upsert могла бы, наоборот,
-потерять импорт.
-
-**Вопрос.** Применяется ли требование self-publish token только к publisher,
-который находится в одном процессе со своим watcher/index (тогда Blender batch
-не создаёт token, а UE watcher штатно наблюдает внешний batch), либо owner
-задаёт отдельный cross-process transport Blender→UE? Если transport нужен,
-требуется точный контракт: endpoint/lifetime, raw-hash domain, generation,
-поведение при незапущенном UE, подтверждение/cleanup и обязательный синхронный
-upsert/import после suppression.
-
-**Временное fail-closed правило.** Не создавать token-файл, SQLite/manifest,
-скрытый socket/IPC или Python-копию UE generation. Новые batch-команды могут
-построить closure, выполнить полный preflight и stage/read-back, но не делают
-первый replace до owner-решения; следовательно partial-publish path и новый
-`MH_E_PARTIAL_PUBLISH` пока не активируются. Existing single-root export
-сохраняет прежнюю атомарную семантику.
-
-## OPEN-V5-12 — optional textures в замыкании и publish order
-
-**Статус. ОТКРЫТ; STOP только для `include_textures=True` у
-`Export Composite Include All Stuff`.** Composite closure и Include All Stuff
-без texture-публикации продолжаются; существующие отдельные texture-copy/remap
-операции не меняются.
-
-**Контекст.** 10 §6.5 объявляет textures опциональной частью Include All Stuff,
-но затем задаёт закрытый порядок без texture-шага:
-placement profiles → materials → meshes → leaf composites → parents → root.
-11 §V5-S4 повторяет тот же список и требует failure injection на каждой publish
-boundary. Материалы ссылаются на texture tokens, поэтому поставить textures до
-materials выглядит естественно, но это новое решение, отсутствующее в 10.
-Также не определено, является ли optional texture членом batch, который можно
-stage/replace из loaded Blender Image, либо команда только проверяет и
-переиспользует уже существующий managed texture source. Текущий отдельный
-`Copy All Textures to Project` имеет собственную copy/remap семантику и не
-доказывает право включить её в atomic batch.
-
-**Вопрос.** Где именно textures стоят в publish order? Что является loaded
-authoring authority для texture: bytes `Image.filepath`, packed image или только
-существующий managed source? Разрешает ли batch копировать внешнюю texture в
-source tree, и если да — как задаются canonical target extension, collision и
-same-name/multi-extension правила; либо `include_textures=True` означает только
-admission/reuse уже существующих source payloads без replace?
-
-**Временное fail-closed правило.** Не выводить порядок из dependency-графа, не
-копировать/распаковывать Blender Image и не включать существующий отдельный
-texture copier в batch. API/UI texture-enabled режима не активируется до
-owner-решения. Material preflight по-прежнему требует однозначный существующий
-texture source по v4-контракту.
-
-## OPEN-V5-13 — loaded-only dependency в Composite-Closure режиме
-
-**Статус. ОТКРЫТ; STOP только для допуска loaded-only mesh/material в
-`Export Composite + Composite Closure`.** Остальные source members и
-Include-All продолжаются.
-
-**Контекст.** Команда Composite + Composite Closure по 10 §6.5 добавляет root,
-nested composites и placement profiles, но явно НЕ добавляет mesh/material
-payloads. Общий preflight той же секции и kickoff при этом допускают каждый
-член source closure, если он является либо loaded authoring resource, либо
-existing managed source. Если composite ссылается на managed Blender mesh
-Collection, но `<name>.mesh.fbx` отсутствует, loaded-authoring альтернатива
-формально выполнена, однако этому режиму запрещено публиковать mesh. Успешный
-batch оставил бы dangling source reference, что конфликтует с fail-closed и
-acceptance «missing блокирует до записи».
-
-**Вопрос.** Для kind, исключённых выбранной командой, обязателен ли existing
-unique managed source независимо от наличия loaded Blender authority? Либо
-loaded-only mesh/material должен считаться допустимым — тогда какой source
-artifact делает результат неданглингующим, не нарушая запрет добавлять эти
-payloads?
-
-**Временное fail-closed правило.** В Composite-Closure режиме loaded authority
-не заменяет отсутствующий source для mesh/material: требуется существующий
-unique canonical payload, который переиспользуется byte-for-byte без replace.
-Loaded-only dependency блокируется preflight и не оставляет staging/files.
 
 ## OPEN-V5-9 — Blender carrier и identity для Dagor `include` → placement profile
 

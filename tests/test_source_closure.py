@@ -73,6 +73,12 @@ def test_every_random_option_and_nested_child_enters_source_closure():
         *closure.static_meshes,
         *closure.composites_postorder,
     )
+    assert closure.referrers_for(
+        ResourceKey("static_mesh", "unused_mesh")) == (
+            ResourceKey("composite", "root"),)
+    assert closure.referrers_for(
+        ResourceKey("static_mesh", "zero_weight_mesh")) == (
+            ResourceKey("composite", "zero_weight"),)
 
 
 def test_dependency_postorder_is_root_last_and_diamond_is_deduplicated():
@@ -95,6 +101,10 @@ def test_dependency_postorder_is_root_last_and_diamond_is_deduplicated():
     assert closure.composites_postorder.count(
         ResourceKey("composite", "leaf")) == 1
     assert closure.composites_postorder[-1] == closure.root
+    assert closure.referrers_for(ResourceKey("composite", "leaf")) == (
+        ResourceKey("composite", "left"),
+        ResourceKey("composite", "right"),
+    )
 
 
 def test_zero_weight_cycle_fails_closed_with_existing_code():

@@ -21,8 +21,11 @@ from mh4blend.core import (  # noqa: E402
     placement_publication as placement_publication_module,
 )
 from mh4blend.core.placements import placement_json_bytes  # noqa: E402
-from mh4blend.scene import export_composite as export_composite_module  # noqa: E402
-from mh4blend.scene.export_composite import export_composite_collection  # noqa: E402
+from mh4blend.scene import export_closure as export_closure_module  # noqa: E402
+from mh4blend.scene.export_composite import (  # noqa: E402
+    _extract_composite,
+    export_composite_collection,
+)
 from mh4blend.scene.import_dagor_composite import (  # noqa: E402
     _option_weight,
     convert_dag4blend_collection,
@@ -138,14 +141,32 @@ node{ tm:m=[[1,0,0] [0,1,0] [0,0,1] [0,0,0]] }
     assert options[2].instance_collection is bpy.data.collections[
         "truck_variant.composite"]
 
-    for name in ("truck_variant", "truck_random", "truck"):
-        exported = export_composite_collection(
-            bpy.data.collections[f"{name}.composite"],
+    variant = export_composite_collection(
+        bpy.data.collections["truck_variant.composite"],
+        tmp_path,
+        source_root=tmp_path,
+    )
+    assert Path(variant["filepath"]).read_bytes() == composite_json_bytes(
+        documents["truck_variant"])
+
+    # Root-only still admits the full source closure. The structure-only mesh
+    # definition is not publishable and there is no managed crate.mesh.fbx.
+    with pytest.raises(ValueError, match="MH_E_RESOURCE_NOT_FOUND") as caught:
+        export_composite_collection(
+            bpy.data.collections["truck_random.composite"],
             tmp_path,
             source_root=tmp_path,
         )
-        assert Path(exported["filepath"]).read_bytes() == composite_json_bytes(
-            documents[name])
+    assert "static_mesh:crate" in caught.value.subjects
+    assert "composite:truck_random" in caught.value.subjects
+    assert "Export Composite Include All Stuff" in str(caught.value)
+
+    # The imported authoring tree remains a lossless conversion even though
+    # publication is correctly blocked by its missing source dependency.
+    for name in ("truck_random", "truck"):
+        assert composite_json_bytes(_extract_composite(
+            bpy.data.collections[f"{name}.composite"])) == composite_json_bytes(
+                documents[name])
 
 
 def test_owner_gaz_fixture_materializes_and_exports_real_composite_options(
@@ -184,13 +205,17 @@ def test_owner_gaz_fixture_materializes_and_exports_real_composite_options(
     for name in (
             "gaz53_b_body_cmp", "gaz53_body_bc_random_cmp",
             "gaz53_b_random_cmp"):
-        exported = export_composite_collection(
-            bpy.data.collections[f"{name}.composite"],
-            tmp_path,
-            source_root=tmp_path,
-        )
-        assert Path(exported["filepath"]).read_bytes() == composite_json_bytes(
-            documents[name])
+        assert composite_json_bytes(_extract_composite(
+            bpy.data.collections[f"{name}.composite"])) == composite_json_bytes(
+                documents[name])
+
+    # The owner fixture intentionally contains unresolved composite options.
+    # Root-only may not publish a dangling source graph.
+    with pytest.raises(ValueError, match="MH_E_RESOURCE_NOT_FOUND") as caught:
+        export_composite_collection(
+            random_definition, tmp_path, source_root=tmp_path)
+    assert "composite:gaz53_bread_b_cmp" in caught.value.subjects
+    assert "composite:gaz53_body_bc_random_cmp" in caught.value.subjects
 
 
 def test_direct_dagor_composed_world_shear_fails_before_blender_mutation(tmp_path):
@@ -282,20 +307,20 @@ node{
     assert node["mh_composite_profile"] == "vehicle_scatter"
 
     node["mh_composite_profile"] = "artist_mirror_edit"
-    real_publish = export_composite_module.atomic_publish_bytes
+    real_publish = export_closure_module.publish_ordered_batch
 
     def fail_publish(*_args, **_kwargs):
         raise RuntimeError("injected publish failure")
 
     monkeypatch.setattr(
-        export_composite_module, "atomic_publish_bytes", fail_publish)
+        export_closure_module, "publish_ordered_batch", fail_publish)
     with pytest.raises(RuntimeError, match="injected publish failure"):
         export_composite_collection(
             bpy.data.collections["profiled.composite"], output,
             source_root=tmp_path)
     assert node["mh_composite_profile"] == "artist_mirror_edit"
     monkeypatch.setattr(
-        export_composite_module, "atomic_publish_bytes", real_publish)
+        export_closure_module, "publish_ordered_batch", real_publish)
 
     exported = export_composite_collection(
         bpy.data.collections["profiled.composite"], output,
@@ -323,7 +348,7 @@ node{
     duplicate.unlink()
 
     placement.unlink()
-    with pytest.raises(ValueError, match="required source resource"):
+    with pytest.raises(ValueError, match="MH_E_RESOURCE_NOT_FOUND"):
         export_composite_collection(
             bpy.data.collections["profiled.composite"], output,
             source_root=tmp_path)
@@ -523,13 +548,16 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
     assert helper_mesh["weight:r"] == 2.0
 
     for name in ("nested_variant", "legacy_vehicle"):
-        exported = export_composite_collection(
-            bpy.data.collections[f"{name}.composite"],
-            tmp_path,
-            source_root=tmp_path,
-        )
-        assert Path(exported["filepath"]).read_bytes() == composite_json_bytes(
-            closure_documents[name])
+        assert composite_json_bytes(_extract_composite(
+            bpy.data.collections[f"{name}.composite"])) == composite_json_bytes(
+                closure_documents[name])
+
+    with pytest.raises(ValueError, match="MH_E_RESOURCE_NOT_FOUND") as caught:
+        export_composite_collection(
+            target, tmp_path, source_root=tmp_path)
+    assert "composite:nested_variant" in caught.value.subjects
+    assert "composite:legacy_vehicle" in caught.value.subjects
+    assert "Export Composite Include All Stuff" in str(caught.value)
 
 
 def test_dag4blend_weight_cascade_prefers_dagorprops_then_id_then_one():

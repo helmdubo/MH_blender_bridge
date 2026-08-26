@@ -16,6 +16,7 @@ from mh4blend.core.composites import composite_json_bytes, parse_composite  # no
 from mh4blend.core.model import Composite, Node, RandomOption  # noqa: E402
 from mh4blend.scene.export_composite import (  # noqa: E402
     NODE_KIND_KEY,
+    _extract_composite,
     export_composite_collection,
 )
 from mh4blend.scene import import_composite as import_module  # noqa: E402
@@ -114,21 +115,24 @@ def test_random_import_roundtrip_uses_typed_authority_and_all_options(tmp_path):
         assert WEIGHT_MIRROR_KEY not in resource
         assert OPTION_INDEX_MIRROR_KEY not in resource
 
-    exported = export_composite_collection(
-        report["collection"], tmp_path, source_root=tmp_path)
-    assert Path(exported["filepath"]).read_bytes() == expected
+    assert composite_json_bytes(_extract_composite(report["collection"])) == expected
 
     # Option matrices are display-only and diagnostic mirrors are projections.
     options[0].matrix_basis = Matrix.Translation((123.0, -9.0, 4.0))
     options[1][WEIGHT_MIRROR_KEY] = 999.0
     options[1][OPTION_INDEX_MIRROR_KEY] = 99
-    exported = export_composite_collection(
-        report["collection"], tmp_path, source_root=tmp_path)
-    assert Path(exported["filepath"]).read_bytes() == expected
+    assert composite_json_bytes(_extract_composite(report["collection"])) == expected
     assert options[1].mh4blend.weight == pytest.approx(2.5)
     assert options[1].mh4blend.option_index == 1
+    sync_typed_mirror(options[1])
     assert options[1][WEIGHT_MIRROR_KEY] == pytest.approx(2.5)
     assert options[1][OPTION_INDEX_MIRROR_KEY] == 1
+
+    with pytest.raises(ValueError, match="MH_E_RESOURCE_NOT_FOUND") as caught:
+        export_composite_collection(
+            report["collection"], tmp_path, source_root=tmp_path)
+    assert "composite:variant_a" in caught.value.subjects
+    assert "composite:random_root" in caught.value.subjects
 
 
 def _make_random_collection(name="authored_random"):
@@ -243,11 +247,15 @@ def test_dag4blend_resource_override_is_explicit_and_routed_after_commit(
     assert len(managed.objects) == 0
     assert bpy.data.scenes["MESH"].collection.children.get(managed.name) is managed
 
-    decoded_path = export_composite_collection(
-        report["collection"], tmp_path, source_root=tmp_path)
-    decoded = parse_composite(Path(decoded_path["filepath"]).read_bytes())
+    decoded = _extract_composite(report["collection"])
     assert decoded.nodes[0].options == [
         RandomOption("mesh", 1.0, "variant_mesh")]
+
+    with pytest.raises(ValueError, match="MH_E_RESOURCE_NOT_FOUND") as caught:
+        export_composite_collection(
+            report["collection"], tmp_path, source_root=tmp_path)
+    assert "static_mesh:variant_mesh" in caught.value.subjects
+    assert "composite:override_root" in caught.value.subjects
 
 
 def test_failed_materialization_does_not_link_existing_override():

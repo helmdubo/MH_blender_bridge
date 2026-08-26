@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh4blend.core.composites import composite_json_bytes, parse_composite  # noqa: E402
 from mh4blend.core.model import Composite, CompositeTransform, Node  # noqa: E402
+from mh4blend.core.validate import MHValidationError  # noqa: E402
 from mh4blend.scene import import_composite as import_module  # noqa: E402
 from mh4blend.scene.export_composite import (  # noqa: E402
     COLLECTION_KIND_KEY,
@@ -129,7 +130,7 @@ def test_direct_writer_uses_explicit_actor_token_without_registry(tmp_path):
     ("mesh", "missing_mesh"),
     ("composite", "missing_composite"),
 ])
-def test_writer_preserves_unresolved_source_dependency(
+def test_root_only_writer_blocks_unresolved_source_dependency(
         tmp_path, kind, resource):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = bpy.data.collections.new("unresolved")
@@ -139,12 +140,15 @@ def test_writer_preserves_unresolved_source_dependency(
     placement.mh4blend.kind = kind
     placement[NODE_RESOURCE_KEY] = resource
 
-    report = export_composite_collection(
-        collection, tmp_path, source_root=tmp_path)
-    decoded = parse_composite(Path(report["filepath"]).read_bytes())
-    assert [(node.kind, node.resource) for node in decoded.nodes] == [
-        (kind, resource),
-    ]
+    with pytest.raises(MHValidationError) as caught:
+        export_composite_collection(
+            collection, tmp_path, source_root=tmp_path)
+    assert caught.value.code == "MH_E_RESOURCE_NOT_FOUND"
+    assert f"{'static_mesh' if kind == 'mesh' else kind}:{resource}" in (
+        caught.value.subjects)
+    assert "composite:unresolved" in caught.value.subjects
+    assert "Export Composite Include All Stuff" in caught.value.subjects
+    assert not (tmp_path / "unresolved.composite").exists()
 
 
 @pytest.mark.parametrize("kind,resource", [
@@ -195,19 +199,21 @@ def test_missing_resource_imports_placeholder_and_fresh_import_resolves(
     assert placeholder[NODE_RESOURCE_KEY] == resource
     assert placeholder[UNRESOLVED_PLACEMENT_KEY] is True
 
-    exported = export_composite_collection(
-        report["collection"], tmp_path, source_root=tmp_path)
-    assert Path(exported["filepath"]).read_bytes() == expected
+    with pytest.raises(MHValidationError) as missing:
+        export_composite_collection(
+            report["collection"], tmp_path, source_root=tmp_path)
+    assert missing.value.code == "MH_E_RESOURCE_NOT_FOUND"
+    assert source_path.read_bytes() == expected
 
     child = next(obj for obj in report["collection"].objects
                  if obj.parent is placeholder)
     edited_matrix = child.matrix_world.copy()
     edited_matrix.translation.x += 1.0
     child.matrix_world = edited_matrix
-    edited = export_composite_collection(
-        report["collection"], tmp_path, source_root=tmp_path)
-    assert Path(edited["filepath"]).read_bytes() != expected
-    source_path.write_bytes(expected)
+    with pytest.raises(MHValidationError):
+        export_composite_collection(
+            report["collection"], tmp_path, source_root=tmp_path)
+    assert source_path.read_bytes() == expected
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     if kind == "mesh":
@@ -229,6 +235,9 @@ def test_missing_resource_imports_placeholder_and_fresh_import_resolves(
     assert resolved["warnings"] == []
     assert placement.instance_collection is not None
     assert UNRESOLVED_PLACEMENT_KEY not in placement
+    exported = export_composite_collection(
+        resolved["collection"], tmp_path, source_root=tmp_path)
+    assert Path(exported["filepath"]).is_file()
 
 
 @pytest.mark.parametrize("kind,extension", [
@@ -354,7 +363,7 @@ def test_writer_identifies_raw_mesh_instead_of_collection_instance(tmp_path):
     assert "diagnostic mirror" in rendered
 
 
-def test_writer_infers_mesh_from_unmarked_collection_instance(tmp_path):
+def test_writer_rejects_unmanaged_mesh_collection_instance(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     mesh_definition = bpy.data.collections.new("garage_shell")
     mesh = bpy.data.meshes.new("GarageGeometry")
@@ -369,14 +378,11 @@ def test_writer_infers_mesh_from_unmarked_collection_instance(tmp_path):
     placement.instance_type = "COLLECTION"
     placement.instance_collection = mesh_definition
 
-    report = export_composite_collection(
-        composite, tmp_path, source_root=tmp_path)
-    assert report["nodes"] == 1
-    payload = (tmp_path / "garage_set.composite").read_text("utf-8")
-    assert '"kind": "mesh"' in payload
-    assert '"resource": "garage_shell"' in payload
-    assert composite[COLLECTION_KIND_KEY] == "composite"
-    assert composite[COLLECTION_RESOURCE_KEY] == "garage_set"
+    with pytest.raises(MHValidationError) as caught:
+        export_composite_collection(
+            composite, tmp_path, source_root=tmp_path)
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+    assert not (tmp_path / "garage_set.composite").exists()
 
 
 def test_composite_import_materializes_mesh_once_and_builds_instance(tmp_path):

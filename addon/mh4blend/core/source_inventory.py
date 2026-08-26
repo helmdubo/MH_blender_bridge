@@ -238,6 +238,25 @@ def scan_source_inventory(source_root: str | os.PathLike) -> SourceInventory:
                     f"scanned path cannot be resolved: {exc}",
                 )
             if not _inside(root, physical):
+                # Texture files are targeted, preflight-only dependencies.
+                # Keep an outside-root file symlink out of the managed
+                # inventory without globally blocking unrelated closures; the
+                # ratified texture resolver will emit the precise
+                # MH_E_TEXTURE_OUTSIDE_ROOT if this logical key is referenced.
+                if (physical.is_file()
+                        and lexical_path.suffix.casefold()
+                        in MATERIAL_TEXTURE_EXTENSIONS):
+                    physical_files.setdefault(
+                        "outside-texture:" + _physical_key(
+                            lexical_path.absolute()),
+                        InvalidSourceCandidate(
+                            lexical_path,
+                            "texture",
+                            lexical_path.stem,
+                            f"texture resolves outside source_root: {physical}",
+                        ),
+                    )
+                    continue
                 _raise(
                     "MH_E_INVALID_RESOURCE_SOURCE",
                     [lexical_path, physical],

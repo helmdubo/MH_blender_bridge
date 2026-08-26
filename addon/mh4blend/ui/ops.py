@@ -7,6 +7,11 @@ import bpy
 
 from .. import prefs as prefs_mod
 from ..scene.export_composite import export_composite_collection
+from ..scene.export_closure import (
+    CLOSURE_MODE_COMPOSITES,
+    CLOSURE_MODE_INCLUDE_ALL,
+    export_composite_closure_collection,
+)
 from ..scene.export_fbx import export_fbx_collection
 from ..scene.export_material import (
     prepare_blender_material_export,
@@ -397,6 +402,57 @@ class MH_OT_export_composite(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class _MH_OT_export_composite_closure_base:
+    closure_mode = ""
+
+    def execute(self, context):
+        collection = context.scene.mh_composite_export_collection
+        if collection is None:
+            self.report({"ERROR"}, "Choose a composite collection")
+            return {"CANCELLED"}
+        try:
+            preferences = prefs_mod.get_prefs(context)
+            report = export_composite_closure_collection(
+                collection,
+                _directory(context.scene.mh_composite_export_directory),
+                source_root=_directory(preferences.source_root),
+                mode=self.closure_mode,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            failure = {"ok": False, "error": str(exc)}
+            for field in ("code", "published", "unpublished"):
+                if hasattr(exc, field):
+                    failure[field] = getattr(exc, field)
+            _log(self.bl_idname.removeprefix("mh."), failure)
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log(self.bl_idname.removeprefix("mh."), report)
+        self.report(
+            {"INFO"},
+            f"Closure exported: {len(report['published'])} published, "
+            f"{len(report['reused'])} reused",
+        )
+        return {"FINISHED"}
+
+
+class MH_OT_export_composite_closure(
+        _MH_OT_export_composite_closure_base, bpy.types.Operator):
+    bl_idname = "mh.export_composite_closure"
+    bl_label = "Export Composite + Composite Closure"
+    bl_description = (
+        "Export root, every nested composite option and placement profiles")
+    closure_mode = CLOSURE_MODE_COMPOSITES
+
+
+class MH_OT_export_composite_include_all(
+        _MH_OT_export_composite_closure_base, bpy.types.Operator):
+    bl_idname = "mh.export_composite_include_all"
+    bl_label = "Export Composite Include All Stuff"
+    bl_description = (
+        "Export the full all-options closure including meshes and materials")
+    closure_mode = CLOSURE_MODE_INCLUDE_ALL
+
+
 class MH_OT_import_composite(bpy.types.Operator):
     bl_idname = "mh.import_composite"
     bl_label = "Import Composite"
@@ -497,6 +553,8 @@ CLASSES = (
     MH_OT_copy_all_textures_to_project,
     MH_OT_remap_all_textures_to_project,
     MH_OT_export_composite,
+    MH_OT_export_composite_closure,
+    MH_OT_export_composite_include_all,
     MH_OT_import_composite,
     MH_OT_import_dagor_composite,
     MH_OT_convert_dag4blend_composite,

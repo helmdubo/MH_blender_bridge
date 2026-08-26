@@ -58,6 +58,7 @@ def test_error_codes_registry_matches_golden_list():
         "MH_E_PARENT_CYCLE",
         "MH_E_PLACEMENT_PROFILE_GRAMMAR",
         "MH_E_PARENT_OUTSIDE_RESOURCE",
+        "MH_E_PARTIAL_PUBLISH",
         "MH_E_PAYLOAD_LOCK_TIMEOUT",
         "MH_E_RESOURCE_KIND_MISMATCH",
         "MH_E_RESOURCE_NOT_FOUND",
@@ -89,7 +90,7 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
         "MH_W_UNRESOLVED_PLACEMENT",
     })
-    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 51
+    assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 52
     assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 14
     assert all(re.fullmatch(r"MH_[EW]_[A-Z0-9_]+", code)
                for code in ERROR_CODES)

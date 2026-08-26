@@ -37,6 +37,8 @@ def test_register_exposes_only_v4_workflow_surfaces():
         assert {cls.bl_idname for cls in ops.CLASSES} == {
             "mh.export_fbx", "mh.import_mesh_fbx", "mh.export_material",
             "mh.export_composite",
+            "mh.export_composite_closure",
+            "mh.export_composite_include_all",
             "mh.import_composite", "mh.material_texture_add",
             "mh.material_texture_remove", "mh.material_param_add",
             "mh.material_param_remove", "mh.copy_all_textures_to_project",
@@ -89,6 +91,38 @@ def test_material_export_option_is_forwarded_to_fbx_workflow(tmp_path, monkeypat
         assert bpy.ops.mh.export_fbx() == {"FINISHED"}
         assert len(calls) == 1
         assert calls[0]["export_materials"] is True
+    finally:
+        mh4blend.unregister()
+
+
+def test_closure_export_operators_forward_only_the_two_ratified_modes(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mh4blend.register()
+    try:
+        scene = bpy.context.scene
+        collection = bpy.data.collections.new("root")
+        scene.collection.children.link(collection)
+        scene.mh_composite_export_collection = collection
+        scene.mh_composite_export_directory = str(tmp_path)
+        monkeypatch.setattr(
+            ops.prefs_mod,
+            "get_prefs",
+            lambda _context: SimpleNamespace(source_root=str(tmp_path)),
+        )
+        modes = []
+        monkeypatch.setattr(
+            ops,
+            "export_composite_closure_collection",
+            lambda *_args, **kwargs: (
+                modes.append(kwargs["mode"]),
+                {"published": ["composite:root"], "reused": []},
+            )[1],
+        )
+
+        assert bpy.ops.mh.export_composite_closure() == {"FINISHED"}
+        assert bpy.ops.mh.export_composite_include_all() == {"FINISHED"}
+        assert modes == ["composite_closure", "include_all"]
     finally:
         mh4blend.unregister()
 

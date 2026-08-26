@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import math
-from pathlib import Path
 
 import bpy
 from mathutils import Matrix
@@ -13,15 +11,8 @@ from ..core.canonical import validate_resource_name
 from ..core.canonical_json import canonical_json_bytes, parse_json
 from ..core.composites import (
     composite_json_bytes,
-    iter_profile_references,
-    iter_resource_references,
-    parse_composite,
-    read_composite_file,
-    validate_composite_cycles,
 )
-from ..core.placements import placement_json_bytes, read_placement_file
 from ..core.model import Composite, CompositeTransform, Node, RandomOption
-from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.transforms import (
     blender_to_ue_transform,
     matrix_reconstructs_as_float32_trs,
@@ -31,13 +22,11 @@ from .export_fbx import _dagor_lod_structure
 from .resource_markers import (
     COLLECTION_KIND_KEY,
     COLLECTION_RESOURCE_KEY,
-    stamp_resource_collection,
 )
 from ..ui.composite_authoring import (
     OPTION_INDEX_MIRROR_KEY,
     PROFILE_MIRROR_KEY,
     WEIGHT_MIRROR_KEY,
-    sync_typed_mirror,
     validate_random_options,
 )
 
@@ -98,24 +87,6 @@ def _stored_imported_transform(obj) -> CompositeTransform | None:
         return None
 
 
-def _resolved_root(source_root) -> Path:
-    if not isinstance(source_root, (str, os.PathLike)) or not str(source_root).strip():
-        raise ValueError("Configure Project Source Root in the MH addon preferences")
-    root = Path(bpy.path.abspath(os.fspath(source_root))).resolve(strict=False)
-    if not root.is_dir():
-        raise ValueError(f"Project Source Root does not exist: {root}")
-    return root
-
-
-def _inside(root: Path, path: Path) -> bool:
-    try:
-        return os.path.commonpath([
-            os.path.normcase(str(root)), os.path.normcase(str(path)),
-        ]) == os.path.normcase(str(root))
-    except ValueError:
-        return False
-
-
 def _collection_resource_name(collection) -> str:
     marker = collection.get(COLLECTION_RESOURCE_KEY)
     if isinstance(marker, str) and marker:
@@ -126,108 +97,6 @@ def _collection_resource_name(collection) -> str:
         name = collection.name
     validate_resource_name(name)
     return name
-
-
-def _resolve_target(root: Path, output: Path, name: str) -> Path:
-    matches = []
-    for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() != ".composite":
-            continue
-        if path.stem.casefold() != name:
-            continue
-        if path.suffix != ".composite" or path.stem != name:
-            raise MHValidationError(
-                "MH_E_NONCANONICAL_RESOURCE_NAME", [str(path)],
-                "composite filename must use the exact lowercase logical "
-                "name and .composite suffix")
-        matches.append(path.resolve(strict=False))
-    matches.sort(key=lambda row: str(row).replace("\\", "/"))
-    if len(matches) > 1:
-        raise MHValidationError(
-            "MH_E_AMBIGUOUS_RESOURCE_NAME", [name, *(str(row) for row in matches)],
-            "multiple composite resources share this logical name")
-    return matches[0] if matches else output / f"{name}.composite"
-
-
-def _resolve_dependency(
-        root: Path, name: str, extension: str, *, allow_missing=False
-) -> Path | None:
-    """Resolve one source ResourceKey by exact filename identity."""
-    validate_resource_name(name)
-    expected = f"{name}{extension}"
-    matches = []
-    for path in root.rglob("*"):
-        if not path.is_file() or path.name.casefold() != expected.casefold():
-            continue
-        if path.name != expected:
-            raise MHValidationError(
-                "MH_E_NONCANONICAL_RESOURCE_NAME", [str(path)],
-                f"source filename must be exactly '{expected}'")
-        matches.append(path.resolve(strict=False))
-    matches.sort(key=lambda row: str(row).replace("\\", "/"))
-    if len(matches) > 1:
-        raise MHValidationError(
-            "MH_E_AMBIGUOUS_RESOURCE_NAME",
-            [name, *(str(row) for row in matches)],
-            f"multiple resources resolve as '{expected}'")
-    if not matches:
-        if allow_missing:
-            return None
-        raise MHValidationError(
-            "MH_E_UNRESOLVED_COMPOSITE_REFERENCE", [name],
-            f"required source resource '{expected}' was not found")
-    return matches[0]
-
-
-def _preflight_dependencies(root: Path, candidate: Composite) -> None:
-    """Resolve mesh/composite closure and reject candidate graph cycles."""
-    documents = {candidate.name: candidate}
-
-    def load_composite(name: str) -> None:
-        if name in documents:
-            return
-        source = _resolve_dependency(
-            root, name, ".composite", allow_missing=True)
-        if source is None:
-            documents[name] = Composite(name)
-            return
-        document = read_composite_file(source)
-        documents[name] = document
-        for dependency in iter_resource_references(
-                document, kind="composite"):
-            load_composite(dependency)
-
-    for dependency in iter_resource_references(candidate, kind="composite"):
-        load_composite(dependency)
-    validate_composite_cycles(candidate.name, documents)
-
-    # Actor tokens are intentionally lossless in Blender and resolve only in
-    # UE.  Missing mesh/composite placements are also valid authoring state;
-    # ambiguous same-kind identities remain fail-closed above.
-    for document in documents.values():
-        for dependency in iter_resource_references(document, kind="mesh"):
-            _resolve_dependency(
-                root, dependency, ".mesh.fbx", allow_missing=True)
-        for profile_name in iter_profile_references(document):
-            profile_path = _resolve_dependency(
-                root, profile_name, ".placement", allow_missing=False)
-            raw = profile_path.read_bytes()
-            try:
-                canonical = placement_json_bytes(read_placement_file(profile_path))
-            except ValueError as exc:
-                raise MHValidationError(
-                    getattr(exc, "code", None)
-                    or "MH_E_PLACEMENT_PROFILE_GRAMMAR",
-                    [profile_name, str(profile_path)],
-                    f"referenced placement profile is invalid: {exc}",
-                ) from exc
-            if raw != canonical:
-                raise MHValidationError(
-                    "MH_E_PLACEMENT_PROFILE_GRAMMAR",
-                    [profile_name, str(profile_path)],
-                    "referenced placement profile must already contain exact "
-                    "canonical bytes; export never normalizes source",
-                )
 
 
 def _collection_instance_identity(instance) -> tuple[str, str]:
@@ -521,71 +390,17 @@ def _extract_composite(collection) -> Composite:
 
 
 def export_composite_collection(collection, output_dir, *, source_root) -> dict:
-    """Publish one complete composite through sibling tmp/read-back/replace."""
-    if collection is None:
-        raise ValueError("collection is required")
-    linked_ids = [
-        datablock.name
-        for datablock in (collection, *tuple(collection.objects))
-        if datablock.library is not None
-    ]
-    if linked_ids:
-        raise MHValidationError(
-            "MH_E_INVALID_RESOURCE_SOURCE", linked_ids,
-            "linked read-only Blender datablocks cannot be exported as MH "
-            "authoring authority")
-    root = _resolved_root(source_root)
-    output = Path(bpy.path.abspath(os.fspath(output_dir))).resolve(strict=False)
-    if not _inside(root, output):
-        raise ValueError("Composite output folder must be inside Project Source Root")
+    """Publish only the root after full all-options source-closure admission."""
 
-    resource = _extract_composite(collection)
-    payload = composite_json_bytes(resource)
-    target = _resolve_target(root, output, resource.name)
-    if target.exists() and target.is_dir():
-        raise ValueError(f"Composite target exists as a directory: {target}")
-    _preflight_dependencies(root, resource)
-
-    def validate_read_back(read_back: bytes) -> None:
-        decoded = parse_composite(read_back, name=resource.name)
-        if composite_json_bytes(decoded) != payload:
-            raise RuntimeError(
-                "MH_E_COMPOSITE_GRAMMAR: staged composite failed canonical "
-                "read-back")
-
-    mirror_keys = (
-        NODE_KIND_KEY, WEIGHT_MIRROR_KEY, OPTION_INDEX_MIRROR_KEY,
-        PROFILE_MIRROR_KEY)
-    mirror_snapshot = [
-        (obj, {
-            key: (key in obj, obj.get(key))
-            for key in mirror_keys
-        })
-        for obj in collection.objects
-    ]
-    try:
-        for obj in collection.objects:
-            sync_typed_mirror(obj)
-        receipt = atomic_publish_bytes(
-            target,
-            payload,
-            source_root=root,
-            read_back_validator=validate_read_back,
-        )
-    except Exception:
-        for obj, snapshot in mirror_snapshot:
-            for key, (present, value) in snapshot.items():
-                if present:
-                    obj[key] = value
-                elif key in obj:
-                    del obj[key]
-        raise
-    stamp_resource_collection(collection, "composite", resource.name)
-    return {
-        "ok": True,
-        "filepath": str(target),
-        "resource_name": resource.name,
-        "nodes": len(list(collection.objects)),
-        "bytes": receipt["bytes"],
-        "written": True,
-    }
+    # Imported lazily because the closure adapter reuses this module's pure
+    # Blender extraction functions.
+    from .export_closure import (
+        CLOSURE_MODE_ROOT,
+        export_composite_closure_collection,
+    )
+    return export_composite_closure_collection(
+        collection,
+        output_dir,
+        source_root=source_root,
+        mode=CLOSURE_MODE_ROOT,
+    )

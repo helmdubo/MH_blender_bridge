@@ -131,6 +131,21 @@ def test_targeted_texture_resolve_ignores_unrelated_invalid_candidate(tmp_path):
     assert resolve_texture_reference(tmp_path, "wall") == valid
 
 
+def test_texture_resolver_rejects_physical_target_outside_root(tmp_path):
+    if sys.platform.startswith("win"):
+        # Windows developer hosts commonly lack symlink privileges; Linux
+        # owner review executes this physical-containment branch.
+        return
+    source = tmp_path / "source"
+    source.mkdir()
+    outside = tmp_path / "wall.png"
+    outside.write_bytes(b"outside")
+    (source / "wall.png").symlink_to(outside)
+    with pytest.raises(MaterialValueError) as caught:
+        resolve_texture_reference(source, "wall")
+    assert caught.value.code == "MH_E_TEXTURE_OUTSIDE_ROOT"
+
+
 def test_numeric_edges_narrow_to_float32_before_shortest_spelling():
     payload = material_json_bytes(MaterialResource(
         "probe", material_class="numeric_probe", params={

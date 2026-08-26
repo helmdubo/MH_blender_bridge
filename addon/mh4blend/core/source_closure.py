@@ -66,6 +66,17 @@ class CompositeSourceClosure:
     placement_profiles: tuple[ResourceKey, ...]
     static_meshes: tuple[ResourceKey, ...]
     resources: tuple[ResourceKey, ...]
+    referrers: tuple[tuple[ResourceKey, tuple[ResourceKey, ...]], ...]
+
+    def referrers_for(self, key: ResourceKey) -> tuple[ResourceKey, ...]:
+        """Return composites that directly reference ``key`` in source order."""
+
+        if not isinstance(key, ResourceKey):
+            raise TypeError("key must be ResourceKey")
+        for candidate, owners in self.referrers:
+            if candidate == key:
+                return owners
+        return ()
 
 
 def _error(code: str, path: str, message: str) -> CompositeValueError:
@@ -96,6 +107,10 @@ def build_composite_source_closure(
     composite_postorder: list[ResourceKey] = []
     profiles: dict[ResourceKey, None] = {}
     meshes: dict[ResourceKey, None] = {}
+    referrers: dict[ResourceKey, dict[ResourceKey, None]] = {}
+
+    def add_referrer(key: ResourceKey, owner: ResourceKey) -> None:
+        referrers.setdefault(key, {}).setdefault(owner, None)
 
     def visit(name: str) -> None:
         if name in active:
@@ -122,13 +137,19 @@ def build_composite_source_closure(
 
         # These orders are independently significant to their publish classes.
         # The codec iterators include nested children and every random option.
+        owner = ResourceKey("composite", name)
         for profile_name in iter_profile_references(composite):
-            profiles.setdefault(ResourceKey("placement_profile", profile_name), None)
+            profile_key = ResourceKey("placement_profile", profile_name)
+            profiles.setdefault(profile_key, None)
+            add_referrer(profile_key, owner)
         for mesh_name in iter_resource_references(composite, kind="mesh"):
-            meshes.setdefault(ResourceKey("static_mesh", mesh_name), None)
+            mesh_key = ResourceKey("static_mesh", mesh_name)
+            meshes.setdefault(mesh_key, None)
+            add_referrer(mesh_key, owner)
         for dependency_name in iter_resource_references(
             composite, kind="composite"
         ):
+            add_referrer(ResourceKey("composite", dependency_name), owner)
             visit(dependency_name)
 
         active.pop()
@@ -146,4 +167,6 @@ def build_composite_source_closure(
         placement_profiles=ordered_profiles,
         static_meshes=ordered_meshes,
         resources=ordered_profiles + ordered_meshes + ordered_composites,
+        referrers=tuple(
+            (key, tuple(owners)) for key, owners in referrers.items()),
     )

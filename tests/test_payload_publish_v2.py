@@ -223,3 +223,18 @@ def test_pre_replace_guard_runs_under_lock_and_failure_preserves_target(
     assert observed == ["MH_E_PAYLOAD_LOCK_TIMEOUT"]
     assert target.read_bytes() == b"stable"
     assert list(target.parent.glob(".*.mh-tmp-*")) == []
+
+
+def test_publication_rejects_target_outside_supplied_source_root(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    outside = tmp_path / "outside.material"
+    with pytest.raises(PayloadPublishV2Error) as caught:
+        atomic_publish_bytes(
+            outside,
+            b"payload",
+            source_root=source,
+            lock_root=tmp_path / "locks",
+        )
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+    assert not outside.exists()

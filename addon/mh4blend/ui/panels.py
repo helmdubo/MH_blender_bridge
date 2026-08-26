@@ -68,6 +68,8 @@ class MH_PT_source_tools(bpy.types.Panel):
             box.prop(
                 scene, "mh_composite_export_directory", text="Folder")
             box.operator("mh.export_composite", icon="EXPORT")
+            box.operator("mh.export_composite_closure", icon="EXPORT")
+            box.operator("mh.export_composite_include_all", icon="EXPORT")
         draw_random_options(box, context)
 
         materials = layout.box()
