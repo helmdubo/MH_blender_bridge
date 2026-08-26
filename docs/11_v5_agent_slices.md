@@ -107,10 +107,9 @@ Acceptance:
 
 Gate: ОТКРЫТ. V5-S0 ратифицирован, `OPEN-V5-1`/`-2`/`-3` решены в 10 §§13.1–13.3
 (baseline-битконтракт, применение профиля, байты подписи) — реализуй их дословно.
-Единственное ожидание — `OPEN-V5-6`: пока owner не положил исходные GAZ
-`*.composit.blk` в `reference/dagor_fixtures/gaz53/`, финальный GAZ-parity
-acceptance не закрывается; вся остальная работа среза (reference, synthetic
-golden, probe-инфраструктура) идёт без ожидания.
+Единственное ожидание было `OPEN-V5-6` — исходные GAZ `*.composit.blk`.
+Owner положил их в `reference/dagor_fixtures/gaz53/`, synthetic-токены заменены
+реальными, GAZ-parity acceptance закрыт (§13.6).
 
 Python, bpy-free:
 

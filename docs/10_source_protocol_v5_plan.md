@@ -533,8 +533,8 @@ snapping или repair на трёх границах:
 3. UE compile/Build/Break/cook — до мутации уровня или создания компонентов.
 
 В частности, non-uniform parent scale × rotated child не может тихо менять
-форму. Численный predicate admission для float host-матриц не зафиксирован
-owner-контрактом; до ответа `OPEN-V5-5` соответствующая реализация имеет STOP.
+форму. Численный predicate admission для float host-матриц задан §13.5
+(решение `OPEN-V5-5`): реконструкция host-декомпозиции, `8 ULP` в float32.
 
 ### 6.3 Placement profile `.placement`
 
@@ -723,11 +723,12 @@ Blender export-команды:
 Batch сначала строит и валидирует полный source closure без записи. Существующий
 незагруженный managed source переиспользуется байт-в-байт без перезаписи;
 отсутствующий или unmanaged dependency блокирует preflight. Затем ВСЁ замыкание
-пишется в staging и read-back проверяется до первой публикации. Для batch без
-placement profiles Publish order: materials → meshes → leaf composites →
-parents → root LAST. Место `.placement` в publish order не задано и входит в
-`OPEN-V5-2`; batch, которому нужен profile, до ответа имеет STOP. Каждый replace
-получает batch self-publish token; watcher подавляет собственные события.
+пишется в staging и read-back проверяется до первой публикации. Publish order
+(решение `OPEN-V5-2`, §13.2): placement profiles → materials → meshes → leaf
+composites → parents → root LAST. Профили идут первыми как листья зависимостей
+композитов; batch без профилей просто начинает со следующего шага. Каждый
+replace получает batch self-publish token; watcher подавляет собственные
+события.
 После первого успешного replace общий rollback не обещается: ошибка сообщает
 точный published/unpublished set как `MH_E_PARTIAL_PUBLISH`; откат выполняет
 VCS, теневой transaction manifest запрещён.
@@ -835,11 +836,12 @@ gaz53_b_random_cmp.composite
 - placements независимы: seed 100 == seed 100, seed 100 != seed 200;
   перемещение placement не меняет result.
 
-V5-S0 фиксирует topology/source fixtures. Пока owner не дал production option
-tokens/Dagor oracle (`OPEN-V5-6`), option resource names в fixture явно
-synthetic и не являются GAZ content authority. Expected seed traces/signatures
-заполняет V5-S1 только после ратификации `OPEN-V5-1`/`OPEN-V5-3`; подстановка
-случайных ожидаемых значений в V5-S0 запрещена.
+V5-S0 фиксирует topology/source fixtures. Owner передал исходные
+`*.composit.blk` (§13.6), поэтому synthetic option tokens заменены реальными и
+GAZ-фикстура является content authority; guard —
+`test_gaz_protocol_fixture_contains_no_synthetic_option_tokens`. Expected seed
+traces/signatures заполнены V5-S1 после ратификации `OPEN-V5-1`/`OPEN-V5-3`;
+подстановка случайных ожидаемых значений запрещена.
 
 ## 7. Applied state в ассетах (поправка №9)
 
@@ -907,9 +909,10 @@ synthetic и не являются GAZ content authority. Expected seed traces/s
 - Commit applied state только после: build успешен → async compilation
   завершена → package сохранён.
 
-Carrier/generated-path/applied receipt для нового `placement_profile` не задан
-owner-контрактом. `OPEN-V5-4` запрещает до решения добавлять новый UAsset,
-седьмой tag или трактовать source-only profile как уже применённый asset.
+Carrier/generated-path/applied receipt для `placement_profile` задан §13.4
+(решение `OPEN-V5-4`) и §13.4.1: отдельного UAsset, седьмого tag и generated
+path нет, значения инлайнятся в `UMHCompositeAsset` как applied state, а
+freshness закрывает приватный `AppliedSourceHash`.
 
 ## 8. Генерируемые пути UE
 
@@ -925,7 +928,8 @@ owner-контрактом. `OPEN-V5-4` запрещает до решения �
 Путь детерминирован именем, не source-папкой: перемещение файла не двигает
 `.uasset`.
 
-Generated path для `placement_profile` не изобретается до `OPEN-V5-4`.
+`placement_profile` generated path не имеет вовсе (§13.4): он инлайнится в
+композит и `.uasset` не порождает.
 
 ## 9. Политика UE-редактирования
 
@@ -982,8 +986,10 @@ v5. Owner удаляет старые source-файлы и переэкспор�
 
 ## 13. Решения owner по вопросам freeze (OPEN-V5-1…7)
 
-Все семь вопросов, поднятых V5-S0, решены. STOP-гейты сняты, кроме явно
-названного ниже ожидания GAZ-oracle.
+Все семь вопросов, поднятых V5-S0, решены; ожидание GAZ-oracle закрыто (§13.6).
+Активных STOP-гейтов по v5 нет. Позднее к разделу добавлены §13.4.1
+(`OPEN-V5-8`) и §13.8 (path-derived seeds), а §6.3/§6.4 несут решения
+`OPEN-V5-9`/`OPEN-V5-10`.
 
 ### 13.1 `mh.random_stream:1` — битовый контракт (OPEN-V5-1)
 
@@ -1141,10 +1147,15 @@ synthetic и в acceptance parity не участвуют. Owner передаё�
 `*.composit.blk` (root/body/random) в `reference/dagor_fixtures/gaz53/`; после
 этого V5-S1 строит oracle из них, заменяет synthetic токены реальными
 (`gaz53_bread_b_cmp`, `gaz53_wooden_b_cmp`, `gaz53_wooden_c_cmp` — это
-composite-опции, а не mesh) и фиксирует seed-векторы. До передачи файлов
-блокируется ТОЛЬКО финальный GAZ-parity acceptance V5-S1; вся остальная работа
-V5-S1 (reference implementation, synthetic-фикстуры, probe-инфраструктура) идёт
-без ожидания.
+composite-опции, а не mesh) и фиксирует seed-векторы.
+
+**Закрыто.** Owner положил три файла в `reference/dagor_fixtures/gaz53/`
+(`gaz53_b_body_cmp`, `gaz53_b_random_cmp`, `gaz53_body_bc_random_cmp`);
+synthetic-токены в `golden/v5/gaz53/` заменены реальными, отсутствие
+synthetic-остатков охраняется
+`test_gaz_protocol_fixture_contains_no_synthetic_option_tokens`, а
+Dagor→MH round-trip трёх документов проверен V5-S3. Ожиданий owner-данных по
+v5 больше нет.
 
 ### 13.7 Filesystem aliases (OPEN-V5-7, бывший OPEN-V4-1)
 

@@ -242,7 +242,7 @@ V5-S2/V5-S3/V5-S5/V5-S7.
 
 ## OPEN-V5-6 — authoritative GAZ-53 option resources и transform/profile data
 
-**Статус. ЧАСТИЧНО РЕШЕНО OWNER — нормативно в 10 §13.6.** Topology-фикстура принята; synthetic-токены в parity не участвуют. Owner передаёт три `*.composit.blk` в `reference/dagor_fixtures/gaz53/`; до передачи блокируется ТОЛЬКО финальный GAZ-parity acceptance V5-S1, остальная работа среза идёт.
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.6.** Owner передал три исходных `*.composit.blk` в `reference/dagor_fixtures/gaz53/`; synthetic option tokens заменены реальными, отсутствие остатков охраняется `test_gaz_protocol_fixture_contains_no_synthetic_option_tokens`, Dagor→MH round-trip трёх документов проверен V5-S3. Ожидание снято. Topology-фикстура принята; synthetic-токены в parity не участвуют. Owner передаёт три `*.composit.blk` в `reference/dagor_fixtures/gaz53/`; до передачи блокируется ТОЛЬКО финальный GAZ-parity acceptance V5-S1, остальная работа среза идёт.
 
 **Контекст.** Owner задал имена трёх composite-файлов, topology root→body+random
 и три options weight 1, но не передал authoritative option resource tokens,
