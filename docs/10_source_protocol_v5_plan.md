@@ -686,9 +686,12 @@ random не резолвит никогда; в будущем он допуст
 
 Битовый алгоритм/инициализация stream, отображение int32 Seed в state, draw →
 `[0,1)`/weighted interval, stable NodePath encoding, closure-hash serialization,
-signature hash/tag и resolver-version token owner-контрактом не заданы.
-Это `OPEN-V5-1` и `OPEN-V5-3`; V5-S1 может подготовить Dagor parity probe, но не
-может объявить Python reference/golden expected values принятыми до ответа.
+signature hash/tag и resolver-version token ЗАДАНЫ в §§13.1 и 13.3
+(решения `OPEN-V5-1`/`OPEN-V5-3`); Dagor probe выполнена, owner выбрал вариант
+B — совместимость поведенческая, байты `mh.random_stream:1` окончательны.
+Stream создаётся ОДИН раз от placement Seed и непрерывно течёт через всю
+рекурсию: отдельного производного seed на поддерево нет (осознанное отличие от
+Dagor, где child получает собственное значение seed).
 
 ### 6.7 UE editor, runtime и cook
 
