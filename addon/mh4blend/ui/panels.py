@@ -6,6 +6,7 @@ import bpy
 
 from .. import prefs as prefs_mod
 from ..scene.export_material import material_class_for_export
+from .composite_authoring import draw_random_options
 
 
 _TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
@@ -30,6 +31,8 @@ class MH_PT_source_tools(bpy.types.Panel):
         fbx = layout.box()
         fbx.label(text="Mesh FBX", icon="MESH_CUBE")
         fbx.prop(scene, "mh_fbx_import_path", text="Import File")
+        fbx.prop(scene, "mh_import_load_mode", text="Geometry")
+        fbx.prop(scene, "mh_import_definition_policy", text="Definitions")
         fbx.operator("mh.import_mesh_fbx", icon="IMPORT")
         fbx.separator()
         fbx.prop(scene, "mh_fbx_collection", text="Collection")
@@ -42,13 +45,30 @@ class MH_PT_source_tools(bpy.types.Panel):
         box.prop(scene, "mh_composite_mode", expand=True)
         if scene.mh_composite_mode == "IMPORT":
             box.prop(scene, "mh_composite_import_path", text="File")
+            box.prop(scene, "mh_import_load_mode", text="Geometry")
+            box.prop(scene, "mh_import_definition_policy", text="Definitions")
             box.operator("mh.import_composite", icon="IMPORT")
+            dagor = box.box()
+            dagor.label(text="Dagor → MH", icon="FILE_REFRESH")
+            dagor.prop(
+                scene, "mh_dagor_composite_import_path", text=".composit.blk")
+            dagor.prop(
+                scene, "mh_composite_export_directory", text="MH Output Folder")
+            dagor.operator("mh.import_dagor_composite", icon="IMPORT")
+            dagor.separator()
+            dagor.prop(
+                scene, "mh_dag4blend_composite_collection",
+                text="dag4blend Collection")
+            dagor.operator(
+                "mh.convert_dag4blend_composite",
+                icon="OUTLINER_COLLECTION")
         else:
             box.prop(
                 scene, "mh_composite_export_collection", text="Collection")
             box.prop(
                 scene, "mh_composite_export_directory", text="Folder")
             box.operator("mh.export_composite", icon="EXPORT")
+        draw_random_options(box, context)
 
         materials = layout.box()
         materials.label(text="Materials", icon="MATERIAL")

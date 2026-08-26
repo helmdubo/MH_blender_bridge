@@ -1,4 +1,4 @@
-"""Blender operators for Source Protocol v4 workflows."""
+"""Blender operators for the active Source Protocol host workflows."""
 
 import json
 import os
@@ -13,13 +13,36 @@ from ..scene.export_material import (
     write_prepared_material,
 )
 from ..scene.import_composite import import_composite_file
-from ..scene.import_fbx import import_mesh_fbx
+from ..scene.import_dagor_composite import (
+    import_dag4blend_composite_collection,
+    import_dagor_composite_file,
+)
+from ..scene.import_fbx import (
+    LOAD_MODE_FULL_LOD,
+    LOAD_MODE_LOD0,
+    LOAD_MODE_STRUCTURE_ONLY,
+    import_mesh_fbx,
+)
 from ..scene.project_textures import (
     copy_all_dagor_textures_to_project,
     remap_all_dagor_textures_to_project,
 )
 
 LOG_TEXT_NAME = "mh_export_log"
+
+_LOAD_MODE_VALUES = {
+    "FULL_LOD": LOAD_MODE_FULL_LOD,
+    "LOD0": LOAD_MODE_LOD0,
+    "STRUCTURE_ONLY": LOAD_MODE_STRUCTURE_ONLY,
+}
+
+
+def _load_mode(scene):
+    return _LOAD_MODE_VALUES[scene.mh_import_load_mode]
+
+
+def _definition_policy(scene):
+    return scene.mh_import_definition_policy.lower()
 
 
 def _json_default(value):
@@ -41,6 +64,12 @@ def _directory(value):
     return os.path.abspath(bpy.path.abspath(value))
 
 
+def _optional_directory(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _directory(value)
+
+
 def _composite_filepath(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Choose a .composite file")
@@ -51,6 +80,19 @@ def _composite_filepath(value):
             "lowercase .composite file")
     if not os.path.isfile(path):
         raise ValueError(f"Composite file does not exist: {path}")
+    return path
+
+
+def _dagor_composite_filepath(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Choose a .composit.blk file")
+    path = os.path.abspath(bpy.path.abspath(value))
+    if not path.endswith(".composit.blk"):
+        raise ValueError(
+            "MH_E_NONCANONICAL_RESOURCE_NAME: import path must point to an "
+            "exact .composit.blk file")
+    if not os.path.isfile(path):
+        raise ValueError(f"Dagor Composite file does not exist: {path}")
     return path
 
 
@@ -118,6 +160,8 @@ class MH_OT_import_mesh_fbx(bpy.types.Operator):
             report = import_mesh_fbx(
                 _mesh_filepath(context.scene.mh_fbx_import_path),
                 source_root=_directory(preferences.source_root),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene),
             )
         except (OSError, RuntimeError, ValueError) as exc:
             _log("import_mesh_fbx", {"ok": False, "error": str(exc)})
@@ -364,7 +408,9 @@ class MH_OT_import_composite(bpy.types.Operator):
             preferences = prefs_mod.get_prefs(context)
             report = import_composite_file(
                 _composite_filepath(context.scene.mh_composite_import_path),
-                source_root=_directory(preferences.source_root))
+                source_root=_directory(preferences.source_root),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene))
         except (OSError, RuntimeError, ValueError) as exc:
             _log("import_composite", {"ok": False, "error": str(exc)})
             self.report({"ERROR"}, str(exc))
@@ -375,6 +421,61 @@ class MH_OT_import_composite(bpy.types.Operator):
                 {"WARNING"},
                 f"{warning['code']}: {warning.get('message', '')}")
         self.report({"INFO"}, "Composite imported")
+        return {"FINISHED"}
+
+
+class MH_OT_import_dagor_composite(bpy.types.Operator):
+    bl_idname = "mh.import_dagor_composite"
+    bl_label = "Import Dagor Composite"
+    bl_description = "Convert an authoritative .composit.blk closure to MH"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            preferences = prefs_mod.get_prefs(context)
+            report = import_dagor_composite_file(
+                _dagor_composite_filepath(
+                    context.scene.mh_dagor_composite_import_path),
+                source_root=_directory(preferences.source_root),
+                output_dir=_optional_directory(
+                    context.scene.mh_composite_export_directory),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("import_dagor_composite", {"ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("import_dagor_composite", report)
+        self.report({"INFO"}, "Dagor Composite converted")
+        return {"FINISHED"}
+
+
+class MH_OT_convert_dag4blend_composite(bpy.types.Operator):
+    bl_idname = "mh.convert_dag4blend_composite"
+    bl_label = "Convert dag4blend Scene Composite"
+    bl_description = "Lift an imported dag4blend definition into MH authority"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        collection = context.scene.mh_dag4blend_composite_collection
+        if collection is None:
+            self.report({"ERROR"}, "Choose a dag4blend composite collection")
+            return {"CANCELLED"}
+        try:
+            preferences = prefs_mod.get_prefs(context)
+            report = import_dag4blend_composite_collection(
+                collection,
+                source_root=_directory(preferences.source_root),
+                load_mode=_load_mode(context.scene),
+                definition_policy=_definition_policy(context.scene))
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("convert_dag4blend_composite", {
+                "ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("convert_dag4blend_composite", report)
+        self.report({"INFO"}, "dag4blend Composite converted")
         return {"FINISHED"}
 
 
@@ -397,6 +498,8 @@ CLASSES = (
     MH_OT_remap_all_textures_to_project,
     MH_OT_export_composite,
     MH_OT_import_composite,
+    MH_OT_import_dagor_composite,
+    MH_OT_convert_dag4blend_composite,
 )
 
 
@@ -411,6 +514,21 @@ def register():
         name="Output Folder", subtype="DIR_PATH", default="")
     bpy.types.Scene.mh_fbx_import_path = bpy.props.StringProperty(
         name="Mesh FBX", subtype="FILE_PATH", default="")
+    bpy.types.Scene.mh_import_load_mode = bpy.props.EnumProperty(
+        name="Load Mode",
+        items=(
+            ("FULL_LOD", "Full LOD", "Import every authored LOD"),
+            ("LOD0", "LOD0", "Import lod00 plus collisions, sockets and groups"),
+            ("STRUCTURE_ONLY", "Structure Only", "Create empty definitions"),
+        ),
+        default="FULL_LOD")
+    bpy.types.Scene.mh_import_definition_policy = bpy.props.EnumProperty(
+        name="Definitions",
+        items=(
+            ("REUSE", "Reuse", "Reuse only complete managed definitions"),
+            ("REFRESH", "Refresh", "Replace contents and preserve Collection IDs"),
+        ),
+        default="REUSE")
     bpy.types.Scene.mh_fbx_export_materials = bpy.props.BoolProperty(
         name="Export Materials",
         description="Write every material used by the exported mesh resource",
@@ -427,6 +545,10 @@ def register():
         default="IMPORT")
     bpy.types.Scene.mh_composite_import_path = bpy.props.StringProperty(
         name="Composite", subtype="FILE_PATH", default="")
+    bpy.types.Scene.mh_dagor_composite_import_path = bpy.props.StringProperty(
+        name="Dagor Composite", subtype="FILE_PATH", default="")
+    bpy.types.Scene.mh_dag4blend_composite_collection = bpy.props.PointerProperty(
+        name="dag4blend Collection", type=bpy.types.Collection)
     bpy.types.Scene.mh_composite_export_collection = bpy.props.PointerProperty(
         name="Collection", type=bpy.types.Collection)
     bpy.types.Scene.mh_composite_export_directory = bpy.props.StringProperty(
@@ -438,7 +560,9 @@ def unregister():
         bpy.utils.unregister_class(cls)
     for name in (
         "mh_composite_export_directory", "mh_composite_export_collection",
+        "mh_dag4blend_composite_collection", "mh_dagor_composite_import_path",
         "mh_composite_import_path", "mh_composite_mode",
+        "mh_import_definition_policy", "mh_import_load_mode",
         "mh_fbx_export_materials", "mh_fbx_import_path",
         "mh_fbx_directory", "mh_fbx_collection",
         "mh_material_directory", "mh_material",

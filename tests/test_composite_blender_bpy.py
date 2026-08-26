@@ -28,17 +28,23 @@ from mh4blend.scene.import_composite import (  # noqa: E402
     import_composite_file,
 )
 from mh4blend.ui import ops  # noqa: E402
+from mh4blend.ui import composite_authoring  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def registered_addon_properties():
-    owned = not hasattr(bpy.types.Material, "mh4blend")
-    if owned:
+    owned_material = not hasattr(bpy.types.Material, "mh4blend")
+    owned_object = not hasattr(bpy.types.Object, "mh4blend")
+    if owned_material:
         ops.register()
+    if owned_object:
+        composite_authoring.register()
     try:
         yield
     finally:
-        if owned:
+        if owned_object:
+            composite_authoring.unregister()
+        if owned_material:
             ops.unregister()
 
 
@@ -111,7 +117,7 @@ def test_direct_writer_uses_explicit_actor_token_without_registry(tmp_path):
     bpy.context.scene.collection.children.link(collection)
     actor = bpy.data.objects.new("ArtistReadableName", None)
     collection.objects.link(actor)
-    actor[NODE_KIND_KEY] = "actor"
+    actor.mh4blend.kind = "actor"
     actor[NODE_RESOURCE_KEY] = "project_actor_token"
     report = export_composite_collection(
         collection, tmp_path, source_root=tmp_path)
@@ -130,7 +136,7 @@ def test_writer_preserves_unresolved_source_dependency(
     bpy.context.scene.collection.children.link(collection)
     placement = bpy.data.objects.new("placement", None)
     collection.objects.link(placement)
-    placement[NODE_KIND_KEY] = kind
+    placement.mh4blend.kind = kind
     placement[NODE_RESOURCE_KEY] = resource
 
     report = export_composite_collection(
@@ -250,7 +256,7 @@ def test_ambiguous_same_kind_dependency_remains_fail_closed(
     bpy.context.scene.collection.children.link(collection)
     placement = bpy.data.objects.new("placement", None)
     collection.objects.link(placement)
-    placement[NODE_KIND_KEY] = kind
+    placement.mh4blend.kind = kind
     placement[NODE_RESOURCE_KEY] = "duplicate"
     preserved = composite_json_bytes(Composite("writer_ambiguous"))
     target = tmp_path / "writer_ambiguous.composite"
@@ -267,7 +273,7 @@ def test_writer_rejects_self_and_ancestor_cycles_before_replace(tmp_path):
     bpy.context.scene.collection.children.link(collection)
     placement = bpy.data.objects.new("placement", None)
     collection.objects.link(placement)
-    placement[NODE_KIND_KEY] = "composite"
+    placement.mh4blend.kind = "composite"
     placement[NODE_RESOURCE_KEY] = "cycle_a"
     with pytest.raises(ValueError, match="MH_E_COMPOSITE_CYCLE"):
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
@@ -290,7 +296,7 @@ def test_writer_rejects_non_roundtrippable_shear(tmp_path):
     bpy.context.scene.collection.children.link(collection)
     group = bpy.data.objects.new("sheared_group", None)
     collection.objects.link(group)
-    group[NODE_KIND_KEY] = "group"
+    group.mh4blend.kind = "group"
     group.matrix_world = Matrix((
         (1.0, 0.25, 0.0, 0.0),
         (0.0, 1.0, 0.0, 0.0),
@@ -312,12 +318,12 @@ def test_writer_rejects_child_shear_from_rotated_nonuniform_parent(tmp_path):
 
     parent = bpy.data.objects.new("scaled_parent", None)
     collection.objects.link(parent)
-    parent[NODE_KIND_KEY] = "group"
+    parent.mh4blend.kind = "group"
     parent.scale = (1.0, 2.0, 1.0)
 
     child = bpy.data.objects.new("rotated_child", None)
     collection.objects.link(child)
-    child[NODE_KIND_KEY] = "group"
+    child.mh4blend.kind = "group"
     child.parent = parent
     child.rotation_euler[2] = math.radians(45.0)
     bpy.context.view_layer.update()
@@ -344,8 +350,8 @@ def test_writer_identifies_raw_mesh_instead_of_collection_instance(tmp_path):
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
     rendered = str(excinfo.value)
     assert "UnmarkedPlacement" in rendered
-    assert "mh_composite_kind=None" in rendered
-    assert "collection instances" in rendered
+    assert "no typed mh4blend.kind" in rendered
+    assert "diagnostic mirror" in rendered
 
 
 def test_writer_infers_mesh_from_unmarked_collection_instance(tmp_path):
@@ -359,6 +365,7 @@ def test_writer_infers_mesh_from_unmarked_collection_instance(tmp_path):
     bpy.context.scene.collection.children.link(composite)
     placement = bpy.data.objects.new("GaragePlacement", None)
     composite.objects.link(placement)
+    placement.mh4blend.kind = "mesh"
     placement.instance_type = "COLLECTION"
     placement.instance_collection = mesh_definition
 
