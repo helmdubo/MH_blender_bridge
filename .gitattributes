@@ -2,3 +2,8 @@
 * text=auto
 golden/canonical_vectors.json text eol=lf
 golden/fbxdump/*.json text eol=lf
+
+# Bytes of these files ARE identity: they are hashed into goldens, receipts and
+# protocol signatures, so git must never rewrite their line endings on any host.
+reference/dagor_fixtures/** text eol=lf
+golden/v5/** text eol=lf
