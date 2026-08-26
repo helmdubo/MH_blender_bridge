@@ -3,7 +3,6 @@
 #include "AssetRegistry/AssetData.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Composite/MHCompositeAsset.h"
-#include "Composite/MHCompositeThumbnailRenderer.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
@@ -22,7 +21,6 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
-#include "ThumbnailRendering/ThumbnailManager.h"
 #include "UI/MHSourceToolMenus.h"
 #include "UObject/AssetRegistryTagsContext.h"
 
@@ -193,10 +191,6 @@ void FMimirCompositeEditorModule::StartupModule()
     ObjectModifiedHandle = FCoreUObjectDelegates::OnObjectModified.AddStatic(
         &MarkManagedStaticMeshLocallyModified);
 
-    UThumbnailManager::Get().RegisterCustomRenderer(
-        UMHCompositeAsset::StaticClass(),
-        UMHCompositeThumbnailRenderer::StaticClass());
-
     FMessageLogModule& MessageLogModule = FModuleManager::LoadModuleChecked<FMessageLogModule>("MessageLog");
     FMessageLogInitializationOptions LogOptions;
     LogOptions.bShowPages = true;
@@ -206,11 +200,10 @@ void FMimirCompositeEditorModule::StartupModule()
     UToolMenus::RegisterStartupCallback(
         FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FMimirCompositeEditorModule::RegisterMenus));
     bOwnsToolMenusRegistration = true;
-    // OnPreExit runs while editor UI modules are still alive. ToolMenus may
-    // already have destroyed its singleton by the later module-shutdown pass,
-    // so plugin-owned delegates must be released here rather than discovered
-    // through UToolMenus::TryGet() during teardown.
-    PreExitHandle = FCoreDelegates::OnPreExit.AddRaw(
+    // OnEnginePreExit runs before editor UI and UObject-backed services are
+    // torn down. Release plugin-owned ToolMenus delegates at that boundary;
+    // ShutdownModule can arrive only after those services have been destroyed.
+    EnginePreExitHandle = FCoreDelegates::OnEnginePreExit.AddRaw(
         this,
         &FMimirCompositeEditorModule::UnregisterMenusBeforeExit);
 }
@@ -218,21 +211,17 @@ void FMimirCompositeEditorModule::StartupModule()
 void FMimirCompositeEditorModule::ShutdownModule()
 {
     UE::MimirComposite::MHShutdownProjectIndex();
-    if (PreExitHandle.IsValid())
+    if (EnginePreExitHandle.IsValid())
     {
-        FCoreDelegates::OnPreExit.Remove(PreExitHandle);
-        PreExitHandle.Reset();
+        FCoreDelegates::OnEnginePreExit.Remove(EnginePreExitHandle);
+        EnginePreExitHandle.Reset();
     }
     if (!IsRunningCommandlet())
     {
-        if (UThumbnailManager* ThumbnailManager = UThumbnailManager::TryGet())
-        {
-            ThumbnailManager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
-        }
         // Dynamic plugin unload still needs cleanup, but engine exit must not
         // touch ToolMenus: its singleton can already be torn down even though
         // this editor module is only now receiving ShutdownModule(). Normal
-        // exit was cleaned by OnPreExit above.
+        // exit was cleaned by OnEnginePreExit above.
         if (bOwnsToolMenusRegistration &&
             !IsEngineExitRequested() &&
             FModuleManager::Get().IsModuleLoaded(TEXT("ToolMenus")))

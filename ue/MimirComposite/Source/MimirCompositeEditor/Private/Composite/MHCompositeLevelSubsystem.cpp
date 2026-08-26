@@ -14,7 +14,6 @@
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "Materials/MaterialInterface.h"
-#include "Misc/ObjectThumbnail.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
@@ -24,7 +23,6 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
-#include "ThumbnailRendering/ThumbnailManager.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UObjectIterator.h"
 
@@ -37,18 +35,6 @@ namespace
 
 constexpr const TCHAR* MHLevelGeneratedCompositeRoot = TEXT("/Game/MH/Generated/Composites");
 constexpr const TCHAR* MHLevelGeneratedMeshRoot = TEXT("/Game/MH/Generated/Meshes");
-
-void MHDirtyCompositeThumbnail(UMHCompositeAsset& Asset)
-{
-    if (FObjectThumbnail* Thumbnail = ThumbnailTools::GetThumbnailForObject(&Asset))
-    {
-        Thumbnail->MarkAsDirty();
-    }
-    if (UThumbnailManager* ThumbnailManager = UThumbnailManager::TryGet())
-    {
-        ThumbnailManager->GetOnThumbnailDirtied().Broadcast(FSoftObjectPath(&Asset));
-    }
-}
 
 struct FMHBreakSpawnSpec
 {
@@ -794,7 +780,6 @@ bool UMHCompositeLevelSubsystem::RebuildComposites(
         return false;
     }
     const FScopedTransaction Transaction(INVTEXT("Rebuild MH Composites"));
-    TSet<UMHCompositeAsset*> ChangedAssets;
     for (AMHCompositeActor* Actor : Actors)
     {
         if (Actor == nullptr)
@@ -804,16 +789,6 @@ bool UMHCompositeLevelSubsystem::RebuildComposites(
         Actor->Modify();
         Actor->RebuildComposite();
         OutWarnings.Append(Actor->GetLastPlacementWarnings());
-        if (UMHCompositeAsset* Asset = Actor->GetCompositeAsset())
-        {
-            ChangedAssets.Add(Asset);
-        }
-    }
-    // Refresh can reflect restored nested resources without mutating the root
-    // asset. Dirty only its visual cache, once per unique asset.
-    for (UMHCompositeAsset* Asset : ChangedAssets)
-    {
-        MHDirtyCompositeThumbnail(*Asset);
     }
     return true;
 }
