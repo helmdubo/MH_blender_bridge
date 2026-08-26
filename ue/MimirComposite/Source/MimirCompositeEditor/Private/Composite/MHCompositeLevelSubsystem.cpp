@@ -61,37 +61,6 @@ struct FMHBreakSpawnSpec
     TObjectPtr<UClass> ActorClass;
 };
 
-bool MHCompositeTransformIsIdentity(const FMHCompositeTransform& Transform)
-{
-    return Transform.TranslationCm.IsNearlyZero(UE_KINDA_SMALL_NUMBER) &&
-        Transform.RotationQuat.Equals(FQuat::Identity, UE_KINDA_SMALL_NUMBER) &&
-        Transform.Scale.Equals(FVector::OneVector, UE_KINDA_SMALL_NUMBER);
-}
-
-void MHCollectAmbiguousTransformGroups(
-    const TArray<FMHCompositeNode>& Nodes,
-    const FString& PathPrefix,
-    TArray<FString>& OutPaths)
-{
-    for (int32 Index = 0; Index < Nodes.Num(); ++Index)
-    {
-        const FMHCompositeNode& Node = Nodes[Index];
-        const FString Path = FString::Printf(TEXT("%s[%d]"), *PathPrefix, Index);
-        if (Node.Kind == EMHCompositeNodeKind::Group &&
-            !Node.Children.IsEmpty() &&
-            !MHCompositeTransformIsIdentity(Node.Transform))
-        {
-            OutPaths.Add(Node.Name.IsEmpty()
-                ? Path
-                : FString::Printf(TEXT("%s ('%s')"), *Path, *Node.Name));
-        }
-        MHCollectAmbiguousTransformGroups(
-            Node.Children,
-            Path + TEXT(".children"),
-            OutPaths);
-    }
-}
-
 const TCHAR* MHLevelNodeKindLabel(const EMHCompositeNodeKind Kind)
 {
     switch (Kind)
@@ -584,7 +553,6 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         TArray<FMHBreakSpawnSpec> Specs;
     };
     TArray<FActorBreakPlan> Plans;
-    TArray<FString> AmbiguousTransformGroups;
     for (AMHCompositeActor* Actor : Actors)
     {
         UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
@@ -598,15 +566,6 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         {
             return false;
         }
-        const int32 PreviousAmbiguousCount = AmbiguousTransformGroups.Num();
-        MHCollectAmbiguousTransformGroups(
-            Document.Nodes,
-            Actor->GetPathName() + TEXT("/nodes"),
-            AmbiguousTransformGroups);
-        if (AmbiguousTransformGroups.Num() != PreviousAmbiguousCount)
-        {
-            continue;
-        }
         FActorBreakPlan& Plan = Plans.AddDefaulted_GetRef();
         Plan.Actor = Actor;
         if (!MHCollectBreakSpecs(
@@ -619,14 +578,6 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
             return false;
         }
     }
-    if (!AmbiguousTransformGroups.IsEmpty())
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT: Break transform domain is unresolved for transform-bearing groups with children: %s"),
-            *FString::Join(AmbiguousTransformGroups, TEXT(", ")));
-        return false;
-    }
-
     const FScopedTransaction Transaction(INVTEXT("Break MH Composite"));
     for (const FActorBreakPlan& Plan : Plans)
     {

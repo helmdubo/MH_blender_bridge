@@ -270,50 +270,51 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
                     KINDA_SMALL_NUMBER));
         }
 
-        UMHCompositeAsset* AmbiguousGroupAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-        AmbiguousGroupAsset->LogicalName = TEXT("ambiguous_group_") + Suffix;
-        FMHCompositeDocument AmbiguousGroupDocument;
-        FMHCompositeNode AmbiguousGroup;
-        AmbiguousGroup.Kind = EMHCompositeNodeKind::Group;
-        AmbiguousGroup.Name = TEXT("scaled_group");
-        AmbiguousGroup.Transform.Scale = FVector(1.0, 2.0, 1.0);
-        FMHCompositeNode RotatedGroupChild;
-        RotatedGroupChild.Kind = EMHCompositeNodeKind::Mesh;
-        RotatedGroupChild.Resource = MeshResource;
-        RotatedGroupChild.Name = TEXT("rotated_child");
-        RotatedGroupChild.Transform.RotationQuat = FQuat(FVector::UpVector, FMath::DegreesToRadians(45.0));
-        AmbiguousGroup.Children.Add(RotatedGroupChild);
-        AmbiguousGroupDocument.Nodes.Add(AmbiguousGroup);
+        UMHCompositeAsset* WorldGroupAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
+        WorldGroupAsset->LogicalName = TEXT("world_group_") + Suffix;
+        FMHCompositeDocument WorldGroupDocument;
+        FMHCompositeNode WorldGroup;
+        WorldGroup.Kind = EMHCompositeNodeKind::Group;
+        WorldGroup.Name = TEXT("translated_group");
+        WorldGroup.Transform.TranslationCm = FVector(100.0, 0.0, 0.0);
+        FMHCompositeNode WorldGroupChild;
+        WorldGroupChild.Kind = EMHCompositeNodeKind::Mesh;
+        WorldGroupChild.Resource = MeshResource;
+        WorldGroupChild.Name = TEXT("world_child");
+        WorldGroupChild.Transform.TranslationCm = FVector(125.0, 0.0, 0.0);
+        WorldGroup.Children.Add(WorldGroupChild);
+        WorldGroupDocument.Nodes.Add(WorldGroup);
         Error.Reset();
         bPassed &= TestTrue(
-            TEXT("transform-bearing group fixture applies"),
-            MHApplyCompositeV4(*AmbiguousGroupAsset, AmbiguousGroupDocument, Error));
-        AMHCompositeActor* AmbiguousGroupActor = World->SpawnActor<AMHCompositeActor>(
+            TEXT("document-world group fixture applies"),
+            MHApplyCompositeV4(*WorldGroupAsset, WorldGroupDocument, Error));
+        AMHCompositeActor* WorldGroupActor = World->SpawnActor<AMHCompositeActor>(
             AMHCompositeActor::StaticClass(),
             FTransform::Identity,
             SpawnParameters);
-        AmbiguousGroupActor->SetCompositeAsset(AmbiguousGroupAsset);
-        TArray<AActor*> RejectedGroupBreakActors;
+        WorldGroupActor->SetCompositeAsset(WorldGroupAsset);
+        TArray<AActor*> WorldGroupBreakActors;
         Error.Reset();
-        bPassed &= TestFalse(
-            TEXT("Break fails closed while group transform domain is unresolved"),
+        bPassed &= TestTrue(
+            TEXT("Break discards the group pivot and succeeds"),
             Subsystem->BreakComposites(
-                {AmbiguousGroupActor},
-                RejectedGroupBreakActors,
+                {WorldGroupActor},
+                WorldGroupBreakActors,
                 Warnings,
                 Error));
-        bPassed &= TestTrue(
-            TEXT("blocked group Break is machine-readable and names the JSON path"),
-            Error.StartsWith(TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT:")) &&
-                Error.Contains(TEXT("nodes[0]")) &&
-                Error.Contains(TEXT("scaled_group")));
-        bPassed &= TestTrue(
-            TEXT("blocked group Break leaves the source actor intact"),
-            IsValid(AmbiguousGroupActor) && !AmbiguousGroupActor->IsActorBeingDestroyed());
-        bPassed &= TestTrue(
-            TEXT("blocked group Break leaves no spawned actor delta"),
-            RejectedGroupBreakActors.IsEmpty());
-        AmbiguousGroupActor->Destroy();
+        bPassed &= TestEqual(
+            TEXT("Break emits only the world-space child"),
+            WorldGroupBreakActors.Num(),
+            1);
+        if (WorldGroupBreakActors.Num() == 1)
+        {
+            bPassed &= TestTrue(
+                TEXT("group translation 100 does not double-apply to child world 125"),
+                WorldGroupBreakActors[0]->GetActorLocation().Equals(
+                    FVector(125.0, 0.0, 0.0),
+                    KINDA_SMALL_NUMBER));
+            WorldGroupBreakActors[0]->Destroy();
+        }
 
         TArray<AActor*> BrokenActors;
         TArray<TWeakObjectPtr<UActorComponent>> DestroyedPlacementComponents;
