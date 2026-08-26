@@ -1,5 +1,80 @@
 # MH_blender_bridge
 
+> **ACTIVE FREEZE TARGET: MH SOURCE PROTOCOL V5.** Freeze candidate —
+> [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
+> порядок срезов — [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md).
+> До owner merge V5-S0 production-код не меняется; текущая реализация остаётся
+> полностью принятой v4.
+
+## Source Protocol v5 в одном экране
+
+```text
+Имя файла определяет identity; UUID нет.
+v5 меняет только .composite и добавляет .placement.
+.composite начинается с "v": 5; migration/dual-read нет.
+World(node) = World(parent) × Local(node); group — настоящий transform.
+random хранит ordered weighted options; source closure обходит все options.
+Seed int32 живёт только на AMHCompositeActor; в Blender seed отсутствует.
+Один mh.random_stream:1 строит один FMHResolvedCompositePlan.
+Editor preview = Break = runtime = PIE = packaged = cook по одному plan.
+Shear блокируется на Dagor import, Blender export и UE compile.
+```
+
+Payload'ы `.material`, `.mesh.fbx`, textures, name-keyed identity, Project
+Resource Index и applied state сохраняют v4-контракты без version fields.
+Новый `<name>.placement` имеет kind `placement_profile` и `"v": 1`.
+
+## Активные документы и gate
+
+- [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md) —
+  полный freeze candidate; owner merge V5-S0 делает его authority;
+- [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md) — инварианты,
+  последовательные V5-S0…S7 и parked S8;
+- [`docs/QUESTIONS.md`](docs/QUESTIONS.md) — активные `OPEN-V5-*` с
+  временными fail-closed STOP;
+- `docs/receipts/` — квитанции срезов; automated checks не равны owner
+  acceptance.
+
+08/09 получают v5 supersede/fate banners и после ratification остаются
+историей v4. Следующий срез не начинается до owner merge предыдущего. PR мержит
+только owner; Engine и `reference/` не изменяются.
+
+## Текущее состояние реализации
+
+На V5-S0 меняются только docs и явно разрешённые GAZ fixtures в `golden/`.
+`addon/mh4blend` и `ue/MimirComposite` всё ещё реализуют Source Protocol v4.
+Это ожидаемо и не разрешает v5 fallback: кодовая замена начинается только V5-S1
+после ratification freeze и соответствующих owner-ответов.
+
+Python regression:
+
+```bash
+python -m pytest tests/ -q
+```
+
+Каждый будущий C++-срез проходит stock UE 5.7.4 guarded build,
+`BuildPlugin -StrictIncludes` без unity/PCH, force-unity без adaptive unity и
+`Automation RunTests Mimir`. Engine не форкается.
+
+## Структура репозитория
+
+```text
+docs/               # v5 freeze/slices/questions/receipts + history
+reference/          # read-only reference material
+tools/              # build and verification tooling
+golden/             # cross-host fixtures and expected reports
+addon/mh4blend/     # Blender Extension
+ue/MimirComposite/  # UE plugin
+```
+
+---
+
+## Архивное README Source Protocol v4
+
+> **SUPERSEDED BY SOURCE PROTOCOL V5 UPON OWNER MERGE OF V5-S0.** Раздел ниже
+> сохраняет прежний top-level README v4. Он описывает текущую production-
+> реализацию на freeze-ветке, но не является v5 normative input.
+
 > **ACTIVE TARGET: MH SOURCE PROTOCOL V4.** Единственный норматив —
 > [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md).
 > Порядок реализации и definition of done —

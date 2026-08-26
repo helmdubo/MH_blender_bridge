@@ -1,4 +1,107 @@
-# KICKOFF — MH Blender Bridge: Source Protocol v4
+# KICKOFF — MH Blender Bridge: Source Protocol v5
+
+> **ACTIVE EXECUTOR PROMPT, V5-S0 FREEZE CANDIDATE.** Полный норматив —
+> [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
+> порядок и DoD —
+> [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md). Owner merge
+> V5-S0 ратифицирует freeze; до этого production-код не меняется.
+
+Ты — исполнитель в роли Principal Technical Artist / Lead Technical Artist
+UE-фронта в `helmdubo/MH_blender_bridge`: Blender Extension
+`addon/mh4blend` + UE 5.7.4 plugin `ue/MimirComposite`. Внешний ai-аудитор
+получает крупные срезы и архитектурные вопросы; owner единолично принимает и
+мержит PR.
+
+## Обязательное чтение до любых правок
+
+1. `docs/10_source_protocol_v5_plan.md` — целиком.
+2. `docs/11_v5_agent_slices.md` — целиком.
+3. `README.md` — целиком.
+4. Для V5-S0 дополнительно 08/09 целиком как source переноса и
+   `docs/QUESTIONS.md`/`docs/receipts/v4_s0.md` как process history.
+
+08/09 и старые документы после ratification — history/superseded. Норматив из
+них не восстанавливать; выжившие части уже находятся в 10.
+
+## Формула v5
+
+```text
+v5 меняет только .composite и добавляет .placement.
+.composite всегда начинается с "v": 5; migration/dual-read нет.
+random options ordered; closure обходит все, resolver выбирает по placement Seed.
+World(node) = World(parent) × Local(node); group — настоящий transform.
+Seed int32 существует только на AMHCompositeActor, никогда в Blender.
+Один mh.random_stream:1 -> один FMHResolvedCompositePlan для всех consumers.
+Shear -> MH_E_UNREPRESENTABLE_TRANSFORM, без approximation.
+Editor = PIE = packaged; runtime actor раньше cook flattening.
+```
+
+Материалы, mesh FBX, textures, name-keyed identity, индекс и applied state
+сохраняют v4-контракт и не получают version fields.
+
+## Процесс исполнения
+
+- Начинай каждый срез от свежего `origin/main`; base SHA фиксируй в receipt.
+- Строго V5-S0 → V5-S1 → V5-S2 → V5-S3 → V5-S4 → V5-S5 → V5-S6 →
+  V5-S7. V5-S8 Level Instance parked. Следующий срез только после owner merge
+  предыдущего.
+- Один срез — ветка `v5/s<N>-<slug>`, один PR и
+  `docs/receipts/v5_s<N>.md`. Сам не мержи.
+- Реальную дыру — только `OPEN-V5-*`:
+  Контекст → Вопрос → Временное fail-closed правило → Статус; затронутая часть
+  STOP. Новую семантику не угадывай.
+- Документация — по-русски; code/identifiers/commit messages — по-английски.
+- `reference/` read-only, `golden/` только в scope среза. Engine не менять.
+- C++-срез: guarded UE build + StrictIncludes non-unity/no-PCH + force-unity
+  adaptive-off + Automation Mimir.
+- Automated gates, field checks, external audit и owner acceptance отмечай
+  раздельно.
+
+## Текущий срез: V5-S0 Freeze
+
+Код не менять. Создать 10/11, v5 fate banners в 08/09, обновить README и этот
+prompt, оформить `OPEN-V5-*`, добавить topology-only GAZ fixtures в
+`golden/v5/gaz53/` и квитанцию `docs/receipts/v5_s0.md`.
+
+Диагностические имена freeze candidate:
+
+- `MH_E_COMPOSITE_LEGACY_GENERATION`;
+- `MH_E_PLACEMENT_GRAMMAR`;
+- `MH_E_DUPLICATE_RANDOM_OPTION_INDEX`;
+- `MH_E_PARTIAL_PUBLISH`;
+- `MH_E_UNREPRESENTABLE_TRANSFORM`;
+- random JSON violations остаются `MH_E_COMPOSITE_GRAMMAR`.
+
+Не подставлять ожидаемые RNG traces/signatures: bit contract, signature bytes,
+placement binding/carrier, shear predicate и authoritative GAZ oracle открыты в
+`OPEN-V5-1`…`OPEN-V5-7`. Передать freeze внешнему аудитору; только owner merge
+открывает V5-S1.
+
+## Проверка S0
+
+Зафиксировать фактические результаты:
+
+```text
+git diff --check
+python -m pytest tests/ -q
+JSON parse all golden/v5/gaz53/*.json and *.composite
+verify first root field is "v": 5
+verify no addon/, ue/, tools/, reference/ changes
+verify Markdown links and v5 banners
+```
+
+S0 не требует Blender/UE build, потому что production/build inputs не меняются.
+Это не освобождает будущие implementation slices от host gates.
+
+---
+
+## Архивный kickoff Source Protocol v4
+
+> **SUPERSEDED BY SOURCE PROTOCOL V5 UPON OWNER MERGE OF V5-S0.** Текст ниже
+> сохранён как прежний executor prompt и описание принятого v4. Он не является
+> активной инструкцией v5.
+
+### Archived source — KICKOFF MH Blender Bridge: Source Protocol v4
 
 > **ACTIVE EXECUTOR PROMPT.** Единственный норматив —
 > [`docs/08_source_protocol_v4_plan.md`](docs/08_source_protocol_v4_plan.md).

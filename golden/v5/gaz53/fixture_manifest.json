@@ -1,0 +1,42 @@
+{
+  "schema": "mh.v5_gaz53_freeze_fixture",
+  "status": "topology_only_open_v5_6",
+  "root": "gaz53_b_random_cmp",
+  "composite_files": [
+    "gaz53_b_random_cmp.composite",
+    "gaz53_b_body_cmp.composite",
+    "gaz53_body_bc_random_cmp.composite"
+  ],
+  "synthetic_option_resources": [
+    "gaz53_body_bc_option_0",
+    "gaz53_body_bc_option_1",
+    "gaz53_body_bc_option_2"
+  ],
+  "expected_source_closure": {
+    "composite": [
+      "gaz53_b_body_cmp",
+      "gaz53_b_random_cmp",
+      "gaz53_body_bc_random_cmp"
+    ],
+    "static_mesh": [
+      "gaz53_b_body",
+      "gaz53_body_bc_option_0",
+      "gaz53_body_bc_option_1",
+      "gaz53_body_bc_option_2"
+    ]
+  },
+  "parent_local_probe": {
+    "parent_translation_cm_x": 100,
+    "child_local_translation_cm_x": 25,
+    "expected_child_world_translation_cm_x": 125
+  },
+  "seed_set_pending_open_v5_1_and_open_v5_3": [
+    0,
+    1,
+    2,
+    42,
+    123,
+    1024,
+    2147483647
+  ]
+}
