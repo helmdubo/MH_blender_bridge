@@ -56,6 +56,10 @@ MIMIRCOMPOSITEEDITOR_API bool MHShouldPresentWatcherAnalysis(
 /** Observes the coordinator's fixed texture -> material -> mesh -> composite stages. */
 MIMIRCOMPOSITEEDITOR_API void MHSetImportStageObserverForTests(
     TFunction<void(EMHResourceKind)> Observer);
+
+/** Observes the exact composite keys whose inline profile receipts require UObject loading. */
+MIMIRCOMPOSITEEDITOR_API void MHSetProfileFreshnessAssetLoadObserverForTests(
+    TFunction<void(const FMHResourceKey&)> Observer);
 #endif
 
 } // namespace UE::MimirComposite

@@ -459,6 +459,13 @@ bool FMHProjectIndexPlacementProfileDependencyTest::RunTest(const FString& Param
     bPassed &= TestTrue(
         TEXT("index stores exact composite to placement_profile profile edge"),
         Dump.Contains(TEXT("Dependencies\tcomposite\troot\tplacement_profile\tscatter\tprofile\tcomposites/root.composite\n")));
+    TArray<FMHResourceKey> ProfileDependencies;
+    bPassed &= TestTrue(
+        TEXT("profile dependency reader succeeds"),
+        Index.GetPlacementProfileDependencies(CompositeKey, ProfileDependencies, Error));
+    bPassed &= TestTrue(
+        TEXT("profile dependency reader returns the exact indexed edge"),
+        ProfileDependencies.Num() == 1 && ProfileDependencies[0] == ProfileKey);
     bPassed &= TestFalse(
         TEXT("placement profile has no generated asset path"),
         Dump.Contains(TEXT("GeneratedAssets\tplacement_profile")));
@@ -477,9 +484,9 @@ bool FMHProjectIndexPlacementProfileDependencyTest::RunTest(const FString& Param
     if (CompositeAssets.Num() == 1)
     {
         bPassed &= TestEqual(
-            TEXT("profile raw hash change makes applied carrier stale"),
+            TEXT("profile freshness stays outside the pure index projection"),
             CompositeAssets[0].Status,
-            EMHGeneratedAssetStatus::Stale);
+            EMHGeneratedAssetStatus::Applied);
     }
     bPassed &= TestTrue(
         TEXT("refresh carrier receipt before profile ambiguity probe"),
@@ -503,9 +510,9 @@ bool FMHProjectIndexPlacementProfileDependencyTest::RunTest(const FString& Param
     if (CompositeAssets.Num() == 1)
     {
         bPassed &= TestEqual(
-            TEXT("loss of unique-valid profile makes carrier stale"),
+            TEXT("profile ambiguity does not synthesize composite receipt staleness"),
             CompositeAssets[0].Status,
-            EMHGeneratedAssetStatus::Stale);
+            EMHGeneratedAssetStatus::Applied);
     }
     bPassed &= TestTrue(
         TEXT("refresh carrier receipt before profile recovery probe"),
@@ -528,9 +535,9 @@ bool FMHProjectIndexPlacementProfileDependencyTest::RunTest(const FString& Param
     if (CompositeAssets.Num() == 1)
     {
         bPassed &= TestEqual(
-            TEXT("recovery to unique-valid profile makes carrier stale"),
+            TEXT("profile recovery leaves the pure composite projection applied"),
             CompositeAssets[0].Status,
-            EMHGeneratedAssetStatus::Stale);
+            EMHGeneratedAssetStatus::Applied);
     }
     Index.Close();
     bool bRecreated = false;

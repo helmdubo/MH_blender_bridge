@@ -29,6 +29,7 @@ struct FInlinedProfileSourceSnapshot
 {
     FString LogicalName;
     FString PayloadPath;
+    FString RawHash;
     TArray<uint8> Bytes;
 };
 
@@ -84,7 +85,8 @@ bool LoadInlinedProfiles(
                 TEXT("MH_E_PLACEMENT_PROFILE_GRAMMAR: cannot read placement_profile:%s"), *Name);
             return false;
         }
-        if (!Outcome.RawHash.IsEmpty() && MHRawPayloadHash(Bytes) != Outcome.RawHash)
+        const FString RawHash = MHRawPayloadHash(Bytes);
+        if (!Outcome.RawHash.IsEmpty() && RawHash != Outcome.RawHash)
         {
             OutError = FString::Printf(
                 TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: placement_profile:%s changed after source resolution"),
@@ -97,6 +99,7 @@ bool LoadInlinedProfiles(
         FInlinedProfileSourceSnapshot& Snapshot = OutSnapshots.AddDefaulted_GetRef();
         Snapshot.LogicalName = Name;
         Snapshot.PayloadPath = Outcome.PayloadPath;
+        Snapshot.RawHash = RawHash;
         Snapshot.Bytes = MoveTemp(Bytes);
     }
     return true;
@@ -117,6 +120,29 @@ bool RevalidateInlinedProfileSources(
                 *Snapshot.LogicalName);
             return false;
         }
+    }
+    return true;
+}
+
+bool ApplyInlinedProfileSourceHashes(
+    TArray<FMHPlacementProfile>& Profiles,
+    const TArray<FInlinedProfileSourceSnapshot>& Snapshots,
+    FString& OutError)
+{
+    if (Profiles.Num() != Snapshots.Num())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: inlined placement profile receipt count changed during import");
+        return false;
+    }
+    for (int32 Index = 0; Index < Profiles.Num(); ++Index)
+    {
+        if (Profiles[Index].LogicalName != Snapshots[Index].LogicalName ||
+            !MHIsCanonicalRawPayloadHash(Snapshots[Index].RawHash))
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: inlined placement profile receipt identity changed during import");
+            return false;
+        }
+        Profiles[Index].SetAppliedSourceHash(Snapshots[Index].RawHash);
     }
     return true;
 }
@@ -382,6 +408,19 @@ FMHCompositeOperationResult MHImportCompositeV5(
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
         return Result;
     }
+    // The first save deliberately persisted empty profile receipt markers.
+    // Advance them only in the same final save as the composite receipt.
+    if (!ApplyInlinedProfileSourceHashes(
+            Asset->InlinedPlacementProfiles,
+            InlinedProfileSnapshots,
+            Result.Error))
+    {
+        Asset->Nodes = PreviousNodes;
+        Asset->InlinedPlacementProfiles = PreviousProfiles;
+        Asset->PostEditChange();
+        if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
+        return Result;
+    }
     Asset->LogicalName = Entry.Key.LogicalName;
     Asset->SourceRelativePath = Entry.SourcePath;
     Asset->SourceHash = InitialHash;
@@ -389,6 +428,8 @@ FMHCompositeOperationResult MHImportCompositeV5(
     Asset->PostEditChange();
     if (!SaveAssetPackage(*Asset, Result.Error))
     {
+        Asset->Nodes = PreviousNodes;
+        Asset->InlinedPlacementProfiles = PreviousProfiles;
         Asset->LogicalName = PreviousLogicalName;
         Asset->SourceRelativePath = PreviousSourcePath;
         Asset->SourceHash = PreviousSourceHash;

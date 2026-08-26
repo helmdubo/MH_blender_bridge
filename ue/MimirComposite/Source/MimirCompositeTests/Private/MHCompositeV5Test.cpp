@@ -20,6 +20,8 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/MemoryWriter.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
@@ -480,6 +482,128 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
     if (!Adopted.Succeeded()) AddError(Adopted.Error);
     bPassed &= TestTrue(TEXT("Adopt writes exact target"),
         FPaths::FileExists(FPaths::Combine(AdoptFolder, TEXT("ue_s3_adopted.composite"))));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHCompositePlacementProfileReceiptTest,
+    "Mimir.V5.Composite.PlacementProfileAppliedSourceHash",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositePlacementProfileReceiptTest::RunTest(const FString& Parameters)
+{
+    const FString Token = FString::Printf(TEXT("profile_receipt_%08x"), FPlatformTime::Cycles());
+    const FString SourceRoot = FPaths::Combine(
+        FPaths::ProjectSavedDir(), TEXT("MimirCompositeTests"), Token);
+    IFileManager::Get().MakeDirectory(*SourceRoot, true);
+    const FString CompositePath = FPaths::Combine(SourceRoot, Token + TEXT(".composite"));
+    const FString PlacementPath = FPaths::Combine(SourceRoot, TEXT("receipt_profile.placement"));
+    const TArray<uint8> CompositeBytes = Utf8Composite(
+        TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"group\",\"profile\":\"receipt_profile\"}]}"));
+    const TArray<uint8> PlacementBytes = Utf8Composite(
+        TEXT("{ \"v\" : 1, \"kind\" : \"placement_profile\", \"uniform_scale\" : [ 1, 0.25 ] }\r\n"));
+    FFileHelper::SaveArrayToFile(CompositeBytes, *CompositePath);
+    FFileHelper::SaveArrayToFile(PlacementBytes, *PlacementPath);
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key = CompositeTestKey(EMHResourceKind::Composite, Token);
+    Entry.PayloadPath = CompositePath;
+    Entry.SourcePath = Token + TEXT(".composite");
+    Entry.RawHash = MHRawPayloadHash(CompositeBytes);
+    Entry.Change = EMHSourceChange::Create;
+    FCompositeTestResolver Resolver;
+    Resolver.AddResolved(
+        CompositeTestKey(EMHResourceKind::PlacementProfile, TEXT("receipt_profile")),
+        PlacementPath,
+        MHRawPayloadHash(PlacementBytes));
+    UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
+    const FMHCompositeOperationResult Imported = MHImportCompositeV5(
+        Entry, Resolver, SourceRoot, *Settings);
+    bool bPassed = TestTrue(TEXT("profiled composite imports"), Imported.Succeeded());
+    if (!Imported.Succeeded())
+    {
+        AddError(Imported.Error);
+        return false;
+    }
+    bPassed &= TestEqual(
+        TEXT("one placement profile is inlined"),
+        Imported.Asset->InlinedPlacementProfiles.Num(),
+        1);
+    if (Imported.Asset->InlinedPlacementProfiles.Num() != 1)
+    {
+        return false;
+    }
+    FMHPlacementProfile& Profile = Imported.Asset->InlinedPlacementProfiles[0];
+    const FString ExactProfileHash = MHRawPayloadHash(PlacementBytes);
+    bPassed &= TestEqual(
+        TEXT("private receipt stores exact raw placement bytes hash"),
+        Profile.GetAppliedSourceHash(),
+        ExactProfileHash);
+    TArray<uint8> SerializedProfile;
+    FMemoryWriter ProfileWriter(SerializedProfile);
+    FMHPlacementProfile::StaticStruct()->SerializeItem(
+        ProfileWriter,
+        &Profile,
+        nullptr);
+    ProfileWriter.Close();
+    FMHPlacementProfile ReloadedProfile;
+    FMemoryReader ProfileReader(SerializedProfile);
+    FMHPlacementProfile::StaticStruct()->SerializeItem(
+        ProfileReader,
+        &ReloadedProfile,
+        nullptr);
+    ProfileReader.Close();
+    bPassed &= TestEqual(
+        TEXT("private profile receipt survives reflected serialization"),
+        ReloadedProfile.GetAppliedSourceHash(),
+        ExactProfileHash);
+    TArray<uint8> CanonicalPlacement;
+    FString Error;
+    bPassed &= TestTrue(
+        TEXT("receipt-bearing profile still writes canonical placement wire bytes"),
+        MHWriteCanonicalPlacementProfileV1(Profile, CanonicalPlacement, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestNotEqual(
+        TEXT("receipt hash remains raw rather than canonicalized"),
+        Profile.GetAppliedSourceHash(),
+        MHRawPayloadHash(CanonicalPlacement));
+    FMHCompositeDocument ExtractedBefore;
+    TArray<uint8> CompositeBefore;
+    bPassed &= TestTrue(
+        TEXT("extract receipt-bearing composite"),
+        MHExtractCompositeV5(*Imported.Asset, ExtractedBefore, Error) &&
+        MHWriteCanonicalCompositeV5(ExtractedBefore, CompositeBefore, Error));
+    const FString AppliedHashBefore = Imported.Asset->AppliedHash;
+    Profile.SetAppliedSourceHash(MHRawPayloadHash(Utf8Composite(TEXT("different receipt bytes"))));
+    FMHCompositeDocument ExtractedAfter;
+    TArray<uint8> CompositeAfter;
+    bPassed &= TestTrue(
+        TEXT("extract composite after private receipt-only edit"),
+        MHExtractCompositeV5(*Imported.Asset, ExtractedAfter, Error) &&
+        MHWriteCanonicalCompositeV5(ExtractedAfter, CompositeAfter, Error));
+    bPassed &= TestTrue(
+        TEXT("private profile receipt is excluded from canonical composite extract"),
+        CompositeAfter == CompositeBefore);
+    bPassed &= TestEqual(
+        TEXT("private profile receipt does not change composite AppliedHash"),
+        Imported.Asset->AppliedHash,
+        AppliedHashBefore);
+    Profile.SetAppliedSourceHash(ExactProfileHash);
+
+    const FAssetData AssetData = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
+        .Get().GetAssetByObjectPath(FSoftObjectPath::ConstructFromObject(Imported.Asset));
+    TSet<FName> MHTags;
+    AssetData.TagsAndValues.ForEach([&MHTags](const TPair<FName, FAssetTagValueRef>& Pair)
+    {
+        if (Pair.Key.ToString().StartsWith(TEXT("MH."), ESearchCase::CaseSensitive))
+        {
+            MHTags.Add(Pair.Key);
+        }
+    });
+    bPassed &= TestEqual(
+        TEXT("profile receipt adds no seventh Asset Registry tag"),
+        MHTags.Num(),
+        6);
     return bPassed;
 }
 

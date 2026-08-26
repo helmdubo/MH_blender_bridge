@@ -56,6 +56,11 @@ struct MIMIRCOMPOSITEEDITOR_API FMHPlacementProfile
 {
     GENERATED_BODY()
 
+public:
+    /** Import-only receipt; deliberately excluded from source JSON and Asset Registry tags. */
+    const FString& GetAppliedSourceHash() const { return AppliedSourceHash; }
+    void SetAppliedSourceHash(FString InHash) { AppliedSourceHash = MoveTemp(InHash); }
+
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FString LogicalName;
 
@@ -82,6 +87,11 @@ struct MIMIRCOMPOSITEEDITOR_API FMHPlacementProfile
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FMHPlacementRange VerticalScale;
+
+private:
+    /** Raw hash of the exact .placement bytes applied by the last successful import. */
+    UPROPERTY(meta = (AllowPrivateAccess = "true"))
+    FString AppliedSourceHash;
 };
 
 /** Persisted source-shaped node. ParentIndex preserves authored pre-order. */

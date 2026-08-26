@@ -3,6 +3,7 @@
 #include "Async/Async.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -24,6 +25,7 @@
 #include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "StaticMesh/MHStaticMeshImporter.h"
 #include "Texture/MHTextureImporter.h"
@@ -40,6 +42,7 @@ constexpr double StartupImportDelaySeconds = 1.0;
 
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void(EMHResourceKind)> GImportStageObserverForTests;
+TFunction<void(const FMHResourceKey&)> GProfileFreshnessAssetLoadObserverForTests;
 #endif
 
 void ObserveImportStage(const EMHResourceKind Kind)
@@ -91,6 +94,113 @@ bool MaterialReferencesFailedTexture(
     return false;
 }
 
+void BlockProfileFreshnessCheck(
+    FMHSourceAnalysisEntry& Entry,
+    FString Error)
+{
+    Entry.Change = EMHSourceChange::Blocked;
+    Entry.Errors.Add(Error.IsEmpty()
+        ? TEXT("MH_E_SOURCE_INDEX_INVALID: inline profile freshness check failed")
+        : MoveTemp(Error));
+}
+
+void PromoteStaleInlinedProfileReceipts(
+    FMHSourceAnalysisServices& Services,
+    FMHSourceAnalysis& Analysis)
+{
+    check(Services.Index.IsValid());
+    check(Services.Resolver.IsValid());
+    for (FMHSourceAnalysisEntry& Entry : Analysis.Entries)
+    {
+        if (Entry.Key.Kind != EMHResourceKind::Composite ||
+            Entry.Change != EMHSourceChange::NoChange ||
+            !Entry.Errors.IsEmpty())
+        {
+            continue;
+        }
+
+        TArray<FMHResourceKey> ProfileKeys;
+        FString Error;
+        if (!Services.Index->GetPlacementProfileDependencies(Entry.Key, ProfileKeys, Error))
+        {
+            BlockProfileFreshnessCheck(Entry, MoveTemp(Error));
+            continue;
+        }
+        if (ProfileKeys.IsEmpty())
+        {
+            continue;
+        }
+
+        TArray<FMHProjectIndexGeneratedAssetState> Assets;
+        if (!Services.Index->GetGeneratedAssets(Entry.Key, Assets, Error) ||
+            Assets.Num() != 1 || Assets[0].UEObjectPath.IsEmpty())
+        {
+            if (Error.IsEmpty())
+            {
+                Error = TEXT("MH_E_SOURCE_INDEX_INVALID: NO_CHANGE profiled composite has no unique generated asset");
+            }
+            BlockProfileFreshnessCheck(Entry, MoveTemp(Error));
+            continue;
+        }
+
+#if WITH_DEV_AUTOMATION_TESTS
+        if (GProfileFreshnessAssetLoadObserverForTests)
+        {
+            GProfileFreshnessAssetLoadObserverForTests(Entry.Key);
+        }
+#endif
+        const UMHCompositeAsset* Asset = LoadObject<UMHCompositeAsset>(
+            nullptr, *Assets[0].UEObjectPath);
+        if (Asset == nullptr)
+        {
+            BlockProfileFreshnessCheck(
+                Entry,
+                FString::Printf(
+                    TEXT("MH_E_SOURCE_INDEX_INVALID: cannot load inline profile carrier %s"),
+                    *Assets[0].UEObjectPath));
+            continue;
+        }
+
+        bool bRequiresReimport =
+            Asset->InlinedPlacementProfiles.Num() != ProfileKeys.Num();
+        TMap<FString, FString> AppliedHashes;
+        for (const FMHPlacementProfile& Profile : Asset->InlinedPlacementProfiles)
+        {
+            if (!MHIsCanonicalCompositeToken(Profile.LogicalName) ||
+                AppliedHashes.Contains(Profile.LogicalName) ||
+                !MHIsCanonicalRawPayloadHash(Profile.GetAppliedSourceHash()))
+            {
+                bRequiresReimport = true;
+                continue;
+            }
+            AppliedHashes.Add(Profile.LogicalName, Profile.GetAppliedSourceHash());
+        }
+        for (const FMHResourceKey& ProfileKey : ProfileKeys)
+        {
+            const FMHResolveOutcome Outcome = Services.Resolver->Resolve(ProfileKey);
+            if (Outcome.Status != EMHResolveStatus::Resolved ||
+                !MHIsCanonicalRawPayloadHash(Outcome.RawHash))
+            {
+                BlockProfileFreshnessCheck(
+                    Entry,
+                    Outcome.Diagnostic.IsEmpty()
+                        ? FString::Printf(
+                            TEXT("MH_E_SOURCE_INDEX_INVALID: cannot resolve inline profile receipt for %s"),
+                            *ProfileKey.ToString())
+                        : Outcome.Diagnostic);
+                bRequiresReimport = false;
+                break;
+            }
+            const FString* AppliedHash = AppliedHashes.Find(ProfileKey.LogicalName);
+            bRequiresReimport |= AppliedHash == nullptr || *AppliedHash != Outcome.RawHash;
+        }
+        if (Entry.Change != EMHSourceChange::Blocked && bRequiresReimport)
+        {
+            Entry.Change = EMHSourceChange::Reimport;
+        }
+    }
+}
+
 bool ExecutePreparedSourceImports(
     const FString& SourceRoot,
     const FMHImportSourcesScope& Scope,
@@ -106,6 +216,11 @@ bool ExecutePreparedSourceImports(
         Scope,
         OutAnalysis,
         bOutExecuted);
+
+    // §13.4.1: index status remains a pure six-tag projection. Only otherwise
+    // NO_CHANGE composites with an indexed profile edge pay the UObject load
+    // needed to compare durable inlined-profile receipts.
+    PromoteStaleInlinedProfileReceipts(Services, OutAnalysis);
 
     // placement_profile is a source-only leaf. It has no generated path or
     // UObject; the dependent composite importer parses and inlines its typed
@@ -410,6 +525,12 @@ bool MHShouldPresentWatcherAnalysis(
 void MHSetImportStageObserverForTests(TFunction<void(EMHResourceKind)> Observer)
 {
     GImportStageObserverForTests = MoveTemp(Observer);
+}
+
+void MHSetProfileFreshnessAssetLoadObserverForTests(
+    TFunction<void(const FMHResourceKey&)> Observer)
+{
+    GProfileFreshnessAssetLoadObserverForTests = MoveTemp(Observer);
 }
 #endif
 
