@@ -45,14 +45,6 @@ TArray<uint8> Utf8Composite(const FString& Value)
     return Bytes;
 }
 
-TArray<uint8> CompositeJsonObjectBytes(const TSharedRef<FJsonObject>& Object)
-{
-    FString Json;
-    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
-    FJsonSerializer::Serialize(Object, Writer);
-    return Utf8Composite(Json);
-}
-
 bool StartsWithCode(const FString& Error, const FString& Code)
 {
     return Error.StartsWith(Code + TEXT(":"), ESearchCase::CaseSensitive);
@@ -123,7 +115,7 @@ FMHResourceKey CompositeTestKey(const EMHResourceKind Kind, const FString& Name)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeGoldenVectorsTest,
-    "Mimir.V4.Composite.CanonicalGoldenVectors",
+    "Mimir.V5.Composite.CanonicalGoldenVectors",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeGoldenVectorsTest::RunTest(const FString& Parameters)
@@ -131,7 +123,7 @@ bool FMHCompositeGoldenVectorsTest::RunTest(const FString& Parameters)
     FString GoldenRoot;
     if (!ResolveGoldenRoot(*this, GoldenRoot)) return false;
     FString FixtureText;
-    const FString FixturePath = FPaths::Combine(GoldenRoot, TEXT("composite_v4_vectors.json"));
+    const FString FixturePath = FPaths::Combine(GoldenRoot, TEXT("v5/source_protocol_v5_codec_vectors.json"));
     if (!FFileHelper::LoadFileToString(FixtureText, *FixturePath))
     {
         AddError(FString::Printf(TEXT("cannot read %s"), *FixturePath));
@@ -140,23 +132,21 @@ bool FMHCompositeGoldenVectorsTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Fixture;
     if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(FixtureText), Fixture) || !Fixture.IsValid())
     {
-        AddError(TEXT("composite_v4_vectors.json is not valid JSON"));
+        AddError(TEXT("source_protocol_v5_codec_vectors.json is not valid JSON"));
         return false;
     }
     FString Schema;
     bool bPassed = TestTrue(TEXT("fixture schema"),
-        Fixture->TryGetStringField(TEXT("schema"), Schema) && Schema == TEXT("mh.composite_v4_vectors"));
+        Fixture->TryGetStringField(TEXT("schema"), Schema) && Schema == TEXT("mh.source_protocol_v5_codec_vectors:1"));
     const TArray<TSharedPtr<FJsonValue>>* Vectors = nullptr;
-    if (!Fixture->TryGetArrayField(TEXT("vectors"), Vectors) || Vectors == nullptr) return false;
+    if (!Fixture->TryGetArrayField(TEXT("composite_vectors"), Vectors) || Vectors == nullptr) return false;
     for (const TSharedPtr<FJsonValue>& Value : *Vectors)
     {
         const TSharedPtr<FJsonObject> Vector = Value->AsObject();
         FString Name;
         FString Expected;
-        const TSharedPtr<FJsonObject>* Document = nullptr;
         if (!Vector.IsValid() || !Vector->TryGetStringField(TEXT("name"), Name) ||
-            !Vector->TryGetStringField(TEXT("canonical_utf8"), Expected) ||
-            !Vector->TryGetObjectField(TEXT("value"), Document) || Document == nullptr)
+            !Vector->TryGetStringField(TEXT("canonical_utf8"), Expected))
         {
             AddError(TEXT("malformed composite golden vector"));
             return false;
@@ -165,14 +155,14 @@ bool FMHCompositeGoldenVectorsTest::RunTest(const FString& Parameters)
         TArray<uint8> Actual;
         FString Error;
         bPassed &= TestTrue(*FString::Printf(TEXT("%s parses"), *Name),
-            MHParseCompositeV4(CompositeJsonObjectBytes((*Document).ToSharedRef()), Parsed, Error));
+            MHParseCompositeV5(Utf8Composite(Expected), Parsed, Error));
         bPassed &= TestTrue(*FString::Printf(TEXT("%s writes"), *Name),
-            MHWriteCanonicalCompositeV4(Parsed, Actual, Error));
+            MHWriteCanonicalCompositeV5(Parsed, Actual, Error));
         bPassed &= TestTrue(*FString::Printf(TEXT("%s exact bytes"), *Name), Actual == Utf8Composite(Expected));
     }
 
     const TArray<TSharedPtr<FJsonValue>>* Negative = nullptr;
-    if (!Fixture->TryGetArrayField(TEXT("negative_vectors"), Negative) || Negative == nullptr) return false;
+    if (!Fixture->TryGetArrayField(TEXT("composite_negative_vectors"), Negative) || Negative == nullptr) return false;
     for (const TSharedPtr<FJsonValue>& Value : *Negative)
     {
         const TSharedPtr<FJsonObject> Vector = Value->AsObject();
@@ -188,44 +178,146 @@ bool FMHCompositeGoldenVectorsTest::RunTest(const FString& Parameters)
         FMHCompositeDocument Parsed;
         FString Error;
         bPassed &= TestFalse(*FString::Printf(TEXT("%s rejected"), *Name),
-            MHParseCompositeV4(Utf8Composite(Json), Parsed, Error));
+            MHParseCompositeV5(Utf8Composite(Json), Parsed, Error));
         bPassed &= TestTrue(*FString::Printf(TEXT("%s error code"), *Name), StartsWithCode(Error, Code));
+        FString RequiredMessage;
+        if (Vector->TryGetStringField(TEXT("message_contains"), RequiredMessage))
+        {
+            bPassed &= TestTrue(*FString::Printf(TEXT("%s mandatory message"), *Name), Error.Contains(RequiredMessage));
+        }
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* PlacementVectors = nullptr;
+    if (!Fixture->TryGetArrayField(TEXT("placement_vectors"), PlacementVectors) || PlacementVectors == nullptr) return false;
+    for (const TSharedPtr<FJsonValue>& Value : *PlacementVectors)
+    {
+        const TSharedPtr<FJsonObject> Vector = Value->AsObject();
+        FString Name;
+        FString Expected;
+        if (!Vector.IsValid() || !Vector->TryGetStringField(TEXT("name"), Name) ||
+            !Vector->TryGetStringField(TEXT("canonical_utf8"), Expected)) return false;
+        FMHPlacementProfile Parsed;
+        Parsed.LogicalName = TEXT("golden_profile");
+        TArray<uint8> Actual;
+        FString Error;
+        bPassed &= TestTrue(*FString::Printf(TEXT("placement %s parses"), *Name),
+            MHParsePlacementProfileV1(Utf8Composite(Expected), Parsed, Error));
+        bPassed &= TestTrue(*FString::Printf(TEXT("placement %s writes"), *Name),
+            MHWriteCanonicalPlacementProfileV1(Parsed, Actual, Error));
+        bPassed &= TestTrue(*FString::Printf(TEXT("placement %s exact bytes"), *Name), Actual == Utf8Composite(Expected));
+    }
+    const TArray<TSharedPtr<FJsonValue>>* PlacementNegative = nullptr;
+    if (!Fixture->TryGetArrayField(TEXT("placement_negative_vectors"), PlacementNegative) || PlacementNegative == nullptr) return false;
+    for (const TSharedPtr<FJsonValue>& Value : *PlacementNegative)
+    {
+        const TSharedPtr<FJsonObject> Vector = Value->AsObject();
+        FString Name;
+        FString Json;
+        FString Code;
+        if (!Vector.IsValid() || !Vector->TryGetStringField(TEXT("name"), Name) ||
+            !Vector->TryGetStringField(TEXT("json"), Json) || !Vector->TryGetStringField(TEXT("error"), Code)) return false;
+        FMHPlacementProfile Parsed;
+        Parsed.LogicalName = TEXT("golden_profile");
+        FString Error;
+        bPassed &= TestFalse(*FString::Printf(TEXT("placement %s rejected"), *Name),
+            MHParsePlacementProfileV1(Utf8Composite(Json), Parsed, Error));
+        bPassed &= TestTrue(*FString::Printf(TEXT("placement %s error code"), *Name), StartsWithCode(Error, Code));
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* MatrixVectors = nullptr;
+    if (!Fixture->TryGetArrayField(TEXT("transform_representability_vectors"), MatrixVectors) || MatrixVectors == nullptr) return false;
+    for (const TSharedPtr<FJsonValue>& Value : *MatrixVectors)
+    {
+        const TSharedPtr<FJsonObject> Vector = Value->AsObject();
+        FString Name;
+        bool bExpected = false;
+        const TArray<TSharedPtr<FJsonValue>>* SourceRows = nullptr;
+        const TArray<TSharedPtr<FJsonValue>>* RestoredRows = nullptr;
+        if (!Vector.IsValid() || !Vector->TryGetStringField(TEXT("name"), Name) ||
+            !Vector->TryGetBoolField(TEXT("representable"), bExpected) ||
+            !Vector->TryGetArrayField(TEXT("matrix"), SourceRows) || SourceRows == nullptr ||
+            !Vector->TryGetArrayField(TEXT("reconstructed"), RestoredRows) || RestoredRows == nullptr ||
+            SourceRows->Num() != 4 || RestoredRows->Num() != 4) return false;
+        FMatrix Source = FMatrix::Identity;
+        FMatrix Restored = FMatrix::Identity;
+        for (int32 Row = 0; Row < 4; ++Row)
+        {
+            if ((*SourceRows)[Row]->AsArray().Num() != 4 || (*RestoredRows)[Row]->AsArray().Num() != 4) return false;
+            for (int32 Column = 0; Column < 4; ++Column)
+            {
+                Source.M[Row][Column] = (*SourceRows)[Row]->AsArray()[Column]->AsNumber();
+                Restored.M[Row][Column] = (*RestoredRows)[Row]->AsArray()[Column]->AsNumber();
+            }
+        }
+        bPassed &= TestEqual(
+            *FString::Printf(TEXT("%s 8-ULP predicate"), *Name),
+            MHMatrixElementsWithinTrsTolerance(Source, Restored),
+            bExpected);
     }
     return bPassed;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeApplyExtractTest,
-    "Mimir.V4.Composite.ApplyExtractAndLocalEdit",
+    "Mimir.V5.Composite.ApplyExtractAndLocalEdit",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeApplyExtractTest::RunTest(const FString& Parameters)
 {
     const TArray<uint8> Source = Utf8Composite(
-        TEXT("{\"nodes\":[{\"kind\":\"group\",\"name\":\"root\",")
+        TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"group\",\"name\":\"root\",")
         TEXT("\"transform\":{\"translation_cm\":[100,20,3]},\"children\":[")
-        TEXT("{\"kind\":\"actor\",\"resource\":\"light\",\"transform\":{\"translation_cm\":[125,20,3]}}]}]}"));
+        TEXT("{\"kind\":\"actor\",\"resource\":\"light\",\"transform\":{\"translation_cm\":[25,0,0]}}]}]}"));
     FMHCompositeDocument Parsed;
     FString Error;
-    bool bPassed = TestTrue(TEXT("source parses"), MHParseCompositeV4(Source, Parsed, Error));
+    bool bPassed = TestTrue(TEXT("source parses"), MHParseCompositeV5(Source, Parsed, Error));
     UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>();
-    bPassed &= TestTrue(TEXT("apply succeeds"), MHApplyCompositeV4(*Asset, Parsed, Error));
+    bPassed &= TestTrue(TEXT("apply succeeds"), MHApplyCompositeV5(*Asset, Parsed, Error));
     FMHCompositeDocument Extracted;
     TArray<uint8> Canonical;
     TArray<uint8> ExtractedBytes;
-    bPassed &= TestTrue(TEXT("extract succeeds"), MHExtractCompositeV4(*Asset, Extracted, Error));
-    bPassed &= TestTrue(TEXT("source canonical writes"), MHWriteCanonicalCompositeV4(Parsed, Canonical, Error));
-    bPassed &= TestTrue(TEXT("extract canonical writes"), MHWriteCanonicalCompositeV4(Extracted, ExtractedBytes, Error));
+    bPassed &= TestTrue(TEXT("extract succeeds"), MHExtractCompositeV5(*Asset, Extracted, Error));
+    bPassed &= TestTrue(TEXT("source canonical writes"), MHWriteCanonicalCompositeV5(Parsed, Canonical, Error));
+    bPassed &= TestTrue(TEXT("extract canonical writes"), MHWriteCanonicalCompositeV5(Extracted, ExtractedBytes, Error));
     bPassed &= TestTrue(TEXT("apply/extract exact canonical bytes"), ExtractedBytes == Canonical);
     Asset->AppliedHash = MHRawPayloadHash(Canonical);
     FString Warning;
     bPassed &= TestFalse(TEXT("fresh receipt is not locally modified"),
         MHDetectManagedCompositeLocalModification(*Asset, Warning));
-    Asset->Nodes[1].Transform.SetTranslation(FVector(126.0, 20.0, 3.0));
+    Asset->Nodes[1].Transform.SetTranslation(FVector(26.0, 0.0, 0.0));
     bPassed &= TestTrue(TEXT("changed applied node is locally modified"),
         MHDetectManagedCompositeLocalModification(*Asset, Warning));
     bPassed &= TestTrue(TEXT("local modification warning is machine-coded"),
         Warning.StartsWith(TEXT("MH_W_MANAGED_ASSET_LOCALLY_MODIFIED:")));
+
+    FMHCompositeDocument ProfiledDocument;
+    FMHCompositeNode& ProfiledNode = ProfiledDocument.Nodes.AddDefaulted_GetRef();
+    ProfiledNode.Kind = EMHCompositeNodeKind::Group;
+    ProfiledNode.Profile = TEXT("scatter_profile");
+    FMHPlacementProfile Profile;
+    Profile.LogicalName = TEXT("scatter_profile");
+    Profile.bHasUniformScale = true;
+    Profile.UniformScale.Base = 1.0f;
+    Profile.UniformScale.Deviation = 0.25f;
+    const TArray<FMHPlacementProfile> Profiles = {Profile};
+    UMHCompositeAsset* ProfiledAsset = NewObject<UMHCompositeAsset>();
+    bPassed &= TestFalse(
+        TEXT("profile reference cannot apply without its source-only carrier"),
+        MHApplyCompositeV5(*ProfiledAsset, ProfiledDocument, Error));
+    bPassed &= TestTrue(
+        TEXT("profile reference applies with exactly matching inline carrier"),
+        MHApplyCompositeV5(*ProfiledAsset, ProfiledDocument, Profiles, Error));
+    bPassed &= TestEqual(
+        TEXT("UMHCompositeAsset stores one inline typed profile"),
+        ProfiledAsset->InlinedPlacementProfiles.Num(),
+        1);
+    if (ProfiledAsset->InlinedPlacementProfiles.Num() == 1)
+    {
+        bPassed &= TestEqual(
+            TEXT("inline profile retains logical identity"),
+            ProfiledAsset->InlinedPlacementProfiles[0].LogicalName,
+            FString(TEXT("scatter_profile")));
+    }
 
     FMHCompositeDocument NonFiniteWriter;
     FMHCompositeNode& InvalidNode = NonFiniteWriter.Nodes.AddDefaulted_GetRef();
@@ -234,7 +326,7 @@ bool FMHCompositeApplyExtractTest::RunTest(const FString& Parameters)
         std::numeric_limits<double>::infinity(), 0.0, 0.0, 1.0);
     TArray<uint8> InvalidBytes;
     bPassed &= TestFalse(TEXT("writer rejects non-finite quaternion"),
-        MHWriteCanonicalCompositeV4(NonFiniteWriter, InvalidBytes, Error));
+        MHWriteCanonicalCompositeV5(NonFiniteWriter, InvalidBytes, Error));
     bPassed &= TestTrue(TEXT("writer non-finite quaternion code"),
         StartsWithCode(Error, TEXT("MH_E_NAN_INF_VALUE")));
 
@@ -247,10 +339,10 @@ bool FMHCompositeApplyExtractTest::RunTest(const FString& Parameters)
         FVector::OneVector);
     FMHCompositeDocument InvalidExtract;
     bPassed &= TestFalse(TEXT("extract rejects quaternion outside finite float32"),
-        MHExtractCompositeV4(*InvalidAsset, InvalidExtract, Error));
+        MHExtractCompositeV5(*InvalidAsset, InvalidExtract, Error));
     bPassed &= TestTrue(TEXT("extract non-finite quaternion code"),
         StartsWithCode(Error, TEXT("MH_E_NAN_INF_VALUE")));
-    const FMHCompositeOperationResult InvalidPublish = MHPublishCompositeV4(
+    const FMHCompositeOperationResult InvalidPublish = MHPublishCompositeV5(
         *InvalidAsset, FPaths::ProjectSavedDir());
     bPassed &= TestFalse(TEXT("publish rejects non-finite extracted quaternion"),
         InvalidPublish.Succeeded());
@@ -261,7 +353,7 @@ bool FMHCompositeApplyExtractTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeClosureTest,
-    "Mimir.V4.Composite.ClosureCycleAndUnresolved",
+    "Mimir.V5.Composite.ClosureCycleAndUnresolved",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeClosureTest::RunTest(const FString& Parameters)
@@ -270,29 +362,30 @@ bool FMHCompositeClosureTest::RunTest(const FString& Parameters)
     IFileManager::Get().MakeDirectory(*TempRoot, true);
     const FString NestedPath = FPaths::Combine(TempRoot, TEXT("nested.composite"));
     const TArray<uint8> NestedBytes = Utf8Composite(
-        TEXT("{\"nodes\":[{\"kind\":\"composite\",\"resource\":\"root\"}]}"));
+        TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"composite\",\"resource\":\"root\"}]}"));
     FFileHelper::SaveArrayToFile(NestedBytes, *NestedPath);
 
     FMHCompositeDocument Root;
     FString Error;
-    MHParseCompositeV4(
-        Utf8Composite(TEXT("{\"nodes\":[{\"kind\":\"composite\",\"resource\":\"nested\"}]}")),
+    MHParseCompositeV5(
+        Utf8Composite(TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"random\",\"options\":[")
+            TEXT("{\"kind\":\"empty\",\"weight\":1},{\"kind\":\"composite\",\"resource\":\"nested\",\"weight\":0}]}]}")),
         Root,
         Error);
     FCompositeTestResolver Resolver;
     Resolver.AddResolved(CompositeTestKey(EMHResourceKind::Composite, TEXT("nested")), NestedPath, MHRawPayloadHash(NestedBytes));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
-    bool bPassed = TestFalse(TEXT("ancestor cycle rejected"),
-        MHValidateCompositeClosureV4(TEXT("root"), Root, Resolver, *Settings, Error));
+    bool bPassed = TestFalse(TEXT("cycle in non-selected zero-weight option rejected"),
+        MHValidateCompositeClosureV5(TEXT("root"), Root, Resolver, *Settings, Error));
     bPassed &= TestTrue(TEXT("cycle code"), StartsWithCode(Error, TEXT("MH_E_COMPOSITE_CYCLE")));
 
     FMHCompositeDocument MissingActor;
-    MHParseCompositeV4(
-        Utf8Composite(TEXT("{\"nodes\":[{\"kind\":\"actor\",\"resource\":\"missing\"}]}")),
+    MHParseCompositeV5(
+        Utf8Composite(TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"actor\",\"resource\":\"missing\"}]}")),
         MissingActor,
         Error);
     bPassed &= TestFalse(TEXT("unresolved actor rejected"),
-        MHValidateCompositeClosureV4(TEXT("root"), MissingActor, Resolver, *Settings, Error));
+        MHValidateCompositeClosureV5(TEXT("root"), MissingActor, Resolver, *Settings, Error));
     bPassed &= TestTrue(TEXT("unresolved code"),
         StartsWithCode(Error, TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE")));
     IFileManager::Get().Delete(*NestedPath, false, true, true);
@@ -301,7 +394,7 @@ bool FMHCompositeClosureTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeImportPublishReceiptTest,
-    "Mimir.V4.Composite.ImportPublishReceipts",
+    "Mimir.V5.Composite.ImportPublishReceipts",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
@@ -309,7 +402,7 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
     const FString SourceRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("MimirCompositeTests/import_publish"));
     IFileManager::Get().MakeDirectory(*SourceRoot, true);
     const FString SourcePath = FPaths::Combine(SourceRoot, TEXT("ue_s3_roundtrip.composite"));
-    const TArray<uint8> RawBytes = Utf8Composite(TEXT("{ \"nodes\" : [] }\r\n"));
+    const TArray<uint8> RawBytes = Utf8Composite(TEXT("{ \"v\" : 5, \"nodes\" : [] }\r\n"));
     FFileHelper::SaveArrayToFile(RawBytes, *SourcePath);
 
     FMHSourceAnalysisEntry Entry;
@@ -320,7 +413,7 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
     Entry.Change = EMHSourceChange::Create;
     FCompositeTestResolver Resolver;
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
-    FMHCompositeOperationResult Imported = MHImportCompositeV4(
+    FMHCompositeOperationResult Imported = MHImportCompositeV5(
         Entry, Resolver, SourceRoot, *Settings);
     bool bPassed = TestTrue(TEXT("empty composite imports"), Imported.Succeeded());
     if (!Imported.Succeeded())
@@ -331,7 +424,7 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("logical receipt"), Imported.Asset->LogicalName, TEXT("ue_s3_roundtrip"));
     bPassed &= TestEqual(TEXT("source path receipt"), Imported.Asset->SourceRelativePath, Entry.SourcePath);
     bPassed &= TestEqual(TEXT("raw source hash receipt"), Imported.Asset->SourceHash, MHRawPayloadHash(RawBytes));
-    const TArray<uint8> CanonicalEmpty = Utf8Composite(TEXT("{\n  \"nodes\": []\n}\n"));
+    const TArray<uint8> CanonicalEmpty = Utf8Composite(TEXT("{\n  \"v\": 5,\n  \"nodes\": []\n}\n"));
     bPassed &= TestEqual(TEXT("applied canonical hash receipt"),
         Imported.Asset->AppliedHash, MHRawPayloadHash(CanonicalEmpty));
     bPassed &= TestNotEqual(TEXT("dual hashes retain raw/canonical distinction"),
@@ -359,11 +452,11 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
 
     FMHCompositeDocument Edited;
     FString Error;
-    MHParseCompositeV4(Utf8Composite(
-        TEXT("{\"nodes\":[{\"kind\":\"group\",\"name\":\"published\"}]}")), Edited, Error);
+    MHParseCompositeV5(Utf8Composite(
+        TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"group\",\"name\":\"published\"}]}")), Edited, Error);
     bPassed &= TestTrue(TEXT("local source-shaped edit applies"),
-        MHApplyCompositeV4(*Imported.Asset, Edited, Error));
-    FMHCompositeOperationResult Published = MHPublishCompositeV4(
+        MHApplyCompositeV5(*Imported.Asset, Edited, Error));
+    FMHCompositeOperationResult Published = MHPublishCompositeV5(
         *Imported.Asset, SourceRoot);
     bPassed &= TestTrue(TEXT("managed publish succeeds"), Published.Succeeded());
     if (!Published.Succeeded()) AddError(Published.Error);
@@ -381,7 +474,7 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
     Imported.Asset->AppliedHash.Reset();
     const FString AdoptFolder = FPaths::Combine(SourceRoot, TEXT("adopted"));
     FMHCompositeAdoptTarget Adopt{AdoptFolder, TEXT("ue_s3_adopted")};
-    FMHCompositeOperationResult Adopted = MHPublishCompositeV4(
+    FMHCompositeOperationResult Adopted = MHPublishCompositeV5(
         *Imported.Asset, SourceRoot, &Adopt);
     bPassed &= TestTrue(TEXT("unmanaged Adopt publish succeeds"), Adopted.Succeeded());
     if (!Adopted.Succeeded()) AddError(Adopted.Error);
@@ -392,7 +485,7 @@ bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeSourceRaceNoGhostTest,
-    "Mimir.V4.Composite.SourceRaceNoGhost",
+    "Mimir.V5.Composite.SourceRaceNoGhost",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeSourceRaceNoGhostTest::RunTest(const FString& Parameters)
@@ -401,7 +494,7 @@ bool FMHCompositeSourceRaceNoGhostTest::RunTest(const FString& Parameters)
     IFileManager::Get().MakeDirectory(*SourceRoot, true);
     const FString Token = FString::Printf(TEXT("ue_s3_race_%08x"), FPlatformTime::Cycles());
     const FString SourcePath = FPaths::Combine(SourceRoot, Token + TEXT(".composite"));
-    const TArray<uint8> Initial = Utf8Composite(TEXT("{\"nodes\":[]}"));
+    const TArray<uint8> Initial = Utf8Composite(TEXT("{\"v\":5,\"nodes\":[]}"));
     FFileHelper::SaveArrayToFile(Initial, *SourcePath);
     FMHSourceAnalysisEntry Entry;
     Entry.Key = CompositeTestKey(EMHResourceKind::Composite, Token);
@@ -413,9 +506,9 @@ bool FMHCompositeSourceRaceNoGhostTest::RunTest(const FString& Parameters)
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     MHSetBeforeCompositeSourceCommitTestHook([SourcePath]()
     {
-        FFileHelper::SaveStringToFile(TEXT("{\"nodes\":[]}\n"), *SourcePath);
+        FFileHelper::SaveStringToFile(TEXT("{\"v\":5,\"nodes\":[]}\n"), *SourcePath);
     });
-    const FMHCompositeOperationResult Result = MHImportCompositeV4(
+    const FMHCompositeOperationResult Result = MHImportCompositeV5(
         Entry, Resolver, SourceRoot, *Settings);
     bool bPassed = TestFalse(TEXT("source race blocks import"), Result.Succeeded());
     bPassed &= TestTrue(TEXT("source race code"),
@@ -429,11 +522,11 @@ bool FMHCompositeSourceRaceNoGhostTest::RunTest(const FString& Parameters)
 
 #if WITH_EDITOR
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHCompositeCompilerWorldTransformTest,
-    "Mimir.V4.Composite.CompilerPreservesSourceWorldTransforms",
+    FMHCompositeCompilerParentLocalTransformTest,
+    "Mimir.V5.Composite.CompilerComposesParentLocalTransforms",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHCompositeCompilerWorldTransformTest::RunTest(const FString& Parameters)
+bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parameters)
 {
     if (GEditor == nullptr || GEditor->GetEditorWorldContext().World() == nullptr)
     {
@@ -451,10 +544,10 @@ bool FMHCompositeCompilerWorldTransformTest::RunTest(const FString& Parameters)
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     FMHCompositeDocument Document;
     FString Error;
-    if (!MHParseCompositeV4(Utf8Composite(
-            TEXT("{\"nodes\":[{\"kind\":\"group\",\"name\":\"parent\",\"transform\":{")
+    if (!MHParseCompositeV5(Utf8Composite(
+            TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"group\",\"name\":\"parent\",\"transform\":{")
             TEXT("\"translation_cm\":[100,0,0]},\"children\":[{\"kind\":\"mesh\",")
-            TEXT("\"resource\":\"world_probe\",\"transform\":{\"translation_cm\":[125,0,0]}}]}]}")),
+            TEXT("\"resource\":\"world_probe\",\"transform\":{\"translation_cm\":[25,0,0]}}]}]}")),
             Document, Error))
     {
         AddError(Error);
@@ -468,7 +561,7 @@ bool FMHCompositeCompilerWorldTransformTest::RunTest(const FString& Parameters)
         AddError(TEXT("cannot spawn compiler target"));
         return false;
     }
-    const FMHCompositeCompileResult Compiled = MHCompileCompositeV4(
+    const FMHCompositeCompileResult Compiled = MHCompileCompositeV5(
         *Target, TEXT("root"), Document, Resolver, *Settings);
     bool bPassed = TestTrue(TEXT("compiler succeeds"), Compiled.Succeeded());
     bPassed &= TestEqual(TEXT("group and mesh components"), Compiled.Components.Num(), 2);
@@ -480,21 +573,47 @@ bool FMHCompositeCompilerWorldTransformTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(TEXT("child component"), Child != nullptr);
         if (Group != nullptr && Child != nullptr)
         {
-            bPassed &= TestTrue(TEXT("group source world"),
+            bPassed &= TestTrue(TEXT("parent local transform"),
                 Group->GetComponentLocation().Equals(FVector(100, 0, 0), UE_KINDA_SMALL_NUMBER));
-            bPassed &= TestTrue(TEXT("child source world not double-applied"),
+            bPassed &= TestTrue(TEXT("parent 100 plus child local 25 equals world 125"),
                 Child->GetComponentLocation().Equals(FVector(125, 0, 0), UE_KINDA_SMALL_NUMBER));
-            bPassed &= TestTrue(TEXT("authored structural parent retained"), Child->GetAttachParent() == Group);
+            bPassed &= TestTrue(TEXT("authored transform parent retained"), Child->GetAttachParent() == Group);
         }
     }
     Target->Destroy();
+
+    FMHCompositeDocument ShearDocument;
+    FMHCompositeNode& ShearParent = ShearDocument.Nodes.AddDefaulted_GetRef();
+    ShearParent.Kind = EMHCompositeNodeKind::Group;
+    ShearParent.Transform.Scale = FVector(2.0, 1.0, 1.0);
+    FMHCompositeNode& RotatedChild = ShearParent.Children.AddDefaulted_GetRef();
+    RotatedChild.Kind = EMHCompositeNodeKind::Mesh;
+    RotatedChild.Resource = TEXT("world_probe");
+    RotatedChild.Transform.RotationQuat = FQuat(FVector::UpVector, FMath::DegreesToRadians(45.0));
+    AActor* ShearTarget = GEditor->GetEditorWorldContext().World()->SpawnActor<AActor>(SpawnParameters);
+    if (ShearTarget == nullptr)
+    {
+        AddError(TEXT("cannot spawn shear compiler target"));
+        return false;
+    }
+    const FMHCompositeCompileResult ShearResult = MHCompileCompositeV5(
+        *ShearTarget,
+        TEXT("root"),
+        ShearDocument,
+        Resolver,
+        *Settings);
+    bPassed &= TestFalse(TEXT("compiler rejects accumulated shear without TRS approximation"), ShearResult.Succeeded());
+    bPassed &= TestTrue(TEXT("compiler shear failure uses frozen code"),
+        ShearResult.Error.StartsWith(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM:")));
+    bPassed &= TestEqual(TEXT("shear failure mutates no authored components"), ShearResult.Components.Num(), 0);
+    ShearTarget->Destroy();
 
     return bPassed;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeCompilerTopLevelAttachmentTest,
-    "Mimir.V4.Composite.CompilerTopLevelAttachment",
+    "Mimir.V5.Composite.CompilerTopLevelAttachment",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Parameters)
@@ -515,8 +634,8 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     FMHCompositeDocument Document;
     FString Error;
-    if (!MHParseCompositeV4(Utf8Composite(
-            TEXT("{\"nodes\":[{\"kind\":\"mesh\",\"resource\":\"top_level_probe\",")
+    if (!MHParseCompositeV5(Utf8Composite(
+            TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"mesh\",\"resource\":\"top_level_probe\",")
             TEXT("\"name\":\"lights/front: left \\u03bb\",")
             TEXT("\"transform\":{\"translation_cm\":[10,0,0]}},{\"kind\":\"mesh\",")
             TEXT("\"resource\":\"top_level_probe\",\"transform\":{\"translation_cm\":[20,0,0]}}]}")),
@@ -533,7 +652,7 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
         AddError(TEXT("cannot spawn top-level compiler target"));
         return false;
     }
-    const FMHCompositeCompileResult Compiled = MHCompileCompositeV4(
+    const FMHCompositeCompileResult Compiled = MHCompileCompositeV5(
         *Target, TEXT("top_level_root"), Document, Resolver, *Settings);
     bool bPassed = TestTrue(TEXT("two-top-level compiler succeeds"), Compiled.Succeeded());
     bPassed &= TestEqual(TEXT("display-only name survives protocol parse"),
@@ -569,7 +688,7 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     FFailOnSecondResolve FlakyResolver(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("top_level_probe")));
     FMHCompositeDocument OneNode;
     OneNode.Nodes.Add(Document.Nodes[0]);
-    const FMHCompositeCompileResult Failed = MHCompileCompositeV4(
+    const FMHCompositeCompileResult Failed = MHCompileCompositeV5(
         *FailureTarget, TEXT("top_level_root"), OneNode, FlakyResolver, *Settings);
     bPassed &= TestFalse(TEXT("endpoint race fails second compile pass"), Failed.Succeeded());
     bPassed &= TestEqual(TEXT("failed compile returns no authored components"), Failed.Components.Num(), 0);
@@ -580,7 +699,7 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeFbxPlacementParityTest,
-    "Mimir.V4.Composite.FbxPlacementParity",
+    "Mimir.V5.Composite.FbxPlacementParity",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeFbxPlacementParityTest::RunTest(const FString& Parameters)
@@ -625,8 +744,8 @@ bool FMHCompositeFbxPlacementParityTest::RunTest(const FString& Parameters)
     Resolver.AddResolved(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("axis_probe_parity")));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
     FMHCompositeDocument Document;
-    if (!MHParseCompositeV4(Utf8Composite(
-            TEXT("{\"nodes\":[{\"kind\":\"mesh\",\"resource\":\"axis_probe_parity\",")
+    if (!MHParseCompositeV5(Utf8Composite(
+            TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"mesh\",\"resource\":\"axis_probe_parity\",")
             TEXT("\"transform\":{\"translation_cm\":[125,250,75],")
             TEXT("\"rotation_quat\":[-0.038135,0.189308,-0.239298,0.951549]}}]}")),
             Document, Error))
@@ -642,7 +761,7 @@ bool FMHCompositeFbxPlacementParityTest::RunTest(const FString& Parameters)
         AddError(TEXT("cannot spawn Composite parity target"));
         return false;
     }
-    const FMHCompositeCompileResult Compiled = MHCompileCompositeV4(
+    const FMHCompositeCompileResult Compiled = MHCompileCompositeV5(
         *Target, TEXT("axis_parity_root"), Document, Resolver, *Settings);
     bPassed &= TestTrue(TEXT("Composite compiler succeeds"), Compiled.Succeeded());
     bPassed &= TestEqual(TEXT("one compiled mesh component"), Compiled.Components.Num(), 1);

@@ -32,7 +32,7 @@ namespace UE::MimirComposite::Tests
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositePlacementActorTest,
-    "Mimir.V4.Composite.PlacementActor",
+    "Mimir.V5.Composite.PlacementActor",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
@@ -60,7 +60,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
     FString Error;
     bool bPassed = TestTrue(
         TEXT("source-shaped asset applies"),
-        MHApplyCompositeV4(*Asset, Document, Error));
+        MHApplyCompositeV5(*Asset, Document, Error));
 
     UMHCompositeActorFactory* Factory = NewObject<UMHCompositeActorFactory>();
     const FAssetData AssetData(Asset, FAssetData::ECreationFlags::None);
@@ -140,7 +140,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
             Actor->SetPlacementEditMode(true);
         }
         Document.Nodes[0].Transform.TranslationCm = FVector(250.0, 0.0, 0.0);
-        bPassed &= TestTrue(TEXT("updated asset applies in place"), MHApplyCompositeV4(*Asset, Document, Error));
+        bPassed &= TestTrue(TEXT("updated asset applies in place"), MHApplyCompositeV5(*Asset, Document, Error));
         FMHResourceKey RootKey;
         RootKey.Kind = EMHResourceKind::Composite;
         RootKey.LogicalName = LogicalName;
@@ -187,7 +187,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
         }
 
         Document.Nodes[0].Transform.TranslationCm = FVector(300.0, 0.0, 0.0);
-        bPassed &= TestTrue(TEXT("second in-place update applies"), MHApplyCompositeV4(*Asset, Document, Error));
+        bPassed &= TestTrue(TEXT("second in-place update applies"), MHApplyCompositeV5(*Asset, Document, Error));
         UPackage* LevelPackage = Actor->GetOutermost();
         LevelPackage->SetDirtyFlag(false);
         MHNotifyGeneratedResourceChanged(RootKey);
@@ -207,7 +207,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositePlacementDependencyViewTest,
-    "Mimir.V4.Composite.PlacementDependencyView",
+    "Mimir.V5.Composite.PlacementDependencyView",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
@@ -235,7 +235,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
     NestedDocument.Nodes.Add(NestedGroup);
     bPassed &= TestTrue(
         TEXT("nested generated asset applies"),
-        MHApplyCompositeV4(*NestedAsset, NestedDocument, Error));
+        MHApplyCompositeV5(*NestedAsset, NestedDocument, Error));
 
     UMHCompositeAsset* RootAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
     RootAsset->LogicalName = RootName;
@@ -247,7 +247,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
     RootDocument.Nodes.Add(NestedPlacement);
     bPassed &= TestTrue(
         TEXT("root nested document applies"),
-        MHApplyCompositeV4(*RootAsset, RootDocument, Error));
+        MHApplyCompositeV5(*RootAsset, RootDocument, Error));
 
     UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
     bPassed &= TestNotNull(TEXT("dependency-view world exists"), World);
@@ -291,7 +291,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         NestedDocument.Nodes[0].Transform.TranslationCm = FVector(20.0, 0.0, 0.0);
         bPassed &= TestTrue(
             TEXT("nested asset updates in place"),
-            MHApplyCompositeV4(*NestedAsset, NestedDocument, Error));
+            MHApplyCompositeV5(*NestedAsset, NestedDocument, Error));
         MHNotifyGeneratedResourceChanged(NestedKey);
         if (Actor->GetDerivedComponents().Num() == 2)
         {
@@ -309,7 +309,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         MissingMeshDocument.Nodes.Add(MissingMesh);
         bPassed &= TestTrue(
             TEXT("missing-mesh document applies"),
-            MHApplyCompositeV4(*RootAsset, MissingMeshDocument, Error));
+            MHApplyCompositeV5(*RootAsset, MissingMeshDocument, Error));
         FMHResourceKey RootKey;
         RootKey.Kind = EMHResourceKind::Composite;
         RootKey.LogicalName = RootName;
@@ -417,7 +417,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
             HealedDocument.Nodes.Add(HealedGroup);
             bPassed &= TestTrue(
                 TEXT("same-name dead-root replacement applies"),
-                MHApplyCompositeV4(*RestoredDeadAsset, HealedDocument, Error));
+                MHApplyCompositeV5(*RestoredDeadAsset, HealedDocument, Error));
             MHNotifyGeneratedResourceChanged(DeadKey);
             bPassed &= TestEqual(
                 TEXT("same-name root notification heals dead placeholder"),
@@ -449,7 +449,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeThumbnailRenderingDisabledTest,
-    "Mimir.V4.Composite.ThumbnailRenderingDisabled",
+    "Mimir.V5.Composite.ThumbnailRenderingDisabled",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeThumbnailRenderingDisabledTest::RunTest(const FString& Parameters)
@@ -461,7 +461,7 @@ bool FMHCompositeThumbnailRenderingDisabledTest::RunTest(const FString& Paramete
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeDerivedActorVisibilityTest,
-    "Mimir.V4.Composite.DerivedActorVisibility",
+    "Mimir.V5.Composite.DerivedActorVisibility",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
@@ -483,7 +483,7 @@ bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
     FString Error;
     bool bPassed = TestTrue(
         TEXT("derived-actor fixture applies"),
-        MHApplyCompositeV4(*Asset, Document, Error));
+        MHApplyCompositeV5(*Asset, Document, Error));
 
     UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
     bPassed &= TestNotNull(TEXT("derived-actor preview world exists"), World);
@@ -534,7 +534,7 @@ bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeManualFileImportTest,
-    "Mimir.V4.Composite.ManualFileImport",
+    "Mimir.V5.Composite.ManualFileImport",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeManualFileImportTest::RunTest(const FString& Parameters)
@@ -553,7 +553,7 @@ bool FMHCompositeManualFileImportTest::RunTest(const FString& Parameters)
     FString Error;
     bool bPassed = TestTrue(
         TEXT("manual-import fixture canonicalizes"),
-        MHWriteCanonicalCompositeV4(Document, Bytes, Error));
+        MHWriteCanonicalCompositeV5(Document, Bytes, Error));
     bPassed &= TestTrue(
         TEXT("manual-import source written"),
         FFileHelper::SaveArrayToFile(Bytes, *SourcePath));

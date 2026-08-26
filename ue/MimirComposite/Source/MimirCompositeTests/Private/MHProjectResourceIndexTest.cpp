@@ -385,6 +385,51 @@ bool FMHProjectIndexStaticMeshSlotDependencyTest::RunTest(const FString& Paramet
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProjectIndexPlacementProfileDependencyTest,
+    "Mimir.V5.ProjectIndex.PlacementProfileDependency",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProjectIndexPlacementProfileDependencyTest::RunTest(const FString& Parameters)
+{
+    FIndexFixture Fixture;
+    const FString ProfilePath = FPaths::Combine(Fixture.Root, TEXT("profiles/scatter.placement"));
+    const FString CompositePath = FPaths::Combine(Fixture.Root, TEXT("composites/root.composite"));
+    bool bPassed = WriteProjectIndexUtf8(
+        ProfilePath,
+        TEXT("{\n  \"v\": 1,\n  \"kind\": \"placement_profile\",\n  \"uniform_scale\": [\n    1,\n    0.1\n  ]\n}\n"));
+    bPassed &= WriteProjectIndexUtf8(
+        CompositePath,
+        TEXT("{\n  \"v\": 5,\n  \"nodes\": [\n    {\n      \"kind\": \"group\",\n      \"profile\": \"scatter\"\n    }\n  ]\n}\n"));
+    FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
+    if (!OpenIndex(Index, *this)) return false;
+    FMHProjectIndexUpdateResult Update;
+    FString Error;
+    bPassed &= TestTrue(TEXT("profile/composite scan succeeds"), Index.FullScan({}, Update, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestEqual(
+        TEXT("placement profile resolves as source-only resource"),
+        Index.Resolve(ProjectIndexTestKey(EMHResourceKind::PlacementProfile, TEXT("scatter"))).Status,
+        EMHResolveStatus::Resolved);
+    bPassed &= TestEqual(
+        TEXT("composite resolves through profile"),
+        Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Composite, TEXT("root"))).Status,
+        EMHResolveStatus::Resolved);
+    FString Dump;
+    bPassed &= TestTrue(TEXT("profile dependency dump builds"), Index.BuildNormalizedDump(Dump, Error));
+    bPassed &= TestTrue(
+        TEXT("index stores exact composite to placement_profile profile edge"),
+        Dump.Contains(TEXT("Dependencies\tcomposite\troot\tplacement_profile\tscatter\tprofile\tcomposites/root.composite\n")));
+    bPassed &= TestFalse(
+        TEXT("placement profile has no generated asset path"),
+        Dump.Contains(TEXT("GeneratedAssets\tplacement_profile")));
+    Index.Close();
+    bool bRecreated = false;
+    bPassed &= TestTrue(TEXT("index with profile edge reopens"), Index.Open(bRecreated, Error));
+    bPassed &= TestFalse(TEXT("profile dictionary does not force cache recreation"), bRecreated);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHProjectIndexStatusTest,
     "Mimir.V4.ProjectIndex.StatusPrecedenceAndClosure",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

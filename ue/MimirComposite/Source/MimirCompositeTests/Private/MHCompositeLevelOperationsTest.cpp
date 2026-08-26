@@ -21,7 +21,7 @@ namespace UE::MimirComposite::Tests
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeLevelOperationsTest,
-    "Mimir.V4.Composite.LevelOperations",
+    "Mimir.V5.Composite.LevelOperations",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
@@ -111,7 +111,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
     Error.Reset();
     bPassed &= TestTrue(
         TEXT("nested Break fixture applies"),
-        MHApplyCompositeV4(*NestedAsset, EmptyNestedDocument, Error));
+        MHApplyCompositeV5(*NestedAsset, EmptyNestedDocument, Error));
 
     FMHCompositeDocument Document;
     FMHCompositeNode Node;
@@ -137,7 +137,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
     Error.Reset();
     bPassed &= TestTrue(
         TEXT("level-operation fixture applies"),
-        MHApplyCompositeV4(*Asset, Document, Error));
+        MHApplyCompositeV5(*Asset, Document, Error));
 
     AMHCompositeActor* CompositeActor = World->SpawnActor<AMHCompositeActor>(
         AMHCompositeActor::StaticClass(),
@@ -241,8 +241,8 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         Error.Reset();
         bPassed &= TestTrue(
             TEXT("Refresh invariant fixture extracts"),
-            MHExtractCompositeV4(*Asset, BeforeRefreshDocument, Error) &&
-            MHWriteCanonicalCompositeV4(BeforeRefreshDocument, BeforeRefreshBytes, Error));
+            MHExtractCompositeV5(*Asset, BeforeRefreshDocument, Error) &&
+            MHWriteCanonicalCompositeV5(BeforeRefreshDocument, BeforeRefreshBytes, Error));
         const FString BeforeRefreshSourceHash = Asset->SourceHash;
         const FString BeforeRefreshAppliedHash = Asset->AppliedHash;
         const bool bPackageWasDirty = Asset->GetOutermost()->IsDirty();
@@ -255,8 +255,8 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         Error.Reset();
         bPassed &= TestTrue(
             TEXT("Refresh leaves the managed document extractable"),
-            MHExtractCompositeV4(*Asset, AfterRefreshDocument, Error) &&
-            MHWriteCanonicalCompositeV4(AfterRefreshDocument, AfterRefreshBytes, Error));
+            MHExtractCompositeV5(*Asset, AfterRefreshDocument, Error) &&
+            MHWriteCanonicalCompositeV5(AfterRefreshDocument, AfterRefreshBytes, Error));
         bPassed &= TestTrue(TEXT("Refresh does not mutate canonical asset data"), BeforeRefreshBytes == AfterRefreshBytes);
         bPassed &= TestEqual(TEXT("Refresh preserves SourceHash"), Asset->SourceHash, BeforeRefreshSourceHash);
         bPassed &= TestEqual(TEXT("Refresh preserves AppliedHash"), Asset->AppliedHash, BeforeRefreshAppliedHash);
@@ -270,50 +270,50 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
                     KINDA_SMALL_NUMBER));
         }
 
-        UMHCompositeAsset* WorldGroupAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-        WorldGroupAsset->LogicalName = TEXT("world_group_") + Suffix;
-        FMHCompositeDocument WorldGroupDocument;
-        FMHCompositeNode WorldGroup;
-        WorldGroup.Kind = EMHCompositeNodeKind::Group;
-        WorldGroup.Name = TEXT("translated_group");
-        WorldGroup.Transform.TranslationCm = FVector(100.0, 0.0, 0.0);
-        FMHCompositeNode WorldGroupChild;
-        WorldGroupChild.Kind = EMHCompositeNodeKind::Mesh;
-        WorldGroupChild.Resource = MeshResource;
-        WorldGroupChild.Name = TEXT("world_child");
-        WorldGroupChild.Transform.TranslationCm = FVector(125.0, 0.0, 0.0);
-        WorldGroup.Children.Add(WorldGroupChild);
-        WorldGroupDocument.Nodes.Add(WorldGroup);
+        UMHCompositeAsset* ParentLocalAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
+        ParentLocalAsset->LogicalName = TEXT("parent_local_group_") + Suffix;
+        FMHCompositeDocument ParentLocalDocument;
+        FMHCompositeNode ParentNode;
+        ParentNode.Kind = EMHCompositeNodeKind::Group;
+        ParentNode.Name = TEXT("translated_parent");
+        ParentNode.Transform.TranslationCm = FVector(100.0, 0.0, 0.0);
+        FMHCompositeNode LocalChild;
+        LocalChild.Kind = EMHCompositeNodeKind::Mesh;
+        LocalChild.Resource = MeshResource;
+        LocalChild.Name = TEXT("local_child");
+        LocalChild.Transform.TranslationCm = FVector(25.0, 0.0, 0.0);
+        ParentNode.Children.Add(LocalChild);
+        ParentLocalDocument.Nodes.Add(ParentNode);
         Error.Reset();
         bPassed &= TestTrue(
-            TEXT("document-world group fixture applies"),
-            MHApplyCompositeV4(*WorldGroupAsset, WorldGroupDocument, Error));
-        AMHCompositeActor* WorldGroupActor = World->SpawnActor<AMHCompositeActor>(
+            TEXT("parent-local group fixture applies"),
+            MHApplyCompositeV5(*ParentLocalAsset, ParentLocalDocument, Error));
+        AMHCompositeActor* ParentLocalActor = World->SpawnActor<AMHCompositeActor>(
             AMHCompositeActor::StaticClass(),
             FTransform::Identity,
             SpawnParameters);
-        WorldGroupActor->SetCompositeAsset(WorldGroupAsset);
-        TArray<AActor*> WorldGroupBreakActors;
+        ParentLocalActor->SetCompositeAsset(ParentLocalAsset);
+        TArray<AActor*> ParentLocalBreakActors;
         Error.Reset();
         bPassed &= TestTrue(
-            TEXT("Break discards the group pivot and succeeds"),
+            TEXT("Break accumulates and dissolves the parent group"),
             Subsystem->BreakComposites(
-                {WorldGroupActor},
-                WorldGroupBreakActors,
+                {ParentLocalActor},
+                ParentLocalBreakActors,
                 Warnings,
                 Error));
         bPassed &= TestEqual(
-            TEXT("Break emits only the world-space child"),
-            WorldGroupBreakActors.Num(),
+            TEXT("Break emits only the resolved child"),
+            ParentLocalBreakActors.Num(),
             1);
-        if (WorldGroupBreakActors.Num() == 1)
+        if (ParentLocalBreakActors.Num() == 1)
         {
             bPassed &= TestTrue(
-                TEXT("group translation 100 does not double-apply to child world 125"),
-                WorldGroupBreakActors[0]->GetActorLocation().Equals(
+                TEXT("parent 100 plus child local 25 equals world 125"),
+                ParentLocalBreakActors[0]->GetActorLocation().Equals(
                     FVector(125.0, 0.0, 0.0),
                     KINDA_SMALL_NUMBER));
-            WorldGroupBreakActors[0]->Destroy();
+            ParentLocalBreakActors[0]->Destroy();
         }
 
         TArray<AActor*> BrokenActors;

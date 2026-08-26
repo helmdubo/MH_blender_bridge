@@ -107,6 +107,11 @@ bool ExecutePreparedSourceImports(
         OutAnalysis,
         bOutExecuted);
 
+    // placement_profile is a source-only leaf. It has no generated path or
+    // UObject; the dependent composite importer parses and inlines its typed
+    // value into UMHCompositeAsset.
+    ObserveImportStage(EMHResourceKind::PlacementProfile);
+
     TSet<FString> FailedTextures;
     ObserveImportStage(EMHResourceKind::Texture);
     for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
@@ -226,7 +231,7 @@ bool ExecutePreparedSourceImports(
         {
             continue;
         }
-        FMHCompositeOperationResult CompositeResult = MHImportCompositeV4(
+        FMHCompositeOperationResult CompositeResult = MHImportCompositeV5(
             Entry,
             *Services.Resolver,
             SourceRoot,
@@ -1186,7 +1191,7 @@ bool UMHSourceImporter::ImportCompositeFile(
     Entry.RawHash = Outcome.RawHash;
     Entry.Change = EMHSourceChange::Reimport;
 
-    FMHCompositeOperationResult Result = MHImportCompositeV4(
+    FMHCompositeOperationResult Result = MHImportCompositeV5(
         Entry,
         *Services.Resolver,
         SourceRoot,
@@ -1278,7 +1283,7 @@ bool UMHSourceImporter::AdoptCompositeFile(
     TArray<uint8> SourceBytes;
     FMHCompositeDocument Document;
     if (!FFileHelper::LoadFileToArray(SourceBytes, *AbsoluteFile) ||
-        !MHParseCompositeV4(SourceBytes, Document, OutError))
+        !MHParseCompositeV5(SourceBytes, Document, OutError))
     {
         if (OutError.IsEmpty())
         {
@@ -1306,7 +1311,7 @@ bool UMHSourceImporter::AdoptCompositeFile(
     if (!FFileHelper::SaveArrayToFile(SourceBytes, *TempPath) ||
         !FFileHelper::LoadFileToArray(ReadBack, *TempPath) ||
         ReadBack != SourceBytes ||
-        !MHParseCompositeV4(ReadBack, ReadBackDocument, ValidationError))
+        !MHParseCompositeV5(ReadBack, ReadBackDocument, ValidationError))
     {
         IFileManager::Get().Delete(*TempPath, false, true, true);
         OutError = FString::Printf(
@@ -1427,7 +1432,7 @@ bool UMHSourceImporter::PublishComposite(
         Adopt.LogicalName = AdoptLogicalName;
         AdoptPtr = &Adopt;
     }
-    FMHCompositeOperationResult Result = MHPublishCompositeV4(
+    FMHCompositeOperationResult Result = MHPublishCompositeV5(
         *Asset, Settings->GetSourceRootPath(), AdoptPtr);
     OutWarnings = MoveTemp(Result.Warnings);
     OutError = MoveTemp(Result.Error);

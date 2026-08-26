@@ -16,7 +16,7 @@ struct FMHCompositeAdoptTarget;
 }
 
 /**
- * Transaction boundary for the Source Protocol v4 composite level operations.
+ * Transaction boundary for Source Protocol v5 parent-local composite operations.
  * Source documents remain authoritative; all scene objects produced here are
  * either managed endpoints or the one persisted AMHCompositeActor row.
  */

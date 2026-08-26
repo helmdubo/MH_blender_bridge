@@ -21,7 +21,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeCompileResult
 };
 
 /** Resolve the complete source closure and all generated mesh/actor endpoints. */
-MIMIRCOMPOSITEEDITOR_API bool MHValidateCompositeClosureV4(
+MIMIRCOMPOSITEEDITOR_API bool MHValidateCompositeClosureV5(
     const FString& LogicalName,
     const FMHCompositeDocument& Document,
     IMHSourceResolver& Resolver,
@@ -29,10 +29,10 @@ MIMIRCOMPOSITEEDITOR_API bool MHValidateCompositeClosureV4(
     FString& OutError);
 
 /**
- * Compile to a real component tree. Source transforms are UE world transforms:
- * attach first, then SetWorldTransform, so authored parents never double-apply.
+ * Compile to a real component tree using parent-local transforms. Random/profile
+ * materialization remains fail-closed until the V5-S5 resolved-plan consumer.
  */
-MIMIRCOMPOSITEEDITOR_API FMHCompositeCompileResult MHCompileCompositeV4(
+MIMIRCOMPOSITEEDITOR_API FMHCompositeCompileResult MHCompileCompositeV5(
     AActor& Target,
     const FString& LogicalName,
     const FMHCompositeDocument& Document,
@@ -40,7 +40,7 @@ MIMIRCOMPOSITEEDITOR_API FMHCompositeCompileResult MHCompileCompositeV4(
     const UMHCompositeSettings& Settings);
 
 /** Build/destroy a real transient component tree; import uses this before mutation. */
-MIMIRCOMPOSITEEDITOR_API bool MHProbeCompositeBuildV4(
+MIMIRCOMPOSITEEDITOR_API bool MHProbeCompositeBuildV5(
     const FString& LogicalName,
     const FMHCompositeDocument& Document,
     IMHSourceResolver& Resolver,

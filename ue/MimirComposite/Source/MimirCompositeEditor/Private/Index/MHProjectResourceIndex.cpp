@@ -140,6 +140,7 @@ FString ExpectedGeneratedObjectPath(
     case EMHResourceKind::StaticMesh: Folder = TEXT("Meshes"); break;
     case EMHResourceKind::Material: Folder = TEXT("Materials"); break;
     case EMHResourceKind::Composite: Folder = TEXT("Composites"); break;
+    case EMHResourceKind::PlacementProfile: return FString();
     case EMHResourceKind::Texture: Folder = TEXT("Textures"); break;
     }
     return FString::Printf(
@@ -188,12 +189,42 @@ void CollectCompositeDependencies(
         FIndexedDependency Dependency;
         Dependency.Owner = Owner;
         Dependency.OwnerPath = OwnerPath;
+        if (!Node.Profile.IsEmpty())
+        {
+            Dependency.Target.Kind = EMHResourceKind::PlacementProfile;
+            Dependency.Target.LogicalName = Node.Profile;
+            Dependency.Role = TEXT("profile");
+            OutDependencies.Add(Dependency);
+        }
         if (Node.Kind == EMHCompositeNodeKind::Mesh)
         {
             Dependency.Target.Kind = EMHResourceKind::StaticMesh;
             Dependency.Target.LogicalName = Node.Resource;
             Dependency.Role = TEXT("placement_mesh");
             OutDependencies.Add(MoveTemp(Dependency));
+        }
+        if (Node.Kind == EMHCompositeNodeKind::Random)
+        {
+            for (const FMHCompositeOption& Option : Node.Options)
+            {
+                FIndexedDependency OptionDependency;
+                OptionDependency.Owner = Owner;
+                OptionDependency.OwnerPath = OwnerPath;
+                if (Option.Kind == EMHCompositeOptionKind::Mesh)
+                {
+                    OptionDependency.Target.Kind = EMHResourceKind::StaticMesh;
+                    OptionDependency.Target.LogicalName = Option.Resource;
+                    OptionDependency.Role = TEXT("placement_mesh");
+                    OutDependencies.Add(MoveTemp(OptionDependency));
+                }
+                else if (Option.Kind == EMHCompositeOptionKind::Composite)
+                {
+                    OptionDependency.Target.Kind = EMHResourceKind::Composite;
+                    OptionDependency.Target.LogicalName = Option.Resource;
+                    OptionDependency.Role = TEXT("placement_composite");
+                    OutDependencies.Add(MoveTemp(OptionDependency));
+                }
+            }
         }
         else if (Node.Kind == EMHCompositeNodeKind::Composite)
         {
@@ -907,10 +938,10 @@ private:
                 TEXT("SELECT COUNT(*) FROM ResourceCandidates WHERE "
                      "parse_status NOT IN ('ok','noncanonical','unreadable','invalid_payload') "
                      "OR ((kind IS NULL) <> (name IS NULL)) "
-                     "OR (kind IS NOT NULL AND kind NOT IN ('static_mesh','material','composite','texture'));")) ||
+                     "OR (kind IS NOT NULL AND kind NOT IN ('static_mesh','material','composite','placement_profile','texture'));")) ||
             HasInvalidRows(
                 TEXT("SELECT COUNT(*) FROM ResourceKeys WHERE "
-                     "kind NOT IN ('static_mesh','material','composite','texture') "
+                     "kind NOT IN ('static_mesh','material','composite','placement_profile','texture') "
                      "OR resolution_status NOT IN ('unique','ambiguous','invalid','missing');")) ||
             HasInvalidRows(
                 TEXT("WITH CandidateStates(kind,name,resolution_status) AS ("
@@ -937,6 +968,7 @@ private:
                      "NOT ((owner_kind='material' AND target_kind='texture' AND role='texture') "
                      "OR (owner_kind='composite' AND target_kind='static_mesh' AND role='placement_mesh') "
                      "OR (owner_kind='composite' AND target_kind='composite' AND role='placement_composite') "
+                     "OR (owner_kind='composite' AND target_kind='placement_profile' AND role='profile') "
                      "OR (owner_kind='static_mesh' AND target_kind='material' AND role='slot'));")) ||
             HasInvalidRows(
                 TEXT("SELECT COUNT(*) FROM GeneratedAssets WHERE "
@@ -1277,7 +1309,7 @@ private:
         else if (Key.Kind == EMHResourceKind::Composite)
         {
             FMHCompositeDocument Document;
-            if (!MHParseCompositeV4(Bytes, Document, ParseError))
+            if (!MHParseCompositeV5(Bytes, Document, ParseError))
             {
                 OutCandidate.ParseStatus = ECandidateParseStatus::InvalidPayload;
                 OutCandidate.Diagnostic = ParseError;
@@ -1290,6 +1322,16 @@ private:
                     OutCandidate.RelativePath,
                     OutCandidate.Dependencies);
                 DeduplicateDependencies(OutCandidate.Dependencies);
+            }
+        }
+        else if (Key.Kind == EMHResourceKind::PlacementProfile)
+        {
+            FMHPlacementProfile Profile;
+            Profile.LogicalName = Key.LogicalName;
+            if (!MHParsePlacementProfileV1(Bytes, Profile, ParseError))
+            {
+                OutCandidate.ParseStatus = ECandidateParseStatus::InvalidPayload;
+                OutCandidate.Diagnostic = ParseError;
             }
         }
         return true;
@@ -1385,7 +1427,8 @@ private:
             EMHResourceKind ClaimedKind = EMHResourceKind::StaticMesh;
             FMHResourceKey Key;
             Key.LogicalName = Claim.LogicalName;
-            Row.bKeyValid = MHResourceKindFromLabel(Claim.Kind, ClaimedKind);
+            Row.bKeyValid = MHResourceKindFromLabel(Claim.Kind, ClaimedKind) &&
+                ClaimedKind != EMHResourceKind::PlacementProfile;
             if (Row.bKeyValid)
             {
                 Key.Kind = ClaimedKind;

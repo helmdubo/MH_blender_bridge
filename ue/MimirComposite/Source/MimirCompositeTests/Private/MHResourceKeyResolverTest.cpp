@@ -82,6 +82,11 @@ bool FMHResourceKeyClassifierTest::RunTest(const FString& Parameters)
         TEXT("composite extension is classified"),
         MHResourceKeyFromSourceFile(TEXT("C:/source/composite_name.composite"), Parsed, Error));
     bPassed &= TestEqual(TEXT("composite kind"), Parsed.Kind, EMHResourceKind::Composite);
+    bPassed &= TestTrue(
+        TEXT("placement profile extension is classified"),
+        MHResourceKeyFromSourceFile(TEXT("C:/source/scatter_profile.placement"), Parsed, Error));
+    bPassed &= TestEqual(TEXT("placement profile kind"), Parsed.Kind, EMHResourceKind::PlacementProfile);
+    bPassed &= TestEqual(TEXT("placement profile logical name"), Parsed.LogicalName, TEXT("scatter_profile"));
 
     bPassed &= TestFalse(
         TEXT("embedded dot is rejected without normalization"),

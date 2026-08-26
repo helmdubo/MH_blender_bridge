@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositeProtocol.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -100,9 +101,16 @@ bool MHBuildNodeForActor(
     FString& OutReason)
 {
     OutNode = FMHCompositeNode();
-    OutNode.Transform.TranslationCm = Actor.GetActorTransform().GetRelativeTransform(Pivot).GetTranslation();
-    OutNode.Transform.RotationQuat = Actor.GetActorTransform().GetRelativeTransform(Pivot).GetRotation();
-    OutNode.Transform.Scale = Actor.GetActorTransform().GetRelativeTransform(Pivot).GetScale3D();
+    const FMatrix LocalMatrix = Actor.GetActorTransform().ToMatrixWithScale() * Pivot.ToInverseMatrixWithScale();
+    if (!MHIsRepresentableTransformMatrix(LocalMatrix))
+    {
+        OutReason = TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: actor transform is not representable as parent-local T/R/S within 8 float32 ULP");
+        return false;
+    }
+    const FTransform LocalTransform(LocalMatrix);
+    OutNode.Transform.TranslationCm = LocalTransform.GetTranslation();
+    OutNode.Transform.RotationQuat = LocalTransform.GetRotation();
+    OutNode.Transform.Scale = LocalTransform.GetScale3D();
     OutNode.Name = Actor.GetActorLabel();
 
     if (AStaticMeshActor* StaticMeshActor = Cast<AStaticMeshActor>(&Actor))
@@ -171,18 +179,36 @@ FBox MHSelectionBounds(const TArray<AActor*>& Actors)
 
 bool MHCollectBreakSpecs(
     const TArray<FMHCompositeNode>& Nodes,
-    const FTransform& DocumentBasis,
+    const FMatrix& ParentWorld,
     const UMHCompositeSettings& Settings,
     TArray<FMHBreakSpawnSpec>& OutSpecs,
-    FString& OutError)
+    FString& OutError,
+    const FString& ParentPath = TEXT("nodes"))
 {
-    for (const FMHCompositeNode& Node : Nodes)
+    for (int32 NodeIndex = 0; NodeIndex < Nodes.Num(); ++NodeIndex)
     {
-        const FTransform WorldTransform(
+        const FMHCompositeNode& Node = Nodes[NodeIndex];
+        const FString NodePath = FString::Printf(TEXT("%s[%d]"), *ParentPath, NodeIndex);
+        if (Node.Kind == EMHCompositeNodeKind::Random || !Node.Profile.IsEmpty())
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: %s requires the V5-S5 resolved plan before Break"),
+                *NodePath);
+            return false;
+        }
+        const FTransform LocalTransform(
             Node.Transform.RotationQuat,
             Node.Transform.TranslationCm,
             Node.Transform.Scale);
-        const FTransform PlacedWorld = WorldTransform * DocumentBasis;
+        const FMatrix WorldMatrix = LocalTransform.ToMatrixWithScale() * ParentWorld;
+        if (!MHIsRepresentableTransformMatrix(WorldMatrix))
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: parent-local accumulation at %s is not representable within 8 float32 ULP"),
+                *NodePath);
+            return false;
+        }
+        const FTransform PlacedWorld(WorldMatrix);
         if (Node.Kind != EMHCompositeNodeKind::Group)
         {
             FMHBreakSpawnSpec& Spec = OutSpecs.AddDefaulted_GetRef();
@@ -232,9 +258,13 @@ bool MHCollectBreakSpecs(
                 }
             }
         }
-        // Transforms in the v4 document are authored world transforms inside
-        // the document basis; group attachment is structural and dissolves.
-        if (!MHCollectBreakSpecs(Node.Children, DocumentBasis, Settings, OutSpecs, OutError))
+        if (!MHCollectBreakSpecs(
+                Node.Children,
+                WorldMatrix,
+                Settings,
+                OutSpecs,
+                OutError,
+                NodePath + TEXT("/children")))
         {
             return false;
         }
@@ -441,12 +471,12 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
         Package,
         FName(*Key.LogicalName),
         RF_Public | RF_Standalone | RF_Transactional);
-    if (Asset == nullptr || !MHApplyCompositeV4(*Asset, Document, OutError))
+    if (Asset == nullptr || !MHApplyCompositeV5(*Asset, Document, OutError))
     {
         return false;
     }
     FAssetRegistryModule::AssetCreated(Asset);
-    FMHCompositeOperationResult Published = MHPublishCompositeV4(
+    FMHCompositeOperationResult Published = MHPublishCompositeV5(
         *Asset,
         SourceRoot,
         &AdoptTarget);
@@ -548,7 +578,7 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
             return false;
         }
         FMHCompositeDocument Document;
-        if (!MHExtractCompositeV4(*Asset, Document, OutError))
+        if (!MHExtractCompositeV5(*Asset, Document, OutError))
         {
             return false;
         }
@@ -556,7 +586,7 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         Plan.Actor = Actor;
         if (!MHCollectBreakSpecs(
                 Document.Nodes,
-                Actor->GetActorTransform(),
+                Actor->GetActorTransform().ToMatrixWithScale(),
                 *Settings,
                 Plan.Specs,
                 OutError))
@@ -607,7 +637,7 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
         return false;
     }
     UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
-    if (Actor == nullptr || Asset == nullptr || !MHExtractCompositeV4(*Asset, EditingDocument, OutError))
+    if (Actor == nullptr || Asset == nullptr || !MHExtractCompositeV5(*Asset, EditingDocument, OutError))
     {
         if (OutError.IsEmpty())
         {
@@ -657,7 +687,17 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
             OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: an edit component disappeared before Commit");
             return false;
         }
-        const FTransform Relative = Component->GetComponentTransform().GetRelativeTransform(Actor->GetActorTransform());
+        const FMatrix RelativeMatrix =
+            Component->GetComponentTransform().ToMatrixWithScale() *
+            Actor->GetActorTransform().ToInverseMatrixWithScale();
+        if (!MHIsRepresentableTransformMatrix(RelativeMatrix))
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: edited top-level node %d is not representable as parent-local T/R/S within 8 float32 ULP"),
+                Index);
+            return false;
+        }
+        const FTransform Relative(RelativeMatrix);
         Edited.Nodes[Index].Transform.TranslationCm = Relative.GetTranslation();
         Edited.Nodes[Index].Transform.RotationQuat = Relative.GetRotation();
         Edited.Nodes[Index].Transform.Scale = Relative.GetScale3D();
@@ -667,7 +707,7 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     // recoverable. Once Commit crosses the source-file boundary, UE Undo must
     // no longer be able to resurrect a pre-Commit component snapshot.
     TArray<uint8> CanonicalPreflight;
-    if (!MHWriteCanonicalCompositeV4(Edited, CanonicalPreflight, OutError))
+    if (!MHWriteCanonicalCompositeV5(Edited, CanonicalPreflight, OutError))
     {
         return false;
     }
@@ -679,7 +719,7 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     EditingDocument = FMHCompositeDocument();
     GEditor->ResetTransaction(INVTEXT("MH Composite source Commit cannot be undone"));
 
-    if (!MHApplyCompositeV4(*Asset, Edited, OutError))
+    if (!MHApplyCompositeV5(*Asset, Edited, OutError))
     {
         Actor->RebuildComposite();
         return false;
@@ -698,7 +738,7 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     else
 #endif
     {
-        Published = MHPublishCompositeV4(*Asset, SourceRoot, nullptr);
+        Published = MHPublishCompositeV5(*Asset, SourceRoot, nullptr);
     }
     OutWarnings.Append(Published.Warnings);
     if (!Published.Succeeded())

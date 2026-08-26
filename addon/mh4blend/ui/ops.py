@@ -331,7 +331,7 @@ class MH_OT_remap_all_textures_to_project(bpy.types.Operator):
 class MH_OT_export_composite(bpy.types.Operator):
     bl_idname = "mh.export_composite"
     bl_label = "Export Composite"
-    bl_description = "Export one Source Protocol v4 composite"
+    bl_description = "Export one Source Protocol v5 composite"
 
     def execute(self, context):
         collection = context.scene.mh_composite_export_collection
@@ -356,7 +356,7 @@ class MH_OT_export_composite(bpy.types.Operator):
 class MH_OT_import_composite(bpy.types.Operator):
     bl_idname = "mh.import_composite"
     bl_label = "Import Composite"
-    bl_description = "Import one Source Protocol v4 composite"
+    bl_description = "Import one Source Protocol v5 composite"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):

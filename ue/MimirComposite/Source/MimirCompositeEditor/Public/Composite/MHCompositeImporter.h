@@ -40,14 +40,14 @@ MIMIRCOMPOSITEEDITOR_API bool MHDetectManagedCompositeLocalModification(
     FString& OutWarning);
 
 /** Resolve/build first, then create/update the deterministic generated asset in-place. */
-MIMIRCOMPOSITEEDITOR_API FMHCompositeOperationResult MHImportCompositeV4(
+MIMIRCOMPOSITEEDITOR_API FMHCompositeOperationResult MHImportCompositeV5(
     const FMHSourceAnalysisEntry& Entry,
     IMHSourceResolver& Resolver,
     const FString& SourceRoot,
     const UMHCompositeSettings& Settings);
 
 /** Full-overwrite publish. Adopt is required for an unmanaged asset. */
-MIMIRCOMPOSITEEDITOR_API FMHCompositeOperationResult MHPublishCompositeV4(
+MIMIRCOMPOSITEEDITOR_API FMHCompositeOperationResult MHPublishCompositeV5(
     UMHCompositeAsset& Asset,
     const FString& SourceRoot,
     const FMHCompositeAdoptTarget* AdoptTarget = nullptr);

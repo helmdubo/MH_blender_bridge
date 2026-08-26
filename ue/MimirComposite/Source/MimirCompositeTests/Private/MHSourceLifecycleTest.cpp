@@ -191,11 +191,12 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
         bExecuted);
     MHSetImportStageObserverForTests(TFunction<void(EMHResourceKind)>());
     const TArray<EMHResourceKind> Expected = {
+        EMHResourceKind::PlacementProfile,
         EMHResourceKind::Texture,
         EMHResourceKind::Material,
         EMHResourceKind::StaticMesh,
         EMHResourceKind::Composite};
-    bPassed &= TestTrue(TEXT("coordinator stage order is T-M-SM-C"), Stages == Expected);
+    bPassed &= TestTrue(TEXT("coordinator stage order is P-T-M-SM-C"), Stages == Expected);
     MHShutdownProjectIndex();
     return bPassed;
 }
@@ -217,7 +218,7 @@ bool FMHSourceLifecycleSelfPublishEchoTest::RunTest(const FString& Parameters)
     FPaths::NormalizeDirectoryName(SourceRoot);
     IFileManager::Get().MakeDirectory(*SourceRoot, true);
     const FString SourcePath = FPaths::Combine(SourceRoot, Token + TEXT(".composite"));
-    const TArray<uint8> Initial = LifecycleUtf8(TEXT("{\n  \"nodes\": []\n}\n"));
+    const TArray<uint8> Initial = LifecycleUtf8(TEXT("{\n  \"v\": 5,\n  \"nodes\": []\n}\n"));
     bool bPassed = TestTrue(
         TEXT("write initial composite"),
         FFileHelper::SaveArrayToFile(Initial, *SourcePath));
@@ -262,8 +263,8 @@ bool FMHSourceLifecycleSelfPublishEchoTest::RunTest(const FString& Parameters)
     Group.Kind = EMHCompositeNodeKind::Group;
     Group.Name = TEXT("echo");
     FString Error;
-    bPassed &= TestTrue(TEXT("apply local source-shaped edit"), MHApplyCompositeV4(*Asset, Edited, Error));
-    const FMHCompositeOperationResult Published = MHPublishCompositeV4(*Asset, SourceRoot);
+    bPassed &= TestTrue(TEXT("apply local source-shaped edit"), MHApplyCompositeV5(*Asset, Edited, Error));
+    const FMHCompositeOperationResult Published = MHPublishCompositeV5(*Asset, SourceRoot);
     bPassed &= TestTrue(TEXT("publish succeeds"), Published.Succeeded());
     if (!Published.Succeeded())
     {
