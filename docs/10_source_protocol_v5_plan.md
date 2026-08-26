@@ -594,9 +594,41 @@ Export сортирует options по `mh_option_index`. Отсутствующ
 код `MH_E_DUPLICATE_RANDOM_OPTION_INDEX`. Автоматическая перенумерация и
 сортировка по Outliner/имени запрещены.
 
+**Ключи и зеркало (поправка owner по референсу dag4blend).** Authority —
+typed PropertyGroup `mh4blend` на объекте: `kind`, `weight`, `option_index`.
+Дополнительно import/export пишут на тот же Empty НЕавторитетное зеркало в
+обычные ID custom properties с закреплёнными именами —
+`mh_composite_kind` (`"random"` на random-узле), `mh_random_weight` (float),
+`mh_random_option_index` (int). Зеркало существует ровно для внешних
+инструментов и диагностики: reader/writer MH читают ТОЛЬКО typed-данные, при
+расхождении typed побеждает, правка зеркала художником ничего не меняет. Это
+тот же приём, что receipts↔Asset Registry tags (§7): одна истина, одна её
+проекция.
+
 Панель Options предоставляет Add / Remove / Up / Down / weight и меняет typed
-option data. Dagor importer читает `ent` и `weight:r`; отсутствие `weight:r`
-означает ровно 1 при Dagor→typed conversion. Импорт рекурсивен по всем options,
+option data.
+
+**Контракт конвертации Dagor→MH.** Источников два, оба обязательны.
+(1) Прямой разбор `*.composit.blk` — авторитетный путь.
+(2) Конвертация УЖЕ импортированной dag4blend-сцены — рабочий путь художника,
+у которого композит уже открыт. Для (2) действуют правила:
+
+- random-узел распознаётся по ЛЮБОМУ из двух признаков: узел-Empty, чья
+  `instance_collection` является helper-коллекцией `random.*` с
+  ent-Empty внутри, ЛИБО явный маркер `type:t == "random"` (его ставит
+  overlay-патч dag4blend; на непропатченной установке его нет, поэтому
+  опираться только на маркер нельзя);
+- вес берётся из `dagorprops['weight:r']`, при отсутствии — из ID custom
+  property `weight:r` (зеркало overlay-патча), при отсутствии обоих — ровно
+  `1` (Dagor не пишет значение по умолчанию);
+- **options поднимаются из helper-коллекции в дети random-Empty.** dag4blend
+  держит варианты в отдельной коллекции внутри служебной сцены и инстансит
+  её; у нас `TECH` никогда не является source authority (выше), поэтому
+  конвертер переносит варианты в дети узла и назначает `option_index` по
+  порядку их появления в исходном `.blk`/коллекции;
+- `type:t` варианта (`composit`/`rendinst`/`prefab`/`gameobj`) отображается в
+  наш `kind` (`composite`/`mesh`/`mesh`/`actor`); неизвестный или
+  отсутствующий тип — fail-closed, угадывание по имени запрещено. Импорт рекурсивен по всем options,
 поддерживает structure-only / LOD0 / full-LOD и явные reuse/refresh definitions.
 Неразрешённый option следует v4 Blender placeholder policy, но остаётся в
 source closure; ambiguous same-kind resource блокирует импорт.
