@@ -125,6 +125,7 @@ const TCHAR* MHResourceKindLabel(const EMHResourceKind Kind)
     case EMHResourceKind::StaticMesh: return TEXT("static_mesh");
     case EMHResourceKind::Material: return TEXT("material");
     case EMHResourceKind::Composite: return TEXT("composite");
+    case EMHResourceKind::PlacementProfile: return TEXT("placement_profile");
     case EMHResourceKind::Texture: return TEXT("texture");
     }
     return TEXT("unknown");
@@ -136,6 +137,7 @@ bool MHResourceKindFromLabel(const FString& Label, EMHResourceKind& OutKind)
         EMHResourceKind::StaticMesh,
         EMHResourceKind::Material,
         EMHResourceKind::Composite,
+        EMHResourceKind::PlacementProfile,
         EMHResourceKind::Texture})
     {
         if (Label == MHResourceKindLabel(Kind))
@@ -154,6 +156,7 @@ bool FMHResourceKey::IsCanonical() const
     case EMHResourceKind::StaticMesh:
     case EMHResourceKind::Material:
     case EMHResourceKind::Composite:
+    case EMHResourceKind::PlacementProfile:
     case EMHResourceKind::Texture:
         return IsCanonicalLogicalName(LogicalName);
     }
@@ -192,6 +195,11 @@ bool MHResourceKeyFromSourceFile(
     {
         OutKey.Kind = EMHResourceKind::Composite;
         CanonicalSuffix = TEXT(".composite");
+    }
+    else if (LowerFilename.EndsWith(TEXT(".placement")))
+    {
+        OutKey.Kind = EMHResourceKind::PlacementProfile;
+        CanonicalSuffix = TEXT(".placement");
     }
     else
     {

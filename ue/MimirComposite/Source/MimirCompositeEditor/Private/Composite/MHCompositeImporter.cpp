@@ -25,9 +25,127 @@ namespace
 
 constexpr const TCHAR* GeneratedCompositeRoot = TEXT("/Game/MH/Generated/Composites");
 
+struct FInlinedProfileSourceSnapshot
+{
+    FString LogicalName;
+    FString PayloadPath;
+    FString RawHash;
+    TArray<uint8> Bytes;
+};
+
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void()> GBeforeCompositeSourceCommitTestHook;
 #endif
+
+void CollectProfileNames(
+    const TArray<FMHCompositeNode>& Nodes,
+    TArray<FString>& OutNames,
+    TSet<FString>& Seen)
+{
+    for (const FMHCompositeNode& Node : Nodes)
+    {
+        if (!Node.Profile.IsEmpty() && !Seen.Contains(Node.Profile))
+        {
+            Seen.Add(Node.Profile);
+            OutNames.Add(Node.Profile);
+        }
+        CollectProfileNames(Node.Children, OutNames, Seen);
+    }
+}
+
+bool LoadInlinedProfiles(
+    const FMHCompositeDocument& Document,
+    IMHSourceResolver& Resolver,
+    TArray<FMHPlacementProfile>& OutProfiles,
+    TArray<FInlinedProfileSourceSnapshot>& OutSnapshots,
+    FString& OutError)
+{
+    TArray<FString> Names;
+    TSet<FString> Seen;
+    CollectProfileNames(Document.Nodes, Names, Seen);
+    OutProfiles.Reset(Names.Num());
+    OutSnapshots.Reset(Names.Num());
+    for (const FString& Name : Names)
+    {
+        FMHResourceKey Key;
+        Key.Kind = EMHResourceKind::PlacementProfile;
+        Key.LogicalName = Name;
+        const FMHResolveOutcome Outcome = Resolver.Resolve(Key);
+        if (Outcome.Status != EMHResolveStatus::Resolved)
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: placement_profile:%s does not resolve uniquely"),
+                *Name);
+            return false;
+        }
+        TArray<uint8> Bytes;
+        if (!FFileHelper::LoadFileToArray(Bytes, *Outcome.PayloadPath))
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_PLACEMENT_PROFILE_GRAMMAR: cannot read placement_profile:%s"), *Name);
+            return false;
+        }
+        const FString RawHash = MHRawPayloadHash(Bytes);
+        if (!Outcome.RawHash.IsEmpty() && RawHash != Outcome.RawHash)
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: placement_profile:%s changed after source resolution"),
+                *Name);
+            return false;
+        }
+        FMHPlacementProfile& Profile = OutProfiles.AddDefaulted_GetRef();
+        Profile.LogicalName = Name;
+        if (!MHParsePlacementProfileV1(Bytes, Profile, OutError)) return false;
+        FInlinedProfileSourceSnapshot& Snapshot = OutSnapshots.AddDefaulted_GetRef();
+        Snapshot.LogicalName = Name;
+        Snapshot.PayloadPath = Outcome.PayloadPath;
+        Snapshot.RawHash = RawHash;
+        Snapshot.Bytes = MoveTemp(Bytes);
+    }
+    return true;
+}
+
+bool RevalidateInlinedProfileSources(
+    const TArray<FInlinedProfileSourceSnapshot>& Snapshots,
+    FString& OutError)
+{
+    for (const FInlinedProfileSourceSnapshot& Snapshot : Snapshots)
+    {
+        TArray<uint8> FinalBytes;
+        if (!FFileHelper::LoadFileToArray(FinalBytes, *Snapshot.PayloadPath) ||
+            FinalBytes != Snapshot.Bytes)
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: placement_profile:%s changed before generated-asset mutation"),
+                *Snapshot.LogicalName);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ApplyInlinedProfileSourceHashes(
+    TArray<FMHPlacementProfile>& Profiles,
+    const TArray<FInlinedProfileSourceSnapshot>& Snapshots,
+    FString& OutError)
+{
+    if (Profiles.Num() != Snapshots.Num())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: inlined placement profile receipt count changed during import");
+        return false;
+    }
+    for (int32 Index = 0; Index < Profiles.Num(); ++Index)
+    {
+        if (Profiles[Index].LogicalName != Snapshots[Index].LogicalName ||
+            !MHIsCanonicalRawPayloadHash(Snapshots[Index].RawHash))
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: inlined placement profile receipt identity changed during import");
+            return false;
+        }
+        Profiles[Index].SetAppliedSourceHash(Snapshots[Index].RawHash);
+    }
+    return true;
+}
 
 bool CompositeRelativeToRoot(const FString& Root, const FString& Path, FString& OutRelative)
 {
@@ -99,8 +217,8 @@ bool AtomicWriteComposite(const FString& TargetPath, const TArray<uint8>& Bytes,
     TArray<uint8> Rewritten;
     FString ValidationError;
     if (!FFileHelper::LoadFileToArray(ReadBack, *TempPath) || ReadBack != Bytes ||
-        !MHParseCompositeV4(ReadBack, Parsed, ValidationError) ||
-        !MHWriteCanonicalCompositeV4(Parsed, Rewritten, ValidationError) || Rewritten != Bytes)
+        !MHParseCompositeV5(ReadBack, Parsed, ValidationError) ||
+        !MHWriteCanonicalCompositeV5(Parsed, Rewritten, ValidationError) || Rewritten != Bytes)
     {
         IFileManager::Get().Delete(*TempPath, false, true, true);
         OutError = FString::Printf(
@@ -161,8 +279,8 @@ bool MHDetectManagedCompositeLocalModification(
     FMHCompositeDocument Extracted;
     TArray<uint8> Bytes;
     FString Error;
-    if (!MHExtractCompositeV4(Asset, Extracted, Error) ||
-        !MHWriteCanonicalCompositeV4(Extracted, Bytes, Error) ||
+    if (!MHExtractCompositeV5(Asset, Extracted, Error) ||
+        !MHWriteCanonicalCompositeV5(Extracted, Bytes, Error) ||
         MHRawPayloadHash(Bytes) != Asset.AppliedHash)
     {
         OutWarning = FString::Printf(
@@ -173,7 +291,7 @@ bool MHDetectManagedCompositeLocalModification(
     return false;
 }
 
-FMHCompositeOperationResult MHImportCompositeV4(
+FMHCompositeOperationResult MHImportCompositeV5(
     const FMHSourceAnalysisEntry& Entry,
     IMHSourceResolver& Resolver,
     const FString& SourceRoot,
@@ -190,7 +308,7 @@ FMHCompositeOperationResult MHImportCompositeV4(
     TArray<uint8> SourceBytes;
     FMHCompositeDocument Document;
     if (!FFileHelper::LoadFileToArray(SourceBytes, *Entry.PayloadPath) ||
-        !MHParseCompositeV4(SourceBytes, Document, Result.Error))
+        !MHParseCompositeV5(SourceBytes, Document, Result.Error))
     {
         if (Result.Error.IsEmpty()) Result.Error = TEXT("MH_E_COMPOSITE_GRAMMAR: cannot read composite payload");
         return Result;
@@ -202,8 +320,11 @@ FMHCompositeOperationResult MHImportCompositeV4(
         return Result;
     }
     TArray<uint8> CanonicalSource;
-    if (!MHWriteCanonicalCompositeV4(Document, CanonicalSource, Result.Error) ||
-        !MHProbeCompositeBuildV4(Entry.Key.LogicalName, Document, Resolver, Settings, Result.Error))
+    TArray<FMHPlacementProfile> InlinedProfiles;
+    TArray<FInlinedProfileSourceSnapshot> InlinedProfileSnapshots;
+    if (!MHWriteCanonicalCompositeV5(Document, CanonicalSource, Result.Error) ||
+        !LoadInlinedProfiles(Document, Resolver, InlinedProfiles, InlinedProfileSnapshots, Result.Error) ||
+        !MHProbeCompositeBuildV5(Entry.Key.LogicalName, Document, Resolver, Settings, Result.Error))
     {
         return Result;
     }
@@ -222,6 +343,7 @@ FMHCompositeOperationResult MHImportCompositeV4(
         Result.Error = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: composite bytes changed before generated-asset mutation");
         return Result;
     }
+    if (!RevalidateInlinedProfileSources(InlinedProfileSnapshots, Result.Error)) return Result;
 
     const FString PackageName = FString(GeneratedCompositeRoot) + TEXT("/") + Entry.Key.LogicalName;
     const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;
@@ -249,24 +371,26 @@ FMHCompositeOperationResult MHImportCompositeV4(
     }
 
     const TArray<FMHCompositeAssetNode> PreviousNodes = Asset->Nodes;
+    const TArray<FMHPlacementProfile> PreviousProfiles = Asset->InlinedPlacementProfiles;
     const FString PreviousLogicalName = Asset->LogicalName;
     const FString PreviousSourcePath = Asset->SourceRelativePath;
     const FString PreviousSourceHash = Asset->SourceHash;
     const FString PreviousAppliedHash = Asset->AppliedHash;
-    if (!MHApplyCompositeV4(*Asset, Document, Result.Error))
+    if (!MHApplyCompositeV5(*Asset, Document, InlinedProfiles, Result.Error))
     {
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
         return Result;
     }
     FMHCompositeDocument Extracted;
     TArray<uint8> AppliedBytes;
-    if (!MHExtractCompositeV4(*Asset, Extracted, Result.Error) ||
-        !MHWriteCanonicalCompositeV4(Extracted, AppliedBytes, Result.Error) || AppliedBytes != CanonicalSource)
+    if (!MHExtractCompositeV5(*Asset, Extracted, Result.Error) ||
+        !MHWriteCanonicalCompositeV5(Extracted, AppliedBytes, Result.Error) || AppliedBytes != CanonicalSource)
     {
         Result.Error = FString::Printf(
             TEXT("MH_E_COMPOSITE_GRAMMAR: applied asset does not round-trip canonical source: %s"),
             *Result.Error);
         Asset->Nodes = PreviousNodes;
+        Asset->InlinedPlacementProfiles = PreviousProfiles;
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
         return Result;
     }
@@ -276,10 +400,24 @@ FMHCompositeOperationResult MHImportCompositeV4(
     if (!SaveAssetPackage(*Asset, Result.Error))
     {
         Asset->Nodes = PreviousNodes;
+        Asset->InlinedPlacementProfiles = PreviousProfiles;
         Asset->LogicalName = PreviousLogicalName;
         Asset->SourceRelativePath = PreviousSourcePath;
         Asset->SourceHash = PreviousSourceHash;
         Asset->AppliedHash = PreviousAppliedHash;
+        if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
+        return Result;
+    }
+    // The first save deliberately persisted empty profile receipt markers.
+    // Advance them only in the same final save as the composite receipt.
+    if (!ApplyInlinedProfileSourceHashes(
+            Asset->InlinedPlacementProfiles,
+            InlinedProfileSnapshots,
+            Result.Error))
+    {
+        Asset->Nodes = PreviousNodes;
+        Asset->InlinedPlacementProfiles = PreviousProfiles;
+        Asset->PostEditChange();
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
         return Result;
     }
@@ -290,6 +428,8 @@ FMHCompositeOperationResult MHImportCompositeV4(
     Asset->PostEditChange();
     if (!SaveAssetPackage(*Asset, Result.Error))
     {
+        Asset->Nodes = PreviousNodes;
+        Asset->InlinedPlacementProfiles = PreviousProfiles;
         Asset->LogicalName = PreviousLogicalName;
         Asset->SourceRelativePath = PreviousSourcePath;
         Asset->SourceHash = PreviousSourceHash;
@@ -313,7 +453,7 @@ FMHCompositeOperationResult MHImportCompositeV4(
     return Result;
 }
 
-FMHCompositeOperationResult MHPublishCompositeV4(
+FMHCompositeOperationResult MHPublishCompositeV5(
     UMHCompositeAsset& Asset,
     const FString& SourceRoot,
     const FMHCompositeAdoptTarget* AdoptTarget)
@@ -323,8 +463,8 @@ FMHCompositeOperationResult MHPublishCompositeV4(
     FPaths::NormalizeDirectoryName(AbsoluteSourceRoot);
     FMHCompositeDocument Document;
     TArray<uint8> Bytes;
-    if (!MHExtractCompositeV4(Asset, Document, Result.Error) ||
-        !MHWriteCanonicalCompositeV4(Document, Bytes, Result.Error))
+    if (!MHExtractCompositeV5(Asset, Document, Result.Error) ||
+        !MHWriteCanonicalCompositeV5(Document, Bytes, Result.Error))
     {
         return Result;
     }

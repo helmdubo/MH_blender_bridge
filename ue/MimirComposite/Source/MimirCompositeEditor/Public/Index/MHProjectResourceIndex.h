@@ -143,6 +143,12 @@ public:
         TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,
         FString& OutError) const;
 
+    /** Stable profile edges for importer-owned inline freshness checks. */
+    bool GetPlacementProfileDependencies(
+        const FMHResourceKey& CompositeKey,
+        TArray<FMHResourceKey>& OutProfiles,
+        FString& OutError) const;
+
     /** Enumerates every generated claim, including malformed key rows. */
     bool GetAllGeneratedAssets(
         TArray<FMHProjectIndexGeneratedAssetState>& OutAssets,

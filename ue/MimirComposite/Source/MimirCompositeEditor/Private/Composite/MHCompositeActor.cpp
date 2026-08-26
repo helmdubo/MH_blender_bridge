@@ -100,7 +100,7 @@ void AMHCompositeActor::RebuildComposite()
         ? Asset->LogicalName
         : AssetPath.GetAssetName();
     UE::MimirComposite::FMHCompositePlacementCompileResult Result =
-        UE::MimirComposite::MHCompileCompositePlacementV4(
+        UE::MimirComposite::MHCompileCompositePlacementV5(
             *this,
             Asset,
             ExpectedLogicalName,

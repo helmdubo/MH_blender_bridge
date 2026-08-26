@@ -1,11 +1,9 @@
-"""Blender writer for Source Protocol v4 composite resources."""
+"""Blender writer for Source Protocol v5 composite resources."""
 
 from __future__ import annotations
 
-import math
 import os
 from pathlib import Path
-import struct
 
 import bpy
 from mathutils import Matrix
@@ -21,7 +19,10 @@ from ..core.composites import (
 )
 from ..core.model import Composite, CompositeTransform, Node
 from ..core.payload_publish_v2 import atomic_publish_bytes
-from ..core.transforms import blender_to_ue_transform
+from ..core.transforms import (
+    blender_to_ue_transform,
+    matrix_reconstructs_as_float32_trs,
+)
 from ..core.validate import MHValidationError
 from .export_fbx import _dagor_lod_structure
 from .resource_markers import (
@@ -46,9 +47,7 @@ NODE_RESOURCE_KEY = "mh_composite_resource"
 NODE_NAME_KEY = "mh_composite_name"
 UNRESOLVED_PLACEMENT_KEY = "mh_unresolved_placement"
 _IMPORTED_TRANSFORM_KEY = "mh_imported_source_transform"
-_IMPORTED_MATRIX_KEY = "mh_imported_matrix"
-_FLOAT32_EPSILON = 2.0 ** -23
-_FLOAT32_RECONSTRUCTION_ULPS = 8.0
+_IMPORTED_MATRIX_KEY = "mh_imported_local_matrix"
 
 
 def _matrix_signature(matrix) -> str:
@@ -59,42 +58,17 @@ def _matrix_signature(matrix) -> str:
     )
 
 
-def _float32(value: float) -> float:
-    return struct.unpack("<f", struct.pack("<f", float(value)))[0]
-
-
-def _matrix_reconstructs_as_float32_trs(matrix, reconstructed) -> bool:
-    """Return whether decomposition preserves every matrix element as float32."""
-    try:
-        for row in range(4):
-            for column in range(4):
-                source = _float32(matrix[row][column])
-                restored = _float32(reconstructed[row][column])
-                if not math.isfinite(source) or not math.isfinite(restored):
-                    return False
-                magnitude = max(1.0, abs(source), abs(restored))
-                tolerance = (
-                    _FLOAT32_RECONSTRUCTION_ULPS
-                    * _FLOAT32_EPSILON
-                    * magnitude)
-                if abs(source - restored) > tolerance:
-                    return False
-    except (OverflowError, struct.error):
-        return False
-    return True
-
-
 def _stamp_imported_transform(obj, transform: CompositeTransform) -> None:
     obj[_IMPORTED_TRANSFORM_KEY] = canonical_json_bytes(
         transform.disk_dict()).decode("utf-8")
-    obj[_IMPORTED_MATRIX_KEY] = _matrix_signature(obj.matrix_world)
+    obj[_IMPORTED_MATRIX_KEY] = _matrix_signature(obj.matrix_local)
 
 
 def _stored_imported_transform(obj) -> CompositeTransform | None:
     encoded = obj.get(_IMPORTED_TRANSFORM_KEY)
     snapshot = obj.get(_IMPORTED_MATRIX_KEY)
     if (not isinstance(encoded, str) or not isinstance(snapshot, str)
-            or snapshot != _matrix_signature(obj.matrix_world)):
+            or snapshot != _matrix_signature(obj.matrix_local)):
         return None
     try:
         document = parse_json(encoded)
@@ -300,16 +274,32 @@ def _node_kind_and_resource(obj) -> tuple[str, str | None]:
 
 
 def _object_transform(obj):
+    world_translation, world_rotation, world_scale = obj.matrix_world.decompose()
+    reconstructed_world = Matrix.LocRotScale(
+        world_translation, world_rotation, world_scale)
+    if not matrix_reconstructs_as_float32_trs(
+            obj.matrix_world, reconstructed_world):
+        subjects = [obj.name]
+        if obj.parent is not None:
+            subjects.insert(0, obj.parent.name)
+        raise MHValidationError(
+            "MH_E_UNREPRESENTABLE_TRANSFORM", subjects,
+            f"composite node {obj.name!r} world matrix contains shear or "
+            "cannot round-trip as float32 T/R/S")
+
     stored = _stored_imported_transform(obj)
     if stored is not None:
         return stored
-    translation, rotation, scale = obj.matrix_world.decompose()
+    translation, rotation, scale = obj.matrix_local.decompose()
     recomposed = Matrix.LocRotScale(translation, rotation, scale)
-    if not _matrix_reconstructs_as_float32_trs(obj.matrix_world, recomposed):
+    if not matrix_reconstructs_as_float32_trs(obj.matrix_local, recomposed):
+        subjects = [obj.name]
+        if obj.parent is not None:
+            subjects.insert(0, obj.parent.name)
         raise MHValidationError(
-            "MH_E_INVALID_RESOURCE_SOURCE", [obj.name],
-            f"composite placement object {obj.name!r} matrix_world contains "
-            "shear or cannot round-trip as float32 T/R/S")
+            "MH_E_UNREPRESENTABLE_TRANSFORM", subjects,
+            f"composite node {obj.name!r} parent-local matrix contains shear "
+            "or cannot round-trip as float32 T/R/S")
     return blender_to_ue_transform(
         tuple(float(value) for value in translation),
         (float(rotation.x), float(rotation.y), float(rotation.z),

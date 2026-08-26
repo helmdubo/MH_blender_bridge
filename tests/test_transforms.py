@@ -1,6 +1,7 @@
 """Pure Blender/UE transform seam tests for the R1 pinned FBX mapping."""
 
 import math
+import json
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "addon"))
 from mh4blend.core.model import CompositeTransform  # noqa: E402
 from mh4blend.core.transforms import (  # noqa: E402
     blender_to_ue_transform,
+    matrix_reconstructs_as_float32_trs,
     quat_from_ue,
     quat_to_ue,
     scale_from_ue,
@@ -54,10 +56,28 @@ def test_r1_quaternion_mapping_and_canonical_sign():
 def test_r1_scale_passthrough_and_validation():
     assert scale_to_ue((1.25, 2.0, 0.5)) == (1.25, 2.0, 0.5)
     assert scale_from_ue((1.25, 2.0, 0.5)) == (1.25, 2.0, 0.5)
+    assert scale_to_ue((-1.0, 2.0, 0.5)) == (-1.0, 2.0, 0.5)
     with pytest.raises(ValueError, match="MH_E_INVALID_SCALE"):
         validate_scale((1.0, 0.0, 1.0))
     with pytest.raises(ValueError, match="MH_E_NAN_INF_VALUE"):
         validate_scale((1.0, float("nan"), 1.0))
+
+
+def test_shared_8_ulp_transform_representability_vectors():
+    fixture = json.loads((
+        REPO_ROOT / "golden" / "v5" / "source_protocol_v5_codec_vectors.json"
+    ).read_text(encoding="utf-8"))
+    for vector in fixture["transform_representability_vectors"]:
+        assert matrix_reconstructs_as_float32_trs(
+            vector["matrix"], vector["reconstructed"]
+        ) is vector["representable"], vector["name"]
+
+
+def test_nonfinite_matrix_is_unrepresentable():
+    identity = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+    invalid = [row[:] for row in identity]
+    invalid[0][0] = float("nan")
+    assert not matrix_reconstructs_as_float32_trs(invalid, identity)
 
 
 @pytest.mark.parametrize("translation,rotation,scale", [

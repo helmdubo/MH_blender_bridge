@@ -5,12 +5,55 @@
 Открытый `OPEN-V5-*` не ослабляет 10: затронутая часть остаётся fail-closed
 STOP до owner-решения.
 
-`OPEN-V5-1`…`OPEN-V5-7` РЕШЕНЫ owner — нормативный текст в 10 §13.
-Открытых нормативных вопросов нет; единственное ожидание — owner передаёт
-исходные GAZ `*.composit.blk` в `reference/dagor_fixtures/gaz53/`, что
-блокирует только финальный GAZ-parity acceptance V5-S1 (10 §13.6). Решённые
-V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а `OPEN-V4-24`
-document-world прямо superseded parent-local контрактом v5.
+`OPEN-V5-1`…`OPEN-V5-8` РЕШЕНЫ owner — нормативный текст в 10 §13.
+Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
+`OPEN-V4-24` document-world прямо superseded parent-local контрактом v5.
+
+## OPEN-V5-8 — durable applied receipt инлайненного placement profile
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.4.1, вариант A.**
+
+**Контекст.** §13.4 требует, чтобы изменение `.placement` помечало каждый
+dependent composite `stale` и запускало обычный reimport, но одновременно §3
+сохраняет чистую rebuildable проекцию `mh.project_index:4` строго из source
+scan + шести Asset Registry tags, а §7 закрепляет `MH.SourceHash` как raw hash
+самого `.composite` и `MH.AppliedHash` как hash его canonical extract. Ни один
+из шести tags не несёт hash применённых inline profile bytes. Поэтому после
+рестарта два состояния неразличимы для индекса: (A) UAsset содержит profile
+H1, source уже H2; (B) UAsset содержит H2, source H2. Source tree и все шесть
+tags в A/B одинаковы, но A обязан быть stale, B — applied. Event-only hash
+transition корректен только в текущей generation и теряется после FullScan;
+history в SQLite нарушает rebuild identity. Та же неопределённость возникает
+после recovery `missing|invalid|ambiguous → unique`.
+
+**Вопрос.** Какой owner-approved receipt доказывает freshness инлайненного
+profile после restart/rebuild: (A) private `AppliedSourceHash` внутри каждого
+`FMHPlacementProfile` в `UMHCompositeAsset`, не участвующий в wire JSON,
+`MH.AppliedHash`, Asset Registry tags и SQLite, с загрузкой только
+`NO_CHANGE` profiled-composites по образцу ImporterVersion; (B) новый/изменённый
+Asset Registry receipt/hash domain; либо (C) явное ослабление pure-projection
+rebuild identity в пользу persisted/conservative profile-stale state? Нужно
+также подтвердить, требуется ли durable именно
+`GeneratedAssets.status=stale`, или достаточно durable promotion
+`NO_CHANGE → REIMPORT` вне SQLite при варианте A.
+
+**Решение owner.** Каждый инлайненный `FMHPlacementProfile` хранит private
+editor-only `AppliedSourceHash` exact raw `.placement` bytes. Receipt не входит
+в wire JSON, canonical extract, `MH.AppliedHash`, шесть tags или SQLite.
+Индекс остаётся чистой проекцией и честно оставляет профильный composite
+`applied`; импортёр только для иначе `NO_CHANGE` composite с индексным
+`profile`-ребром загружает carrier, сверяет receipt и при mismatch повышает
+план до `REIMPORT`. Durable `GeneratedAssets.status=stale` не требуется.
+Варианты B/C отвергнуты нормативно в §13.4.1.
+
+**Прежнее временное fail-closed правило.** Новую SQLite-таблицу/tag, седьмой Asset
+Registry tag, переопределение `SourceHash`/`AppliedHash` и новый UAsset receipt
+не вводить. До решения V5-S2 оставался draft/STOP. Разрешались только выводимые без новой
+authority усиления: exact-byte revalidation всех profile payloads перед первой
+UAsset-мутацией; симметричный
+added/removed/changed recovery trigger; source-only `.placement` сам не
+создаёт phantom GeneratedAsset action. Claim durable stale/reimport acceptance
+был запрещён до owner-решения. STOP снят решением выше.
 
 ## OPEN-V5-1 — bit contract `mh.random_stream:1` и weighted selection
 

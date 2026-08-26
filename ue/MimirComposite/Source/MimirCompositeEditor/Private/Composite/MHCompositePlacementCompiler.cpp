@@ -47,7 +47,7 @@ USceneComponent* NewPlacementComponent(
     USceneComponent* Parent,
     UClass* Class,
     const FString& Label,
-    const FTransform& WorldTransform)
+    const FTransform& LocalTransform)
 {
     const FName Name = MakeUniqueObjectName(&Context.Target, Class, FName(*Label));
     USceneComponent* Component = NewObject<USceneComponent>(
@@ -69,7 +69,7 @@ USceneComponent* NewPlacementComponent(
         Context.Target.SetRootComponent(Component);
     }
     Component->RegisterComponent();
-    Component->SetWorldTransform(WorldTransform, false, nullptr, ETeleportType::TeleportPhysics);
+    Component->SetRelativeTransform(LocalTransform, false, nullptr, ETeleportType::TeleportPhysics);
     Context.Result.Components.Add(Component);
     return Component;
 }
@@ -78,7 +78,7 @@ USceneComponent* NewUnresolvedPlacement(
     FPlacementCompileContext& Context,
     USceneComponent* Parent,
     const FString& Label,
-    const FTransform& WorldTransform,
+    const FTransform& LocalTransform,
     const FString& Diagnostic)
 {
     USceneComponent* Placeholder = NewPlacementComponent(
@@ -86,14 +86,14 @@ USceneComponent* NewUnresolvedPlacement(
         Parent,
         USceneComponent::StaticClass(),
         TEXT("MH_Unresolved_") + Label,
-        WorldTransform);
+        LocalTransform);
 
     UBoxComponent* Box = Cast<UBoxComponent>(NewPlacementComponent(
         Context,
         Placeholder,
         UBoxComponent::StaticClass(),
         TEXT("MH_UnresolvedBox_") + Label,
-        WorldTransform));
+        FTransform::Identity));
     if (Box != nullptr)
     {
         Box->SetBoxExtent(FVector(50.0));
@@ -109,7 +109,7 @@ USceneComponent* NewUnresolvedPlacement(
         Placeholder,
         UTextRenderComponent::StaticClass(),
         TEXT("MH_UnresolvedLabel_") + Label,
-        WorldTransform));
+        FTransform::Identity));
     if (Text != nullptr)
     {
         Text->SetText(FText::FromString(Label));
@@ -163,14 +163,11 @@ bool WalkPlacementNodes(
     const TArray<FMHCompositeNode>& Nodes,
     FPlacementCompileContext& Context,
     USceneComponent* StructuralParent,
-    const FTransform& DocumentBasis,
     const bool bRecordTopLevel)
 {
     for (const FMHCompositeNode& Node : Nodes)
     {
-        // Match the accepted S3 observable semantics: transforms inside one
-        // document are document-world; hierarchy is structural only.
-        const FTransform SourceWorld = PlacementNodeTransform(Node) * DocumentBasis;
+        const FTransform LocalTransform = PlacementNodeTransform(Node);
         USceneComponent* Component = nullptr;
         switch (Node.Kind)
         {
@@ -180,7 +177,7 @@ bool WalkPlacementNodes(
                 StructuralParent,
                 USceneComponent::StaticClass(),
                 TEXT("MH_Group"),
-                SourceWorld);
+                LocalTransform);
             break;
         case EMHCompositeNodeKind::Mesh:
         {
@@ -193,7 +190,7 @@ bool WalkPlacementNodes(
                     StructuralParent,
                     UStaticMeshComponent::StaticClass(),
                     TEXT("MH_Mesh_") + Node.Resource,
-                    SourceWorld);
+                    LocalTransform);
                 CastChecked<UStaticMeshComponent>(Component)->SetStaticMesh(Mesh);
             }
             else
@@ -202,7 +199,7 @@ bool WalkPlacementNodes(
                     Context,
                     StructuralParent,
                     Key.ToString(),
-                    SourceWorld,
+                    LocalTransform,
                     FString::Printf(TEXT("%s has no generated static mesh"), *Key.ToString()));
             }
             break;
@@ -216,7 +213,7 @@ bool WalkPlacementNodes(
                     StructuralParent,
                     UChildActorComponent::StaticClass(),
                     TEXT("MH_Actor_") + Node.Resource,
-                    SourceWorld);
+                    LocalTransform);
                 UChildActorComponent* ChildActorComponent = CastChecked<UChildActorComponent>(Component);
 #if WITH_EDITOR
                 // The composite owns one persisted Outliner row. Its derived
@@ -238,7 +235,7 @@ bool WalkPlacementNodes(
                     Context,
                     StructuralParent,
                     TEXT("actor:") + Node.Resource,
-                    SourceWorld,
+                    LocalTransform,
                     FString::Printf(
                         TEXT("actor:%s is unavailable in ActorClassRegistry"),
                         *Node.Resource));
@@ -256,7 +253,7 @@ bool WalkPlacementNodes(
                     Context,
                     StructuralParent,
                     Key.ToString(),
-                    SourceWorld,
+                    LocalTransform,
                     FString::Printf(TEXT("%s has no generated composite asset"), *Key.ToString()));
                 break;
             }
@@ -269,7 +266,7 @@ bool WalkPlacementNodes(
             }
 
             FMHCompositeDocument NestedDocument;
-            if (!MHExtractCompositeV4(*NestedAsset, NestedDocument, Context.Result.Error))
+            if (!MHExtractCompositeV5(*NestedAsset, NestedDocument, Context.Result.Error))
             {
                 return false;
             }
@@ -278,13 +275,12 @@ bool WalkPlacementNodes(
                 StructuralParent,
                 USceneComponent::StaticClass(),
                 TEXT("MH_Composite_") + Node.Resource,
-                SourceWorld);
+                LocalTransform);
             Context.Ancestors.Add(Node.Resource);
             const bool bNestedOk = WalkPlacementNodes(
                 NestedDocument.Nodes,
                 Context,
                 Component,
-                SourceWorld,
                 false);
             Context.Ancestors.Pop();
             if (!bNestedOk)
@@ -293,6 +289,10 @@ bool WalkPlacementNodes(
             }
             break;
         }
+        case EMHCompositeNodeKind::Random:
+            Context.Result.Error = TEXT(
+                "MH_E_COMPOSITE_GRAMMAR: random placement requires the V5-S5 resolved-plan consumer");
+            return false;
         }
 
         if (bRecordTopLevel)
@@ -303,8 +303,69 @@ bool WalkPlacementNodes(
                 Node.Children,
                 Context,
                 Component,
-                DocumentBasis,
                 false))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PreflightPlacementNodes(
+    const TArray<FMHCompositeNode>& Nodes,
+    FPlacementCompileContext& Context,
+    const FMatrix& ParentWorld,
+    const FString& PathPrefix)
+{
+    for (int32 NodeIndex = 0; NodeIndex < Nodes.Num(); ++NodeIndex)
+    {
+        const FMHCompositeNode& Node = Nodes[NodeIndex];
+        const FString NodePath = FString::Printf(
+            TEXT("%snodes[%d]"), *PathPrefix, NodeIndex);
+        const FMatrix NodeWorld =
+            PlacementNodeTransform(Node).ToMatrixWithScale() * ParentWorld;
+        if (!MHIsRepresentableTransformMatrix(NodeWorld))
+        {
+            Context.Result.Error = FString::Printf(
+                TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: %s cannot round-trip through FTransform within 8 ULP"),
+                *NodePath);
+            return false;
+        }
+        if (Node.Kind == EMHCompositeNodeKind::Random || !Node.Profile.IsEmpty())
+        {
+            Context.Result.Error = FString::Printf(
+                TEXT("MH_E_COMPOSITE_GRAMMAR: %s requires the V5-S5 resolved-plan consumer"),
+                *NodePath);
+            return false;
+        }
+        if (Node.Kind == EMHCompositeNodeKind::Composite)
+        {
+            if (Context.Ancestors.Contains(Node.Resource))
+            {
+                Context.Result.Error = FString::Printf(
+                    TEXT("MH_E_COMPOSITE_CYCLE: composite:%s includes itself or an ancestor"),
+                    *Node.Resource);
+                return false;
+            }
+            if (UMHCompositeAsset* NestedAsset = LoadPlacementComposite(Node.Resource))
+            {
+                FMHCompositeDocument NestedDocument;
+                if (!MHExtractCompositeV5(*NestedAsset, NestedDocument, Context.Result.Error)) return false;
+                Context.Ancestors.Add(Node.Resource);
+                const bool bNestedOk = PreflightPlacementNodes(
+                    NestedDocument.Nodes,
+                    Context,
+                    NodeWorld,
+                    NodePath + TEXT(">") + Node.Resource + TEXT(":"));
+                Context.Ancestors.Pop();
+                if (!bNestedOk) return false;
+            }
+        }
+        if (!PreflightPlacementNodes(
+                Node.Children,
+                Context,
+                NodeWorld,
+                NodePath + TEXT("/children/")))
         {
             return false;
         }
@@ -326,7 +387,7 @@ void DestroyPlacementComponents(TArray<TObjectPtr<UActorComponent>>& Components)
 
 } // namespace
 
-FMHCompositePlacementCompileResult MHCompileCompositePlacementV4(
+FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(
     AActor& Target,
     const UMHCompositeAsset* Asset,
     const FString& ExpectedLogicalName,
@@ -352,19 +413,23 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV4(
             Context,
             Root,
             RootKey.ToString(),
-            Target.GetActorTransform(),
+            FTransform::Identity,
             FString::Printf(TEXT("%s asset reference is unavailable"), *RootKey.ToString()));
         Result.TopLevelComponents.Add(Placeholder);
         return Result;
     }
 
     FMHCompositeDocument Document;
-    if (!MHExtractCompositeV4(*Asset, Document, Result.Error) ||
+    if (!MHExtractCompositeV5(*Asset, Document, Result.Error) ||
+        !PreflightPlacementNodes(
+            Document.Nodes,
+            Context,
+            Target.GetActorTransform().ToMatrixWithScale(),
+            ExpectedLogicalName + TEXT(":")) ||
         !WalkPlacementNodes(
             Document.Nodes,
             Context,
             Root,
-            Target.GetActorTransform(),
             true))
     {
         DestroyPlacementComponents(Result.Components);

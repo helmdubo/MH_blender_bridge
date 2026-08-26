@@ -19,6 +19,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeNode
     FString Resource;
     FString Name;
     FMHCompositeTransform Transform;
+    FString Profile;
+    TArray<FMHCompositeOption> Options;
     TArray<FMHCompositeNode> Children;
 };
 
@@ -29,26 +31,49 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeDocument
 
 MIMIRCOMPOSITEEDITOR_API bool MHIsCanonicalCompositeToken(const FString& Value);
 
-/** Parse the closed §6 grammar, rejecting duplicate JSON keys. */
-MIMIRCOMPOSITEEDITOR_API bool MHParseCompositeV4(
+/** Shared 8-ULP float32 element comparison used by the host TRS predicate. */
+MIMIRCOMPOSITEEDITOR_API bool MHMatrixElementsWithinTrsTolerance(
+    const FMatrix& Matrix,
+    const FMatrix& Reconstructed);
+
+/** Decompose with FTransform, reconstruct, and reject non-finite/sheared matrices. */
+MIMIRCOMPOSITEEDITOR_API bool MHIsRepresentableTransformMatrix(const FMatrix& Matrix);
+
+/** Parse the closed v5 §6 grammar, rejecting duplicate JSON keys. */
+MIMIRCOMPOSITEEDITOR_API bool MHParseCompositeV5(
     TConstArrayView<uint8> Bytes,
     FMHCompositeDocument& OutDocument,
     FString& OutError);
 
 /** Emit the §5 byte mode with significant node order and identity elision. */
-MIMIRCOMPOSITEEDITOR_API bool MHWriteCanonicalCompositeV4(
+MIMIRCOMPOSITEEDITOR_API bool MHWriteCanonicalCompositeV5(
     const FMHCompositeDocument& Document,
     TArray<uint8>& OutBytes,
     FString& OutError);
 
 /** Full source-wins apply/extract seams used by import, publish and local-edit detection. */
-MIMIRCOMPOSITEEDITOR_API bool MHApplyCompositeV4(
+MIMIRCOMPOSITEEDITOR_API bool MHApplyCompositeV5(
+    UMHCompositeAsset& Asset,
+    const FMHCompositeDocument& Document,
+    TConstArrayView<FMHPlacementProfile> InlinedProfiles,
+    FString& OutError);
+MIMIRCOMPOSITEEDITOR_API bool MHApplyCompositeV5(
     UMHCompositeAsset& Asset,
     const FMHCompositeDocument& Document,
     FString& OutError);
-MIMIRCOMPOSITEEDITOR_API bool MHExtractCompositeV4(
+MIMIRCOMPOSITEEDITOR_API bool MHExtractCompositeV5(
     const UMHCompositeAsset& Asset,
     FMHCompositeDocument& OutDocument,
+    FString& OutError);
+
+/** Parse/write one closed `.placement` v1 profile document. */
+MIMIRCOMPOSITEEDITOR_API bool MHParsePlacementProfileV1(
+    TConstArrayView<uint8> Bytes,
+    FMHPlacementProfile& OutProfile,
+    FString& OutError);
+MIMIRCOMPOSITEEDITOR_API bool MHWriteCanonicalPlacementProfileV1(
+    const FMHPlacementProfile& Profile,
+    TArray<uint8>& OutBytes,
     FString& OutError);
 
 } // namespace UE::MimirComposite

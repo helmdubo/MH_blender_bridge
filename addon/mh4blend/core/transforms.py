@@ -12,6 +12,7 @@ No ``bpy`` or ``mathutils`` dependency is allowed here.  Callers convert a
 from __future__ import annotations
 
 import math
+import struct
 from typing import Iterable
 
 from .canonical_json import narrow_float32
@@ -19,6 +20,7 @@ from .model import CompositeTransform
 
 __all__ = [
     "blender_to_ue_transform",
+    "matrix_reconstructs_as_float32_trs",
     "quat_from_ue",
     "quat_to_ue",
     "scale_from_ue",
@@ -102,12 +104,34 @@ def quat_from_ue(quat_xyzw):
 
 
 def validate_scale(scale):
-    """Reject non-finite, zero, and mirrored placement scales."""
+    """Reject non-finite/zero scale; representable reflections are valid."""
     components = _vector(scale, 3, "scale")
-    if any(component <= 0.0 for component in components):
+    if any(component == 0.0 for component in components):
         raise ValueError(
-            "MH_E_INVALID_SCALE: mirror geometry, not composite placement")
+            "MH_E_INVALID_SCALE: composite scale components must be non-zero")
     return components
+
+
+def _float32(value: float) -> float:
+    return struct.unpack("<f", struct.pack("<f", float(value)))[0]
+
+
+def matrix_reconstructs_as_float32_trs(matrix, reconstructed) -> bool:
+    """Apply the owner-frozen 8-ULP representability predicate to 4x4 matrices."""
+    try:
+        for row in range(4):
+            for column in range(4):
+                source = _float32(matrix[row][column])
+                restored = _float32(reconstructed[row][column])
+                if not math.isfinite(source) or not math.isfinite(restored):
+                    return False
+                magnitude = max(1.0, abs(source), abs(restored))
+                tolerance = 8.0 * (2.0 ** -23) * magnitude
+                if abs(source - restored) > tolerance:
+                    return False
+    except (IndexError, OverflowError, struct.error, TypeError):
+        return False
+    return True
 
 
 def scale_to_ue(scale):
@@ -122,7 +146,7 @@ def scale_from_ue(scale):
 
 def blender_to_ue_transform(
         translation_m, rotation_xyzw, scale) -> CompositeTransform:
-    """Build one canonical protocol transform from Blender world components."""
+    """Build one canonical protocol transform from Blender local components."""
     return CompositeTransform(
         translation_cm=translation_to_ue(translation_m),
         rotation_quat=quat_to_ue(rotation_xyzw),

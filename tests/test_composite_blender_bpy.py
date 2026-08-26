@@ -1,4 +1,4 @@
-"""Blender gates for v4 Composite scene adapters."""
+"""Blender gates for v5 parent-local Composite scene adapters."""
 
 import math
 from pathlib import Path
@@ -57,18 +57,22 @@ def _counts():
     }
 
 
-def test_group_actor_import_export_preserves_tree_order_and_world_transform(tmp_path):
+def test_group_actor_import_export_preserves_tree_order_and_parent_local_transform(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     source = Composite("street_lights", [
         Node(
             "group",
             name="lights",
             transform=CompositeTransform(
-                translation_cm=(100.0, -200.0, 300.0),
+                translation_cm=(100.0, 0.0, 0.0),
                 rotation_quat=(0.0, 0.0, 0.0, 1.0),
                 scale=(1.0, 1.0, 1.0),
             ),
-            children=[Node("actor", resource="lamp_point_warm")],
+            children=[Node(
+                "actor",
+                resource="lamp_point_warm",
+                transform=CompositeTransform(translation_cm=(25.0, 0.0, 0.0)),
+            )],
         ),
         Node("actor", resource="fog_volume"),
     ])
@@ -87,6 +91,12 @@ def test_group_actor_import_export_preserves_tree_order_and_world_transform(tmp_
     actor = next(obj for obj in collection.objects if obj.parent == group)
     assert group[NODE_NAME_KEY] == "lights"
     assert actor[NODE_RESOURCE_KEY] == "lamp_point_warm"
+    assert tuple(round(value, 6) for value in group.matrix_local.translation) \
+        == (1.0, 0.0, 0.0)
+    assert tuple(round(value, 6) for value in actor.matrix_local.translation) \
+        == (0.25, 0.0, 0.0)
+    assert tuple(round(value, 6) for value in actor.matrix_world.translation) \
+        == (1.25, 0.0, 0.0)
 
     exported = export_composite_collection(
         collection, tmp_path, source_root=tmp_path)
@@ -267,7 +277,7 @@ def test_writer_rejects_self_and_ancestor_cycles_before_replace(tmp_path):
         Composite("cycle_b", [Node("composite", resource="cycle_a")])
     ))
     placement[NODE_RESOURCE_KEY] = "cycle_b"
-    preserved = b'{\n  "nodes": []\n}\n'
+    preserved = b'{\n  "v": 5,\n  "nodes": []\n}\n'
     (tmp_path / "cycle_a.composite").write_bytes(preserved)
     with pytest.raises(ValueError, match="MH_E_COMPOSITE_CYCLE"):
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
@@ -289,7 +299,7 @@ def test_writer_rejects_non_roundtrippable_shear(tmp_path):
     ))
     with pytest.raises(
             ValueError,
-            match="MH_E_INVALID_RESOURCE_SOURCE") as excinfo:
+            match="MH_E_UNREPRESENTABLE_TRANSFORM") as excinfo:
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
     assert "sheared_group" in str(excinfo.value)
     assert not (tmp_path / "sheared.composite").exists()
@@ -314,7 +324,7 @@ def test_writer_rejects_child_shear_from_rotated_nonuniform_parent(tmp_path):
 
     with pytest.raises(
             ValueError,
-            match="MH_E_INVALID_RESOURCE_SOURCE") as excinfo:
+            match="MH_E_UNREPRESENTABLE_TRANSFORM") as excinfo:
         export_composite_collection(collection, tmp_path, source_root=tmp_path)
     rendered = str(excinfo.value)
     assert "rotated_child" in rendered

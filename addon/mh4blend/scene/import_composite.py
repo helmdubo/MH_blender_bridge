@@ -1,4 +1,4 @@
-"""Transactional Blender import of Source Protocol v4 composites."""
+"""Transactional Blender import of Source Protocol v5 composites."""
 
 from __future__ import annotations
 
@@ -158,6 +158,12 @@ def _preflight(documents, source_root: Path):
     mesh_plans = {}
     missing_meshes = set()
     for document in documents.values():
+        for _index, node in _iter_nodes(document):
+            if node.kind == "random" or node.profile is not None:
+                raise MHValidationError(
+                    "MH_E_COMPOSITE_GRAMMAR", [document.name],
+                    "Blender random/profile materialization belongs to V5-S3; "
+                    "V5-S2 refuses to discard codec data")
         for name in iter_resource_references(document, kind="mesh"):
             if name in mesh_paths or name in missing_meshes:
                 continue
@@ -199,7 +205,7 @@ def _preflight(documents, source_root: Path):
     return mesh_paths, mesh_plans
 
 
-def _matrix_world(transform):
+def _matrix_local(transform):
     translation, rotation_xyzw, scale = ue_to_blender_transform(transform)
     x, y, z, w = rotation_xyzw
     rotation = Quaternion((w, x, y, z)).to_matrix().to_4x4()
@@ -247,10 +253,8 @@ def _build_definition(document, collection, resources, warnings) -> int:
                 obj.empty_display_type = "PLAIN_AXES"
             if parent is not None:
                 obj.parent = parent
-            # Source values are world transforms by contract.  Set after
-            # parenting so Blender derives the local matrix without changing
-            # the authored world placement.
-            obj.matrix_world = _matrix_world(node.transform)
+            obj.matrix_parent_inverse = Matrix.Identity(4)
+            obj.matrix_basis = _matrix_local(node.transform)
             _stamp_imported_transform(obj, node.transform)
             build(node.children, obj)
 

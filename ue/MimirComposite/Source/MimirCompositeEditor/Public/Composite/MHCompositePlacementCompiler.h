@@ -29,7 +29,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
  * endpoints become visible placeholders and remain in Dependencies so a
  * same-name resource notification can heal the view.
  */
-MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePlacementV4(
+MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(
     AActor& Target,
     const UMHCompositeAsset* Asset,
     const FString& ExpectedLogicalName,

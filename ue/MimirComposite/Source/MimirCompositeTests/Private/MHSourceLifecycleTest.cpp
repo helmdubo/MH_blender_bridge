@@ -10,6 +10,7 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
+#include "Source/MHPayloadHashes.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
 
@@ -191,11 +192,12 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
         bExecuted);
     MHSetImportStageObserverForTests(TFunction<void(EMHResourceKind)>());
     const TArray<EMHResourceKind> Expected = {
+        EMHResourceKind::PlacementProfile,
         EMHResourceKind::Texture,
         EMHResourceKind::Material,
         EMHResourceKind::StaticMesh,
         EMHResourceKind::Composite};
-    bPassed &= TestTrue(TEXT("coordinator stage order is T-M-SM-C"), Stages == Expected);
+    bPassed &= TestTrue(TEXT("coordinator stage order is P-T-M-SM-C"), Stages == Expected);
     MHShutdownProjectIndex();
     return bPassed;
 }
@@ -217,7 +219,7 @@ bool FMHSourceLifecycleSelfPublishEchoTest::RunTest(const FString& Parameters)
     FPaths::NormalizeDirectoryName(SourceRoot);
     IFileManager::Get().MakeDirectory(*SourceRoot, true);
     const FString SourcePath = FPaths::Combine(SourceRoot, Token + TEXT(".composite"));
-    const TArray<uint8> Initial = LifecycleUtf8(TEXT("{\n  \"nodes\": []\n}\n"));
+    const TArray<uint8> Initial = LifecycleUtf8(TEXT("{\n  \"v\": 5,\n  \"nodes\": []\n}\n"));
     bool bPassed = TestTrue(
         TEXT("write initial composite"),
         FFileHelper::SaveArrayToFile(Initial, *SourcePath));
@@ -262,8 +264,8 @@ bool FMHSourceLifecycleSelfPublishEchoTest::RunTest(const FString& Parameters)
     Group.Kind = EMHCompositeNodeKind::Group;
     Group.Name = TEXT("echo");
     FString Error;
-    bPassed &= TestTrue(TEXT("apply local source-shaped edit"), MHApplyCompositeV4(*Asset, Edited, Error));
-    const FMHCompositeOperationResult Published = MHPublishCompositeV4(*Asset, SourceRoot);
+    bPassed &= TestTrue(TEXT("apply local source-shaped edit"), MHApplyCompositeV5(*Asset, Edited, Error));
+    const FMHCompositeOperationResult Published = MHPublishCompositeV5(*Asset, SourceRoot);
     bPassed &= TestTrue(TEXT("publish succeeds"), Published.Succeeded());
     if (!Published.Succeeded())
     {
@@ -327,6 +329,313 @@ bool FMHSourceLifecycleSelfPublishEchoTest::RunTest(const FString& Parameters)
 
     MHShutdownProjectIndex();
     DeleteLifecycleAssetPackage(PackageName);
+    IFileManager::Get().DeleteDirectory(*SourceRoot, false, true);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHSourceLifecyclePlacementProfileFreshnessTest,
+    "Mimir.V5.SourceLifecycle.PlacementProfileFreshness",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHSourceLifecyclePlacementProfileFreshnessTest::RunTest(const FString& Parameters)
+{
+    const FString Token = FString::Printf(
+        TEXT("v5_profile_freshness_%08x"),
+        FPlatformTime::Cycles());
+    FString SourceRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+        FPaths::ProjectSavedDir(),
+        TEXT("MimirCompositeTests/profile_freshness"),
+        Token));
+    FPaths::NormalizeDirectoryName(SourceRoot);
+    IFileManager::Get().MakeDirectory(*SourceRoot, true);
+
+    const FString ProfileName = Token + TEXT("_scatter");
+    const FString ProfiledName = Token + TEXT("_profiled");
+    const FString PlainName = Token + TEXT("_plain");
+    const FString PlacementPath = FPaths::Combine(SourceRoot, ProfileName + TEXT(".placement"));
+    const FString ProfiledPath = FPaths::Combine(SourceRoot, ProfiledName + TEXT(".composite"));
+    const FString PlainPath = FPaths::Combine(SourceRoot, PlainName + TEXT(".composite"));
+    const TArray<uint8> ProfileH1 = LifecycleUtf8(
+        TEXT("{\n  \"v\": 1,\n  \"kind\": \"placement_profile\",\n  \"uniform_scale\": [1, 0.125]\n}\n"));
+    const TArray<uint8> ProfileH2SameValue = LifecycleUtf8(
+        TEXT("{\"v\":1,\"kind\":\"placement_profile\",\"uniform_scale\":[1,0.125]}"));
+    const TArray<uint8> ProfileH3 = LifecycleUtf8(
+        TEXT("{\n  \"v\": 1,\n  \"kind\": \"placement_profile\",\n  \"uniform_scale\": [1, 0.25]\n}\n"));
+    const TArray<uint8> ProfiledBytes = LifecycleUtf8(FString::Printf(
+        TEXT("{\n  \"v\": 5,\n  \"nodes\": [\n    {\"kind\": \"group\", \"profile\": \"%s\"}\n  ]\n}\n"),
+        *ProfileName));
+    const TArray<uint8> PlainBytes = LifecycleUtf8(
+        TEXT("{\n  \"v\": 5,\n  \"nodes\": [{\"kind\": \"group\"}]\n}\n"));
+    bool bPassed = TestTrue(
+        TEXT("write initial placement profile"),
+        FFileHelper::SaveArrayToFile(ProfileH1, *PlacementPath));
+    bPassed &= TestTrue(
+        TEXT("write profiled composite"),
+        FFileHelper::SaveArrayToFile(ProfiledBytes, *ProfiledPath));
+    bPassed &= TestTrue(
+        TEXT("write profile-free composite"),
+        FFileHelper::SaveArrayToFile(PlainBytes, *PlainPath));
+
+    FMHResourceKey ProfiledKey;
+    ProfiledKey.Kind = EMHResourceKind::Composite;
+    ProfiledKey.LogicalName = ProfiledName;
+    FMHResourceKey PlainKey;
+    PlainKey.Kind = EMHResourceKind::Composite;
+    PlainKey.LogicalName = PlainName;
+    const FString ProfiledPackage = FString(TEXT("/Game/MH/Generated/Composites/")) + ProfiledName;
+    const FString PlainPackage = FString(TEXT("/Game/MH/Generated/Composites/")) + PlainName;
+    const FString ProfiledObjectPath = ProfiledPackage + TEXT(".") + ProfiledName;
+    UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
+
+    FMHSourceAnalysis InitialAnalysis;
+    bool bInitialExecuted = false;
+    MHShutdownProjectIndex();
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        InitialAnalysis,
+        bInitialExecuted);
+    const FMHSourceAnalysisEntry* InitialEntry = InitialAnalysis.Find(ProfiledKey);
+    bPassed &= TestNotNull(TEXT("initial plan contains profiled composite"), InitialEntry);
+    bPassed &= TestTrue(
+        TEXT("initial profiled composite import executes"),
+        bInitialExecuted && InitialEntry != nullptr && InitialEntry->Errors.IsEmpty());
+    UMHCompositeAsset* ProfiledAsset = LoadObject<UMHCompositeAsset>(nullptr, *ProfiledObjectPath);
+    bPassed &= TestNotNull(TEXT("profiled carrier exists"), ProfiledAsset);
+    if (ProfiledAsset != nullptr)
+    {
+        bPassed &= TestEqual(
+            TEXT("initial exact raw profile receipt persisted"),
+            ProfiledAsset->InlinedPlacementProfiles.Num(),
+            1);
+        if (ProfiledAsset->InlinedPlacementProfiles.Num() == 1)
+        {
+            bPassed &= TestEqual(
+                TEXT("initial profile receipt is H1"),
+                ProfiledAsset->InlinedPlacementProfiles[0].GetAppliedSourceHash(),
+                MHRawPayloadHash(ProfileH1));
+        }
+    }
+
+    TArray<FMHResourceKey> LoadedForFreshness;
+    MHSetProfileFreshnessAssetLoadObserverForTests(
+        [&LoadedForFreshness](const FMHResourceKey& Key)
+        {
+            LoadedForFreshness.Add(Key);
+        });
+    FMHSourceAnalysis MatchingAnalysis;
+    bool bMatchingExecuted = false;
+    MHShutdownProjectIndex();
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        MatchingAnalysis,
+        bMatchingExecuted);
+    const FMHSourceAnalysisEntry* MatchingEntry = MatchingAnalysis.Find(ProfiledKey);
+    bPassed &= TestTrue(
+        TEXT("matching profile receipt stays NO_CHANGE"),
+        MatchingEntry != nullptr &&
+        MatchingEntry->Change == EMHSourceChange::NoChange &&
+        MatchingEntry->Errors.IsEmpty());
+    bPassed &= TestFalse(TEXT("matching receipt executes no import"), bMatchingExecuted);
+    bPassed &= TestTrue(
+        TEXT("freshness loader touches only the profiled NO_CHANGE composite"),
+        LoadedForFreshness.Num() == 1 &&
+        LoadedForFreshness[0] == ProfiledKey &&
+        !LoadedForFreshness.Contains(PlainKey));
+    MHSetProfileFreshnessAssetLoadObserverForTests(
+        TFunction<void(const FMHResourceKey&)>());
+
+    if (ProfiledAsset != nullptr && ProfiledAsset->InlinedPlacementProfiles.Num() == 1)
+    {
+        ProfiledAsset->InlinedPlacementProfiles[0].SetAppliedSourceHash(FString());
+    }
+    MHShutdownProjectIndex();
+    FMHSourceAnalysis EmptyReceiptAnalysis;
+    bool bEmptyReceiptExecuted = false;
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        EmptyReceiptAnalysis,
+        bEmptyReceiptExecuted);
+    const FMHSourceAnalysisEntry* EmptyReceiptEntry = EmptyReceiptAnalysis.Find(ProfiledKey);
+    bPassed &= TestTrue(
+        TEXT("legacy empty profile receipt forces REIMPORT"),
+        EmptyReceiptEntry != nullptr &&
+        EmptyReceiptEntry->Change == EMHSourceChange::Reimport &&
+        EmptyReceiptEntry->Errors.IsEmpty() &&
+        bEmptyReceiptExecuted);
+    ProfiledAsset = LoadObject<UMHCompositeAsset>(nullptr, *ProfiledObjectPath);
+    if (ProfiledAsset != nullptr && ProfiledAsset->InlinedPlacementProfiles.Num() == 1)
+    {
+        const FMHPlacementProfile DuplicateProfile =
+            ProfiledAsset->InlinedPlacementProfiles[0];
+        ProfiledAsset->InlinedPlacementProfiles.Add(DuplicateProfile);
+    }
+    MHShutdownProjectIndex();
+    FMHSourceAnalysis DuplicateReceiptAnalysis;
+    bool bDuplicateReceiptExecuted = false;
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        DuplicateReceiptAnalysis,
+        bDuplicateReceiptExecuted);
+    const FMHSourceAnalysisEntry* DuplicateReceiptEntry = DuplicateReceiptAnalysis.Find(ProfiledKey);
+    bPassed &= TestTrue(
+        TEXT("duplicate stored profile receipt forces REIMPORT"),
+        DuplicateReceiptEntry != nullptr &&
+        DuplicateReceiptEntry->Change == EMHSourceChange::Reimport &&
+        DuplicateReceiptEntry->Errors.IsEmpty() &&
+        bDuplicateReceiptExecuted);
+
+    bPassed &= TestTrue(
+        TEXT("rewrite profile with different raw bytes and same typed value"),
+        FFileHelper::SaveArrayToFile(ProfileH2SameValue, *PlacementPath));
+    bPassed &= TestNotEqual(
+        TEXT("raw-only edit changes the receipt domain"),
+        MHRawPayloadHash(ProfileH1),
+        MHRawPayloadHash(ProfileH2SameValue));
+    MHShutdownProjectIndex();
+    FMHSourceAnalysisServices ProjectionServices;
+    FString Error;
+    bPassed &= TestTrue(
+        TEXT("rebuild pure projection after profile edit"),
+        MHCreateDefaultSourceAnalysisServices(SourceRoot, ProjectionServices, Error));
+    TArray<FMHProjectIndexGeneratedAssetState> ProjectedAssets;
+    if (ProjectionServices.Index.IsValid())
+    {
+        bPassed &= TestTrue(
+            TEXT("read projected profiled carrier"),
+            ProjectionServices.Index->GetGeneratedAssets(ProfiledKey, ProjectedAssets, Error));
+        bPassed &= TestTrue(
+            TEXT("profile-only edit leaves GeneratedAssets applied"),
+            ProjectedAssets.Num() == 1 &&
+            ProjectedAssets[0].Status == EMHGeneratedAssetStatus::Applied);
+    }
+    FMHSourceAnalysis ProjectionAnalysis;
+    bool bProjectionExecuted = false;
+    if (ProjectionServices.ChangeDetector && ProjectionServices.Resolver)
+    {
+        MHBuildSourceImportPlan(
+            *ProjectionServices.ChangeDetector,
+            *ProjectionServices.Resolver,
+            SourceRoot,
+            FMHImportSourcesScope::All(),
+            ProjectionAnalysis,
+            bProjectionExecuted);
+        const FMHSourceAnalysisEntry* ProjectionEntry = ProjectionAnalysis.Find(ProfiledKey);
+        bPassed &= TestTrue(
+            TEXT("pure index plan remains NO_CHANGE before importer freshness"),
+            ProjectionEntry != nullptr &&
+            ProjectionEntry->Change == EMHSourceChange::NoChange);
+    }
+    bPassed &= TestFalse(TEXT("pure projection executes no builder"), bProjectionExecuted);
+
+    MHShutdownProjectIndex();
+    FMHSourceAnalysis ChangedAnalysis;
+    bool bChangedExecuted = false;
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        ChangedAnalysis,
+        bChangedExecuted);
+    const FMHSourceAnalysisEntry* ChangedEntry = ChangedAnalysis.Find(ProfiledKey);
+    bPassed &= TestTrue(
+        TEXT("importer promotes changed profile receipt to REIMPORT"),
+        ChangedEntry != nullptr &&
+        ChangedEntry->Change == EMHSourceChange::Reimport &&
+        ChangedEntry->Errors.IsEmpty());
+    bPassed &= TestTrue(TEXT("profile receipt reimport executes"), bChangedExecuted);
+    ProfiledAsset = LoadObject<UMHCompositeAsset>(nullptr, *ProfiledObjectPath);
+    bPassed &= TestTrue(
+        TEXT("successful reimport advances exact profile receipt to H2"),
+        ProfiledAsset != nullptr &&
+        ProfiledAsset->InlinedPlacementProfiles.Num() == 1 &&
+        ProfiledAsset->InlinedPlacementProfiles[0].GetAppliedSourceHash() ==
+            MHRawPayloadHash(ProfileH2SameValue));
+
+    const FString DuplicateDirectory = FPaths::Combine(SourceRoot, TEXT("duplicate"));
+    IFileManager::Get().MakeDirectory(*DuplicateDirectory, true);
+    const FString DuplicatePath = FPaths::Combine(
+        DuplicateDirectory,
+        ProfileName + TEXT(".placement"));
+    bPassed &= TestTrue(
+        TEXT("create ambiguous placement profile"),
+        FFileHelper::SaveArrayToFile(ProfileH1, *DuplicatePath));
+    MHShutdownProjectIndex();
+    FMHSourceAnalysis AmbiguousAnalysis;
+    bool bAmbiguousExecuted = false;
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        AmbiguousAnalysis,
+        bAmbiguousExecuted);
+    const FMHSourceAnalysisEntry* AmbiguousEntry = AmbiguousAnalysis.Find(ProfiledKey);
+    bPassed &= TestTrue(
+        TEXT("ambiguous profile blocks dependent composite"),
+        AmbiguousEntry != nullptr &&
+        AmbiguousEntry->Change == EMHSourceChange::Blocked &&
+        !AmbiguousEntry->Errors.IsEmpty());
+
+    bPassed &= TestTrue(
+        TEXT("change profile while its key is ambiguous"),
+        FFileHelper::SaveArrayToFile(ProfileH3, *PlacementPath));
+    bPassed &= TestTrue(
+        TEXT("remove duplicate to recover unique profile"),
+        IFileManager::Get().Delete(*DuplicatePath, false, true, true));
+    MHShutdownProjectIndex();
+    FMHSourceAnalysis RecoveredAnalysis;
+    bool bRecoveredExecuted = false;
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        RecoveredAnalysis,
+        bRecoveredExecuted);
+    const FMHSourceAnalysisEntry* RecoveredEntry = RecoveredAnalysis.Find(ProfiledKey);
+    bPassed &= TestTrue(
+        TEXT("unique recovery rechecks receipt and promotes to REIMPORT"),
+        RecoveredEntry != nullptr &&
+        RecoveredEntry->Change == EMHSourceChange::Reimport &&
+        RecoveredEntry->Errors.IsEmpty());
+    bPassed &= TestTrue(TEXT("recovered profile reimport executes"), bRecoveredExecuted);
+    ProfiledAsset = LoadObject<UMHCompositeAsset>(nullptr, *ProfiledObjectPath);
+    bPassed &= TestTrue(
+        TEXT("recovery advances exact profile receipt to H3"),
+        ProfiledAsset != nullptr &&
+        ProfiledAsset->InlinedPlacementProfiles.Num() == 1 &&
+        ProfiledAsset->InlinedPlacementProfiles[0].GetAppliedSourceHash() ==
+            MHRawPayloadHash(ProfileH3));
+
+    MHShutdownProjectIndex();
+    FMHSourceAnalysis FinalAnalysis;
+    bool bFinalExecuted = false;
+    MHImportSourcesHeadless(
+        SourceRoot,
+        FMHImportSourcesScope::All(),
+        *Settings,
+        FinalAnalysis,
+        bFinalExecuted);
+    const FMHSourceAnalysisEntry* FinalEntry = FinalAnalysis.Find(ProfiledKey);
+    bPassed &= TestTrue(
+        TEXT("fresh final receipt returns to NO_CHANGE"),
+        FinalEntry != nullptr &&
+        FinalEntry->Change == EMHSourceChange::NoChange &&
+        FinalEntry->Errors.IsEmpty());
+    bPassed &= TestFalse(TEXT("fresh final receipt executes no import"), bFinalExecuted);
+
+    MHSetProfileFreshnessAssetLoadObserverForTests(
+        TFunction<void(const FMHResourceKey&)>());
+    MHShutdownProjectIndex();
+    DeleteLifecycleAssetPackage(ProfiledPackage);
+    DeleteLifecycleAssetPackage(PlainPackage);
     IFileManager::Get().DeleteDirectory(*SourceRoot, false, true);
     return bPassed;
 }

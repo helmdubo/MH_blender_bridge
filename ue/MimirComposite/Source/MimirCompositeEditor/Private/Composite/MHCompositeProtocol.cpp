@@ -17,6 +17,31 @@ bool CompositeGrammarError(FString& OutError, const FString& Detail)
     return false;
 }
 
+bool PlacementGrammarError(FString& OutError, const FString& Detail)
+{
+    OutError = FString::Printf(TEXT("MH_E_PLACEMENT_PROFILE_GRAMMAR: %s"), *Detail);
+    return false;
+}
+
+bool RootStartsWithLiteralV(const FString& Text)
+{
+    int32 Index = 0;
+    while (Index < Text.Len() && FChar::IsWhitespace(Text[Index])) ++Index;
+    if (Index >= Text.Len() || Text[Index++] != TEXT('{')) return false;
+    while (Index < Text.Len() && FChar::IsWhitespace(Text[Index])) ++Index;
+    return Text.Mid(Index, 3) == TEXT("\"v\"");
+}
+
+bool HasExactIntegerVersion(
+    const TSharedPtr<FJsonObject>& Root,
+    const TCHAR* Expected,
+    FString& OutRaw)
+{
+    const TSharedPtr<FJsonValue>* Value = Root->Values.Find(TEXT("v"));
+    return Value != nullptr && Value->IsValid() && (*Value)->Type == EJson::Number &&
+        (*Value)->TryGetString(OutRaw) && OutRaw == Expected;
+}
+
 bool ContainsNonFiniteJsonToken(const FString& Text)
 {
     bool bInString = false;
@@ -410,12 +435,69 @@ bool ParseTransform(const TSharedPtr<FJsonValue>& Value, FMHCompositeTransform& 
     if (const TSharedPtr<FJsonValue>* Scale = Value->AsObject()->Values.Find(TEXT("scale")))
     {
         if (!ReadVector(*Scale, 3, Values, OutError, TEXT("scale"))) return false;
-        if (Values[0] <= 0.0f || Values[1] <= 0.0f || Values[2] <= 0.0f)
+        if (Values[0] == 0.0f || Values[1] == 0.0f || Values[2] == 0.0f)
         {
-            OutError = TEXT("MH_E_INVALID_SCALE: composite scale components must be greater than zero");
+            OutError = TEXT("MH_E_INVALID_SCALE: composite scale components must be non-zero");
             return false;
         }
         Out.Scale = FVector(Values[0], Values[1], Values[2]);
+    }
+    return true;
+}
+
+bool ParseOption(const TSharedPtr<FJsonValue>& Value, FMHCompositeOption& Out, FString& OutError)
+{
+    if (!Value.IsValid() || Value->Type != EJson::Object)
+    {
+        return CompositeGrammarError(OutError, TEXT("random option must be an object"));
+    }
+    const TSharedPtr<FJsonObject> Object = Value->AsObject();
+    static const TSet<FString> Allowed = {TEXT("kind"), TEXT("resource"), TEXT("weight")};
+    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Object->Values)
+    {
+        if (!Allowed.Contains(Pair.Key))
+        {
+            return CompositeGrammarError(OutError, FString::Printf(TEXT("unknown random option field '%s'"), *Pair.Key));
+        }
+    }
+    FString Kind;
+    if (!Object->TryGetStringField(TEXT("kind"), Kind))
+    {
+        return CompositeGrammarError(OutError, TEXT("random option kind is required"));
+    }
+    if (Kind == TEXT("mesh")) Out.Kind = EMHCompositeOptionKind::Mesh;
+    else if (Kind == TEXT("actor")) Out.Kind = EMHCompositeOptionKind::Actor;
+    else if (Kind == TEXT("composite")) Out.Kind = EMHCompositeOptionKind::Composite;
+    else if (Kind == TEXT("empty")) Out.Kind = EMHCompositeOptionKind::Empty;
+    else
+    {
+        OutError = FString::Printf(TEXT("MH_E_UNSUPPORTED_NODE_KIND: unsupported random option kind '%s'"), *Kind);
+        return false;
+    }
+    if (Out.Kind == EMHCompositeOptionKind::Empty)
+    {
+        if (Object->HasField(TEXT("resource")))
+        {
+            return CompositeGrammarError(OutError, TEXT("empty option forbids resource"));
+        }
+    }
+    else if (!Object->TryGetStringField(TEXT("resource"), Out.Resource) ||
+        !MHIsCanonicalCompositeToken(Out.Resource))
+    {
+        return CompositeGrammarError(OutError, TEXT("non-empty option requires canonical resource"));
+    }
+    const TSharedPtr<FJsonValue>* Weight = Object->Values.Find(TEXT("weight"));
+    if (Weight == nullptr)
+    {
+        return CompositeGrammarError(OutError, TEXT("random option weight is required"));
+    }
+    if (!ReadFiniteFloat(*Weight, Out.Weight, OutError, TEXT("random option weight")))
+    {
+        return false;
+    }
+    if (Out.Weight < 0.0f)
+    {
+        return CompositeGrammarError(OutError, TEXT("random option weight must be non-negative"));
     }
     return true;
 }
@@ -427,7 +509,9 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
         return CompositeGrammarError(OutError, TEXT("node must be an object"));
     }
     const TSharedPtr<FJsonObject> Object = Value->AsObject();
-    static const TSet<FString> Allowed = {TEXT("kind"), TEXT("resource"), TEXT("name"), TEXT("transform"), TEXT("children")};
+    static const TSet<FString> Allowed = {
+        TEXT("kind"), TEXT("resource"), TEXT("name"), TEXT("transform"),
+        TEXT("profile"), TEXT("options"), TEXT("children")};
     for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Object->Values)
     {
         if (!Allowed.Contains(Pair.Key))
@@ -444,6 +528,7 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     else if (Kind == TEXT("actor")) Out.Kind = EMHCompositeNodeKind::Actor;
     else if (Kind == TEXT("composite")) Out.Kind = EMHCompositeNodeKind::Composite;
     else if (Kind == TEXT("group")) Out.Kind = EMHCompositeNodeKind::Group;
+    else if (Kind == TEXT("random")) Out.Kind = EMHCompositeNodeKind::Random;
     else
     {
         OutError = FString::Printf(TEXT("MH_E_UNSUPPORTED_NODE_KIND: unsupported composite node kind '%s'"), *Kind);
@@ -451,11 +536,11 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     }
 
     const bool bHasResource = Object->HasField(TEXT("resource"));
-    if (Out.Kind == EMHCompositeNodeKind::Group)
+    if (Out.Kind == EMHCompositeNodeKind::Group || Out.Kind == EMHCompositeNodeKind::Random)
     {
         if (bHasResource)
         {
-            return CompositeGrammarError(OutError, TEXT("group node forbids resource"));
+            return CompositeGrammarError(OutError, TEXT("group/random node forbids resource"));
         }
     }
     else if (!Object->TryGetStringField(TEXT("resource"), Out.Resource) ||
@@ -474,6 +559,38 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     if (const TSharedPtr<FJsonValue>* Transform = Object->Values.Find(TEXT("transform")))
     {
         if (!ParseTransform(*Transform, Out.Transform, OutError)) return false;
+    }
+    if (const TSharedPtr<FJsonValue>* Profile = Object->Values.Find(TEXT("profile")))
+    {
+        if (!Profile->IsValid() || !(*Profile)->TryGetString(Out.Profile) ||
+            !MHIsCanonicalCompositeToken(Out.Profile))
+        {
+            return CompositeGrammarError(OutError, TEXT("profile must be canonical [a-z0-9_]+"));
+        }
+    }
+    const TSharedPtr<FJsonValue>* Options = Object->Values.Find(TEXT("options"));
+    if (Out.Kind == EMHCompositeNodeKind::Random)
+    {
+        if (Options == nullptr || !Options->IsValid() || (*Options)->Type != EJson::Array ||
+            (*Options)->AsArray().IsEmpty())
+        {
+            return CompositeGrammarError(OutError, TEXT("random requires a non-empty options array"));
+        }
+        bool bHasPositiveWeight = false;
+        for (const TSharedPtr<FJsonValue>& OptionValue : (*Options)->AsArray())
+        {
+            FMHCompositeOption& Option = Out.Options.AddDefaulted_GetRef();
+            if (!ParseOption(OptionValue, Option, OutError)) return false;
+            bHasPositiveWeight |= Option.Weight > 0.0f;
+        }
+        if (!bHasPositiveWeight)
+        {
+            return CompositeGrammarError(OutError, TEXT("random requires at least one positive option weight"));
+        }
+    }
+    else if (Options != nullptr)
+    {
+        return CompositeGrammarError(OutError, TEXT("options are allowed only on random nodes"));
     }
     if (const TSharedPtr<FJsonValue>* Children = Object->Values.Find(TEXT("children")))
     {
@@ -497,11 +614,28 @@ void AppendCompositeNumber(const float Value, FString& Out)
         Out.AppendChar(TEXT('0'));
         return;
     }
-    ANSICHAR Buffer[128];
-    const std::to_chars_result Result = std::to_chars(Buffer, Buffer + UE_ARRAY_COUNT(Buffer), Value);
-    check(Result.ec == std::errc());
-    const FUTF8ToTCHAR Converted(Buffer, static_cast<int32>(Result.ptr - Buffer));
-    Out.AppendChars(Converted.Get(), Converted.Length());
+    for (int32 Precision = 1; Precision <= 9; ++Precision)
+    {
+        ANSICHAR Buffer[128];
+        const std::to_chars_result Result = std::to_chars(
+            Buffer,
+            Buffer + UE_ARRAY_COUNT(Buffer),
+            Value,
+            std::chars_format::general,
+            Precision);
+        check(Result.ec == std::errc());
+        double ParsedDouble = 0.0;
+        const std::from_chars_result Parsed = std::from_chars(Buffer, Result.ptr, ParsedDouble);
+        check(Parsed.ec == std::errc() && Parsed.ptr == Result.ptr);
+        const float RoundTripped = static_cast<float>(ParsedDouble);
+        if (RoundTripped == Value)
+        {
+            const FUTF8ToTCHAR Converted(Buffer, static_cast<int32>(Result.ptr - Buffer));
+            Out.AppendChars(Converted.Get(), Converted.Length());
+            return;
+        }
+    }
+    checkNoEntry();
 }
 
 void AppendQuoted(const FString& Value, FString& Out)
@@ -541,6 +675,19 @@ const TCHAR* CompositeNodeKindLabel(const EMHCompositeNodeKind Kind)
     case EMHCompositeNodeKind::Actor: return TEXT("actor");
     case EMHCompositeNodeKind::Composite: return TEXT("composite");
     case EMHCompositeNodeKind::Group: return TEXT("group");
+    case EMHCompositeNodeKind::Random: return TEXT("random");
+    }
+    return nullptr;
+}
+
+const TCHAR* CompositeOptionKindLabel(const EMHCompositeOptionKind Kind)
+{
+    switch (Kind)
+    {
+    case EMHCompositeOptionKind::Mesh: return TEXT("mesh");
+    case EMHCompositeOptionKind::Actor: return TEXT("actor");
+    case EMHCompositeOptionKind::Composite: return TEXT("composite");
+    case EMHCompositeOptionKind::Empty: return TEXT("empty");
     }
     return nullptr;
 }
@@ -621,13 +768,47 @@ void AppendVector(const FVector& Value, const int32 FieldLevel, FString& Out)
     Indent(FieldLevel, Out); Out += TEXT("]");
 }
 
+bool WriteOption(
+    const FMHCompositeOption& Option,
+    const int32 Level,
+    FString& Out,
+    FString& OutError)
+{
+    const TCHAR* Label = CompositeOptionKindLabel(Option.Kind);
+    if (Label == nullptr)
+    {
+        return CompositeGrammarError(OutError, TEXT("writer received unsupported option kind"));
+    }
+    if (!FMath::IsFinite(Option.Weight) || Option.Weight < 0.0f)
+    {
+        return CompositeGrammarError(OutError, TEXT("writer option weight must be finite and non-negative"));
+    }
+    const bool bEmpty = Option.Kind == EMHCompositeOptionKind::Empty;
+    if ((bEmpty && !Option.Resource.IsEmpty()) ||
+        (!bEmpty && !MHIsCanonicalCompositeToken(Option.Resource)))
+    {
+        return CompositeGrammarError(OutError, TEXT("writer option resource violates kind grammar"));
+    }
+    Indent(Level, Out); Out += TEXT("{\n");
+    Indent(Level + 1, Out); Out += TEXT("\"kind\": \""); Out += Label; Out += TEXT("\"");
+    if (!bEmpty)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"resource\": ");
+        AppendQuoted(Option.Resource, Out);
+    }
+    Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"weight\": ");
+    AppendCompositeNumber(Option.Weight, Out);
+    Out += TEXT("\n"); Indent(Level, Out); Out += TEXT("}");
+    return true;
+}
+
 bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FString& OutError)
 {
     const TCHAR* Label = CompositeNodeKindLabel(Node.Kind);
     if (Label == nullptr) return CompositeGrammarError(OutError, TEXT("writer received unsupported node kind"));
-    if (Node.Kind == EMHCompositeNodeKind::Group)
+    if (Node.Kind == EMHCompositeNodeKind::Group || Node.Kind == EMHCompositeNodeKind::Random)
     {
-        if (!Node.Resource.IsEmpty()) return CompositeGrammarError(OutError, TEXT("group node forbids resource"));
+        if (!Node.Resource.IsEmpty()) return CompositeGrammarError(OutError, TEXT("group/random node forbids resource"));
     }
     else if (!MHIsCanonicalCompositeToken(Node.Resource))
     {
@@ -646,9 +827,9 @@ bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FS
         OutError = TEXT("MH_E_NAN_INF_VALUE: writer received non-finite transform");
         return false;
     }
-    if (Scale.X <= 0.0 || Scale.Y <= 0.0 || Scale.Z <= 0.0)
+    if (Scale.X == 0.0 || Scale.Y == 0.0 || Scale.Z == 0.0)
     {
-        OutError = TEXT("MH_E_INVALID_SCALE: composite scale components must be greater than zero");
+        OutError = TEXT("MH_E_INVALID_SCALE: composite scale components must be non-zero");
         return false;
     }
     FQuat4f Rotation;
@@ -657,7 +838,7 @@ bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FS
 
     Indent(Level, Out); Out += TEXT("{\n");
     Indent(Level + 1, Out); Out += TEXT("\"kind\": \""); Out += Label; Out += TEXT("\"");
-    if (Node.Kind != EMHCompositeNodeKind::Group)
+    if (Node.Kind != EMHCompositeNodeKind::Group && Node.Kind != EMHCompositeNodeKind::Random)
     {
         Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"resource\": "); AppendQuoted(Node.Resource, Out);
     }
@@ -692,6 +873,39 @@ bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FS
         }
         Out += TEXT("\n"); Indent(Level + 1, Out); Out += TEXT("}");
     }
+    if (!Node.Profile.IsEmpty())
+    {
+        if (!MHIsCanonicalCompositeToken(Node.Profile))
+        {
+            return CompositeGrammarError(OutError, TEXT("writer profile must be canonical [a-z0-9_]+"));
+        }
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"profile\": ");
+        AppendQuoted(Node.Profile, Out);
+    }
+    if (Node.Kind == EMHCompositeNodeKind::Random)
+    {
+        if (Node.Options.IsEmpty())
+        {
+            return CompositeGrammarError(OutError, TEXT("writer random node requires options"));
+        }
+        bool bHasPositiveWeight = false;
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"options\": [\n");
+        for (int32 Index = 0; Index < Node.Options.Num(); ++Index)
+        {
+            if (!WriteOption(Node.Options[Index], Level + 2, Out, OutError)) return false;
+            bHasPositiveWeight |= Node.Options[Index].Weight > 0.0f;
+            Out += Index + 1 < Node.Options.Num() ? TEXT(",\n") : TEXT("\n");
+        }
+        if (!bHasPositiveWeight)
+        {
+            return CompositeGrammarError(OutError, TEXT("writer random requires a positive option weight"));
+        }
+        Indent(Level + 1, Out); Out += TEXT("]");
+    }
+    else if (!Node.Options.IsEmpty())
+    {
+        return CompositeGrammarError(OutError, TEXT("writer options are allowed only on random nodes"));
+    }
     if (!Node.Children.IsEmpty())
     {
         Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"children\": [\n");
@@ -717,8 +931,146 @@ void FlattenNodes(const TArray<FMHCompositeNode>& Nodes, const int32 Parent, TAr
         Stored.Resource = Node.Resource;
         Stored.Name = Node.Name;
         Stored.Transform = FTransform(Node.Transform.RotationQuat, Node.Transform.TranslationCm, Node.Transform.Scale);
+        Stored.Profile = Node.Profile;
+        Stored.Options = Node.Options;
         FlattenNodes(Node.Children, ThisIndex, Out);
     }
+}
+
+bool ReadPlacementFloat(
+    const TSharedPtr<FJsonValue>& Value,
+    float& Out,
+    FString& OutError,
+    const FString& Context)
+{
+    if (!Value.IsValid() || Value->Type != EJson::Number)
+    {
+        return PlacementGrammarError(OutError, Context + TEXT(" must be a number"));
+    }
+    const double Number = Value->AsNumber();
+    Out = static_cast<float>(Number);
+    if (!FMath::IsFinite(Number) || !FMath::IsFinite(Out))
+    {
+        OutError = FString::Printf(TEXT("MH_E_NAN_INF_VALUE: %s contains a non-finite float32 value"), *Context);
+        return false;
+    }
+    return true;
+}
+
+bool ParsePlacementRange(
+    const TSharedPtr<FJsonValue>& Value,
+    const bool bScale,
+    FMHPlacementRange& Out,
+    FString& OutError,
+    const FString& Context)
+{
+    if (!Value.IsValid() || Value->Type != EJson::Array || Value->AsArray().Num() != 2)
+    {
+        return PlacementGrammarError(OutError, Context + TEXT(" must be [base, deviation]"));
+    }
+    if (!ReadPlacementFloat(Value->AsArray()[0], Out.Base, OutError, Context) ||
+        !ReadPlacementFloat(Value->AsArray()[1], Out.Deviation, OutError, Context))
+    {
+        return false;
+    }
+    if (Out.Deviation < 0.0f)
+    {
+        return PlacementGrammarError(OutError, Context + TEXT(" deviation must be non-negative"));
+    }
+    if (bScale && Out.Base - Out.Deviation <= 0.0f)
+    {
+        return PlacementGrammarError(OutError, Context + TEXT(" base - deviation must be greater than zero"));
+    }
+    return true;
+}
+
+bool ParsePlacementTriple(
+    const TSharedPtr<FJsonValue>& Value,
+    TArray<FMHPlacementRange>& Out,
+    FString& OutError,
+    const FString& Context)
+{
+    if (!Value.IsValid() || Value->Type != EJson::Array || Value->AsArray().Num() != 3)
+    {
+        return PlacementGrammarError(OutError, Context + TEXT(" must contain three ranges"));
+    }
+    Out.Reset(3);
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        FMHPlacementRange& Range = Out.AddDefaulted_GetRef();
+        if (!ParsePlacementRange(Value->AsArray()[Index], false, Range, OutError, Context)) return false;
+    }
+    return true;
+}
+
+bool ValidatePlacementProfile(const FMHPlacementProfile& Profile, FString& OutError)
+{
+    auto ValidateRange = [&OutError](const FMHPlacementRange& Range, const bool bScale, const TCHAR* Context)
+    {
+        if (!FMath::IsFinite(Range.Base) || !FMath::IsFinite(Range.Deviation))
+        {
+            OutError = FString::Printf(TEXT("MH_E_NAN_INF_VALUE: %s contains a non-finite float32 value"), Context);
+            return false;
+        }
+        if (Range.Deviation < 0.0f || (bScale && Range.Base - Range.Deviation <= 0.0f))
+        {
+            return PlacementGrammarError(OutError, FString::Printf(TEXT("%s has an invalid range"), Context));
+        }
+        return true;
+    };
+    if (Profile.bHasOffsetCm && Profile.OffsetCm.Num() != 3)
+    {
+        return PlacementGrammarError(OutError, TEXT("offset_cm must contain three ranges"));
+    }
+    if (Profile.bHasRotationDeg && Profile.RotationDeg.Num() != 3)
+    {
+        return PlacementGrammarError(OutError, TEXT("rotation_deg must contain three ranges"));
+    }
+    if (!Profile.bHasOffsetCm && !Profile.OffsetCm.IsEmpty())
+    {
+        return PlacementGrammarError(OutError, TEXT("absent offset_cm must not retain values"));
+    }
+    if (!Profile.bHasRotationDeg && !Profile.RotationDeg.IsEmpty())
+    {
+        return PlacementGrammarError(OutError, TEXT("absent rotation_deg must not retain values"));
+    }
+    for (const FMHPlacementRange& Range : Profile.OffsetCm)
+    {
+        if (!ValidateRange(Range, false, TEXT("offset_cm"))) return false;
+    }
+    for (const FMHPlacementRange& Range : Profile.RotationDeg)
+    {
+        if (!ValidateRange(Range, false, TEXT("rotation_deg"))) return false;
+    }
+    if (Profile.bHasUniformScale && !ValidateRange(Profile.UniformScale, true, TEXT("uniform_scale"))) return false;
+    if (Profile.bHasVerticalScale && !ValidateRange(Profile.VerticalScale, true, TEXT("vertical_scale"))) return false;
+    return true;
+}
+
+void AppendPlacementRange(
+    const FMHPlacementRange& Range,
+    const int32 Level,
+    FString& Out)
+{
+    Out += TEXT("[\n");
+    Indent(Level + 1, Out); AppendCompositeNumber(Range.Base, Out); Out += TEXT(",\n");
+    Indent(Level + 1, Out); AppendCompositeNumber(Range.Deviation, Out); Out += TEXT("\n");
+    Indent(Level, Out); Out += TEXT("]");
+}
+
+void AppendPlacementTriple(
+    const TArray<FMHPlacementRange>& Ranges,
+    const int32 Level,
+    FString& Out)
+{
+    Out += TEXT("[\n");
+    for (int32 Index = 0; Index < Ranges.Num(); ++Index)
+    {
+        Indent(Level + 1, Out);
+        AppendPlacementRange(Ranges[Index], Level + 1, Out);
+        Out += Index + 1 < Ranges.Num() ? TEXT(",\n") : TEXT("\n");
+    }
+    Indent(Level, Out); Out += TEXT("]");
 }
 
 } // namespace
@@ -737,7 +1089,43 @@ bool MHIsCanonicalCompositeToken(const FString& Value)
     return true;
 }
 
-bool MHParseCompositeV4(
+bool MHMatrixElementsWithinTrsTolerance(
+    const FMatrix& Matrix,
+    const FMatrix& Reconstructed)
+{
+    constexpr float Float32Epsilon = 1.1920928955078125e-7f;
+    constexpr float Ulps = 8.0f;
+    for (int32 Row = 0; Row < 4; ++Row)
+    {
+        for (int32 Column = 0; Column < 4; ++Column)
+        {
+            const float Source = static_cast<float>(Matrix.M[Row][Column]);
+            const float Restored = static_cast<float>(Reconstructed.M[Row][Column]);
+            if (!FMath::IsFinite(Source) || !FMath::IsFinite(Restored)) return false;
+            const float Magnitude = FMath::Max3(1.0f, FMath::Abs(Source), FMath::Abs(Restored));
+            if (FMath::Abs(Source - Restored) > Ulps * Float32Epsilon * Magnitude)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool MHIsRepresentableTransformMatrix(const FMatrix& Matrix)
+{
+    for (int32 Row = 0; Row < 4; ++Row)
+    {
+        for (int32 Column = 0; Column < 4; ++Column)
+        {
+            if (!FMath::IsFinite(Matrix.M[Row][Column])) return false;
+        }
+    }
+    const FTransform Decomposed(Matrix);
+    return MHMatrixElementsWithinTrsTolerance(Matrix, Decomposed.ToMatrixWithScale());
+}
+
+bool MHParseCompositeV5(
     const TConstArrayView<uint8> Bytes,
     FMHCompositeDocument& OutDocument,
     FString& OutError)
@@ -762,9 +1150,26 @@ bool MHParseCompositeV4(
     if (!Walk.Validate(WalkDetail)) return CompositeGrammarError(OutError, WalkDetail);
 
     const TSharedPtr<FJsonObject> Root = RootValue->AsObject();
-    if (Root->Values.Num() != 1 || !Root->HasField(TEXT("nodes")))
+    if (!Root->HasField(TEXT("v")))
     {
-        return CompositeGrammarError(OutError, TEXT("root must contain exactly one nodes field"));
+        OutError = TEXT("MH_E_COMPOSITE_LEGACY_GENERATION: файл прежнего поколения: удалите и переэкспортируйте");
+        return false;
+    }
+    FString RawVersion;
+    if (!HasExactIntegerVersion(Root, TEXT("5"), RawVersion))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_UNKNOWN_SCHEMA_VERSION: composite version must be integer 5, got '%s'"),
+            *RawVersion);
+        return false;
+    }
+    if (!RootStartsWithLiteralV(Text))
+    {
+        return CompositeGrammarError(OutError, TEXT("field 'v' must be the first root field"));
+    }
+    if (Root->Values.Num() != 2 || !Root->HasField(TEXT("nodes")))
+    {
+        return CompositeGrammarError(OutError, TEXT("root must contain exactly v and nodes"));
     }
     const TArray<TSharedPtr<FJsonValue>>* Nodes = nullptr;
     if (!Root->TryGetArrayField(TEXT("nodes"), Nodes) || Nodes == nullptr)
@@ -779,14 +1184,14 @@ bool MHParseCompositeV4(
     return true;
 }
 
-bool MHWriteCanonicalCompositeV4(
+bool MHWriteCanonicalCompositeV5(
     const FMHCompositeDocument& Document,
     TArray<uint8>& OutBytes,
     FString& OutError)
 {
     OutBytes.Reset();
     OutError.Reset();
-    FString Text = TEXT("{\n  \"nodes\": [");
+    FString Text = TEXT("{\n  \"v\": 5,\n  \"nodes\": [");
     if (Document.Nodes.IsEmpty())
     {
         Text += TEXT("]\n}\n");
@@ -806,20 +1211,63 @@ bool MHWriteCanonicalCompositeV4(
     return true;
 }
 
-bool MHApplyCompositeV4(
+bool MHApplyCompositeV5(
+    UMHCompositeAsset& Asset,
+    const FMHCompositeDocument& Document,
+    const TConstArrayView<FMHPlacementProfile> InlinedProfiles,
+    FString& OutError)
+{
+    TArray<uint8> Validation;
+    if (!MHWriteCanonicalCompositeV5(Document, Validation, OutError)) return false;
+    TSet<FString> RequiredProfiles;
+    TFunction<void(const TArray<FMHCompositeNode>&)> CollectProfiles =
+        [&RequiredProfiles, &CollectProfiles](const TArray<FMHCompositeNode>& Nodes)
+    {
+        for (const FMHCompositeNode& Node : Nodes)
+        {
+            if (!Node.Profile.IsEmpty()) RequiredProfiles.Add(Node.Profile);
+            CollectProfiles(Node.Children);
+        }
+    };
+    CollectProfiles(Document.Nodes);
+    TSet<FString> SuppliedProfiles;
+    for (const FMHPlacementProfile& Profile : InlinedProfiles)
+    {
+        if (!MHIsCanonicalCompositeToken(Profile.LogicalName) ||
+            SuppliedProfiles.Contains(Profile.LogicalName))
+        {
+            return CompositeGrammarError(OutError, TEXT("inlined placement profiles must have unique canonical names"));
+        }
+        SuppliedProfiles.Add(Profile.LogicalName);
+        TArray<uint8> ProfileValidation;
+        if (!MHWriteCanonicalPlacementProfileV1(Profile, ProfileValidation, OutError)) return false;
+    }
+    bool bProfilesMatch = RequiredProfiles.Num() == SuppliedProfiles.Num();
+    for (const FString& Name : RequiredProfiles)
+    {
+        bProfilesMatch &= SuppliedProfiles.Contains(Name);
+    }
+    if (!bProfilesMatch)
+    {
+        return CompositeGrammarError(OutError, TEXT("inlined placement profiles must exactly match document profile references"));
+    }
+    Asset.Modify();
+    Asset.Nodes.Reset();
+    FlattenNodes(Document.Nodes, INDEX_NONE, Asset.Nodes);
+    Asset.InlinedPlacementProfiles.Reset(InlinedProfiles.Num());
+    Asset.InlinedPlacementProfiles.Append(InlinedProfiles.GetData(), InlinedProfiles.Num());
+    return true;
+}
+
+bool MHApplyCompositeV5(
     UMHCompositeAsset& Asset,
     const FMHCompositeDocument& Document,
     FString& OutError)
 {
-    TArray<uint8> Validation;
-    if (!MHWriteCanonicalCompositeV4(Document, Validation, OutError)) return false;
-    Asset.Modify();
-    Asset.Nodes.Reset();
-    FlattenNodes(Document.Nodes, INDEX_NONE, Asset.Nodes);
-    return true;
+    return MHApplyCompositeV5(Asset, Document, TConstArrayView<FMHPlacementProfile>(), OutError);
 }
 
-bool MHExtractCompositeV4(
+bool MHExtractCompositeV5(
     const UMHCompositeAsset& Asset,
     FMHCompositeDocument& OutDocument,
     FString& OutError)
@@ -860,12 +1308,125 @@ bool MHExtractCompositeV4(
         Node->Kind = Stored.Kind;
         Node->Resource = Stored.Resource;
         Node->Name = Stored.Name;
+        Node->Profile = Stored.Profile;
+        Node->Options = Stored.Options;
         Node->Transform.TranslationCm = Stored.Transform.GetTranslation();
         Node->Transform.RotationQuat = Stored.Transform.GetRotation();
         Node->Transform.Scale = Stored.Transform.GetScale3D();
     }
     TArray<uint8> Validation;
-    return MHWriteCanonicalCompositeV4(OutDocument, Validation, OutError);
+    return MHWriteCanonicalCompositeV5(OutDocument, Validation, OutError);
+}
+
+bool MHParsePlacementProfileV1(
+    const TConstArrayView<uint8> Bytes,
+    FMHPlacementProfile& OutProfile,
+    FString& OutError)
+{
+    const FString LogicalName = OutProfile.LogicalName;
+    OutProfile = FMHPlacementProfile();
+    OutProfile.LogicalName = LogicalName;
+    OutError.Reset();
+    const FUTF8ToTCHAR Converted(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()), Bytes.Num());
+    const FString Text(Converted.Length(), Converted.Get());
+    if (ContainsNonFiniteJsonToken(Text))
+    {
+        OutError = TEXT("MH_E_NAN_INF_VALUE: placement JSON contains NaN or Infinity");
+        return false;
+    }
+    TSharedPtr<FJsonValue> RootValue;
+    const FMHCanonicalResult Parsed = MHParseJsonUtf8(Bytes, RootValue);
+    if (!Parsed.bSuccess || !RootValue.IsValid() || RootValue->Type != EJson::Object)
+    {
+        return PlacementGrammarError(OutError, TEXT("payload must be one UTF-8 JSON object"));
+    }
+    FString WalkDetail;
+    FStrictJsonWalk Walk(Text);
+    if (!Walk.Validate(WalkDetail)) return PlacementGrammarError(OutError, WalkDetail);
+    const TSharedPtr<FJsonObject> Root = RootValue->AsObject();
+    static const TSet<FString> Allowed = {
+        TEXT("v"), TEXT("kind"), TEXT("offset_cm"), TEXT("rotation_deg"),
+        TEXT("uniform_scale"), TEXT("vertical_scale")};
+    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Root->Values)
+    {
+        if (!Allowed.Contains(Pair.Key))
+        {
+            return PlacementGrammarError(OutError, FString::Printf(TEXT("unknown field '%s'"), *Pair.Key));
+        }
+    }
+    if (!Root->HasField(TEXT("v")) || !Root->HasField(TEXT("kind")))
+    {
+        return PlacementGrammarError(OutError, TEXT("root requires v and kind"));
+    }
+    FString RawVersion;
+    if (!HasExactIntegerVersion(Root, TEXT("1"), RawVersion))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_UNKNOWN_SCHEMA_VERSION: placement version must be integer 1, got '%s'"),
+            *RawVersion);
+        return false;
+    }
+    FString Kind;
+    if (!Root->TryGetStringField(TEXT("kind"), Kind) || Kind != TEXT("placement_profile"))
+    {
+        return PlacementGrammarError(OutError, TEXT("kind must equal placement_profile"));
+    }
+    if (const TSharedPtr<FJsonValue>* Offset = Root->Values.Find(TEXT("offset_cm")))
+    {
+        OutProfile.bHasOffsetCm = true;
+        if (!ParsePlacementTriple(*Offset, OutProfile.OffsetCm, OutError, TEXT("offset_cm"))) return false;
+    }
+    if (const TSharedPtr<FJsonValue>* Rotation = Root->Values.Find(TEXT("rotation_deg")))
+    {
+        OutProfile.bHasRotationDeg = true;
+        if (!ParsePlacementTriple(*Rotation, OutProfile.RotationDeg, OutError, TEXT("rotation_deg"))) return false;
+    }
+    if (const TSharedPtr<FJsonValue>* Uniform = Root->Values.Find(TEXT("uniform_scale")))
+    {
+        OutProfile.bHasUniformScale = true;
+        if (!ParsePlacementRange(*Uniform, true, OutProfile.UniformScale, OutError, TEXT("uniform_scale"))) return false;
+    }
+    if (const TSharedPtr<FJsonValue>* Vertical = Root->Values.Find(TEXT("vertical_scale")))
+    {
+        OutProfile.bHasVerticalScale = true;
+        if (!ParsePlacementRange(*Vertical, true, OutProfile.VerticalScale, OutError, TEXT("vertical_scale"))) return false;
+    }
+    return true;
+}
+
+bool MHWriteCanonicalPlacementProfileV1(
+    const FMHPlacementProfile& Profile,
+    TArray<uint8>& OutBytes,
+    FString& OutError)
+{
+    OutBytes.Reset();
+    OutError.Reset();
+    if (!ValidatePlacementProfile(Profile, OutError)) return false;
+    FString Text = TEXT("{\n  \"v\": 1,\n  \"kind\": \"placement_profile\"");
+    if (Profile.bHasOffsetCm)
+    {
+        Text += TEXT(",\n  \"offset_cm\": ");
+        AppendPlacementTriple(Profile.OffsetCm, 1, Text);
+    }
+    if (Profile.bHasRotationDeg)
+    {
+        Text += TEXT(",\n  \"rotation_deg\": ");
+        AppendPlacementTriple(Profile.RotationDeg, 1, Text);
+    }
+    if (Profile.bHasUniformScale)
+    {
+        Text += TEXT(",\n  \"uniform_scale\": ");
+        AppendPlacementRange(Profile.UniformScale, 1, Text);
+    }
+    if (Profile.bHasVerticalScale)
+    {
+        Text += TEXT(",\n  \"vertical_scale\": ");
+        AppendPlacementRange(Profile.VerticalScale, 1, Text);
+    }
+    Text += TEXT("\n}\n");
+    const FTCHARToUTF8 Utf8(*Text, Text.Len());
+    OutBytes.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+    return true;
 }
 
 } // namespace UE::MimirComposite

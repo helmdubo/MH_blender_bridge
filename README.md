@@ -1,10 +1,10 @@
 # MH_blender_bridge
 
-> **ACTIVE FREEZE TARGET: MH SOURCE PROTOCOL V5.** Freeze candidate —
+> **ACTIVE AUTHORITY: MH SOURCE PROTOCOL V5.** Норматив —
 > [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
 > порядок срезов — [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md).
-> До owner merge V5-S0 production-код не меняется; текущая реализация остаётся
-> полностью принятой v4.
+> V5-S0 и V5-S1 приняты owner'ом; текущая ветка реализует V5-S2 и остаётся
+> кандидатом до отдельного owner merge.
 
 ## Source Protocol v5 в одном экране
 
@@ -27,7 +27,7 @@ Resource Index и applied state сохраняют v4-контракты без 
 ## Активные документы и gate
 
 - [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md) —
-  полный freeze candidate; owner merge V5-S0 делает его authority;
+  полный ратифицированный норматив v5;
 - [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md) — инварианты,
   последовательные V5-S0…S7 и parked S8;
 - [`docs/QUESTIONS.md`](docs/QUESTIONS.md) — активные `OPEN-V5-*` с
@@ -41,10 +41,11 @@ Resource Index и applied state сохраняют v4-контракты без 
 
 ## Текущее состояние реализации
 
-На V5-S0 меняются только docs и явно разрешённые GAZ fixtures в `golden/`.
-`addon/mh4blend` и `ue/MimirComposite` всё ещё реализуют Source Protocol v4.
-Это ожидаемо и не разрешает v5 fallback: кодовая замена начинается только V5-S1
-после ratification freeze и соответствующих owner-ответов.
+V5-S1 зафиксировал Python-reference `mh.random_stream:1`. Кандидат V5-S2
+заменяет `.composite` на строгий v5 codec без dual-read, добавляет `.placement`
+v1, parent-local T/R/S, source-only profile carrier/index edge, общий 8-ULP
+predicate и бит-идентичный C++ random resolver/plan. Blender random authoring и
+seed UI намеренно остаются закрыты до следующих срезов.
 
 Python regression:
 
@@ -52,7 +53,7 @@ Python regression:
 python -m pytest tests/ -q
 ```
 
-Каждый будущий C++-срез проходит stock UE 5.7.4 guarded build,
+Каждый C++-срез проходит stock UE 5.7.4 guarded build,
 `BuildPlugin -StrictIncludes` без unity/PCH, force-unity без adaptive unity и
 `Automation RunTests Mimir`. Engine не форкается.
 
