@@ -11,7 +11,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "addon"))
 
 from mh4blend.core.validate import MHValidationError  # noqa: E402
-from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
+from mh4blend.scene.export_fbx import (  # noqa: E402
+    export_fbx_collection,
+    prepare_fbx_collection,
+    stage_prepared_fbx,
+)
 from mh4blend.scene.import_fbx import parse_mesh_fbx  # noqa: E402
 from mh4blend.scene.resource_markers import (  # noqa: E402
     COLLECTION_KIND_KEY,
@@ -83,19 +87,177 @@ def _build_lods(base="garage"):
     }
 
 
-def test_incomplete_import_cannot_overwrite_mesh_source(tmp_path):
+def test_incomplete_import_cannot_overwrite_mesh_source(tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("incomplete_mesh")
     _mesh_object("body", collection)
     collection[INCOMPLETE_IMPORT_KEY] = True
     target = tmp_path / "incomplete_mesh.mesh.fbx"
     target.write_bytes(b"existing-authority")
+    calls = []
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx",
+        lambda filepath: calls.append(filepath))
+
+    with pytest.raises(
+            MHValidationError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+        prepare_fbx_collection(collection, tmp_path, source_root=tmp_path)
 
     with pytest.raises(
             MHValidationError, match="MH_E_INVALID_RESOURCE_SOURCE"):
         export_fbx_collection(collection, tmp_path, source_root=tmp_path)
 
     assert target.read_bytes() == b"existing-authority"
+    assert calls == []
+    assert sorted(path.name for path in tmp_path.iterdir()) == [target.name]
+
+
+def test_prepare_and_stage_leave_source_target_unchanged(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, _direct, _nested = _build_joined("closure_mesh")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "closure_mesh.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+    assert prepared.target == target
+    assert target.read_bytes() == b"existing-source-authority"
+    assert COLLECTION_KIND_KEY not in collection
+    assert COLLECTION_RESOURCE_KEY not in collection
+
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    staged = stage_prepared_fbx(
+        prepared, stage_dir / "closure_mesh.mesh.fbx")
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert COLLECTION_KIND_KEY not in collection
+    assert COLLECTION_RESOURCE_KEY not in collection
+    assert staged.filepath.read_bytes() == staged.payload
+    assert len(staged.payload) > 0
+    assert parse_mesh_fbx(staged.filepath).resource_name == "closure_mesh"
+
+
+def test_stage_failure_restores_blender_state_and_cleans_payload(
+        tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    built = _build_lods("closure_restore")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "closure_restore.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    stage_path = stage_dir / target.name
+
+    active = built["render"][1]
+    active.select_set(True)
+    bpy.context.view_layer.objects.active = active
+    built["render"][0].hide_select = True
+    built["render"][0].location = (1.25, -2.5, 3.75)
+    original_names = tuple(obj.name for obj in built["render"])
+    original_data = tuple(obj.data for obj in built["render"])
+    original_matrices = tuple(
+        obj.matrix_basis.copy() for obj in built["render"])
+    original_units = (
+        bpy.context.scene.unit_settings.system,
+        bpy.context.scene.unit_settings.scale_length,
+        bpy.context.scene.unit_settings.length_unit,
+    )
+    prepared = prepare_fbx_collection(
+        built["root"], source_dir, source_root=source_dir)
+
+    def fail_after_partial_write(filepath):
+        Path(filepath).write_bytes(b"partial-stage")
+        raise RuntimeError("synthetic stage failure")
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", fail_after_partial_write)
+    with pytest.raises(RuntimeError, match="synthetic stage failure"):
+        stage_prepared_fbx(prepared, stage_path)
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert not stage_path.exists()
+    assert tuple(obj.name for obj in built["render"]) == original_names
+    assert tuple(obj.data for obj in built["render"]) == original_data
+    assert tuple(obj.matrix_basis for obj in built["render"]) == original_matrices
+    assert (
+        bpy.context.scene.unit_settings.system,
+        bpy.context.scene.unit_settings.scale_length,
+        bpy.context.scene.unit_settings.length_unit,
+    ) == original_units
+    assert built["render"][0].hide_select is True
+    assert bpy.context.view_layer.objects.active is active
+    assert active.select_get() is True
+
+
+def test_empty_stage_readback_is_rejected_and_removed(tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, _direct, _nested = _build_joined("empty_readback")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "empty_readback.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    stage_path = stage_dir / target.name
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx",
+        lambda filepath: Path(filepath).write_bytes(b""))
+
+    with pytest.raises(RuntimeError, match="read-back is empty"):
+        stage_prepared_fbx(prepared, stage_path)
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert not stage_path.exists()
+
+
+def test_non_fbx_stage_readback_is_rejected_and_removed(tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, _direct, _nested = _build_joined("junk_readback")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "junk_readback.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    stage_path = stage_dir / target.name
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx",
+        lambda filepath: Path(filepath).write_bytes(b"not-an-fbx"))
+
+    with pytest.raises(
+            RuntimeError, match="structural read-back validation"):
+        stage_prepared_fbx(prepared, stage_path)
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert not stage_path.exists()
+
+
+def test_stage_rejects_dependency_change_after_prepare(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, direct, _nested = _build_joined("changed_after_preflight")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+
+    _assign_material(direct, _material("late_material"))
+    with pytest.raises(
+            MHValidationError, match="changed after preflight"):
+        stage_prepared_fbx(
+            prepared, stage_dir / "changed_after_preflight.mesh.fbx")
+
+    assert list(stage_dir.iterdir()) == []
+    assert not (source_dir / "changed_after_preflight.mesh.fbx").exists()
 
 
 def test_collision_material_slots_are_writer_validated_and_reader_compatible(

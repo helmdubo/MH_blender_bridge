@@ -213,6 +213,18 @@ def resolve_texture_reference(
     for path in root.rglob("*"):
         if not path.is_file() or path.stem.casefold() != token:
             continue
+        physical = path.resolve(strict=True)
+        try:
+            inside = os.path.commonpath([
+                os.path.normcase(str(root)),
+                os.path.normcase(str(physical)),
+            ]) == os.path.normcase(str(root))
+        except ValueError:
+            inside = False
+        if not inside:
+            raise MaterialValueError(
+                "MH_E_TEXTURE_OUTSIDE_ROOT", str(path),
+                f"texture resolves outside Project Source Root: {physical}")
         suffix = path.suffix
         if suffix.lower() not in MATERIAL_TEXTURE_EXTENSIONS:
             continue

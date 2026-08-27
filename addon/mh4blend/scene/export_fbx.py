@@ -7,7 +7,9 @@ No scene names, bundle directories or texture roots participate in this API.
 """
 
 import contextlib
+from dataclasses import dataclass, replace
 import os
+from pathlib import Path
 import re
 import tempfile
 
@@ -16,14 +18,23 @@ from mathutils import Matrix
 
 from ..core.canonical import validate_resource_name
 from ..core.mesh_nodes import validate_node_markers
-from ..core.payload_publish_v2 import payload_lock
+from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.validate import MHValidationError
-from .resource_markers import INCOMPLETE_IMPORT_KEY, stamp_resource_collection
+from .resource_markers import (
+    COLLECTION_KIND_KEY,
+    COLLECTION_RESOURCE_KEY,
+    INCOMPLETE_IMPORT_KEY,
+    stamp_resource_collection,
+)
 
 __all__ = [
     "FBX_EXPORT_KWARGS",
+    "PreparedFBXExport",
+    "StagedFBXExport",
     "collect_collection_mesh_objects",
     "export_fbx_collection",
+    "prepare_fbx_collection",
+    "stage_prepared_fbx",
 ]
 
 
@@ -51,6 +62,39 @@ _LODS_ROOT_RE = re.compile(
 _LOD_CHILD_RE_TEMPLATE = r"^{base}\.lod(?P<level>\d{{2}})(?:\.\d{{3}})?$"
 _LOD_LEAF_RE = re.compile(
     r"^(?P<base>.+)\.lod(?P<level>\d{2})(?:\.\d{3})?$")
+
+
+@dataclass(frozen=True)
+class PreparedFBXExport:
+    """Fully validated, write-free snapshot of one mesh export request.
+
+    Blender datablocks remain referenced because the FBX operator consumes
+    them, but the carrier itself is immutable and every sequence is frozen.
+    Callers must stage promptly; a closure-level preflight owns the policy for
+    preventing artist edits between prepare and stage.
+    """
+
+    collection: object
+    scene: object
+    target: Path
+    source_root: object
+    resource_name: str
+    export_objects: tuple
+    payload_levels: tuple
+    lod_levels: tuple
+    uses_lod_hierarchy: bool
+    materials: tuple
+    prepared_materials: tuple
+    warnings: tuple
+    authority_fingerprint: tuple
+
+
+@dataclass(frozen=True)
+class StagedFBXExport:
+    """An exact-byte-read-back FBX staged outside source authority."""
+
+    filepath: Path
+    payload: bytes
 
 
 def _collection_objects(collection):
@@ -443,18 +487,26 @@ def _resolved_source_root(value):
     if not isinstance(value, (str, os.PathLike)) or not str(value).strip():
         raise ValueError(
             "Configure Project Source Root in the MH addon preferences")
-    root = os.path.abspath(bpy.path.abspath(os.fspath(value)))
-    if not os.path.isdir(root):
+    authored = Path(bpy.path.abspath(os.fspath(value)))
+    try:
+        root = authored.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            f"Project Source Root cannot be physically resolved: {authored}"
+        ) from exc
+    if not root.is_dir():
         raise ValueError(f"Project Source Root does not exist: {root}")
-    return root
+    return str(root)
 
 
 def _assert_output_under_root(output_dir, source_root):
+    physical_root = Path(source_root).resolve(strict=True)
+    physical_output = Path(output_dir).resolve(strict=False)
     try:
         inside = os.path.commonpath([
-            os.path.normcase(os.path.abspath(output_dir)),
-            os.path.normcase(os.path.abspath(source_root)),
-        ]) == os.path.normcase(os.path.abspath(source_root))
+            os.path.normcase(str(physical_output)),
+            os.path.normcase(str(physical_root)),
+        ]) == os.path.normcase(str(physical_root))
     except ValueError:
         inside = False
     if not inside:
@@ -592,18 +644,85 @@ def _assert_existing_target(filepath):
         raise ValueError(f"FBX target exists as a directory: {filepath}")
 
 
-def export_fbx_collection(
-        collection, output_dir, *, dry_run=False, source_root="",
-        export_materials=False):
-    """Export one selected collection as one static-mesh resource.
+def _matrix_fingerprint(matrix):
+    return tuple(
+        float(matrix[row][column]).hex()
+        for row in range(4)
+        for column in range(4)
+    )
 
-    A regular collection writes one FBX. A recognized dag4blend ``.lods``
-    hierarchy writes one FBX containing every authored level. Render mesh node
-    names temporarily carry their ``_lodNN`` suffix; no MH properties are
-    written to the FBX.
+
+def _mesh_authority_fingerprint(
+        collection, scene, resource_name, export_objects, payload_levels,
+        lod_levels, uses_lod_hierarchy, materials, warnings):
+    object_rows = []
+    for obj in export_objects:
+        slots = tuple(
+            (
+                str(slot.name),
+                None if slot.material is None else slot.material.as_pointer(),
+                None if slot.material is None else slot.material.name,
+            )
+            for slot in obj.material_slots
+        )
+        object_rows.append((
+            obj.as_pointer(),
+            obj.name,
+            obj.type,
+            None if obj.data is None else obj.data.as_pointer(),
+            None if obj.parent is None else obj.parent.as_pointer(),
+            _matrix_fingerprint(obj.matrix_parent_inverse),
+            _matrix_fingerprint(obj.matrix_basis),
+            slots,
+        ))
+    return (
+        collection.as_pointer(),
+        collection.name,
+        collection.get(COLLECTION_KIND_KEY),
+        collection.get(COLLECTION_RESOURCE_KEY),
+        bool(collection.get(INCOMPLETE_IMPORT_KEY, False)),
+        scene.as_pointer(),
+        resource_name,
+        tuple(object_rows),
+        tuple(
+            (level, level_collection.as_pointer(),
+             tuple(obj.as_pointer() for obj in objects))
+            for level, level_collection, objects in payload_levels
+        ),
+        tuple(lod_levels),
+        bool(uses_lod_hierarchy),
+        tuple((material.as_pointer(), material.name) for material in materials),
+        tuple(warnings),
+    )
+
+
+def prepare_fbx_collection(
+        collection, output_dir, *, source_root="", export_materials=False):
+    """Extract and fully validate one Blender mesh without writing source.
+
+    The returned plan is suitable both for the legacy one-resource publisher
+    and for a closure-wide preflight/staging transaction.  In particular the
+    incomplete-import guard and every FBX dialect check happen here, before a
+    staging directory or source payload can be created.
     """
     if collection is None:
         raise ValueError("collection is required")
+    linked = []
+    for member_collection in (
+            collection, *tuple(collection.children_recursive)):
+        if member_collection.library is not None:
+            linked.append(f"collection:{member_collection.name}")
+    for obj in _collection_objects(collection):
+        if obj.library is not None:
+            linked.append(f"object:{obj.name}")
+        data = getattr(obj, "data", None)
+        if data is not None and data.library is not None:
+            linked.append(f"data:{data.name}")
+    if linked:
+        raise MHValidationError(
+            "MH_E_INVALID_RESOURCE_SOURCE", linked,
+            "linked read-only Blender Collections, Objects, or object data "
+            "cannot be mesh export authority")
     if bool(collection.get(INCOMPLETE_IMPORT_KEY, False)):
         raise MHValidationError(
             "MH_E_INVALID_RESOURCE_SOURCE", [collection.name],
@@ -628,9 +747,12 @@ def export_fbx_collection(
         _geometry, aux_objects, group_objects = (
             _collection_resource_objects(collection))
     export_objects = objects + aux_objects + group_objects
-    payload_levels = (
+    payload_levels = tuple(
         lod_structure["levels"] if lod_structure is not None
         else [(0, collection, objects)])
+    payload_levels = tuple(
+        (level, level_collection, tuple(level_objects))
+        for level, level_collection, level_objects in payload_levels)
     _validate_export_node_markers(export_objects, payload_levels)
     _validate_unique_mesh_payloads(export_objects)
     if not objects:
@@ -690,17 +812,17 @@ def export_fbx_collection(
                     f"LOD{level} uses slots absent from LOD0: "
                     f"{', '.join(missing_slots)}")
     scene = _find_export_scene(collection)
-    validation = {"errors": [], "warnings": []}
+    warnings = []
     if lod_structure is not None and lod_structure["ignored_aux"]:
         ignored = ", ".join(
             (f"LOD{level} '{name}'" if level != "root"
              else f"container '{name}'")
             for level, name in lod_structure["ignored_aux"])
-        validation["warnings"].append({
-            "code": "MH_W_LOD_AUX_NODE_IGNORED",
-            "subjects": [resource_name],
-            "message": f"out-of-LOD0 auxiliary nodes were ignored: {ignored}",
-        })
+        warnings.append((
+            "MH_W_LOD_AUX_NODE_IGNORED",
+            (resource_name,),
+            f"out-of-LOD0 auxiliary nodes were ignored: {ignored}",
+        ))
 
     prepared_materials = []
     if export_materials:
@@ -708,57 +830,209 @@ def export_fbx_collection(
             raise ValueError(
                 "Project Source Root is required when Export Materials is enabled")
         from .export_material import prepare_blender_material_export
-        prepared_materials = [
+        prepared_materials = tuple(
             prepare_blender_material_export(
                 material, resolved_output_dir,
                 source_root=resolved_source_root)
             for material in sorted(materials, key=lambda item: item.name)
-        ]
+        )
 
+    lod_levels = tuple(level for level, _child, _objects in payload_levels)
+    fingerprint = _mesh_authority_fingerprint(
+        collection, scene, resource_name, tuple(export_objects),
+        payload_levels, lod_levels, lod_structure is not None,
+        tuple(materials), tuple(warnings))
+    return PreparedFBXExport(
+        collection=collection,
+        scene=scene,
+        target=Path(filepath),
+        source_root=(
+            Path(resolved_source_root)
+            if resolved_source_root is not None else None),
+        resource_name=resource_name,
+        export_objects=tuple(export_objects),
+        payload_levels=payload_levels,
+        lod_levels=lod_levels,
+        uses_lod_hierarchy=lod_structure is not None,
+        materials=tuple(materials),
+        prepared_materials=tuple(prepared_materials),
+        warnings=tuple(warnings),
+        authority_fingerprint=fingerprint,
+    )
+
+
+def stage_prepared_fbx(prepared, staged_filepath):
+    """Write and read back one prepared FBX without touching its source target.
+
+    ``staged_filepath`` is caller-owned but must use the final canonical
+    filename.  Keeping the filename stable preserves the resource identity
+    that will be published, while returned bytes are the exact file read-back.
+    Existing paths are never overwritten, and a failed stage is removed.
+    """
+    if not isinstance(prepared, PreparedFBXExport):
+        raise TypeError("prepared must be PreparedFBXExport")
+    if not isinstance(staged_filepath, (str, os.PathLike)) \
+            or not str(staged_filepath).strip():
+        raise ValueError("staged_filepath is required")
+
+    # Blender state is live.  Re-run every write-free admission check at the
+    # staging edge and require the dependency/structure fingerprint frozen by
+    # the closure plan.  Blender operators are single-threaded after this edge.
+    refreshed = prepare_fbx_collection(
+        prepared.collection,
+        prepared.target.parent,
+        source_root=(prepared.source_root or ""),
+        export_materials=False,
+    )
+    if refreshed.authority_fingerprint != prepared.authority_fingerprint:
+        raise MHValidationError(
+            "MH_E_INVALID_RESOURCE_SOURCE", [prepared.resource_name],
+            "mesh authoring structure or dependencies changed after preflight")
+    prepared = replace(
+        refreshed,
+        target=prepared.target,
+        prepared_materials=prepared.prepared_materials,
+    )
+
+    staged = Path(bpy.path.abspath(os.fspath(staged_filepath))).resolve(
+        strict=False)
+    expected_filename = _clean_fbx_filename(prepared.resource_name)
+    if staged.name != expected_filename:
+        raise ValueError(
+            "staged FBX must preserve canonical filename "
+            f"'{expected_filename}'")
+    if staged == prepared.target.resolve(strict=False):
+        raise ValueError("staged FBX path must differ from source target")
+    if prepared.source_root is not None:
+        physical_root = prepared.source_root.resolve(strict=True)
+        try:
+            inside_source = os.path.commonpath([
+                os.path.normcase(str(physical_root)),
+                os.path.normcase(str(staged)),
+            ]) == os.path.normcase(str(physical_root))
+        except ValueError:
+            inside_source = False
+        if inside_source:
+            raise ValueError(
+                "staged FBX must be outside Project Source Root authority")
+    if os.path.lexists(staged):
+        raise ValueError(f"staged FBX path already exists: {staged}")
+
+    if not staged.parent.is_dir():
+        raise ValueError(
+            f"staged FBX parent directory does not exist: {staged.parent}")
+    succeeded = False
+    try:
+        levels = prepared.payload_levels if prepared.uses_lod_hierarchy else ()
+        with _temporary_lod_node_names(levels):
+            with _temporary_selection_context(
+                    prepared.scene, prepared.export_objects):
+                with _temporary_ue_centimeter_export_state(
+                        prepared.export_objects):
+                    _export_selected_fbx(str(staged))
+        if not staged.is_file():
+            raise RuntimeError("FBX exporter did not create its staged file")
+        payload = staged.read_bytes()
+        if not payload:
+            raise RuntimeError("staged FBX read-back is empty")
+        # Read the staged file through Blender's binary FBX tree reader.  This
+        # rejects truncated/arbitrary bytes without narrowing the established
+        # writer contract to the smaller MH import dialect (shape keys are a
+        # valid writer construct but intentionally not import-classified).
+        from io_scene_fbx import parse_fbx
+        try:
+            root, version = parse_fbx.parse(str(staged))
+        except Exception as exc:
+            raise RuntimeError(
+                "staged FBX failed structural read-back validation"
+            ) from exc
+        section_ids = {item.id for item in root.elems}
+        if version < 7100 or not {b"Objects", b"Connections"}.issubset(
+                section_ids):
+            raise RuntimeError(
+                "staged FBX failed structural read-back validation")
+        succeeded = True
+        return StagedFBXExport(filepath=staged, payload=payload)
+    finally:
+        if not succeeded:
+            with contextlib.suppress(OSError):
+                staged.unlink()
+
+
+def _validation_report(prepared):
+    return {
+        "errors": [],
+        "warnings": [
+            {"code": code, "subjects": list(subjects), "message": message}
+            for code, subjects, message in prepared.warnings
+        ],
+    }
+
+
+def export_fbx_collection(
+        collection, output_dir, *, dry_run=False, source_root="",
+        export_materials=False):
+    """Export one selected collection as one static-mesh resource.
+
+    A regular collection writes one FBX. A recognized dag4blend ``.lods``
+    hierarchy writes one FBX containing every authored level. Render mesh node
+    names temporarily carry their ``_lodNN`` suffix; no MH properties are
+    written to the FBX.
+    """
+    prepared = prepare_fbx_collection(
+        collection,
+        output_dir,
+        source_root=source_root,
+        export_materials=export_materials,
+    )
+
+    filepath = str(prepared.target)
     payload_updates = [{"filepath": filepath, "written": False}]
     written = False
     material_updates = []
     if not dry_run:
-        os.makedirs(resolved_output_dir, exist_ok=True)
-        descriptor, tmp = tempfile.mkstemp(
-            prefix=f".{filename}.mh-tmp-", dir=resolved_output_dir)
-        os.close(descriptor)
-        os.remove(tmp)
-        with payload_lock(filepath, source_root=resolved_source_root):
-            _assert_existing_target(filepath)
-            try:
-                levels = payload_levels if lod_structure is not None else []
-                with _temporary_lod_node_names(levels):
-                    with _temporary_selection_context(scene, export_objects):
-                        with _temporary_ue_centimeter_export_state(export_objects):
-                            _export_selected_fbx(tmp)
-                if not os.path.isfile(tmp):
-                    raise RuntimeError("FBX exporter did not create its staged file")
+        prepared.target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+                prefix=f"{prepared.resource_name}-mh-fbx-stage-") as stage_dir:
+            staged_filepath = Path(stage_dir) / prepared.target.name
+            staged = stage_prepared_fbx(prepared, staged_filepath)
+
+            def guard():
                 _assert_existing_target(filepath)
-                os.replace(tmp, filepath)
-                payload_updates[0]["written"] = True
-                written = True
-            finally:
-                with contextlib.suppress(OSError):
-                    os.remove(tmp)
-        if prepared_materials:
+
+            def validate_publication_read_back(read_back):
+                if read_back != staged.payload:
+                    raise RuntimeError(
+                        "staged FBX failed exact publication read-back")
+
+            atomic_publish_bytes(
+                prepared.target,
+                staged.payload,
+                source_root=prepared.source_root,
+                read_back_validator=validate_publication_read_back,
+                pre_replace_guard=guard,
+            )
+            payload_updates[0]["written"] = True
+            written = True
+        if prepared.prepared_materials:
             from .export_material import write_prepared_material
             material_updates = [
                 write_prepared_material(
-                    prepared, source_root=resolved_source_root)
-                for prepared in prepared_materials
+                    material, source_root=prepared.source_root)
+                for material in prepared.prepared_materials
             ]
-        stamp_resource_collection(collection, "mesh", resource_name)
+        stamp_resource_collection(
+            prepared.collection, "mesh", prepared.resource_name)
 
     return {
         "ok": True,
         "filepath": filepath,
         "written": written,
-        "objects_exported": len(export_objects),
+        "objects_exported": len(prepared.export_objects),
         "payload_updates": payload_updates,
-        "resource_name": resource_name,
-        "lod_levels": [level for level, _child, _objects in payload_levels],
-        "materials": materials,
+        "resource_name": prepared.resource_name,
+        "lod_levels": list(prepared.lod_levels),
+        "materials": list(prepared.materials),
         "material_updates": material_updates,
-        "validation": validation,
+        "validation": _validation_report(prepared),
     }
