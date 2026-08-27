@@ -5,10 +5,22 @@
 Открытый `OPEN-V5-*` не ослабляет 10: затронутая часть остаётся fail-closed
 STOP до owner-решения.
 
-`OPEN-V5-1`…`OPEN-V5-13` РЕШЕНЫ owner — нормативный текст в 10 §§6.3, 6.4,
+`OPEN-V5-1`…`OPEN-V5-14` РЕШЕНЫ owner — нормативный текст в 10 §§6.3, 6.4,
 13. Открытых нормативных вопросов v5 нет.
 Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
 `OPEN-V4-24` document-world прямо superseded parent-local контрактом v5.
+
+## OPEN-V5-14 — thumbnail в S5 после отключения renderer и authority его Seed
+
+**Статус. РЕШЕНО OWNER — нормативно в 10 §13.12.** Thumbnails сейчас не нужны. Custom renderer остаётся отсутствующим, регистрация не возвращается, Automation-тест `Mimir.V5.Composite.ThumbnailRenderingDisabled` не меняется. Thumbnail ИСКЛЮЧЁН из списка потребителей `FMHResolvedCompositePlan` (§6.5, §6.6) и снят с acceptance V5-S5 и сводного end-to-end; принцип «все потребители конкретного результата получают один plan» этим не ослаблен. Причина исключения важнее самого отключения: у композит-ассета нет канонического внешнего вида — резолюция есть свойство РАЗМЕЩЕНИЯ (actor + Seed), а не ассета, и один ассет законно имеет много размещений с разными seed/trace/signature. Поэтому asset-thumbnail не «трудно засидить», он некорректно поставлен как потребитель plan; неявный seed 0, авто-seed или выбор по текущему выделению эту некорректность прячут, а не лечат. Если thumbnail понадобится позже — только как отображательная конвенция над явно документированным фиксированным seed, объявленная не протокольным артефактом, никогда не входящая в `ResolvedSignature`, closure hash, applied state или cook, и вводимая отдельным срезом отдельным owner-решением. Thumbnail-часть снята с V5-S5 целиком, а не отложена внутри него; остальной scope среза не затронут.
+
+**Контекст.** 10 §§6.5/6.6 и 11 §V5-S5 требовали, чтобы thumbnail потреблял тот же `FMHResolvedCompositePlan`, что preview и Break. При этом принятый `main` содержал результат отдельного owner-запроса отключить custom thumbnail rendering после shutdown crash: класс `MHCompositeThumbnailRenderer` физически отсутствует, а Automation-тест `Mimir.V5.Composite.ThumbnailRenderingDisabled` закрепляет его отсутствие. Kickoff V5-S5 снова включил thumbnail-parity в acceptance, не уточнив, отменяется ли это отключение — ошибка owner-формулировки. Кроме того, Content Browser рисует thumbnail для `UMHCompositeAsset`, тогда как единственная authority `Seed` — конкретный `AMHCompositeActor`; у ассета placement Seed нет.
+
+**Вопрос.** Остаётся ли custom asset-thumbnail отключённым в V5-S5 с явным исключением thumbnail-parity из acceptance, или S5 должен вернуть renderer? Если вернуть — откуда берётся Seed для Content Browser thumbnail без placement-контекста и с каким plan проверяется parity?
+
+**Временное fail-closed правило.** Не возвращать renderer и его регистрацию, не менять тест `ThumbnailRenderingDisabled`, не добавлять asset/global Seed, не выбирать seed по умолчанию за owner, не объявлять thumbnail-parity пройденным. Остальной scope среза вопросом не переопределяется.
+
+**Прежний статус.** ОТКРЫТ; блокировал thumbnail-часть V5-S5.
 
 ## OPEN-V5-9 — Blender carrier и identity для Dagor `include` → placement profile
 

@@ -251,13 +251,16 @@ ResourceKey, ссылающийся композит и команду-испр�
 - на мультивыделении две команды вместо copy/paste: `Individual` (каждому
   актору свой новый seed) и `Equal` (один новый seed на всё выделение).
 
-Gate: V5-S4 owner-accepted.
+Gate: V5-S4 owner-accepted. `OPEN-V5-14` решён в 10 §13.12: thumbnail снят со
+среза целиком, custom renderer остаётся отключённым, тест
+`Mimir.V5.Composite.ThumbnailRenderingDisabled` не меняется.
 
 1. `AMHCompositeActor`: int32 `Seed`, `bAutoSeed`, derived read-only
    `ResolvedSignature`. Auto create non-zero; manual 0 legal; transform actor не
    меняет seed; duplicate default new seed, Keep Seed explicit.
-2. Один resolver строит `FMHResolvedCompositePlan`. Preview, Break, thumbnail,
-   Show Choices/Trace используют только plan.
+2. Один resolver строит `FMHResolvedCompositePlan`. Preview, Break и
+   Show Choices/Trace используют только plan. Thumbnail потребителем plan не
+   является (10 §13.12).
 3. UI: Reseed / Randomize Selected / Copy/Paste/Lock Seed / Keep Seed /
    Show Resolved Choices / Show Decision Trace. InstanceSeed отсутствует.
 4. Nested random и dependency-notify rebuild; source closure cook/find-broken
@@ -268,8 +271,8 @@ Gate: V5-S4 owner-accepted.
 
 Acceptance: одинаковые root+closure+seed → одинаковый trace/signature; seed 100
 placements совпадают, seed 200 отличается на ratified golden; move actor не
-меняет resolution; dependency change rebuilds; preview/Break/thumbnail parity;
-двойной unity gate.
+меняет resolution; dependency change rebuilds; preview/Break parity; двойной
+unity gate.
 
 ---
 
@@ -418,7 +421,7 @@ Backlog `mh_asset_io`/`ufbx` остаётся отдельным по
 8. Seed set имеет frozen choices/traces/signatures cross-host.
 9. Seed lives only on UE placement; Blender seed surface отсутствует.
 10. Two seed-100 placements equal; seed-200 differs; actor movement stable.
-11. Editor preview = Break = thumbnail = PIE = packaged = cook plan.
+11. Editor preview = Break = PIE = packaged = cook plan; thumbnail исключён.
 12. Include-All batch stages closure and publishes root last.
 13. Runtime actor precedes cook flattening; Level Instance does not resolve.
 14. Engine and `reference/` unchanged; each C++ slice passes both unity gates.

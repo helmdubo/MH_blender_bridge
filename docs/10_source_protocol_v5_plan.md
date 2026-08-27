@@ -709,7 +709,8 @@ dependency позже исчезла, derived preview показывает per-l
   Source closure никогда не строится из seed.
 - **Resolved plan** — один результат resolver'а для конкретного
   (root composite, placement Seed, closure). Он содержит только выбранные
-  зависимости/leaves для preview, Break, thumbnail, runtime и cook flattening.
+  зависимости/leaves для preview, Break, runtime и cook flattening. Thumbnail
+  потребителем plan НЕ является (§13.12).
 
 Blender export-команды:
 
@@ -781,9 +782,10 @@ Resolver возвращает ровно один immutable `FMHResolvedComposit
 - ResolvedSignature = hash(closure hash + Seed + selected indices + samples +
   resolver version).
 
-Editor preview, Show Resolved Choices, Show Decision Trace, Break, thumbnail,
+Editor preview, Show Resolved Choices, Show Decision Trace, Break,
 `AMHRuntimeCompositeActor`, PIE, packaged runtime и cook обязаны потреблять этот
-же plan. Random-selection внутри component spawning запрещён. Level Instance
+же plan. Custom asset-thumbnail в этот список не входит и остаётся отключённым
+(§13.12). Random-selection внутри component spawning запрещён. Level Instance
 random не резолвит никогда; в будущем он допустим только как optional backend
 уже выбранного plan-варианта.
 
@@ -1002,8 +1004,8 @@ v5. Owner удаляет старые source-файлы и переэкспор�
 Семь вопросов freeze (`OPEN-V5-1…7`) решены в §§13.1–13.7; ожидание GAZ-oracle
 закрыто (§13.6). Позднее добавлены §13.4.1 (`OPEN-V5-8`), §13.8 (path-derived
 seeds, поправка owner) и §§13.9–13.11 (`OPEN-V5-11…13`, подняты V5-S4);
-§6.3/§6.4 несут решения `OPEN-V5-9`/`OPEN-V5-10`. Активных STOP-гейтов по v5
-нет.
+§13.12 (`OPEN-V5-14`, поднят V5-S5); §6.3/§6.4 несут решения
+`OPEN-V5-9`/`OPEN-V5-10`. Активных STOP-гейтов по v5 нет.
 
 ### 13.1 `mh.random_stream:1` — битовый контракт (OPEN-V5-1)
 
@@ -1291,3 +1293,34 @@ v5 больше нет.
 - Причина запрета мягкого режима: композит с висячей зависимостью — это
   заведомо сломанное дерево источников. UE на нём всё равно fail-closed, только
   на импорте, дальше от места ошибки и после записи файлов.
+
+### 13.12 Thumbnail не является потребителем resolved plan (OPEN-V5-14)
+
+Вопрос поднят верно и вскрыл мою ошибку: «thumbnail» попал в списки
+потребителей plan и в acceptance V5-S5, хотя custom renderer был отключён по
+отдельному owner-запросу после shutdown crash. Owner подтвердил: **thumbnails
+сейчас не нужны.**
+
+- `MHCompositeThumbnailRenderer` остаётся отсутствующим, регистрация не
+  возвращается, Automation-тест `Mimir.V5.Composite.ThumbnailRenderingDisabled`
+  не меняется. Content Browser рисует стандартный ассетный thumbnail.
+- Слово `thumbnail` убрано из §6.5, §6.6 и из acceptance V5-S5 и сводного
+  end-to-end. Принцип «все потребители КОНКРЕТНОГО результата получают один
+  `FMHResolvedCompositePlan`» не ослаблен: thumbnail из него ИСКЛЮЧЁН, а не
+  освобождён от него.
+- Причина исключения важнее самого отключения и фиксируется, чтобы вопрос не
+  вернулся в неправильной форме: **у композит-ассета нет канонического
+  внешнего вида.** Резолюция — свойство РАЗМЕЩЕНИЯ (actor + Seed), а не
+  ассета; один ассет законно имеет много размещений с разными seed, trace и
+  signature. Поэтому asset-thumbnail не «трудно засидить» — он некорректно
+  поставлен как потребитель plan, и никакой неявный seed 0, авто-seed или
+  выбор по текущему выделению эту некорректность не лечит, а прячет.
+- Если thumbnail когда-нибудь понадобится, допустима ровно одна форма:
+  ОТОБРАЖАТЕЛЬНАЯ конвенция над явно документированным фиксированным seed,
+  объявленная не протокольным артефактом. Она НИКОГДА не входит в
+  `ResolvedSignature`, closure hash, applied state или cook, и acceptance
+  никогда не сравнивает её «на parity» с размещением. Вводится это отдельным
+  срезом и отдельным owner-решением, не внутри V5-S5.
+
+**Следствие для V5-S5: thumbnail-часть снята со среза целиком**, а не
+отложена внутри него. Остальной scope V5-S5 вопросом не затронут.
