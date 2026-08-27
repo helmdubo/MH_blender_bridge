@@ -5,6 +5,15 @@
 #include "MHCompositeAsset.generated.h"
 
 UENUM()
+enum class EMHCompositeSeedEffect : uint8
+{
+    None,
+    ChildSeedsOnly,
+    Transform,
+    Topology
+};
+
+UENUM()
 enum class EMHCompositeNodeKind : uint8
 {
     Mesh,
@@ -151,6 +160,10 @@ public:
     /** Source-only profiles resolved at import; no placement-profile UAsset exists. */
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     TArray<FMHPlacementProfile> InlinedPlacementProfiles;
+
+    /** Derived import classification; never part of source JSON, hashes or registry tags. */
+    UPROPERTY(VisibleAnywhere, Category = "Mimir")
+    EMHCompositeSeedEffect SeedAffectsResult = EMHCompositeSeedEffect::None;
 
 #if WITH_EDITOR
     virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;

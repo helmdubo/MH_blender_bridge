@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Math/Matrix.h"
 
 namespace UE::MimirComposite
 {
@@ -81,6 +82,8 @@ struct MIMIRCOMPOSITERUNTIME_API FMHRandomNode
 {
     EMHRandomSemanticKind Kind = EMHRandomSemanticKind::Group;
     FString Resource;
+    /** Presentation only; never participates in identity, streams, or signatures. */
+    FString DisplayName;
     FMHRandomTrs Transform;
     FString Profile;
     TArray<FMHRandomOption> Options;
@@ -131,12 +134,29 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeDraw
     double Sample = 0.0;
 };
 
+/** Derived traversal metadata; excluded from the frozen signature preimage. */
+struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeNode
+{
+    FString NodePath;
+    FString DisplayName;
+    FMHRandomTrs AuthoredLocalTrs;
+    FMHRandomTrs LocalTrs;
+    /** Full parent-local product in root-placement space, before actor transform. */
+    FMatrix WorldMatrix = FMatrix::Identity;
+    int32 RootNodeIndex = INDEX_NONE;
+};
+
 struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeLeaf
 {
     EMHRandomSemanticKind Kind = EMHRandomSemanticKind::Empty;
     FString Resource;
+    /** Frozen reference representation used only by the signature wire format. */
     FMHRandomTrs WorldTrs;
     FString Origin;
+    /** Preserve shear for the consumer's fail-closed transform admission. */
+    FMatrix WorldMatrix = FMatrix::Identity;
+    FString DisplayName;
+    int32 RootNodeIndex = INDEX_NONE;
 };
 
 /** Immutable semantic result consumed by later preview/runtime/cook slices. */
@@ -146,6 +166,7 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositePlan
     FMHRandomSourceClosure Closure;
     TArray<FMHResolvedCompositeDecision> Decisions;
     TArray<FMHResolvedCompositeDraw> Draws;
+    TArray<FMHResolvedCompositeNode> Nodes;
     TArray<FMHResolvedCompositeLeaf> Leaves;
     TArray<FString> SelectedDependencies;
     TArray<uint8> SignaturePreimage;
@@ -162,6 +183,9 @@ MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositePlan(
     int32 Seed,
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError);
+
+/** Rehash an otherwise unchanged, seed-independent plan without sampling again. */
+MIMIRCOMPOSITERUNTIME_API void MHRefreshResolvedCompositeSignature(FMHResolvedCompositePlan& Plan);
 
 MIMIRCOMPOSITERUNTIME_API bool MHSelectWeightedOption(
     FMHRandomStream1& Stream,

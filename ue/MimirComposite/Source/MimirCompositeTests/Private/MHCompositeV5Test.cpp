@@ -2,11 +2,13 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeCompiler.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -26,6 +28,7 @@
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceResolver.h"
+#include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/Package.h"
 
 #include <limits>
@@ -112,6 +115,47 @@ FMHResourceKey CompositeTestKey(const EMHResourceKind Kind, const FString& Name)
     Result.LogicalName = Name;
     return Result;
 }
+
+#if WITH_EDITOR
+void StampCompositeProbeMesh(UStaticMesh& Mesh, const FString& LogicalName, TConstArrayView<uint8> SourceBytes)
+{
+    const FMHScopedStaticMeshImportMutation Mutation;
+    UMHStaticMeshImportData* Receipt = NewObject<UMHStaticMeshImportData>(&Mesh);
+    Receipt->LogicalName = LogicalName;
+    Receipt->SourceRelativePath = LogicalName + TEXT(".mesh.fbx");
+    Receipt->SourceHash = MHRawPayloadHash(SourceBytes);
+    Receipt->ImporterVersion = MHStaticMeshImporterVersion;
+    Mesh.SetAssetImportData(Receipt);
+}
+
+UMHCompositeAsset* MakeCompositeProbeAsset(
+    const FString& LogicalName, const FMHCompositeDocument& Document, FString& OutError)
+{
+    OutError.Reset();
+    UPackage* Package = CreatePackage(*FString::Printf(TEXT("/Game/MH/Generated/Composites/%s"), *LogicalName));
+    UMHCompositeAsset* Asset = FindObject<UMHCompositeAsset>(Package, *LogicalName);
+    if (Asset == nullptr)
+        Asset = NewObject<UMHCompositeAsset>(Package, FName(*LogicalName), RF_Public | RF_Standalone);
+    TArray<uint8> Canonical;
+    if (!MHApplyCompositeV5(*Asset, Document, OutError) ||
+        !MHWriteCanonicalCompositeV5(Document, Canonical, OutError)) return nullptr;
+    Asset->LogicalName = LogicalName;
+    Asset->SourceRelativePath = LogicalName + TEXT(".composite");
+    Asset->SourceHash = MHRawPayloadHash(Canonical);
+    Asset->AppliedHash = Asset->SourceHash;
+    return Asset;
+}
+
+TArray<UStaticMeshComponent*> CompositeProbeMeshLeaves(const AMHCompositeActor& Actor)
+{
+    TArray<UStaticMeshComponent*> Result;
+    for (UActorComponent* Component : Actor.GetDerivedComponents())
+    {
+        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) Result.Add(Mesh);
+    }
+    return Result;
+}
+#endif
 
 } // namespace
 
@@ -380,6 +424,19 @@ bool FMHCompositeClosureTest::RunTest(const FString& Parameters)
     bool bPassed = TestFalse(TEXT("cycle in non-selected zero-weight option rejected"),
         MHValidateCompositeClosureV5(TEXT("root"), Root, Resolver, *Settings, Error));
     bPassed &= TestTrue(TEXT("cycle code"), StartsWithCode(Error, TEXT("MH_E_COMPOSITE_CYCLE")));
+    Error.Reset();
+    bPassed &= TestFalse(TEXT("import admission alias also traverses the zero-weight option cycle"),
+        MHProbeCompositeBuildV5(TEXT("root"), Root, Resolver, *Settings, Error));
+    bPassed &= TestTrue(TEXT("import admission alias preserves cycle diagnostic"),
+        StartsWithCode(Error, TEXT("MH_E_COMPOSITE_CYCLE")));
+
+    FMHCompositeDocument EmptyRandom;
+    Error.Reset();
+    bPassed &= TestTrue(TEXT("seed-free random admission fixture parses"), MHParseCompositeV5(
+        Utf8Composite(TEXT("{\"v\":5,\"nodes\":[{\"kind\":\"random\",\"options\":[{\"kind\":\"empty\",\"weight\":1}]}]}")),
+        EmptyRandom, Error));
+    bPassed &= TestTrue(TEXT("definition admission accepts random without inventing a placement Seed"),
+        MHProbeCompositeBuildV5(TEXT("empty_random"), EmptyRandom, Resolver, *Settings, Error));
 
     FMHCompositeDocument MissingActor;
     MHParseCompositeV5(
@@ -699,6 +756,7 @@ bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parame
     {
         Mesh = NewObject<UStaticMesh>(MeshPackage, TEXT("world_probe"), RF_Public | RF_Standalone);
     }
+    StampCompositeProbeMesh(*Mesh, TEXT("world_probe"), Utf8Composite(TEXT("parent-local mesh fixture")));
     FCompositeTestResolver Resolver;
     Resolver.AddResolved(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("world_probe")));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
@@ -715,20 +773,30 @@ bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parame
     }
     FActorSpawnParameters SpawnParameters;
     SpawnParameters.ObjectFlags = RF_Transient;
-    AActor* Target = GEditor->GetEditorWorldContext().World()->SpawnActor<AActor>(SpawnParameters);
-    if (Target == nullptr)
+    UMHCompositeAsset* Asset = MakeCompositeProbeAsset(TEXT("root"), Document, Error);
+    if (Asset == nullptr)
     {
-        AddError(TEXT("cannot spawn compiler target"));
+        AddError(Error);
         return false;
     }
-    const FMHCompositeCompileResult Compiled = MHCompileCompositeV5(
-        *Target, TEXT("root"), Document, Resolver, *Settings);
-    bool bPassed = TestTrue(TEXT("compiler succeeds"), Compiled.Succeeded());
-    bPassed &= TestEqual(TEXT("group and mesh components"), Compiled.Components.Num(), 2);
-    if (Compiled.Components.Num() == 2)
+    AMHCompositeActor* Target = GEditor->GetEditorWorldContext().World()->SpawnActor<AMHCompositeActor>(SpawnParameters);
+    if (Target == nullptr)
     {
-        const USceneComponent* Group = Cast<USceneComponent>(Compiled.Components[0]);
-        const USceneComponent* Child = Cast<USceneComponent>(Compiled.Components[1]);
+        AddError(TEXT("cannot spawn plan preview target"));
+        return false;
+    }
+    bool bPassed = TestTrue(TEXT("seed-free source admission succeeds"),
+        MHValidateCompositeClosureV5(TEXT("root"), Document, Resolver, *Settings, Error));
+    Target->SetCompositeAsset(Asset);
+    bPassed &= TestNotNull(TEXT("placement builds the shared resolved plan"), Target->GetResolvedPlan());
+    bPassed &= TestTrue(TEXT("plan preview succeeds"), Target->GetLastPlacementError().IsEmpty());
+    const TArray<UStaticMeshComponent*> MeshLeaves = CompositeProbeMeshLeaves(*Target);
+    bPassed &= TestEqual(TEXT("one authored root handle"), Target->GetTopLevelComponents().Num(), 1);
+    bPassed &= TestEqual(TEXT("one resolved mesh leaf"), MeshLeaves.Num(), 1);
+    if (Target->GetTopLevelComponents().Num() == 1 && MeshLeaves.Num() == 1)
+    {
+        const USceneComponent* Group = Target->GetTopLevelComponents()[0];
+        const USceneComponent* Child = MeshLeaves[0];
         bPassed &= TestTrue(TEXT("group component"), Group != nullptr);
         bPassed &= TestTrue(TEXT("child component"), Child != nullptr);
         if (Group != nullptr && Child != nullptr)
@@ -737,10 +805,14 @@ bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parame
                 Group->GetComponentLocation().Equals(FVector(100, 0, 0), UE_KINDA_SMALL_NUMBER));
             bPassed &= TestTrue(TEXT("parent 100 plus child local 25 equals world 125"),
                 Child->GetComponentLocation().Equals(FVector(125, 0, 0), UE_KINDA_SMALL_NUMBER));
-            bPassed &= TestTrue(TEXT("authored transform parent retained"), Child->GetAttachParent() == Group);
+            bPassed &= TestTrue(TEXT("sealed plan leaf remains attached to the placement root"),
+                Child->GetAttachParent() == Target->GetRootComponent());
+            const FMHResolvedCompositePlan* Plan = Target->GetResolvedPlan();
+            bPassed &= TestTrue(TEXT("plan retains the accumulated parent-local leaf matrix"),
+                Plan != nullptr && Plan->Leaves.Num() == 1 &&
+                Plan->Leaves[0].WorldMatrix.GetOrigin().Equals(FVector(125, 0, 0), UE_KINDA_SMALL_NUMBER));
         }
     }
-    Target->Destroy();
 
     FMHCompositeDocument ShearDocument;
     FMHCompositeNode& ShearParent = ShearDocument.Nodes.AddDefaulted_GetRef();
@@ -750,23 +822,28 @@ bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parame
     RotatedChild.Kind = EMHCompositeNodeKind::Mesh;
     RotatedChild.Resource = TEXT("world_probe");
     RotatedChild.Transform.RotationQuat = FQuat(FVector::UpVector, FMath::DegreesToRadians(45.0));
-    AActor* ShearTarget = GEditor->GetEditorWorldContext().World()->SpawnActor<AActor>(SpawnParameters);
-    if (ShearTarget == nullptr)
+    Error.Reset();
+    bPassed &= TestFalse(TEXT("seed-free admission still rejects accumulated source shear"),
+        MHValidateCompositeClosureV5(TEXT("shear_root"), ShearDocument, Resolver, *Settings, Error));
+    bPassed &= TestTrue(TEXT("source admission shear uses the frozen code"),
+        Error.StartsWith(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM:")));
+    UMHCompositeAsset* ShearAsset = MakeCompositeProbeAsset(TEXT("shear_root"), ShearDocument, Error);
+    if (ShearAsset == nullptr)
     {
-        AddError(TEXT("cannot spawn shear compiler target"));
+        AddError(Error);
+        Target->Destroy();
         return false;
     }
-    const FMHCompositeCompileResult ShearResult = MHCompileCompositeV5(
-        *ShearTarget,
-        TEXT("root"),
-        ShearDocument,
-        Resolver,
-        *Settings);
-    bPassed &= TestFalse(TEXT("compiler rejects accumulated shear without TRS approximation"), ShearResult.Succeeded());
-    bPassed &= TestTrue(TEXT("compiler shear failure uses frozen code"),
-        ShearResult.Error.StartsWith(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM:")));
-    bPassed &= TestEqual(TEXT("shear failure mutates no authored components"), ShearResult.Components.Num(), 0);
-    ShearTarget->Destroy();
+    const TArray<TObjectPtr<UActorComponent>> PreviousComponents = Target->GetDerivedComponents();
+    USceneComponent* PreviousRoot = Target->GetRootComponent();
+    Target->SetCompositeAsset(ShearAsset);
+    bPassed &= TestNull(TEXT("plan consumer rejects accumulated shear without TRS approximation"), Target->GetResolvedPlan());
+    bPassed &= TestTrue(TEXT("plan consumer shear failure uses frozen code"),
+        Target->GetLastPlacementError().StartsWith(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM:")));
+    bPassed &= TestTrue(TEXT("shear failure preserves every pre-existing component"),
+        Target->GetDerivedComponents() == PreviousComponents);
+    bPassed &= TestTrue(TEXT("shear failure preserves the actor root"), Target->GetRootComponent() == PreviousRoot);
+    Target->Destroy();
 
     return bPassed;
 }
@@ -789,6 +866,7 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     {
         Mesh = NewObject<UStaticMesh>(MeshPackage, TEXT("top_level_probe"), RF_Public | RF_Standalone);
     }
+    StampCompositeProbeMesh(*Mesh, TEXT("top_level_probe"), Utf8Composite(TEXT("top-level mesh fixture")));
     FCompositeTestResolver Resolver;
     Resolver.AddResolved(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("top_level_probe")));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
@@ -806,28 +884,45 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     }
     FActorSpawnParameters SpawnParameters;
     SpawnParameters.ObjectFlags = RF_Transient;
-    AActor* Target = GEditor->GetEditorWorldContext().World()->SpawnActor<AActor>(SpawnParameters);
-    if (Target == nullptr)
+    UMHCompositeAsset* Asset = MakeCompositeProbeAsset(TEXT("top_level_root"), Document, Error);
+    if (Asset == nullptr)
     {
-        AddError(TEXT("cannot spawn top-level compiler target"));
+        AddError(Error);
         return false;
     }
-    const FMHCompositeCompileResult Compiled = MHCompileCompositeV5(
-        *Target, TEXT("top_level_root"), Document, Resolver, *Settings);
-    bool bPassed = TestTrue(TEXT("two-top-level compiler succeeds"), Compiled.Succeeded());
+    AMHCompositeActor* Target = GEditor->GetEditorWorldContext().World()->SpawnActor<AMHCompositeActor>(SpawnParameters);
+    if (Target == nullptr)
+    {
+        AddError(TEXT("cannot spawn top-level plan preview target"));
+        return false;
+    }
+    bool bPassed = TestTrue(TEXT("seed-free top-level admission succeeds"),
+        MHProbeCompositeBuildV5(TEXT("top_level_root"), Document, Resolver, *Settings, Error));
+    Target->SetCompositeAsset(Asset);
+    bPassed &= TestNotNull(TEXT("two-top-level placement resolves one plan"), Target->GetResolvedPlan());
+    bPassed &= TestTrue(TEXT("two-top-level plan preview succeeds"), Target->GetLastPlacementError().IsEmpty());
     bPassed &= TestEqual(TEXT("display-only name survives protocol parse"),
         Document.Nodes[0].Name, FString(TEXT("lights/front: left \u03bb")));
-    bPassed &= TestEqual(TEXT("synthetic root excluded from authored result"), Compiled.Components.Num(), 2);
-    USceneComponent* SyntheticRoot = Target->GetRootComponent();
-    bPassed &= TestTrue(TEXT("synthetic target root exists"), SyntheticRoot != nullptr);
-    if (Compiled.Components.Num() == 2 && SyntheticRoot != nullptr)
+    const TArray<UStaticMeshComponent*> MeshLeaves = CompositeProbeMeshLeaves(*Target);
+    bPassed &= TestEqual(TEXT("two authored top-level handles"), Target->GetTopLevelComponents().Num(), 2);
+    bPassed &= TestEqual(TEXT("two resolved mesh leaves"), MeshLeaves.Num(), 2);
+    USceneComponent* PlacementRoot = Target->GetRootComponent();
+    bPassed &= TestTrue(TEXT("placement actor root exists"), PlacementRoot != nullptr);
+    if (MeshLeaves.Num() == 2 && PlacementRoot != nullptr)
     {
-        USceneComponent* First = Cast<USceneComponent>(Compiled.Components[0]);
-        USceneComponent* Second = Cast<USceneComponent>(Compiled.Components[1]);
-        bPassed &= TestTrue(TEXT("first top-level attached to synthetic root"),
-            First != nullptr && First->GetAttachParent() == SyntheticRoot);
-        bPassed &= TestTrue(TEXT("second top-level attached to synthetic root"),
-            Second != nullptr && Second->GetAttachParent() == SyntheticRoot);
+        USceneComponent* First = MeshLeaves[0];
+        USceneComponent* Second = MeshLeaves[1];
+        bPassed &= TestTrue(TEXT("first resolved leaf attached to placement root"),
+            First != nullptr && First->GetAttachParent() == PlacementRoot);
+        bPassed &= TestTrue(TEXT("second resolved leaf attached to placement root"),
+            Second != nullptr && Second->GetAttachParent() == PlacementRoot);
+        for (const USceneComponent* Handle : Target->GetTopLevelComponents())
+        {
+            bPassed &= TestTrue(TEXT("authored edit handle remains attached to placement root"),
+                Handle != nullptr && Handle->GetAttachParent() == PlacementRoot);
+        }
+        const FMHResolvedCompositePlan* BeforeMovePlan = Target->GetResolvedPlan();
+        const int32 BeforeMoveSeed = Target->GetSeed();
         Target->SetActorLocation(FVector(100.0, 0.0, 0.0), false, nullptr, ETeleportType::TeleportPhysics);
         if (First != nullptr && Second != nullptr)
         {
@@ -836,24 +931,21 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
             bPassed &= TestTrue(TEXT("second top-level follows actor movement"),
                 Second->GetComponentLocation().Equals(FVector(120.0, 0.0, 0.0), UE_KINDA_SMALL_NUMBER));
         }
+        bPassed &= TestEqual(TEXT("moving actor leaves placement Seed unchanged"), Target->GetSeed(), BeforeMoveSeed);
+        bPassed &= TestTrue(TEXT("moving actor reuses the exact cached resolved plan"), Target->GetResolvedPlan() == BeforeMovePlan);
     }
-    Target->Destroy();
 
-    AActor* FailureTarget = GEditor->GetEditorWorldContext().World()->SpawnActor<AActor>(SpawnParameters);
-    if (FailureTarget == nullptr)
-    {
-        AddError(TEXT("cannot spawn failed-compile target"));
-        return false;
-    }
     FFailOnSecondResolve FlakyResolver(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("top_level_probe")));
-    FMHCompositeDocument OneNode;
-    OneNode.Nodes.Add(Document.Nodes[0]);
-    const FMHCompositeCompileResult Failed = MHCompileCompositeV5(
-        *FailureTarget, TEXT("top_level_root"), OneNode, FlakyResolver, *Settings);
-    bPassed &= TestFalse(TEXT("endpoint race fails second compile pass"), Failed.Succeeded());
-    bPassed &= TestEqual(TEXT("failed compile returns no authored components"), Failed.Components.Num(), 0);
-    bPassed &= TestNull(TEXT("failed compile leaves no synthetic root"), FailureTarget->GetRootComponent());
-    FailureTarget->Destroy();
+    const TArray<TObjectPtr<UActorComponent>> BeforeAdmissionComponents = Target->GetDerivedComponents();
+    Error.Reset();
+    bPassed &= TestFalse(TEXT("seed-free admission catches an endpoint disappearing at the second authored reference"),
+        MHProbeCompositeBuildV5(TEXT("top_level_root"), Document, FlakyResolver, *Settings, Error));
+    bPassed &= TestTrue(TEXT("endpoint race keeps the unresolved-reference diagnostic"),
+        StartsWithCode(Error, TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE")));
+    bPassed &= TestTrue(TEXT("failed seed-free admission cannot mutate preview components"),
+        Target->GetDerivedComponents() == BeforeAdmissionComponents);
+    bPassed &= TestTrue(TEXT("failed seed-free admission cannot replace the actor root"), Target->GetRootComponent() == PlacementRoot);
+    Target->Destroy();
     return bPassed;
 }
 
@@ -900,6 +992,13 @@ bool FMHCompositeFbxPlacementParityTest::RunTest(const FString& Parameters)
     {
         Mesh = NewObject<UStaticMesh>(MeshPackage, TEXT("axis_probe_parity"), RF_Public | RF_Standalone);
     }
+    TArray<uint8> FbxBytes;
+    if (!FFileHelper::LoadFileToArray(FbxBytes, *AxisProbe))
+    {
+        AddError(TEXT("cannot hash the FBX parity source fixture"));
+        return false;
+    }
+    StampCompositeProbeMesh(*Mesh, TEXT("axis_probe_parity"), FbxBytes);
     FCompositeTestResolver Resolver;
     Resolver.AddResolved(CompositeTestKey(EMHResourceKind::StaticMesh, TEXT("axis_probe_parity")));
     UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
@@ -915,19 +1014,28 @@ bool FMHCompositeFbxPlacementParityTest::RunTest(const FString& Parameters)
     }
     FActorSpawnParameters SpawnParameters;
     SpawnParameters.ObjectFlags = RF_Transient;
-    AActor* Target = GEditor->GetEditorWorldContext().World()->SpawnActor<AActor>(SpawnParameters);
+    UMHCompositeAsset* Asset = MakeCompositeProbeAsset(TEXT("axis_parity_root"), Document, Error);
+    if (Asset == nullptr)
+    {
+        AddError(Error);
+        return false;
+    }
+    AMHCompositeActor* Target = GEditor->GetEditorWorldContext().World()->SpawnActor<AMHCompositeActor>(SpawnParameters);
     if (Target == nullptr)
     {
         AddError(TEXT("cannot spawn Composite parity target"));
         return false;
     }
-    const FMHCompositeCompileResult Compiled = MHCompileCompositeV5(
-        *Target, TEXT("axis_parity_root"), Document, Resolver, *Settings);
-    bPassed &= TestTrue(TEXT("Composite compiler succeeds"), Compiled.Succeeded());
-    bPassed &= TestEqual(TEXT("one compiled mesh component"), Compiled.Components.Num(), 1);
-    if (Compiled.Components.Num() == 1)
+    bPassed &= TestTrue(TEXT("FBX parity definition passes seed-free admission"),
+        MHValidateCompositeClosureV5(TEXT("axis_parity_root"), Document, Resolver, *Settings, Error));
+    Target->SetCompositeAsset(Asset);
+    bPassed &= TestNotNull(TEXT("FBX placement resolves the shared plan"), Target->GetResolvedPlan());
+    bPassed &= TestTrue(TEXT("Composite plan consumer succeeds"), Target->GetLastPlacementError().IsEmpty());
+    const TArray<UStaticMeshComponent*> MeshLeaves = CompositeProbeMeshLeaves(*Target);
+    bPassed &= TestEqual(TEXT("one materialized mesh leaf"), MeshLeaves.Num(), 1);
+    if (MeshLeaves.Num() == 1)
     {
-        const USceneComponent* Component = Cast<USceneComponent>(Compiled.Components[0]);
+        const USceneComponent* Component = MeshLeaves[0];
         bPassed &= TestTrue(TEXT("compiled node is a scene component"), Component != nullptr);
         if (Component != nullptr)
         {

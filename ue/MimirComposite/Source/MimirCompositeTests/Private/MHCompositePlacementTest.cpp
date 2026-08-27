@@ -23,12 +23,35 @@
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
 #include "Settings/MHCompositeSettings.h"
+#include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
+#include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/UnrealType.h"
 
 namespace UE::MimirComposite::Tests
 {
+
+namespace
+{
+UMHCompositeAsset* NewPlacementReceiptFixture(const FString& Name)
+{
+    UPackage* Package = CreatePackage(*(TEXT("/Game/MH/Generated/Composites/") + Name));
+    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(Package, FName(*Name), RF_Public | RF_Standalone | RF_Transactional);
+    Asset->LogicalName = Name;
+    return Asset;
+}
+
+bool ApplyPlacementReceiptFixture(UMHCompositeAsset& Asset, const FMHCompositeDocument& Document, FString& Error)
+{
+    TArray<uint8> Bytes;
+    if (!MHApplyCompositeV5(Asset, Document, Error) || !MHWriteCanonicalCompositeV5(Document, Bytes, Error)) return false;
+    Asset.SourceRelativePath = Asset.LogicalName + TEXT(".composite");
+    Asset.SourceHash = MHRawPayloadHash(Bytes);
+    Asset.AppliedHash = Asset.SourceHash;
+    return true;
+}
+} // namespace
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositePlacementActorTest,
@@ -49,8 +72,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
     const FDirectoryPath PreviousSourceRoot = Settings->SourceRoot;
     Settings->SourceRoot.Path = SourceRoot;
 
-    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-    Asset->LogicalName = LogicalName;
+    UMHCompositeAsset* Asset = NewPlacementReceiptFixture(LogicalName);
     FMHCompositeDocument Document;
     FMHCompositeNode Group;
     Group.Kind = EMHCompositeNodeKind::Group;
@@ -60,7 +82,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
     FString Error;
     bool bPassed = TestTrue(
         TEXT("source-shaped asset applies"),
-        MHApplyCompositeV5(*Asset, Document, Error));
+        ApplyPlacementReceiptFixture(*Asset, Document, Error));
 
     UMHCompositeActorFactory* Factory = NewObject<UMHCompositeActorFactory>();
     const FAssetData AssetData(Asset, FAssetData::ECreationFlags::None);
@@ -140,7 +162,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
             Actor->SetPlacementEditMode(true);
         }
         Document.Nodes[0].Transform.TranslationCm = FVector(250.0, 0.0, 0.0);
-        bPassed &= TestTrue(TEXT("updated asset applies in place"), MHApplyCompositeV5(*Asset, Document, Error));
+        bPassed &= TestTrue(TEXT("updated asset applies in place"), ApplyPlacementReceiptFixture(*Asset, Document, Error));
         FMHResourceKey RootKey;
         RootKey.Kind = EMHResourceKind::Composite;
         RootKey.LogicalName = LogicalName;
@@ -187,7 +209,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
         }
 
         Document.Nodes[0].Transform.TranslationCm = FVector(300.0, 0.0, 0.0);
-        bPassed &= TestTrue(TEXT("second in-place update applies"), MHApplyCompositeV5(*Asset, Document, Error));
+        bPassed &= TestTrue(TEXT("second in-place update applies"), ApplyPlacementReceiptFixture(*Asset, Document, Error));
         UPackage* LevelPackage = Actor->GetOutermost();
         LevelPackage->SetDirtyFlag(false);
         MHNotifyGeneratedResourceChanged(RootKey);
@@ -200,6 +222,8 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
     {
         World->DestroyWorld(false);
     }
+    Asset->ClearFlags(RF_Public | RF_Standalone);
+    Asset->MarkAsGarbage();
     Settings->SourceRoot = PreviousSourceRoot;
     IFileManager::Get().DeleteDirectory(*SourceRoot, false, true);
     return bPassed;
@@ -235,10 +259,9 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
     NestedDocument.Nodes.Add(NestedGroup);
     bPassed &= TestTrue(
         TEXT("nested generated asset applies"),
-        MHApplyCompositeV5(*NestedAsset, NestedDocument, Error));
+        ApplyPlacementReceiptFixture(*NestedAsset, NestedDocument, Error));
 
-    UMHCompositeAsset* RootAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-    RootAsset->LogicalName = RootName;
+    UMHCompositeAsset* RootAsset = NewPlacementReceiptFixture(RootName);
     FMHCompositeDocument RootDocument;
     FMHCompositeNode NestedPlacement;
     NestedPlacement.Kind = EMHCompositeNodeKind::Composite;
@@ -247,7 +270,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
     RootDocument.Nodes.Add(NestedPlacement);
     bPassed &= TestTrue(
         TEXT("root nested document applies"),
-        MHApplyCompositeV5(*RootAsset, RootDocument, Error));
+        ApplyPlacementReceiptFixture(*RootAsset, RootDocument, Error));
 
     UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
     bPassed &= TestNotNull(TEXT("dependency-view world exists"), World);
@@ -275,31 +298,25 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
             TEXT("nested placement retains one root-document edit handle"),
             Actor->GetTopLevelPlacementComponents().Num(),
             1);
-        bPassed &= TestEqual(TEXT("nested resource flattens into two components"), Actor->GetDerivedComponents().Num(), 2);
-        if (Actor->GetDerivedComponents().Num() == 2)
+        bPassed &= TestEqual(TEXT("nested empty group creates no structural component"), Actor->GetDerivedComponents().Num(), 1);
+        const FMHResolvedCompositePlan* InitialPlan = Actor->GetResolvedPlan();
+        bPassed &= TestNotNull(TEXT("nested empty group still has a resolved plan"), InitialPlan);
+        if (InitialPlan != nullptr && InitialPlan->Nodes.Num() == 2)
         {
-            const USceneComponent* NestedComponent = Cast<USceneComponent>(Actor->GetDerivedComponents()[1]);
-            bPassed &= TestNotNull(TEXT("nested authored component exists"), NestedComponent);
-            if (NestedComponent != nullptr)
-            {
-                bPassed &= TestTrue(
-                    TEXT("nested placement composes document bases"),
-                    NestedComponent->GetComponentLocation().Equals(FVector(1110.0, 0.0, 0.0), 0.01));
-            }
+            const FMatrix NestedWorld = InitialPlan->Nodes[1].WorldMatrix * Actor->GetActorTransform().ToMatrixWithScale();
+            bPassed &= TestEqual(TEXT("nested placement composes parent-local bases in the plan"), NestedWorld.M[3][0], 1110.0);
+            bPassed &= TestTrue(TEXT("nested empty group emits no leaf"), InitialPlan->Leaves.IsEmpty());
         }
 
         NestedDocument.Nodes[0].Transform.TranslationCm = FVector(20.0, 0.0, 0.0);
         bPassed &= TestTrue(
             TEXT("nested asset updates in place"),
-            MHApplyCompositeV5(*NestedAsset, NestedDocument, Error));
+            ApplyPlacementReceiptFixture(*NestedAsset, NestedDocument, Error));
         MHNotifyGeneratedResourceChanged(NestedKey);
-        if (Actor->GetDerivedComponents().Num() == 2)
+        if (const FMHResolvedCompositePlan* UpdatedPlan = Actor->GetResolvedPlan(); UpdatedPlan != nullptr && UpdatedPlan->Nodes.Num() == 2)
         {
-            const USceneComponent* NestedComponent = Cast<USceneComponent>(Actor->GetDerivedComponents()[1]);
-            bPassed &= TestTrue(
-                TEXT("nested ResourceKey notify rebuilds parent placement"),
-                NestedComponent != nullptr &&
-                    NestedComponent->GetComponentLocation().Equals(FVector(1120.0, 0.0, 0.0), 0.01));
+            const FMatrix NestedWorld = UpdatedPlan->Nodes[1].WorldMatrix * Actor->GetActorTransform().ToMatrixWithScale();
+            bPassed &= TestEqual(TEXT("nested ResourceKey notify refreshes parent plan"), NestedWorld.M[3][0], 1120.0);
         }
 
         FMHCompositeDocument MissingMeshDocument;
@@ -309,7 +326,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         MissingMeshDocument.Nodes.Add(MissingMesh);
         bPassed &= TestTrue(
             TEXT("missing-mesh document applies"),
-            MHApplyCompositeV5(*RootAsset, MissingMeshDocument, Error));
+            ApplyPlacementReceiptFixture(*RootAsset, MissingMeshDocument, Error));
         FMHResourceKey RootKey;
         RootKey.Kind = EMHResourceKind::Composite;
         RootKey.LogicalName = RootName;
@@ -320,12 +337,13 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         MeshKey.LogicalName = MeshName;
         bPassed &= TestTrue(TEXT("unresolved mesh key is observed"), Actor->DependsOnResource(MeshKey));
         bPassed &= TestEqual(
-            TEXT("unresolved node still has one top-level edit handle"),
+            TEXT("last-good view retains its root handle while dependency is unavailable"),
             Actor->GetTopLevelPlacementComponents().Num(),
             1);
         bPassed &= TestTrue(
             TEXT("unresolved node produces bbox and label view"),
             Actor->GetDerivedComponents().Num() >= 3);
+        bPassed &= TestNull(TEXT("unavailable dependency cannot expose a fresh plan"), Actor->GetResolvedPlan());
         bPassed &= TestTrue(
             TEXT("unresolved node reports registered placement warning"),
             Actor->GetLastPlacementWarnings().ContainsByPredicate(
@@ -341,6 +359,13 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
             MeshPackage,
             FName(*MeshName),
             RF_Public | RF_Standalone | RF_Transactional);
+        UMHStaticMeshImportData* MeshReceipt = NewObject<UMHStaticMeshImportData>(RestoredMesh);
+        MeshReceipt->LogicalName = MeshName;
+        MeshReceipt->SourceRelativePath = MeshName + TEXT(".mesh.fbx");
+        const TArray<uint8> MeshPayload = {0x4d, 0x48, 0x35};
+        MeshReceipt->SourceHash = MHRawPayloadHash(MeshPayload);
+        MeshReceipt->ImporterVersion = MHStaticMeshImporterVersion;
+        RestoredMesh->SetAssetImportData(MeshReceipt);
         const bool bWorldPackageWasDirty = Actor->GetOutermost()->IsDirty();
         const int32 StartupRefreshCount = MHRebuildAllLoadedCompositeActors();
         bPassed &= TestTrue(
@@ -349,11 +374,12 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         bPassed &= TestEqual(
             TEXT("startup refresh replaces same-name placeholder with endpoint"),
             Actor->GetDerivedComponents().Num(),
-            1);
+            2);
         bPassed &= TestTrue(
             TEXT("restored endpoint compiles as static mesh component"),
-            Actor->GetDerivedComponents().Num() == 1 &&
-                Cast<UStaticMeshComponent>(Actor->GetDerivedComponents()[0]) != nullptr);
+            Actor->GetDerivedComponents().Num() == 2 &&
+                Cast<UStaticMeshComponent>(Actor->GetDerivedComponents()[1]) != nullptr);
+        bPassed &= TestNotNull(TEXT("managed receipt restores a fresh plan"), Actor->GetResolvedPlan());
         bPassed &= TestTrue(
             TEXT("healed placement has no unresolved warning"),
             Actor->GetLastPlacementWarnings().IsEmpty());
@@ -417,7 +443,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
             HealedDocument.Nodes.Add(HealedGroup);
             bPassed &= TestTrue(
                 TEXT("same-name dead-root replacement applies"),
-                MHApplyCompositeV5(*RestoredDeadAsset, HealedDocument, Error));
+                ApplyPlacementReceiptFixture(*RestoredDeadAsset, HealedDocument, Error));
             MHNotifyGeneratedResourceChanged(DeadKey);
             bPassed &= TestEqual(
                 TEXT("same-name root notification heals dead placeholder"),
@@ -439,6 +465,8 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
     }
     NestedAsset->ClearFlags(RF_Public | RF_Standalone);
     NestedAsset->MarkAsGarbage();
+    RootAsset->ClearFlags(RF_Public | RF_Standalone);
+    RootAsset->MarkAsGarbage();
     if (RestoredDeadAsset != nullptr)
     {
         RestoredDeadAsset->ClearFlags(RF_Public | RF_Standalone);
@@ -472,8 +500,7 @@ bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
         TEXT("s6_visibility_actor"),
         FSoftClassPath(AStaticMeshActor::StaticClass()));
 
-    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-    Asset->LogicalName = TEXT("s6_visibility_root");
+    UMHCompositeAsset* Asset = NewPlacementReceiptFixture(TEXT("s6_visibility_root_") + FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower());
     FMHCompositeDocument Document;
     FMHCompositeNode Node;
     Node.Kind = EMHCompositeNodeKind::Actor;
@@ -483,7 +510,7 @@ bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
     FString Error;
     bool bPassed = TestTrue(
         TEXT("derived-actor fixture applies"),
-        MHApplyCompositeV5(*Asset, Document, Error));
+        ApplyPlacementReceiptFixture(*Asset, Document, Error));
 
     UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
     bPassed &= TestNotNull(TEXT("derived-actor preview world exists"), World);
@@ -494,8 +521,8 @@ bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
     if (Actor != nullptr)
     {
         Actor->SetCompositeAsset(Asset);
-        UChildActorComponent* ChildComponent = Actor->GetDerivedComponents().Num() == 1
-            ? Cast<UChildActorComponent>(Actor->GetDerivedComponents()[0])
+        UChildActorComponent* ChildComponent = Actor->GetDerivedComponents().Num() == 2
+            ? Cast<UChildActorComponent>(Actor->GetDerivedComponents()[1])
             : nullptr;
         bPassed &= TestNotNull(TEXT("actor node compiles to child-actor component"), ChildComponent);
         if (ChildComponent != nullptr)
@@ -517,8 +544,8 @@ bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
             Actor->RerunConstructionScripts();
             bPassed &= TestEqual(
                 TEXT("moving/rerunning construction preserves the derived component object"),
-                Actor->GetDerivedComponents().Num() == 1
-                    ? Actor->GetDerivedComponents()[0].Get()
+                Actor->GetDerivedComponents().Num() == 2
+                    ? Actor->GetDerivedComponents()[1].Get()
                     : nullptr,
                 static_cast<UActorComponent*>(ChildComponent));
         }
@@ -529,6 +556,8 @@ bool FMHCompositeDerivedActorVisibilityTest::RunTest(const FString& Parameters)
     {
         World->DestroyWorld(false);
     }
+    Asset->ClearFlags(RF_Public | RF_Standalone);
+    Asset->MarkAsGarbage();
     return bPassed;
 }
 

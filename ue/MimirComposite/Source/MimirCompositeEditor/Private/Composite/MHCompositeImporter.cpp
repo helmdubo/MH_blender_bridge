@@ -2,6 +2,7 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositeResolvedPlan.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
@@ -376,6 +377,7 @@ FMHCompositeOperationResult MHImportCompositeV5(
     const FString PreviousSourcePath = Asset->SourceRelativePath;
     const FString PreviousSourceHash = Asset->SourceHash;
     const FString PreviousAppliedHash = Asset->AppliedHash;
+    const EMHCompositeSeedEffect PreviousSeedEffect = Asset->SeedAffectsResult;
     if (!MHApplyCompositeV5(*Asset, Document, InlinedProfiles, Result.Error))
     {
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
@@ -425,6 +427,7 @@ FMHCompositeOperationResult MHImportCompositeV5(
     Asset->SourceRelativePath = Entry.SourcePath;
     Asset->SourceHash = InitialHash;
     Asset->AppliedHash = MHRawPayloadHash(AppliedBytes);
+    Asset->SeedAffectsResult = MHClassifyCompositeDefinition(*Asset);
     Asset->PostEditChange();
     if (!SaveAssetPackage(*Asset, Result.Error))
     {
@@ -434,6 +437,7 @@ FMHCompositeOperationResult MHImportCompositeV5(
         Asset->SourceRelativePath = PreviousSourcePath;
         Asset->SourceHash = PreviousSourceHash;
         Asset->AppliedHash = PreviousAppliedHash;
+        Asset->SeedAffectsResult = PreviousSeedEffect;
         Asset->PostEditChange();
         if (Result.bCreated) RemoveFailedCreatedAsset(*Asset);
         return Result;
@@ -524,10 +528,12 @@ FMHCompositeOperationResult MHPublishCompositeV5(
     const FString PreviousSourcePath = Asset.SourceRelativePath;
     const FString PreviousSourceHash = Asset.SourceHash;
     const FString PreviousAppliedHash = Asset.AppliedHash;
+    const EMHCompositeSeedEffect PreviousSeedEffect = Asset.SeedAffectsResult;
     Asset.LogicalName = LogicalName;
     Asset.SourceRelativePath = RelativePath;
     Asset.SourceHash = PublishedHash;
     Asset.AppliedHash = PublishedHash;
+    Asset.SeedAffectsResult = MHClassifyCompositeDefinition(Asset);
     Asset.PostEditChange();
     if (!SaveAssetPackage(Asset, Result.Error))
     {
@@ -535,6 +541,7 @@ FMHCompositeOperationResult MHPublishCompositeV5(
         Asset.SourceRelativePath = PreviousSourcePath;
         Asset.SourceHash = PreviousSourceHash;
         Asset.AppliedHash = PreviousAppliedHash;
+        Asset.SeedAffectsResult = PreviousSeedEffect;
         Asset.PostEditChange();
         return Result;
     }

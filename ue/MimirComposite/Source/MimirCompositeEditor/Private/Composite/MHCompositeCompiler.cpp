@@ -1,10 +1,7 @@
 #include "Composite/MHCompositeCompiler.h"
+#include "Composite/MHCompositeResolvedPlan.h"
 
-#include "Components/ChildActorComponent.h"
-#include "Components/SceneComponent.h"
-#include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
-#include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Misc/FileHelper.h"
 #include "Settings/MHCompositeSettings.h"
@@ -133,7 +130,7 @@ bool ResolveActorClass(
             TEXT("actor:%s is absent from ActorClassRegistry"), *Resource));
     }
     OutClass = Path->TryLoadClass<AActor>();
-    if (OutClass == nullptr || !OutClass->IsChildOf(AActor::StaticClass()))
+    if (!MHIsSpawnableCompositeActorClass(OutClass))
     {
         return Unresolved(OutError, FString::Printf(
             TEXT("actor:%s registry path is not a loadable AActor class: %s"),
@@ -143,57 +140,24 @@ bool ResolveActorClass(
     return true;
 }
 
-struct FCompileContext
+struct FCompositeAdmissionContext
 {
     IMHSourceResolver& Resolver;
     const UMHCompositeSettings& Settings;
-    AActor* Target = nullptr;
-    TArray<TObjectPtr<UActorComponent>>* Components = nullptr;
     TArray<FString> Ancestors;
     FString Error;
-    bool bRequiresResolvedPlan = false;
 };
-
-USceneComponent* NewSceneComponent(
-    FCompileContext& Context,
-    USceneComponent* Parent,
-    UClass* Class,
-    const FString& Label,
-    const FTransform& LocalTransform)
-{
-    if (Context.Target == nullptr || Context.Components == nullptr) return Parent;
-    const FName Name = MakeUniqueObjectName(Context.Target, Class, FName(*Label));
-    constexpr EObjectFlags DerivedFlags =
-        RF_Transactional | RF_Transient | RF_DuplicateTransient | RF_TextExportTransient;
-    USceneComponent* Component = NewObject<USceneComponent>(
-        Context.Target, Class, Name, DerivedFlags);
-    Context.Target->AddInstanceComponent(Component);
-    if (Parent != nullptr)
-    {
-        Component->SetupAttachment(Parent);
-    }
-    else if (Context.Target->GetRootComponent() == nullptr)
-    {
-        Context.Target->SetRootComponent(Component);
-    }
-    Component->RegisterComponent();
-    Component->SetRelativeTransform(LocalTransform, false, nullptr, ETeleportType::TeleportPhysics);
-    Context.Components->Add(Component);
-    return Component;
-}
 
 bool WalkNodes(
     const TArray<FMHCompositeNode>& Nodes,
-    FCompileContext& Context,
-    USceneComponent* ParentComponent,
+    FCompositeAdmissionContext& Context,
     const FMatrix& ParentWorld,
     const FString& PathPrefix,
     const TCHAR* SegmentLabel);
 
 bool WalkCompositeReference(
     const FString& Resource,
-    FCompileContext& Context,
-    USceneComponent* ParentComponent,
+    FCompositeAdmissionContext& Context,
     const FMatrix& ParentWorld,
     const FString& PathPrefix)
 {
@@ -210,7 +174,6 @@ bool WalkCompositeReference(
     const bool bOk = WalkNodes(
         Nested.Nodes,
         Context,
-        ParentComponent,
         ParentWorld,
         PathPrefix + TEXT(">") + Resource + TEXT(":"),
         TEXT("nodes"));
@@ -220,11 +183,10 @@ bool WalkCompositeReference(
 
 bool ValidateRandomOptions(
     const FMHCompositeNode& Node,
-    FCompileContext& Context,
+    FCompositeAdmissionContext& Context,
     const FMatrix& NodeWorld,
     const FString& NodePath)
 {
-    Context.bRequiresResolvedPlan = true;
     for (int32 OptionIndex = 0; OptionIndex < Node.Options.Num(); ++OptionIndex)
     {
         const FMHCompositeOption& Option = Node.Options[OptionIndex];
@@ -245,7 +207,6 @@ bool ValidateRandomOptions(
             if (!WalkCompositeReference(
                     Option.Resource,
                     Context,
-                    nullptr,
                     NodeWorld,
                     OptionPath))
             {
@@ -258,8 +219,7 @@ bool ValidateRandomOptions(
 
 bool WalkNodes(
     const TArray<FMHCompositeNode>& Nodes,
-    FCompileContext& Context,
-    USceneComponent* ParentComponent,
+    FCompositeAdmissionContext& Context,
     const FMatrix& ParentWorld,
     const FString& PathPrefix,
     const TCHAR* SegmentLabel)
@@ -280,60 +240,29 @@ bool WalkNodes(
         }
         if (!Node.Profile.IsEmpty())
         {
-            Context.bRequiresResolvedPlan = true;
             if (!ResolveProfile(Node.Profile, Context.Resolver, Context.Error)) return false;
         }
 
-        USceneComponent* Component = nullptr;
         switch (Node.Kind)
         {
         case EMHCompositeNodeKind::Group:
-            Component = NewSceneComponent(
-                Context, ParentComponent, USceneComponent::StaticClass(), TEXT("MH_Group"), Local);
             break;
         case EMHCompositeNodeKind::Mesh:
         {
             UStaticMesh* Mesh = nullptr;
             if (!ResolveMesh(Node.Resource, Context.Resolver, Mesh, Context.Error)) return false;
-            Component = NewSceneComponent(
-                Context,
-                ParentComponent,
-                UStaticMeshComponent::StaticClass(),
-                TEXT("MH_Mesh_") + Node.Resource,
-                Local);
-            if (UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(Component))
-            {
-                MeshComponent->SetStaticMesh(Mesh);
-            }
             break;
         }
         case EMHCompositeNodeKind::Actor:
         {
             UClass* ActorClass = nullptr;
             if (!ResolveActorClass(Node.Resource, Context.Settings, ActorClass, Context.Error)) return false;
-            Component = NewSceneComponent(
-                Context,
-                ParentComponent,
-                UChildActorComponent::StaticClass(),
-                TEXT("MH_Actor_") + Node.Resource,
-                Local);
-            if (UChildActorComponent* ActorComponent = Cast<UChildActorComponent>(Component))
-            {
-                ActorComponent->SetChildActorClass(ActorClass);
-            }
             break;
         }
         case EMHCompositeNodeKind::Composite:
-            Component = NewSceneComponent(
-                Context,
-                ParentComponent,
-                USceneComponent::StaticClass(),
-                TEXT("MH_Composite_") + Node.Resource,
-                Local);
             if (!WalkCompositeReference(
                     Node.Resource,
                     Context,
-                    Component,
                     NodeWorld,
                     NodePath))
             {
@@ -347,7 +276,6 @@ bool WalkNodes(
         if (!WalkNodes(
                 Node.Children,
                 Context,
-                Component,
                 NodeWorld,
                 NodePath + TEXT("/"),
                 TEXT("children")))
@@ -358,77 +286,31 @@ bool WalkNodes(
     return true;
 }
 
-bool Run(
-    AActor* Target,
+bool RunCompositeAdmission(
     const FString& LogicalName,
     const FMHCompositeDocument& Document,
     IMHSourceResolver& Resolver,
     const UMHCompositeSettings& Settings,
-    TArray<TObjectPtr<UActorComponent>>* Components,
-    USceneComponent** OutCreatedSyntheticRoot,
-    bool* OutRequiresResolvedPlan,
     FString& OutError)
 {
-    if (OutCreatedSyntheticRoot != nullptr) *OutCreatedSyntheticRoot = nullptr;
-    if (OutRequiresResolvedPlan != nullptr) *OutRequiresResolvedPlan = false;
     if (!MHIsCanonicalCompositeToken(LogicalName))
     {
         OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: root composite logical name is not canonical");
         return false;
     }
-    FCompileContext Context{Resolver, Settings, Target, Components};
+    FCompositeAdmissionContext Context{Resolver, Settings};
     Context.Ancestors.Add(LogicalName);
-    USceneComponent* Root = Target != nullptr ? Target->GetRootComponent() : nullptr;
-    if (Target != nullptr && Root == nullptr)
-    {
-        const FTransform TargetWorld = Target->GetActorTransform();
-        Root = NewObject<USceneComponent>(
-            Target,
-            USceneComponent::StaticClass(),
-            MakeUniqueObjectName(Target, USceneComponent::StaticClass(), TEXT("MHCompositeRoot")),
-            RF_Transactional | RF_Transient | RF_DuplicateTransient | RF_TextExportTransient);
-        Target->AddInstanceComponent(Root);
-        Target->SetRootComponent(Root);
-        Root->RegisterComponent();
-        Root->SetWorldTransform(TargetWorld, false, nullptr, ETeleportType::TeleportPhysics);
-        if (OutCreatedSyntheticRoot != nullptr) *OutCreatedSyntheticRoot = Root;
-    }
-    const FMatrix RootWorld = Target != nullptr
-        ? Target->GetActorTransform().ToMatrixWithScale()
-        : FMatrix::Identity;
     if (!WalkNodes(
             Document.Nodes,
             Context,
-            Root,
-            RootWorld,
+            FMatrix::Identity,
             LogicalName + TEXT(":"),
             TEXT("nodes")))
     {
         OutError = MoveTemp(Context.Error);
         return false;
     }
-    if (OutRequiresResolvedPlan != nullptr)
-    {
-        *OutRequiresResolvedPlan = Context.bRequiresResolvedPlan;
-    }
     return true;
-}
-
-void DestroyCompileResult(
-    AActor& Target,
-    FMHCompositeCompileResult& Result,
-    USceneComponent* CreatedSyntheticRoot)
-{
-    for (UActorComponent* Component : Result.Components)
-    {
-        if (Component != nullptr) Component->DestroyComponent();
-    }
-    Result.Components.Reset();
-    if (CreatedSyntheticRoot != nullptr)
-    {
-        if (Target.GetRootComponent() == CreatedSyntheticRoot) Target.SetRootComponent(nullptr);
-        CreatedSyntheticRoot->DestroyComponent();
-    }
 }
 
 } // namespace
@@ -441,60 +323,12 @@ bool MHValidateCompositeClosureV5(
     FString& OutError)
 {
     OutError.Reset();
-    return Run(
-        nullptr,
+    return RunCompositeAdmission(
         LogicalName,
         Document,
         Resolver,
         Settings,
-        nullptr,
-        nullptr,
-        nullptr,
         OutError);
-}
-
-FMHCompositeCompileResult MHCompileCompositeV5(
-    AActor& Target,
-    const FString& LogicalName,
-    const FMHCompositeDocument& Document,
-    IMHSourceResolver& Resolver,
-    const UMHCompositeSettings& Settings)
-{
-    FMHCompositeCompileResult Result;
-    bool bRequiresResolvedPlan = false;
-    if (!Run(
-            nullptr,
-            LogicalName,
-            Document,
-            Resolver,
-            Settings,
-            nullptr,
-            nullptr,
-            &bRequiresResolvedPlan,
-            Result.Error))
-    {
-        return Result;
-    }
-    if (bRequiresResolvedPlan)
-    {
-        Result.Error = TEXT("MH_E_COMPOSITE_GRAMMAR: random/profile placement requires the V5-S5 resolved-plan consumer");
-        return Result;
-    }
-    USceneComponent* CreatedSyntheticRoot = nullptr;
-    if (!Run(
-            &Target,
-            LogicalName,
-            Document,
-            Resolver,
-            Settings,
-            &Result.Components,
-            &CreatedSyntheticRoot,
-            nullptr,
-            Result.Error))
-    {
-        DestroyCompileResult(Target, Result, CreatedSyntheticRoot);
-    }
-    return Result;
 }
 
 bool MHProbeCompositeBuildV5(
@@ -504,48 +338,9 @@ bool MHProbeCompositeBuildV5(
     const UMHCompositeSettings& Settings,
     FString& OutError)
 {
-    OutError.Reset();
-    bool bRequiresResolvedPlan = false;
-    if (!Run(
-            nullptr,
-            LogicalName,
-            Document,
-            Resolver,
-            Settings,
-            nullptr,
-            nullptr,
-            &bRequiresResolvedPlan,
-            OutError))
-    {
-        return false;
-    }
-    if (bRequiresResolvedPlan) return true;
-
-    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
-    if (World == nullptr)
-    {
-        OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: cannot create transient compiler world");
-        return false;
-    }
-    FActorSpawnParameters SpawnParameters;
-    SpawnParameters.ObjectFlags = RF_Transient;
-    AActor* Target = World->SpawnActor<AActor>(SpawnParameters);
-    bool bSucceeded = Target != nullptr;
-    if (!bSucceeded)
-    {
-        OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: cannot create transient compiler actor");
-    }
-    else
-    {
-        const FMHCompositeCompileResult Compiled = MHCompileCompositeV5(
-            *Target, LogicalName, Document, Resolver, Settings);
-        bSucceeded = Compiled.Succeeded();
-        OutError = Compiled.Error;
-        Target->Destroy();
-    }
-    World->DestroyWorld(false);
-    World->RemoveFromRoot();
-    return bSucceeded;
+    // Import owns a definition, not a placement. Admission visits every option
+    // and profile without choosing a seed or constructing preview components.
+    return MHValidateCompositeClosureV5(LogicalName, Document, Resolver, Settings, OutError);
 }
 
 } // namespace UE::MimirComposite
