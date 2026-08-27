@@ -3,7 +3,7 @@
 > **ACTIVE AUTHORITY: MH SOURCE PROTOCOL V5.** Норматив —
 > [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
 > порядок срезов — [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md).
-> V5-S0…V5-S4 приняты owner'ом; текущая ветка реализует V5-S5 и остаётся
+> V5-S0…V5-S5 приняты owner'ом; текущая ветка реализует V5-S6 и остаётся
 > кандидатом до отдельного owner review/merge.
 
 ## Source Protocol v5 в одном экране
@@ -14,7 +14,8 @@ v5 меняет только .composite и добавляет .placement.
 .composite начинается с "v": 5; migration/dual-read нет.
 World(node) = World(parent) × Local(node); group — настоящий transform.
 random хранит ordered weighted options; source closure обходит все options.
-Seed int32 живёт только на AMHCompositeActor; в Blender seed отсутствует.
+Authoring Seed int32 — на AMHCompositeActor; runtime получает его снимок.
+В Blender seed отсутствует.
 Один mh.random_stream:1 строит один FMHResolvedCompositePlan.
 Editor preview = Break = runtime = PIE = packaged = cook по одному plan.
 Shear блокируется на Dagor import, Blender export и UE compile.
@@ -50,13 +51,24 @@ load mode, transactional reuse/refresh и два Dagor→MH пути с lossless
 
 Принятый V5-S4 добавил Composite Closure / Include All Stuff с полным
 preflight, staging/read-back и dependency-first/root-last публикацией.
-Кандидат V5-S5 добавляет placement `Seed`, единый applied-only plan для UE
+Принятый V5-S5 добавляет placement `Seed`, единый applied-only plan для UE
 preview / Break / Show Choices / Show Decision Trace и выборочное обновление
 компонентов. В контекстном меню размещения доступны Reseed, Copy/Paste,
 Lock/Unlock, Keep Seed on Duplicate; для нескольких размещений — Individual
 и Equal. Break материализует выбранные leaves без nested wrappers.
 Custom asset-thumbnails отключены по решению `OPEN-V5-14` (10 §13.12).
-Runtime/PIE/packaged acceptance относится к следующему V5-S6.
+Кандидат V5-S6 добавляет `AMHRuntimeCompositeActor`: сериализуемый полный
+seed-free граф и hard references всего source closure передаются тому же
+резолверу. PIE/cook создают временные runtime-размещения, не записывая вторую
+authority в authoring-map; source tree и editor-сервисы игре не нужны.
+Профильные raw hashes сохраняются как вход closure, не как новые receipts.
+SQLite-зависимость плагина ограничена Editor target.
+
+Раздельный пятисторонний parity smoke воспроизводится через
+[`tools/ue_s6_host/README.md`](tools/ue_s6_host/README.md) и
+`tools/s6_runtime_parity.py`. Thumbnail в acceptance не входит. Runtime handoff
+блокирует неподдержанные attachments/внешние ссылки на editor-placement;
+World Partition/OFPA и flattening остаются следующим V5-S7.
 
 Python regression:
 

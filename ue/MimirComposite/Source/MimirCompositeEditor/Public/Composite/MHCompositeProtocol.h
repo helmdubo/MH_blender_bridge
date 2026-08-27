@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeTransformAdmission.h"
 #include "CoreMinimal.h"
 
 namespace UE::MimirComposite
@@ -30,14 +31,6 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeDocument
 };
 
 MIMIRCOMPOSITEEDITOR_API bool MHIsCanonicalCompositeToken(const FString& Value);
-
-/** Shared 8-ULP float32 element comparison used by the host TRS predicate. */
-MIMIRCOMPOSITEEDITOR_API bool MHMatrixElementsWithinTrsTolerance(
-    const FMatrix& Matrix,
-    const FMatrix& Reconstructed);
-
-/** Decompose with FTransform, reconstruct, and reject non-finite/sheared matrices. */
-MIMIRCOMPOSITEEDITOR_API bool MHIsRepresentableTransformMatrix(const FMatrix& Matrix);
 
 /** Parse the closed v5 §6 grammar, rejecting duplicate JSON keys. */
 MIMIRCOMPOSITEEDITOR_API bool MHParseCompositeV5(

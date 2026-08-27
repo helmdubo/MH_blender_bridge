@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeTransformAdmission.h"
 #include "CoreMinimal.h"
 #include "Random/MHRandomStream.h"
 #include "Source/MHSourceResolver.h"
@@ -30,11 +31,5 @@ MIMIRCOMPOSITEEDITOR_API EMHCompositeSeedEffect MHClassifyCompositeGraph(
 /** Import-time classification from source-shaped definitions and inlined profiles. */
 MIMIRCOMPOSITEEDITOR_API EMHCompositeSeedEffect MHClassifyCompositeDefinition(
     const UMHCompositeAsset& Asset);
-
-/** Must succeed before creating, updating or destroying any derived component. */
-MIMIRCOMPOSITEEDITOR_API bool MHValidateResolvedPlacementTransforms(
-    const FMHResolvedCompositePlan& Plan,
-    const FTransform& PlacementTransform,
-    FString& OutError);
 
 } // namespace UE::MimirComposite

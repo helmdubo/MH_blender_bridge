@@ -14,6 +14,7 @@
 #include "Misc/Paths.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
+#include "StaticMeshCompiler.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "Texture/MHTextureSourceData.h"
 
@@ -76,6 +77,16 @@ bool AppliedPlanReceipt(const UObject& Object, const FMHResourceKey& Key,
         !MatchesTag(TEXT("MH.SourceHash"), SourceHash) || !MatchesTag(TEXT("MH.AppliedHash"), AppliedHash))
     {
         Error = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for ") + Key.ToString() + TEXT(" at ") + Object.GetPathName();
+        Error += FString::Printf(TEXT(" (source_path='%s', path_valid=%d, canonical_object=%d, source_hash_valid=%d, applied_hash_valid=%d, MH_tags=%d)"),
+            *SourcePath, bPathValid, Object.GetPathName() == AppliedPlanObjectPath(Key),
+            MHIsCanonicalRawPayloadHash(SourceHash), MHIsCanonicalRawPayloadHash(AppliedHash), MHTagCount);
+        for (const TCHAR* Tag : {TEXT("MH.Managed"), TEXT("MH.Kind"), TEXT("MH.LogicalName"),
+            TEXT("MH.SourcePath"), TEXT("MH.SourceHash"), TEXT("MH.AppliedHash")})
+        {
+            FString Value;
+            const bool bPresent = Live.GetTagValue(FName(Tag), Value);
+            Error += FString::Printf(TEXT(" %s='%s'"), Tag, bPresent ? *Value : TEXT("<missing>"));
+        }
         return false;
     }
     return true;
@@ -204,6 +215,15 @@ struct FAppliedPlanBuilder
         const FMHResourceKey Key = AppliedPlanKey(EMHResourceKind::StaticMesh, Name);
         if (Finished.Contains(Key.ToString())) return true;
         UStaticMesh* Mesh = Cast<UStaticMesh>(Load(Key));
+        if (Mesh != nullptr && Mesh->IsCompiling())
+        {
+            // Cold PostLoad may start async compilation. Until it finishes,
+            // UStaticMesh::GetAssetRegistryTags returns before the inherited
+            // tag provider, hiding all six valid receipt tags. Join only this
+            // closure member before live admission; never skip tag validation.
+            UStaticMesh* PendingMeshes[] = {Mesh};
+            FStaticMeshCompilingManager::Get().FinishCompilation(PendingMeshes);
+        }
         const UMHStaticMeshImportData* Receipt = Mesh != nullptr ? Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData()) : nullptr;
         if (Receipt == nullptr || Receipt->LogicalName != Name) return Fail(Key.ToString() + TEXT(" has no matching managed mesh receipt"));
         if (!AppliedPlanReceipt(*Mesh, Key, Receipt->SourceRelativePath, Receipt->SourceHash, Receipt->SourceHash, Error)) return false;
@@ -427,19 +447,5 @@ EMHCompositeSeedEffect MHClassifyCompositeDefinition(const UMHCompositeAsset& As
     return MHClassifyCompositeGraph(Graph);
 }
 
-bool MHValidateResolvedPlacementTransforms(const FMHResolvedCompositePlan& Plan, const FTransform& PlacementTransform, FString& OutError)
-{
-    OutError.Reset();
-    const FMatrix PlacementMatrix = PlacementTransform.ToMatrixWithScale();
-    for (const FMHResolvedCompositeNode& Node : Plan.Nodes)
-    {
-        if (!MHIsRepresentableTransformMatrix(Node.WorldMatrix) || !MHIsRepresentableTransformMatrix(Node.WorldMatrix * PlacementMatrix))
-        {
-            OutError = TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: ") + Node.NodePath + TEXT(" cannot round-trip through FTransform within 8 float32 ULP");
-            return false;
-        }
-    }
-    return true;
-}
 
 } // namespace UE::MimirComposite
