@@ -22,6 +22,10 @@ class MIMIRCOMPOSITEEDITOR_API AMHCompositeActor final : public AActor
 public:
     AMHCompositeActor();
 
+    /** Source placement is replaced by a runtime-only wrapper at PIE/cook handoff. */
+    virtual bool IsEditorOnly() const override { return true; }
+    virtual void Serialize(FArchive& Archive) override;
+
     void SetCompositeAsset(UMHCompositeAsset* Asset);
     UMHCompositeAsset* GetCompositeAsset() const;
 

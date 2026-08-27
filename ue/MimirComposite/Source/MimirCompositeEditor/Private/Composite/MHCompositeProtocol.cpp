@@ -1089,41 +1089,6 @@ bool MHIsCanonicalCompositeToken(const FString& Value)
     return true;
 }
 
-bool MHMatrixElementsWithinTrsTolerance(
-    const FMatrix& Matrix,
-    const FMatrix& Reconstructed)
-{
-    constexpr float Float32Epsilon = 1.1920928955078125e-7f;
-    constexpr float Ulps = 8.0f;
-    for (int32 Row = 0; Row < 4; ++Row)
-    {
-        for (int32 Column = 0; Column < 4; ++Column)
-        {
-            const float Source = static_cast<float>(Matrix.M[Row][Column]);
-            const float Restored = static_cast<float>(Reconstructed.M[Row][Column]);
-            if (!FMath::IsFinite(Source) || !FMath::IsFinite(Restored)) return false;
-            const float Magnitude = FMath::Max3(1.0f, FMath::Abs(Source), FMath::Abs(Restored));
-            if (FMath::Abs(Source - Restored) > Ulps * Float32Epsilon * Magnitude)
-            {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-bool MHIsRepresentableTransformMatrix(const FMatrix& Matrix)
-{
-    for (int32 Row = 0; Row < 4; ++Row)
-    {
-        for (int32 Column = 0; Column < 4; ++Column)
-        {
-            if (!FMath::IsFinite(Matrix.M[Row][Column])) return false;
-        }
-    }
-    const FTransform Decomposed(Matrix);
-    return MHMatrixElementsWithinTrsTolerance(Matrix, Decomposed.ToMatrixWithScale());
-}
 
 bool MHParseCompositeV5(
     const TConstArrayView<uint8> Bytes,

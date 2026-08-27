@@ -12,7 +12,8 @@
   "Plugins": [
     {
       "Name": "SQLiteCore",
-      "Enabled": true
+      "Enabled": true,
+      "TargetAllowList": [ "Editor" ]
     }
   ],
   "Modules": [

@@ -3,13 +3,17 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Composite/MHCompositeRuntimeBridge.h"
 #include "Engine/World.h"
 #include "LevelEditor.h"
 #include "Logging/MessageLog.h"
 #include "Misc/Guid.h"
 #include "Modules/ModuleManager.h"
+#include "Serialization/Archive.h"
+#include "Serialization/ArchiveSavePackageData.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
+#include "UObject/ObjectSaveContext.h"
 #include "UObject/UnrealType.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeActor)
@@ -38,6 +42,21 @@ AMHCompositeActor::AMHCompositeActor()
     SetRootComponent(CompositeRoot);
     PrimaryActorTick.bCanEverTick = true;
     PrimaryActorTick.bStartWithTickEnabled = false;
+}
+
+void AMHCompositeActor::Serialize(FArchive& Archive)
+{
+    Super::Serialize(Archive);
+    const FArchiveSavePackageData* SaveData = Archive.GetSavePackageData();
+    const FObjectSavePackageSerializeContext* SaveContext = SaveData != nullptr ? &SaveData->SavePackageContext : nullptr;
+    if (Archive.IsCooking() && !IsTemplate() && SaveContext != nullptr &&
+        SaveContext->GetPhase() != EObjectSaveContextPhase::CookDependencyHarvest &&
+        !UE::MimirComposite::MHIsRuntimeCompositeCookPrepared(*this))
+    {
+        Archive.SetError();
+        UE_LOG(LogMHCompositeActor, Error,
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: %s has no admitted runtime cook handoff"), *GetPathName());
+    }
 }
 
 int32 AMHCompositeActor::GenerateAutoSeed(const int32 DifferentFrom)
@@ -185,6 +204,10 @@ void AMHCompositeActor::RebuildComposite()
 void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
 {
     using namespace UE::MimirComposite;
+    // Play/cook consumes a fresh applied-input snapshot through the runtime
+    // wrapper. Never manufacture an editor preview in either handoff world.
+    if (IsRunningCookCommandlet() ||
+        (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     if (bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
     bBasisRejected = false;

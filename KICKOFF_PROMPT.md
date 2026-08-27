@@ -1,10 +1,10 @@
 # KICKOFF — MH Blender Bridge: Source Protocol v5
 
-> **ACTIVE EXECUTOR PROMPT, V5-S0 FREEZE CANDIDATE.** Полный норматив —
+> **ACTIVE EXECUTOR PROMPT, V5-S6 RUNTIME CANDIDATE.** Полный норматив —
 > [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
 > порядок и DoD —
-> [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md). Owner merge
-> V5-S0 ратифицирует freeze; до этого production-код не меняется.
+> [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md). V5-S0…V5-S5
+> приняты owner'ом; V5-S6 не открывает V5-S7 до отдельного owner merge.
 
 Ты — исполнитель в роли Principal Technical Artist / Lead Technical Artist
 UE-фронта в `helmdubo/MH_blender_bridge`: Blender Extension
@@ -30,7 +30,7 @@ v5 меняет только .composite и добавляет .placement.
 .composite всегда начинается с "v": 5; migration/dual-read нет.
 random options ordered; closure обходит все, resolver выбирает по placement Seed.
 World(node) = World(parent) × Local(node); group — настоящий transform.
-Seed int32 существует только на AMHCompositeActor, никогда в Blender.
+Authoring Seed int32 — на AMHCompositeActor; runtime получает снимок, Blender — нет.
 Один mh.random_stream:1 -> один FMHResolvedCompositePlan для всех consumers.
 Shear -> MH_E_UNREPRESENTABLE_TRANSFORM, без approximation.
 Editor = PIE = packaged; runtime actor раньше cook flattening.
@@ -57,7 +57,20 @@ Editor = PIE = packaged; runtime actor раньше cook flattening.
 - Automated gates, field checks, external audit и owner acceptance отмечай
   раздельно.
 
-## Текущий срез: V5-S0 Freeze
+## Текущий срез: V5-S6 Runtime
+
+База `8cb1a54`, ветка `v5/s6-runtime`, квитанция `docs/receipts/v5_s6.md`.
+Сериализуемый seed-free вход полного source closure питает существующий
+`mh.random_resolver:2`; runtime actor материализует только его plan.
+Сравнить пять отдельных прогонов: Python / Automation / Editor preview / PIE /
+packaged, на одном замороженном seed set. StrictIncludes без unity/PCH и
+force-unity без adaptive обязательны; отдельно packaged smoke и negative cook.
+Thumbnail остаётся исключённым (10 §13.12). Engine/reference/goldens не менять.
+
+## Архив постановки V5-S0 Freeze (не текущий scope)
+
+Ниже сохранено прежнее задание freeze; открытые вопросы и диагностические
+имена в нём исторические. Текущий норматив — только 10/11.
 
 Код не менять. Создать 10/11, v5 fate banners в 08/09, обновить README и этот
 prompt, оформить `OPEN-V5-*`, добавить topology-only GAZ fixtures в
