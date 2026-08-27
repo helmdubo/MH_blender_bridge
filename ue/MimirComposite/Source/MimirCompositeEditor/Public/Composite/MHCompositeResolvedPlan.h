@@ -1,0 +1,40 @@
+#pragma once
+
+#include "Composite/MHCompositeAsset.h"
+#include "CoreMinimal.h"
+#include "Random/MHRandomStream.h"
+#include "Source/MHSourceResolver.h"
+
+class UMHCompositeSettings;
+
+namespace UE::MimirComposite
+{
+
+/** Unique generated claim by ResourceKey; no source-tree lookup or fallback winner. */
+MIMIRCOMPOSITEEDITOR_API UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError);
+
+MIMIRCOMPOSITEEDITOR_API bool MHIsSpawnableCompositeActorClass(const UClass* Class);
+
+/** Applied-only input. No filesystem resolver or source-index scan participates. */
+MIMIRCOMPOSITEEDITOR_API bool MHBuildAppliedCompositeGraph(
+    const UMHCompositeAsset& Root,
+    const UMHCompositeSettings& Settings,
+    FMHRandomSourceGraph& OutGraph,
+    TSet<FMHResourceKey>& OutDependencies,
+    FString& OutError);
+
+/** Visual impact classification; even a visually constant random node still consumes draws. */
+MIMIRCOMPOSITEEDITOR_API EMHCompositeSeedEffect MHClassifyCompositeGraph(
+    const FMHRandomSourceGraph& Graph);
+
+/** Import-time classification from source-shaped definitions and inlined profiles. */
+MIMIRCOMPOSITEEDITOR_API EMHCompositeSeedEffect MHClassifyCompositeDefinition(
+    const UMHCompositeAsset& Asset);
+
+/** Must succeed before creating, updating or destroying any derived component. */
+MIMIRCOMPOSITEEDITOR_API bool MHValidateResolvedPlacementTransforms(
+    const FMHResolvedCompositePlan& Plan,
+    const FTransform& PlacementTransform,
+    FString& OutError);
+
+} // namespace UE::MimirComposite

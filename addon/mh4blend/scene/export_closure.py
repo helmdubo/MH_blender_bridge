@@ -520,7 +520,7 @@ def prepare_composite_closure_export(
                 key, source_candidate, source_candidate.read_bytes()))
         else:
             _raise(
-                "MH_E_RESOURCE_NOT_FOUND", [key],
+                "MH_E_RESOURCE_NOT_FOUND", [key, *_owner_subjects(owners)],
                 "mesh dependency has neither managed Blender authority nor "
                 "an existing source payload")
 
@@ -545,6 +545,7 @@ def prepare_composite_closure_export(
     else:
         for name in sorted(material_names):
             key = ResourceKey("material", name)
+            owners = tuple(material_owners.get(name, ()))
             source_candidate = inventory.resolve(key, allow_missing=True)
             material = bpy.data.materials.get(name)
             if material is not None:
@@ -593,7 +594,7 @@ def prepare_composite_closure_export(
                 material_rows.append(row)
             else:
                 _raise(
-                    "MH_E_RESOURCE_NOT_FOUND", [key],
+                    "MH_E_RESOURCE_NOT_FOUND", [key, *_owner_subjects(owners)],
                     "material dependency has neither loaded Blender authority "
                     "nor an existing source payload")
 

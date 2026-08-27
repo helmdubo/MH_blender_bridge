@@ -23,6 +23,7 @@ public class MimirCompositeEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new[]
             {
+                "ApplicationCore",
                 "AssetTools",
                 "AssetRegistry",
                 "ContentBrowser",

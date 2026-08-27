@@ -3,7 +3,7 @@
 > **ACTIVE AUTHORITY: MH SOURCE PROTOCOL V5.** Норматив —
 > [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
 > порядок срезов — [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md).
-> V5-S0…V5-S2 приняты owner'ом; текущая ветка реализует V5-S3 и остаётся
+> V5-S0…V5-S4 приняты owner'ом; текущая ветка реализует V5-S5 и остаётся
 > кандидатом до отдельного owner review/merge.
 
 ## Source Protocol v5 в одном экране
@@ -43,14 +43,25 @@ Resource Index и applied state сохраняют v4-контракты без 
 V5-S1 зафиксировал Python-reference `mh.random_stream:1`; принятый V5-S2
 заменил `.composite` на строгий v5 codec без dual-read, добавил `.placement`
 v1, parent-local T/R/S, source-only profile carrier/index edge, общий 8-ULP
-predicate и бит-идентичный C++ random resolver/plan. Кандидат V5-S3 добавляет
+predicate и бит-идентичный C++ random resolver/plan. Принятый V5-S3 добавил
 Blender typed random/profile-authoring, четыре служебные сцены, три geometry
 load mode, transactional reuse/refresh и два Dagor→MH пути с lossless
 `include`→`.placement`. Seed в Blender по-прежнему отсутствует.
 
+Принятый V5-S4 добавил Composite Closure / Include All Stuff с полным
+preflight, staging/read-back и dependency-first/root-last публикацией.
+Кандидат V5-S5 добавляет placement `Seed`, единый applied-only plan для UE
+preview / Break / Show Choices / Show Decision Trace и выборочное обновление
+компонентов. В контекстном меню размещения доступны Reseed, Copy/Paste,
+Lock/Unlock, Keep Seed on Duplicate; для нескольких размещений — Individual
+и Equal. Break материализует выбранные leaves без nested wrappers.
+Custom asset-thumbnails отключены по решению `OPEN-V5-14` (10 §13.12).
+Runtime/PIE/packaged acceptance относится к следующему V5-S6.
+
 Python regression:
 
 ```bash
+python -m pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 

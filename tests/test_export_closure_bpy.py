@@ -44,6 +44,7 @@ from mh4blend.scene.resource_markers import (  # noqa: E402
     is_managed_resource_collection,
     stamp_resource_collection,
 )
+from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
 from mh4blend.ui import composite_authoring, ops  # noqa: E402
 
 
@@ -472,6 +473,52 @@ def test_composite_only_loaded_mesh_requires_existing_source(tmp_path):
         assert outside_error.value.code == "MH_E_TEXTURE_OUTSIDE_ROOT"
         assert "texture:missing_albedo" in outside_error.value.subjects
         assert "composite:mesh_root" in outside_error.value.subjects
+
+
+def test_include_all_missing_mesh_reports_owner_without_command(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root = _collection("include_all_root")
+    _unresolved_object(root, "missing_mesh", "mesh", "missing_mesh")
+
+    with pytest.raises(MHValidationError) as caught:
+        prepare_composite_closure_export(
+            root, tmp_path, source_root=tmp_path,
+            mode=CLOSURE_MODE_INCLUDE_ALL)
+    assert caught.value.code == "MH_E_RESOURCE_NOT_FOUND"
+    assert caught.value.subjects == [
+        "composite:include_all_root", "static_mesh:missing_mesh"]
+    assert "Export Composite Include All Stuff" not in str(caught.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_include_all_missing_material_reports_owner_without_command(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    mesh_collection = _collection("existing_mesh")
+    mesh = bpy.data.meshes.new("existing_mesh_geometry")
+    mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+    mesh_collection.objects.link(bpy.data.objects.new("existing_mesh", mesh))
+    material = bpy.data.materials.new("missing_mat")
+    mesh.materials.append(material)
+    exported = export_fbx_collection(
+        mesh_collection, tmp_path, source_root=tmp_path,
+        export_materials=False)
+    source_path = Path(exported["filepath"])
+    source_bytes = source_path.read_bytes()
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root = _collection("include_all_root")
+    _unresolved_object(root, "existing_mesh", "mesh", "existing_mesh")
+    with pytest.raises(MHValidationError) as caught:
+        prepare_composite_closure_export(
+            root, tmp_path, source_root=tmp_path,
+            mode=CLOSURE_MODE_INCLUDE_ALL)
+    assert caught.value.code == "MH_E_RESOURCE_NOT_FOUND"
+    assert caught.value.subjects == [
+        "composite:include_all_root", "material:missing_mat"]
+    assert "Export Composite Include All Stuff" not in str(caught.value)
+    assert source_path.read_bytes() == source_bytes
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "existing_mesh.mesh.fbx"]
 
 
 def test_public_api_has_neither_seed_nor_texture_publish_toggle(tmp_path):

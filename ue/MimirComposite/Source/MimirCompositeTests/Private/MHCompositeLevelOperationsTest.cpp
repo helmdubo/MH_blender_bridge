@@ -5,7 +5,9 @@
 #include "Composite/MHCompositeProtocol.h"
 
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editor.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "Editor/Transactor.h"
@@ -13,11 +15,44 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "Random/MHRandomStream.h"
 #include "ScopedTransaction.h"
 #include "Settings/MHCompositeSettings.h"
+#include "Source/MHPayloadHashes.h"
+#include "StaticMesh/MHStaticMeshImportData.h"
 
 namespace UE::MimirComposite::Tests
 {
+
+namespace
+{
+
+UMHCompositeAsset* MHNewLevelOperationFixture(const FString& Name)
+{
+    UPackage* Package = CreatePackage(*(TEXT("/Game/MH/Generated/Composites/") + Name));
+    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(Package, FName(*Name), RF_Public | RF_Standalone);
+    Asset->LogicalName = Name;
+    return Asset;
+}
+
+bool MHApplyLevelOperationFixture(
+    UMHCompositeAsset& Asset,
+    const FMHCompositeDocument& Document,
+    FString& OutError)
+{
+    TArray<uint8> Bytes;
+    if (!MHApplyCompositeV5(Asset, Document, OutError) ||
+        !MHWriteCanonicalCompositeV5(Document, Bytes, OutError))
+    {
+        return false;
+    }
+    Asset.SourceRelativePath = Asset.LogicalName + TEXT(".composite");
+    Asset.SourceHash = MHRawPayloadHash(Bytes);
+    Asset.AppliedHash = Asset.SourceHash;
+    return true;
+}
+
+} // namespace
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeLevelOperationsTest,
@@ -88,8 +123,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
             SourceRoot,
             RejectTarget.LogicalName + TEXT(".composite"))));
 
-    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-    Asset->LogicalName = TEXT("level_ops_") + Suffix;
+    UMHCompositeAsset* Asset = MHNewLevelOperationFixture(TEXT("level_ops_") + Suffix);
     const FString MeshResource = TEXT("level_ops_mesh_") + Suffix;
     const FString NestedResource = TEXT("level_ops_nested_") + Suffix;
     UPackage* MeshPackage = CreatePackage(*FString::Printf(
@@ -99,6 +133,13 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         MeshPackage,
         FName(*MeshResource),
         RF_Public | RF_Standalone);
+    UMHStaticMeshImportData* MeshReceipt = NewObject<UMHStaticMeshImportData>(MeshAsset);
+    MeshReceipt->LogicalName = MeshResource;
+    MeshReceipt->SourceRelativePath = MeshResource + TEXT(".mesh.fbx");
+    const TArray<uint8> AppliedMeshBytes = {0x4d, 0x48, 0x35};
+    MeshReceipt->SourceHash = MHRawPayloadHash(AppliedMeshBytes);
+    MeshReceipt->ImporterVersion = MHStaticMeshImporterVersion;
+    MeshAsset->SetAssetImportData(MeshReceipt);
     UPackage* NestedPackage = CreatePackage(*FString::Printf(
         TEXT("/Game/MH/Generated/Composites/%s"),
         *NestedResource));
@@ -111,7 +152,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
     Error.Reset();
     bPassed &= TestTrue(
         TEXT("nested Break fixture applies"),
-        MHApplyCompositeV5(*NestedAsset, EmptyNestedDocument, Error));
+        MHApplyLevelOperationFixture(*NestedAsset, EmptyNestedDocument, Error));
 
     FMHCompositeDocument Document;
     FMHCompositeNode Node;
@@ -137,7 +178,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
     Error.Reset();
     bPassed &= TestTrue(
         TEXT("level-operation fixture applies"),
-        MHApplyCompositeV5(*Asset, Document, Error));
+        MHApplyLevelOperationFixture(*Asset, Document, Error));
 
     AMHCompositeActor* CompositeActor = World->SpawnActor<AMHCompositeActor>(
         AMHCompositeActor::StaticClass(),
@@ -147,10 +188,27 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
     if (CompositeActor != nullptr)
     {
         CompositeActor->SetCompositeAsset(Asset);
+        bPassed &= TestNotNull(TEXT("managed receipts produce the cached preview plan"), CompositeActor->GetResolvedPlan());
         bPassed &= TestEqual(
             TEXT("one top-level placement is compiled"),
             CompositeActor->GetTopLevelComponents().Num(),
             4);
+
+        AMHCompositeActor* MissingPlanActor = World->SpawnActor<AMHCompositeActor>(
+            AMHCompositeActor::StaticClass(), FTransform::Identity, SpawnParameters);
+        const TArray<TObjectPtr<UActorComponent>> ComponentsBeforeFailedBreak = CompositeActor->GetDerivedComponents();
+        TArray<AActor*> RejectedBreakActors;
+        Error.Reset();
+        bPassed &= TestFalse(
+            TEXT("Break rejects the full selection when one placement has no cached plan"),
+            Subsystem->BreakComposites({CompositeActor, MissingPlanActor}, RejectedBreakActors, Warnings, Error));
+        bPassed &= TestTrue(TEXT("missing-plan rejection names resolved plan"), Error.Contains(TEXT("resolved plan")));
+        bPassed &= TestTrue(TEXT("failed selection preflight spawns nothing"), RejectedBreakActors.IsEmpty());
+        bPassed &= TestFalse(TEXT("failed selection preflight preserves first actor"), CompositeActor->IsActorBeingDestroyed());
+        bPassed &= TestTrue(TEXT("failed selection preflight preserves preview components"),
+            ComponentsBeforeFailedBreak == CompositeActor->GetDerivedComponents());
+        if (MissingPlanActor != nullptr) MissingPlanActor->Destroy();
+
         Error.Reset();
         bPassed &= TestTrue(
             TEXT("Edit unlocks top-level transforms"),
@@ -270,8 +328,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
                     KINDA_SMALL_NUMBER));
         }
 
-        UMHCompositeAsset* ParentLocalAsset = NewObject<UMHCompositeAsset>(GetTransientPackage());
-        ParentLocalAsset->LogicalName = TEXT("parent_local_group_") + Suffix;
+        UMHCompositeAsset* ParentLocalAsset = MHNewLevelOperationFixture(TEXT("parent_local_group_") + Suffix);
         FMHCompositeDocument ParentLocalDocument;
         FMHCompositeNode ParentNode;
         ParentNode.Kind = EMHCompositeNodeKind::Group;
@@ -287,7 +344,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         Error.Reset();
         bPassed &= TestTrue(
             TEXT("parent-local group fixture applies"),
-            MHApplyCompositeV5(*ParentLocalAsset, ParentLocalDocument, Error));
+            MHApplyLevelOperationFixture(*ParentLocalAsset, ParentLocalDocument, Error));
         AMHCompositeActor* ParentLocalActor = World->SpawnActor<AMHCompositeActor>(
             AMHCompositeActor::StaticClass(),
             FTransform::Identity,
@@ -316,7 +373,107 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
             ParentLocalBreakActors[0]->Destroy();
         }
 
+        UMHCompositeAsset* ShearAsset = MHNewLevelOperationFixture(TEXT("break_shear_") + Suffix);
+        FMHCompositeDocument ShearDocument;
+        FMHCompositeNode RotatedMesh = MeshNode;
+        RotatedMesh.Transform.RotationQuat = FQuat(FRotator(0.0, 45.0, 0.0));
+        ShearDocument.Nodes.Add(RotatedMesh);
+        Error.Reset();
+        bPassed &= TestTrue(TEXT("Break shear fixture applies"), MHApplyLevelOperationFixture(*ShearAsset, ShearDocument, Error));
+        AMHCompositeActor* ShearActor = World->SpawnActor<AMHCompositeActor>(
+            AMHCompositeActor::StaticClass(), FTransform::Identity, SpawnParameters);
+        ShearActor->SetCompositeAsset(ShearAsset);
+        bPassed &= TestNotNull(TEXT("shear fixture starts with a valid plan"), ShearActor->GetResolvedPlan());
+        const TArray<TObjectPtr<UActorComponent>> ComponentsBeforeShear = ShearActor->GetDerivedComponents();
+        ShearActor->SetActorScale3D(FVector(2.0, 1.0, 1.0));
+        Error.Reset();
+        bPassed &= TestFalse(TEXT("Break rejects actor-world shear before mutation"),
+            Subsystem->BreakComposites({CompositeActor, ShearActor}, RejectedBreakActors, Warnings, Error));
+        bPassed &= TestTrue(TEXT("Break shear uses the registered representability code"),
+            Error.StartsWith(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM:")));
+        bPassed &= TestTrue(TEXT("shear rejection spawns no partial leaves"), RejectedBreakActors.IsEmpty());
+        bPassed &= TestFalse(TEXT("shear rejection preserves earlier selected actor"), CompositeActor->IsActorBeingDestroyed());
+        bPassed &= TestTrue(TEXT("shear rejection preserves original derived components"),
+            ComponentsBeforeShear == ShearActor->GetDerivedComponents());
+        ShearActor->Destroy();
+
+        const FString SelectedNestedName = TEXT("break_selected_nested_") + Suffix;
+        UPackage* SelectedNestedPackage = CreatePackage(*FString::Printf(
+            TEXT("/Game/MH/Generated/Composites/%s"), *SelectedNestedName));
+        UMHCompositeAsset* SelectedNestedAsset = NewObject<UMHCompositeAsset>(
+            SelectedNestedPackage, FName(*SelectedNestedName), RF_Public | RF_Standalone);
+        SelectedNestedAsset->LogicalName = SelectedNestedName;
+        FMHCompositeDocument SelectedNestedDocument;
+        FMHCompositeNode SelectedNestedMesh = MeshNode;
+        SelectedNestedMesh.Name = TEXT("selected_nested_leaf");
+        SelectedNestedMesh.Transform.TranslationCm = FVector(25.0, 0.0, 0.0);
+        SelectedNestedDocument.Nodes.Add(SelectedNestedMesh);
+        Error.Reset();
+        bPassed &= TestTrue(TEXT("selected nested definition fixture applies"),
+            MHApplyLevelOperationFixture(*SelectedNestedAsset, SelectedNestedDocument, Error));
+        UMHCompositeAsset* RandomRootAsset = MHNewLevelOperationFixture(TEXT("break_random_root_") + Suffix);
+        FMHCompositeDocument RandomDocument;
+        FMHCompositeNode RandomNode;
+        RandomNode.Kind = EMHCompositeNodeKind::Random;
+        RandomNode.Name = TEXT("random_wrapper");
+        RandomNode.Transform.TranslationCm = FVector(100.0, 0.0, 0.0);
+        FMHCompositeOption SelectedOption;
+        SelectedOption.Kind = EMHCompositeOptionKind::Composite;
+        SelectedOption.Resource = SelectedNestedName;
+        SelectedOption.Weight = 1.0f;
+        RandomNode.Options.Add(SelectedOption);
+        FMHCompositeOption UnselectedOption;
+        UnselectedOption.Kind = EMHCompositeOptionKind::Composite;
+        UnselectedOption.Resource = NestedResource;
+        UnselectedOption.Weight = 0.0f;
+        RandomNode.Options.Add(UnselectedOption);
+        RandomDocument.Nodes.Add(RandomNode);
+        Error.Reset();
+        bPassed &= TestTrue(TEXT("random Break definition fixture applies"),
+            MHApplyLevelOperationFixture(*RandomRootAsset, RandomDocument, Error));
+        AMHCompositeActor* RandomActor = World->SpawnActor<AMHCompositeActor>(
+            AMHCompositeActor::StaticClass(), FTransform(FVector(50.0, 0.0, 0.0)), SpawnParameters);
+        RandomActor->SetCompositeAsset(RandomRootAsset);
+        RandomActor->SetSeed(100);
+        const FMHResolvedCompositePlan* RandomPreviewPlan = RandomActor->GetResolvedPlan();
+        bPassed &= TestNotNull(TEXT("random nested preview resolves a cached plan"), RandomPreviewPlan);
+        if (RandomPreviewPlan != nullptr)
+        {
+            bPassed &= TestEqual(TEXT("random nested plan records one decision"), RandomPreviewPlan->Decisions.Num(), 1);
+            bPassed &= TestEqual(TEXT("random nested plan records one selected leaf"), RandomPreviewPlan->Leaves.Num(), 1);
+            bPassed &= TestTrue(TEXT("unselected nested option remains in source closure"),
+                RandomPreviewPlan->Closure.Resources.Contains(TEXT("composite:") + NestedResource));
+        }
+        const FString RandomSourceHash = RandomRootAsset->SourceHash;
+        TArray<AActor*> RandomBreakActors;
+        Error.Reset();
+        bPassed &= TestTrue(TEXT("Break consumes the nested random result without retaining wrappers"),
+            Subsystem->BreakComposites({RandomActor}, RandomBreakActors, Warnings, Error));
+        bPassed &= TestEqual(TEXT("nested random Break emits only the selected mesh leaf"), RandomBreakActors.Num(), 1);
+        if (RandomBreakActors.Num() == 1)
+        {
+            bPassed &= TestTrue(TEXT("nested random Break preserves parent-local accumulation plus actor placement"),
+                RandomBreakActors[0]->GetActorLocation().Equals(FVector(175.0, 0.0, 0.0), KINDA_SMALL_NUMBER));
+            bPassed &= TestEqual(TEXT("nested random Break preserves leaf display identity"),
+                RandomBreakActors[0]->GetActorLabel(false), FString(TEXT("selected_nested_leaf")));
+            AStaticMeshActor* SelectedMeshActor = Cast<AStaticMeshActor>(RandomBreakActors[0]);
+            bPassed &= TestTrue(TEXT("nested random Break preserves selected mesh resource"),
+                SelectedMeshActor != nullptr && SelectedMeshActor->GetStaticMeshComponent()->GetStaticMesh() == MeshAsset);
+            RandomBreakActors[0]->Destroy();
+        }
+        bPassed &= TestEqual(TEXT("random Break leaves applied source receipt untouched"), RandomRootAsset->SourceHash, RandomSourceHash);
+        SelectedNestedAsset->ClearFlags(RF_Public | RF_Standalone);
+        SelectedNestedAsset->MarkAsGarbage();
+
         TArray<AActor*> BrokenActors;
+        TArray<FTransform> ExpectedBreakTransforms;
+        if (const FMHResolvedCompositePlan* PreviewPlan = CompositeActor->GetResolvedPlan())
+        {
+            for (const FMHResolvedCompositeLeaf& Leaf : PreviewPlan->Leaves)
+            {
+                ExpectedBreakTransforms.Add(FTransform(Leaf.WorldMatrix * CompositeActor->GetActorTransform().ToMatrixWithScale()));
+            }
+        }
         TArray<TWeakObjectPtr<UActorComponent>> DestroyedPlacementComponents;
         for (UActorComponent* Component : CompositeActor->GetDerivedComponents())
         {
@@ -324,9 +481,16 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         }
         Error.Reset();
         bPassed &= TestTrue(
-            TEXT("Break removes one composite layer"),
+            TEXT("Break materializes the complete resolved plan"),
             Subsystem->BreakComposites({CompositeActor}, BrokenActors, Warnings, Error));
-        bPassed &= TestEqual(TEXT("Break creates every authored placement actor"), BrokenActors.Num(), 4);
+        bPassed &= TestEqual(TEXT("Break creates only resolved mesh and actor leaves"), BrokenActors.Num(), 3);
+        bPassed &= TestEqual(TEXT("Break and cached preview have identical leaf counts"), BrokenActors.Num(), ExpectedBreakTransforms.Num());
+        for (int32 Index = 0; Index < BrokenActors.Num() && Index < ExpectedBreakTransforms.Num(); ++Index)
+        {
+            bPassed &= TestTrue(TEXT("Break consumes cached leaf matrices in plan order"),
+                BrokenActors[Index]->GetActorTransform().Equals(ExpectedBreakTransforms[Index], KINDA_SMALL_NUMBER));
+        }
+        bPassed &= TestEqual(TEXT("Break leaves applied SourceHash untouched"), Asset->SourceHash, BeforeRefreshSourceHash);
         MHRebuildAllLoadedCompositeActors();
         for (const TWeakObjectPtr<UActorComponent>& Component : DestroyedPlacementComponents)
         {
@@ -339,11 +503,12 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         {
             if (BrokenActor != nullptr)
             {
+                bPassed &= TestFalse(TEXT("Break leaves no nested composite wrapper"), BrokenActor->IsA<AMHCompositeActor>());
                 ActorsByLabel.Add(BrokenActor->GetActorLabel(false), BrokenActor);
             }
         }
         bPassed &= TestTrue(TEXT("Break restores authored mesh name"), ActorsByLabel.Contains(TEXT("authored_mesh")));
-        bPassed &= TestTrue(TEXT("Break restores authored nested-composite name"), ActorsByLabel.Contains(TEXT("authored_nested")));
+        bPassed &= TestFalse(TEXT("empty nested composite has no resolved leaf"), ActorsByLabel.Contains(TEXT("authored_nested")));
         bPassed &= TestTrue(TEXT("Break falls back to mesh resource name"), ActorsByLabel.Contains(MeshResource));
         if (AActor** AuthoredActor = ActorsByLabel.Find(TEXT("authored_actor")))
         {
@@ -359,6 +524,9 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         }
     }
 
+    TArray<FString> SourceFiles;
+    IFileManager::Get().FindFilesRecursive(SourceFiles, *SourceRoot, TEXT("*"), true, false, false);
+    bPassed &= TestTrue(TEXT("Break and derived editing tests publish no source files"), SourceFiles.IsEmpty());
     World->DestroyWorld(false);
     Settings->SourceRoot = PreviousRoot;
     Settings->ActorClassRegistry = PreviousRegistry;

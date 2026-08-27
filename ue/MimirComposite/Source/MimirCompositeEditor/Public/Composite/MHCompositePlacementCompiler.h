@@ -1,38 +1,39 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Source/MHSourceResolver.h"
+#include "Random/MHRandomStream.h"
 
 class AActor;
 class UActorComponent;
-class UMHCompositeAsset;
 class UMHCompositeSettings;
 class USceneComponent;
 
 namespace UE::MimirComposite
 {
-
-/** Tolerant generated-asset view described by §6.1; strict import probing is separate. */
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
 {
     TArray<TObjectPtr<UActorComponent>> Components;
     TArray<TObjectPtr<USceneComponent>> TopLevelComponents;
-    TSet<FMHResourceKey> Dependencies;
+    TArray<TObjectPtr<USceneComponent>> LeafComponents;
     TArray<FString> Warnings;
     FString Error;
-
     bool Succeeded() const { return Error.IsEmpty(); }
 };
 
-/**
- * Compile one managed asset into a transient placement view. Missing generated
- * endpoints become visible placeholders and remain in Dependencies so a
- * same-name resource notification can heal the view.
- */
+/** Reconcile only plan leaves; stable components survive seed-only changes. */
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(
-    AActor& Target,
-    const UMHCompositeAsset* Asset,
-    const FString& ExpectedLogicalName,
-    const UMHCompositeSettings& Settings);
+    AActor& Target, const FMHResolvedCompositePlan& Plan,
+    const FMHRandomComposite& RootDefinition, const UMHCompositeSettings& Settings,
+    TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents);
 
+/** No resolution or signature: explicit diagnostics when no applied plan is available. */
+MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHBuildCompositeDiagnosticView(
+    AActor& Target, const FString& Label, const FString& Diagnostic);
+
+/** Move cached plan matrices without consuming random draws. */
+MIMIRCOMPOSITEEDITOR_API bool MHUpdateCompositePlacementBasis(
+    AActor& Target, const FMHResolvedCompositePlan& Plan,
+    const FMHRandomComposite& RootDefinition,
+    TConstArrayView<TObjectPtr<USceneComponent>> Handles,
+    TConstArrayView<TObjectPtr<USceneComponent>> Leaves, FString& OutError);
 } // namespace UE::MimirComposite

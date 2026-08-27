@@ -9,12 +9,15 @@
 #include "Diagnostics/MHSourceOperations.h"
 #include "Editor.h"
 #include "Elements/Framework/TypedElementSelectionSet.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Index/MHProjectResourceIndex.h"
 #include "LevelEditorMenuContext.h"
 #include "Logging/MessageLog.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
+#include "Random/MHRandomStream.h"
+#include "ScopedTransaction.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
@@ -434,6 +437,286 @@ void ExecuteRebuildSelected(const TArray<TWeakObjectPtr<AMHCompositeActor>>& Act
         Error);
 }
 
+bool ResolveSeedCommandActors(
+    const TArray<TWeakObjectPtr<AMHCompositeActor>>& ActorSnapshot,
+    const bool bMutating,
+    TArray<AMHCompositeActor*>& OutActors,
+    FString& OutError)
+{
+    if (!ResolveActorSnapshot(ActorSnapshot, OutActors))
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the complete MH Composite selection is no longer available");
+        return false;
+    }
+    for (const AMHCompositeActor* Actor : OutActors)
+    {
+        if (Actor->IsTemplate() || Actor->IsActorBeingDestroyed())
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: seed command requires live placed actors: %s"),
+                *Actor->GetPathName());
+            return false;
+        }
+        if (bMutating && Actor->IsPlacementEditMode())
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel Composite Edit before changing seeds: %s"),
+                *Actor->GetPathName());
+            return false;
+        }
+    }
+    if (bMutating && GEditor == nullptr)
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: editor is unavailable for a seed transaction");
+        return false;
+    }
+    const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    if (bMutating && Subsystem != nullptr && Subsystem->IsEditingComposite())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel the active Composite Edit before changing seeds");
+        return false;
+    }
+    return true;
+}
+
+// Consume the entire clipboard string. Prefix parsers would accept an overflow,
+// decimal fraction, or an otherwise unrelated clipboard value as a valid Seed.
+bool ParseClipboardSeed(const FString& Text, int32& OutSeed)
+{
+    if (Text.IsEmpty()) return false;
+    const bool bNegative = Text[0] == TEXT('-');
+    int32 Index = bNegative || Text[0] == TEXT('+') ? 1 : 0;
+    if (Index == Text.Len()) return false;
+    const uint64 Limit = bNegative ? static_cast<uint64>(MAX_int32) + 1u : MAX_int32;
+    uint64 Magnitude = 0;
+    for (; Index < Text.Len(); ++Index)
+    {
+        const TCHAR Character = Text[Index];
+        if (Character < TEXT('0') || Character > TEXT('9')) return false;
+        const uint64 Digit = static_cast<uint64>(Character - TEXT('0'));
+        if (Magnitude > (Limit - Digit) / 10u) return false;
+        Magnitude = Magnitude * 10u + Digit;
+    }
+    OutSeed = static_cast<int32>(bNegative ? -static_cast<int64>(Magnitude) : static_cast<int64>(Magnitude));
+    return true;
+}
+
+enum class EMHSeedCommand : uint8
+{
+    Reseed,
+    Individual,
+    Equal,
+    Paste,
+    Lock,
+    Unlock,
+    KeepOnDuplicate
+};
+
+FText SeedCommandTitle(const EMHSeedCommand Command)
+{
+    switch (Command)
+    {
+    case EMHSeedCommand::Reseed: return LOCTEXT("ReseedCompositePage", "Reseed MH Composite");
+    case EMHSeedCommand::Individual: return LOCTEXT("IndividualSeedPage", "Randomize Selected: Individual");
+    case EMHSeedCommand::Equal: return LOCTEXT("EqualSeedPage", "Randomize Selected: Equal");
+    case EMHSeedCommand::Paste: return LOCTEXT("PasteSeedPage", "Paste MH Composite Seed");
+    case EMHSeedCommand::Lock: return LOCTEXT("LockSeedPage", "Lock MH Composite Seed");
+    case EMHSeedCommand::Unlock: return LOCTEXT("UnlockSeedPage", "Unlock MH Composite Seed");
+    case EMHSeedCommand::KeepOnDuplicate: return LOCTEXT("KeepSeedPage", "Keep Seed on Duplicate");
+    }
+    return FText::GetEmpty();
+}
+
+void ExecuteSeedCommand(
+    const TArray<TWeakObjectPtr<AMHCompositeActor>>& ActorSnapshot,
+    const EMHSeedCommand Command)
+{
+    const FText Page = SeedCommandTitle(Command);
+    TArray<AMHCompositeActor*> Actors;
+    FString Error;
+    if (!ResolveSeedCommandActors(ActorSnapshot, true, Actors, Error))
+    {
+        NotifyOperation(Page, LOCTEXT("SeedCommandFailed", "MH seed command failed"), {}, Error);
+        return;
+    }
+
+    TArray<int32> NewSeeds;
+    NewSeeds.Reserve(Actors.Num());
+    if (Command == EMHSeedCommand::Paste)
+    {
+        FString Clipboard;
+        int32 ClipboardSeed = 0;
+        FPlatformApplicationMisc::ClipboardPaste(Clipboard);
+        if (Actors.Num() != 1 || !ParseClipboardSeed(Clipboard, ClipboardSeed))
+        {
+            Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Paste Seed requires one MH Composite actor and a complete decimal int32 in the clipboard");
+            NotifyOperation(Page, LOCTEXT("SeedCommandFailed", "MH seed command failed"), {}, Error);
+            return;
+        }
+        NewSeeds.Add(ClipboardSeed);
+    }
+    else if (Command == EMHSeedCommand::Individual)
+    {
+        for (const AMHCompositeActor* Actor : Actors)
+        {
+            int32 NewSeed;
+            do
+            {
+                NewSeed = AMHCompositeActor::GenerateAutoSeed(Actor->GetSeed());
+            }
+            while (NewSeeds.Contains(NewSeed));
+            NewSeeds.Add(NewSeed);
+        }
+    }
+    else if (Command == EMHSeedCommand::Equal)
+    {
+        TArray<int32> PreviousSeeds;
+        for (const AMHCompositeActor* Actor : Actors) PreviousSeeds.Add(Actor->GetSeed());
+        int32 NewSeed;
+        do
+        {
+            NewSeed = AMHCompositeActor::GenerateAutoSeed();
+        }
+        while (PreviousSeeds.Contains(NewSeed));
+        NewSeeds.Init(NewSeed, Actors.Num());
+    }
+
+    // All selection/clipboard validation and seed allocation precedes the first
+    // Modify. One command is one undo step, including the multi-actor variants.
+    {
+        const FScopedTransaction Transaction(Page);
+        for (int32 Index = 0; Index < Actors.Num(); ++Index)
+        {
+            AMHCompositeActor* Actor = Actors[Index];
+            Actor->Modify();
+            switch (Command)
+            {
+            case EMHSeedCommand::Reseed:
+                Actor->Reseed();
+                break;
+            case EMHSeedCommand::Individual:
+            case EMHSeedCommand::Equal:
+            case EMHSeedCommand::Paste:
+                Actor->SetSeed(NewSeeds[Index]);
+                break;
+            case EMHSeedCommand::Lock:
+            case EMHSeedCommand::KeepOnDuplicate:
+                Actor->SetAutoSeed(false);
+                break;
+            case EMHSeedCommand::Unlock:
+                Actor->SetAutoSeed(true);
+                break;
+            }
+            if ((Command == EMHSeedCommand::Reseed || !NewSeeds.IsEmpty()) &&
+                !Actor->GetLastPlacementError().IsEmpty())
+            {
+                Error += FString::Printf(TEXT("%s: %s\n"),
+                    *Actor->GetPathName(), *Actor->GetLastPlacementError());
+            }
+        }
+    }
+    GEditor->RedrawLevelEditingViewports();
+    NotifyOperation(
+        Page,
+        Error.IsEmpty()
+            ? FText::Format(LOCTEXT("SeedCommandComplete", "Updated {0} MH Composite placements"), FText::AsNumber(Actors.Num()))
+            : LOCTEXT("SeedResolutionFailed", "MH seed command encountered a placement error; see the Mimir log"),
+        {},
+        Error);
+}
+
+void ExecuteCopySeed(const TArray<TWeakObjectPtr<AMHCompositeActor>>& ActorSnapshot)
+{
+    TArray<AMHCompositeActor*> Actors;
+    FString Error;
+    if (!ResolveSeedCommandActors(ActorSnapshot, false, Actors, Error) || Actors.Num() != 1)
+    {
+        if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Copy Seed requires exactly one MH Composite actor");
+    }
+    else
+    {
+        FPlatformApplicationMisc::ClipboardCopy(*FString::Printf(TEXT("%d"), Actors[0]->GetSeed()));
+    }
+    NotifyOperation(
+        LOCTEXT("CopySeedPage", "Copy MH Composite Seed"),
+        Error.IsEmpty() ? LOCTEXT("SeedCopied", "MH Composite seed copied") : LOCTEXT("CopySeedFailed", "Copy MH Composite Seed failed"),
+        {},
+        Error);
+}
+
+void ExecuteInspectResolvedPlan(
+    const TArray<TWeakObjectPtr<AMHCompositeActor>>& ActorSnapshot,
+    const bool bShowTrace)
+{
+    const FText Page = bShowTrace
+        ? LOCTEXT("DecisionTracePage", "MH Composite Decision Trace")
+        : LOCTEXT("ResolvedChoicesPage", "MH Composite Resolved Choices");
+    FMessageLog Log(TEXT("Mimir"));
+    Log.NewPage(Page);
+    TArray<AMHCompositeActor*> Actors;
+    FString Error;
+    if (!ResolveSeedCommandActors(ActorSnapshot, false, Actors, Error))
+    {
+        AddDiagnostic(Log, Error);
+        Log.Notify(Page, EMessageSeverity::Error, true);
+        return;
+    }
+    bool bHasErrors = false;
+    for (const AMHCompositeActor* Actor : Actors)
+    {
+        // Inspection never resolves a new result or guesses a seed for an asset.
+        const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
+        if (Plan == nullptr || Plan->Seed != Actor->GetSeed() || !Actor->GetLastPlacementError().IsEmpty())
+        {
+            bHasErrors = true;
+            Log.Error(FText::FromString(FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: no current resolved plan for %s: %s"),
+                *Actor->GetPathName(), *Actor->GetLastPlacementError())));
+            continue;
+        }
+        Log.Info(FText::FromString(FString::Printf(
+            TEXT("%s | Seed=%d | Resolver=%s | ResolvedSignature=%s | ClosureHash=%s"),
+            *Actor->GetPathName(), Plan->Seed, MHRandomResolverTag,
+            *Plan->ResolvedSignature, *Plan->Closure.ClosureHash)));
+        for (const FMHResolvedCompositeDecision& Decision : Plan->Decisions)
+        {
+            TArray<FString> Weights;
+            for (const float Weight : Decision.Weights)
+            {
+                Weights.Add(FString::Printf(TEXT("%.9g"), static_cast<double>(Weight)));
+            }
+            Log.Info(FText::FromString(FString::Printf(
+                TEXT("choice %s | option_index=%d | weights=[%s] | raw_u32=%u | unit=%.17g | total=%.17g | target=%.17g"),
+                *Decision.NodePath, Decision.OptionIndex, *FString::Join(Weights, TEXT(", ")),
+                Decision.RawU32, Decision.Unit, Decision.Total, Decision.Target)));
+        }
+        if (bShowTrace)
+        {
+            for (int32 Index = 0; Index < Plan->Draws.Num(); ++Index)
+            {
+                const FMHResolvedCompositeDraw& Draw = Plan->Draws[Index];
+                Log.Info(FText::FromString(FString::Printf(
+                    TEXT("draw[%d] %s | role=%s | raw_u32=%u | unit=%.17g | sample=%.17g"),
+                    Index, *Draw.NodePath, *Draw.Role, Draw.RawU32, Draw.Unit, Draw.Sample)));
+            }
+        }
+        for (const FMHResolvedCompositeLeaf& Leaf : Plan->Leaves)
+        {
+            const TCHAR* Kind = Leaf.Kind == EMHRandomSemanticKind::Mesh ? TEXT("mesh") : TEXT("actor");
+            Log.Info(FText::FromString(FString::Printf(
+                TEXT("leaf %s -> %s:%s | world_matrix=%s"),
+                *Leaf.Origin, Kind, *Leaf.Resource,
+                *Leaf.WorldMatrix.ToString())));
+        }
+        Log.Info(FText::FromString(FString::Printf(
+            TEXT("%d decisions, %d draws, %d leaves | SelectedDependencies=[%s]"),
+            Plan->Decisions.Num(), Plan->Draws.Num(), Plan->Leaves.Num(),
+            *FString::Join(Plan->SelectedDependencies, TEXT(", ")))));
+    }
+    Log.Notify(Page, bHasErrors ? EMessageSeverity::Error : EMessageSeverity::Info, true);
+    Log.Open(EMessageSeverity::Info);
+}
+
 enum class EMHDiagnosticView : uint8
 {
     Duplicates,
@@ -700,6 +983,74 @@ void AddLevelAction(
     Section.AddMenuEntry(Name, Label, Tooltip, FSlateIcon(), Action);
 }
 
+void AddCompositeSeedActions(
+    UToolMenu* Menu,
+    const TArray<TWeakObjectPtr<AMHCompositeActor>>& Actors)
+{
+    FToolMenuSection& Seeds = Menu->AddSection(
+        TEXT("MHCompositeSeedActions"), LOCTEXT("CompositeSeedActions", "Placement Seed"));
+    auto AddSeedCommand = [&Seeds, &Actors](
+        const FName Name, const FText& Label, const FText& Tooltip, const EMHSeedCommand Command)
+    {
+        AddLevelAction(Seeds, Name, Label, Tooltip,
+            FToolMenuExecuteAction::CreateLambda([Actors, Command](const FToolMenuContext&)
+            {
+                ExecuteSeedCommand(Actors, Command);
+            }));
+    };
+    if (Actors.Num() == 1)
+    {
+        AddSeedCommand(TEXT("MHReseedComposite"), LOCTEXT("ReseedComposite", "Reseed"),
+            LOCTEXT("ReseedCompositeTip", "Assign a new nonzero seed, including when automatic duplicate reseeding is locked."),
+            EMHSeedCommand::Reseed);
+        AddLevelAction(Seeds, TEXT("MHCopyCompositeSeed"), LOCTEXT("CopyCompositeSeed", "Copy Seed"),
+            LOCTEXT("CopyCompositeSeedTip", "Copy this placement's signed int32 seed to the clipboard."),
+            FToolMenuExecuteAction::CreateLambda([Actors](const FToolMenuContext&)
+            {
+                ExecuteCopySeed(Actors);
+            }));
+        AddSeedCommand(TEXT("MHPasteCompositeSeed"), LOCTEXT("PasteCompositeSeed", "Paste Seed"),
+            LOCTEXT("PasteCompositeSeedTip", "Apply an exact decimal int32 from the clipboard. Zero is valid; duplication policy is unchanged."),
+            EMHSeedCommand::Paste);
+    }
+    else
+    {
+        AddSeedCommand(TEXT("MHRandomizeCompositeSeedsIndividual"),
+            LOCTEXT("IndividualCompositeSeeds", "Randomize Selected: Individual"),
+            LOCTEXT("IndividualCompositeSeedsTip", "Assign a distinct new nonzero seed to every selected composite, in one undo step."),
+            EMHSeedCommand::Individual);
+        AddSeedCommand(TEXT("MHRandomizeCompositeSeedsEqual"),
+            LOCTEXT("EqualCompositeSeeds", "Randomize Selected: Equal"),
+            LOCTEXT("EqualCompositeSeedsTip", "Assign one new nonzero seed to all selected composites, in one undo step."),
+            EMHSeedCommand::Equal);
+    }
+    AddSeedCommand(TEXT("MHLockCompositeSeed"), LOCTEXT("LockCompositeSeed", "Lock Seed"),
+        LOCTEXT("LockCompositeSeedTip", "Keep the seed on duplicate. Explicit Reseed and Paste Seed remain available."),
+        EMHSeedCommand::Lock);
+    AddSeedCommand(TEXT("MHUnlockCompositeSeed"), LOCTEXT("UnlockCompositeSeed", "Unlock Seed"),
+        LOCTEXT("UnlockCompositeSeedTip", "Restore automatic new seeds on duplication without changing the current seed."),
+        EMHSeedCommand::Unlock);
+    AddSeedCommand(TEXT("MHKeepCompositeSeedOnDuplicate"),
+        LOCTEXT("KeepCompositeSeedOnDuplicate", "Keep Seed on Duplicate"),
+        LOCTEXT("KeepCompositeSeedOnDuplicateTip", "Explicitly preserve each selected actor's current seed when it is duplicated."),
+        EMHSeedCommand::KeepOnDuplicate);
+
+    FToolMenuSection& Inspection = Menu->AddSection(
+        TEXT("MHCompositeResolvedPlanActions"), LOCTEXT("CompositeResolvedPlanActions", "Resolved Placement"));
+    AddLevelAction(Inspection, TEXT("MHShowResolvedChoices"), LOCTEXT("ShowResolvedChoices", "Show Resolved Choices"),
+        LOCTEXT("ShowResolvedChoicesTip", "Show the current preview plan's signature, ordered choices, weights and selected leaves in the Mimir log."),
+        FToolMenuExecuteAction::CreateLambda([Actors](const FToolMenuContext&)
+        {
+            ExecuteInspectResolvedPlan(Actors, false);
+        }));
+    AddLevelAction(Inspection, TEXT("MHShowDecisionTrace"), LOCTEXT("ShowDecisionTrace", "Show Decision Trace"),
+        LOCTEXT("ShowDecisionTraceTip", "Show the current preview plan's ordered raw draws and profile samples without resolving again."),
+        FToolMenuExecuteAction::CreateLambda([Actors](const FToolMenuContext&)
+        {
+            ExecuteInspectResolvedPlan(Actors, true);
+        }));
+}
+
 void FillCompositeOptionsSubMenu(UToolMenu* Menu)
 {
     if (Menu == nullptr)
@@ -744,7 +1095,7 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
     if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())
     {
         AddLevelAction(Section, TEXT("MHBreakComposite"), LOCTEXT("BreakComposite", "Break Composite"),
-            LOCTEXT("BreakCompositeTip", "Replace the selected composite instances with one authored placement layer."),
+            LOCTEXT("BreakCompositeTip", "Materialize each selected instance's resolved plan as mesh and gameplay actors, dissolving nested composites and groups."),
             FToolMenuExecuteAction::CreateLambda([CompositeActors](const FToolMenuContext&)
             {
                 ExecuteBreakComposite(CompositeActors);
@@ -765,6 +1116,10 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
             {
                 ExecuteBeginEditComposite(Actor);
             }));
+    }
+    if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())
+    {
+        AddCompositeSeedActions(Menu, CompositeActors);
     }
 }
 
