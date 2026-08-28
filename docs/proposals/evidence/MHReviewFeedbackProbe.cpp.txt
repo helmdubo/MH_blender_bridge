@@ -1,0 +1,299 @@
+#include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositePreviewCache.h"
+#include "Composite/MHCompositeProtocol.h"
+#include "Containers/Ticker.h"
+#include "Editor.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "Misc/AutomationTest.h"
+#include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
+#include "Modules/ModuleManager.h"
+#include "Random/MHRandomStream.h"
+#include "Source/MHPayloadHashes.h"
+#include "Source/MHSourceImporter.h"
+#include "StaticMesh/MHStaticMeshImportData.h"
+#include "UObject/AssetRegistryTagsContext.h"
+#include "UObject/Object.h"
+#include "UObject/Package.h"
+#include "UObject/UObjectGlobals.h"
+
+namespace UE::MimirComposite::Tests
+{
+namespace
+{
+
+FMHResourceKey ReviewFeedbackKey(const EMHResourceKind Kind, const FString& Name)
+{
+    FMHResourceKey Key;
+    Key.Kind = Kind;
+    Key.LogicalName = Name;
+    return Key;
+}
+
+FMHCompositeDocument ReviewFeedbackDocument(const FString& MeshName)
+{
+    FMHCompositeDocument Document;
+    FMHCompositeNode Node;
+    Node.Kind = EMHCompositeNodeKind::Mesh;
+    Node.Resource = MeshName;
+    Node.Name = TEXT("review_leaf");
+    Node.Transform.TranslationCm = FVector(25.0, 0.0, 0.0);
+    Document.Nodes.Add(Node);
+    return Document;
+}
+
+// In-memory applied assets only: nothing is saved to Content or a source root.
+// Run this diagnostic in the isolated review host, never in the owner session.
+struct FReviewFeedbackFixture
+{
+    FAutomationTestBase& Test;
+    FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    UWorld* World = nullptr;
+    UMHSourceImporter* Importer = nullptr;
+    TArray<UObject*> Assets;
+
+    explicit FReviewFeedbackFixture(FAutomationTestBase& InTest) : Test(InTest)
+    {
+        Importer = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHSourceImporter>() : nullptr;
+        // Source startup/watcher work must not heal a placement while the test
+        // advances only the cache ticker. This is the existing test-only seam.
+        if (Importer != nullptr) Importer->SetPIEActiveForTests(true);
+        MHStartupCompositePreviewCache();
+        World = UWorld::CreateWorld(EWorldType::Editor, false);
+    }
+
+    ~FReviewFeedbackFixture()
+    {
+        if (World != nullptr) World->DestroyWorld(false);
+        for (UObject* Asset : Assets)
+        {
+            if (!IsValid(Asset)) continue;
+            FAssetRegistryModule::AssetDeleted(Asset);
+            Asset->GetOutermost()->SetDirtyFlag(false);
+            Asset->ClearFlags(RF_Public | RF_Standalone);
+            Asset->MarkAsGarbage();
+        }
+        if (Importer != nullptr) Importer->SetPIEActiveForTests(false);
+    }
+
+    bool Ready()
+    {
+        return Test.TestNotNull(TEXT("isolated review world exists"), World) &&
+            Test.TestNotNull(TEXT("importer lifecycle is paused for the diagnostic"), Importer);
+    }
+
+    FString Name(const TCHAR* Stem) const { return FString(Stem) + TEXT("_") + Suffix; }
+
+    bool Apply(UMHCompositeAsset& Asset, const FMHCompositeDocument& Document)
+    {
+        FString Error;
+        TArray<uint8> Bytes;
+        if (!MHApplyCompositeV5(Asset, Document, Error) || !MHWriteCanonicalCompositeV5(Document, Bytes, Error))
+        {
+            Test.AddError(TEXT("review feedback fixture apply: ") + Error);
+            return false;
+        }
+        Asset.SourceRelativePath = Asset.LogicalName + TEXT(".composite");
+        Asset.SourceHash = MHRawPayloadHash(Bytes);
+        Asset.AppliedHash = Asset.SourceHash;
+        return true;
+    }
+
+    UMHCompositeAsset* Composite(const FString& LogicalName, const FMHCompositeDocument& Document)
+    {
+        const FString PackageName = TEXT("/Game/MH/Generated/Composites/") + LogicalName;
+        if (FindObject<UObject>(nullptr, *(PackageName + TEXT(".") + LogicalName)) != nullptr)
+        {
+            Test.AddError(TEXT("review refuses to replace an occupied composite: ") + LogicalName);
+            return nullptr;
+        }
+        UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(CreatePackage(*PackageName),
+            FName(*LogicalName), RF_Public | RF_Standalone);
+        Assets.Add(Asset);
+        Asset->LogicalName = LogicalName;
+        if (!Apply(*Asset, Document)) return nullptr;
+        FAssetRegistryModule::AssetCreated(Asset);
+        return Asset;
+    }
+
+    UStaticMesh* Mesh(const FString& LogicalName)
+    {
+        const FString PackageName = TEXT("/Game/MH/Generated/Meshes/") + LogicalName;
+        if (FindObject<UObject>(nullptr, *(PackageName + TEXT(".") + LogicalName)) != nullptr)
+        {
+            Test.AddError(TEXT("review refuses to replace an occupied mesh: ") + LogicalName);
+            return nullptr;
+        }
+        UStaticMesh* Asset = NewObject<UStaticMesh>(CreatePackage(*PackageName),
+            FName(*LogicalName), RF_Public | RF_Standalone);
+        Assets.Add(Asset);
+        UMHStaticMeshImportData* Receipt = NewObject<UMHStaticMeshImportData>(Asset);
+        Receipt->LogicalName = LogicalName;
+        Receipt->SourceRelativePath = LogicalName + TEXT(".mesh.fbx");
+        Receipt->SourceHash = MHRawPayloadHash(TArray<uint8>{0x6d, 0x68, 0x35});
+        Receipt->ImporterVersion = MHStaticMeshImporterVersion;
+        Asset->SetAssetImportData(Receipt);
+        FAssetRegistryModule::AssetCreated(Asset);
+        return Asset;
+    }
+
+    AMHCompositeActor* Spawn(UMHCompositeAsset& Asset)
+    {
+        FActorSpawnParameters Parameters;
+        Parameters.ObjectFlags = RF_Transactional | RF_Transient;
+        AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>(AMHCompositeActor::StaticClass(),
+            FTransform(FVector(1000.0, 0.0, 0.0)), Parameters);
+        if (Test.TestNotNull(TEXT("review placement exists"), Actor))
+        {
+            Actor->SetSeed(100);
+            Actor->SetCompositeAsset(&Asset);
+        }
+        return Actor;
+    }
+};
+
+} // namespace
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHReviewOneRefreshPerTickProbe,
+    "Mimir.Audit.CacheFeedback.OneRefreshPerTick",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHReviewOneRefreshPerTickProbe::RunTest(const FString& Parameters)
+{
+    FReviewFeedbackFixture Fixture(*this);
+    if (!Fixture.Ready()) return false;
+    UStaticMesh* Mesh = Fixture.Mesh(Fixture.Name(TEXT("audit_feedback_mesh")));
+    if (!TestNotNull(TEXT("warm feedback mesh exists"), Mesh) ||
+        !TestFalse(TEXT("probe does not wait on mesh compilation"), Mesh->IsCompiling())) return false;
+    UMHCompositeAsset* Root = Fixture.Composite(Fixture.Name(TEXT("audit_feedback_root")), ReviewFeedbackDocument(Mesh->GetName()));
+    if (Root == nullptr) return false;
+    AMHCompositeActor* Actor = Fixture.Spawn(*Root);
+    if (Actor == nullptr || !TestNotNull(TEXT("feedback placement initially has a current plan"), Actor->GetResolvedPlan())) return false;
+    const FString InitialSignature = Actor->GetResolvedPlan()->ResolvedSignature;
+
+    IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    // Construct before installing the tag hook. Constructing FAssetData inside
+    // that hook would recursively collect tags instead of testing the ticker.
+    const FAssetData EventData(Root);
+    constexpr int32 InjectionLimit = 3;
+    int32 GraphAttempts = 0;
+    int32 Injections = 0;
+    const FDelegateHandle Handle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddLambda(
+        [Root, &Registry, &EventData, &GraphAttempts, &Injections](FAssetRegistryTagsContext Context)
+        {
+            // AppliedPlanReceipt uses the two-argument FAssetData constructor,
+            // hence Uncategorized. Registry snapshots use AssetRegistryQuery;
+            // they must not be counted as additional graph admission attempts.
+            if (Context.GetObject() != Root || Context.GetCaller() != EAssetRegistryTagsCaller::Uncategorized) return;
+            ++GraphAttempts;
+            if (Injections < InjectionLimit)
+            {
+                ++Injections;
+                Registry.OnAssetUpdatedOnDisk().Broadcast(EventData);
+            }
+        });
+    ON_SCOPE_EXIT { UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.Remove(Handle); };
+
+    MHInvalidateCompositePreviewCache();
+    const uint64 TriggerSerial = MHCompositePreviewInvalidationSerial();
+    bool bPassed = TestNull(TEXT("initial invalidation revokes the old plan"), Actor->GetResolvedPlan());
+    FTSTicker::GetCoreTicker().Tick(0.0f);
+    const uint64 FirstTickSerial = MHCompositePreviewInvalidationSerial();
+    AddInfo(FString::Printf(TEXT("FEEDBACK first_tick attempts=%d injections=%d cap=%d serial_before=%llu serial_after=%llu current=%d needs_refresh=%d"),
+        GraphAttempts, Injections, InjectionLimit, TriggerSerial, FirstTickSerial,
+        Actor->GetResolvedPlan() != nullptr, Actor->NeedsDeferredPreviewRefresh()));
+
+    // Intentionally RED on 6aeac4b: zero-delay callbacks added during a ticker
+    // callback run again in that SAME Tick. The capped injection prevents a hang.
+    bPassed &= TestEqual(TEXT("one Tick performs at most one graph refresh despite admission feedback"), GraphAttempts, 1);
+    bPassed &= TestEqual(TEXT("later injected events wait for later ticks"), Injections, 1);
+    bPassed &= TestTrue(TEXT("the injected event still invalidates instead of being suppressed"), FirstTickSerial > TriggerSerial);
+
+    // No unbounded wait: even an implementation that correctly yields between
+    // attempts needs only the remaining capped injections plus one clean pass.
+    int32 AdditionalTicks = 0;
+    for (; AdditionalTicks < InjectionLimit + 1 && Actor->GetResolvedPlan() == nullptr; ++AdditionalTicks)
+        FTSTicker::GetCoreTicker().Tick(0.0f);
+    AddInfo(FString::Printf(TEXT("FEEDBACK settled additional_ticks=%d attempts=%d injections=%d serial=%llu current=%d needs_refresh=%d"),
+        AdditionalTicks, GraphAttempts, Injections, MHCompositePreviewInvalidationSerial(),
+        Actor->GetResolvedPlan() != nullptr, Actor->NeedsDeferredPreviewRefresh()));
+    bPassed &= TestEqual(TEXT("feedback injection is finite and exhausts the exact cap"), Injections, InjectionLimit);
+    bPassed &= TestTrue(TEXT("three injected events need no more than four graph attempts"), GraphAttempts <= InjectionLimit + 1);
+    const FMHResolvedCompositePlan* Settled = Actor->GetResolvedPlan();
+    bPassed &= TestNotNull(TEXT("a clean attempt eventually restores the current plan"), Settled);
+    if (Settled != nullptr)
+        bPassed &= TestEqual(TEXT("feedback does not change the resolved result"), Settled->ResolvedSignature, InitialSignature);
+    bPassed &= TestFalse(TEXT("a settled admission is not a polling request"), Actor->NeedsDeferredPreviewRefresh());
+
+    const int32 SettledAttempts = GraphAttempts;
+    const uint64 SettledSerial = MHCompositePreviewInvalidationSerial();
+    FTSTicker::GetCoreTicker().Tick(0.0f);
+    FTSTicker::GetCoreTicker().Tick(0.0f);
+    bPassed &= TestEqual(TEXT("quiet ticks do not admit another graph"), GraphAttempts, SettledAttempts);
+    bPassed &= TestEqual(TEXT("quiet ticks do not generate an invalidation"), MHCompositePreviewInvalidationSerial(), SettledSerial);
+    AddInfo(TEXT("This deliberately injected feedback demonstrates scheduling amplification; it does not establish a natural event source in the owner scene."));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHReviewNewMissingKeyRecoveryProbe,
+    "Mimir.Audit.CacheFeedback.NewMissingKeyTargetedRecovery",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHReviewNewMissingKeyRecoveryProbe::RunTest(const FString& Parameters)
+{
+    FReviewFeedbackFixture Fixture(*this);
+    if (!Fixture.Ready()) return false;
+    UStaticMesh* OriginalMesh = Fixture.Mesh(Fixture.Name(TEXT("audit_recovery_original")));
+    if (!TestNotNull(TEXT("original managed mesh exists"), OriginalMesh)) return false;
+    UMHCompositeAsset* Root = Fixture.Composite(Fixture.Name(TEXT("audit_recovery_root")), ReviewFeedbackDocument(OriginalMesh->GetName()));
+    if (Root == nullptr) return false;
+    AMHCompositeActor* Actor = Fixture.Spawn(*Root);
+    if (Actor == nullptr || !TestNotNull(TEXT("recovery placement initially has a current plan"), Actor->GetResolvedPlan())) return false;
+    const FString InitialSignature = Actor->GetResolvedPlan()->ResolvedSignature;
+    const FTransform InitialBasis = Actor->GetActorTransform();
+    const FString MissingName = Fixture.Name(TEXT("audit_new_missing_mesh"));
+    const FMHResourceKey MissingKey = ReviewFeedbackKey(EMHResourceKind::StaticMesh, MissingName);
+    bool bPassed = TestFalse(TEXT("new key is absent from the previously admitted dependencies"), Actor->DependsOnResource(MissingKey));
+
+    if (!Fixture.Apply(*Root, ReviewFeedbackDocument(MissingName))) return false;
+    MHNotifyGeneratedResourceChanged(ReviewFeedbackKey(EMHResourceKind::Composite, Root->LogicalName));
+    bPassed &= TestNull(TEXT("a new unavailable dependency rejects admission"), Actor->GetResolvedPlan());
+    bPassed &= TestTrue(TEXT("failure retains the newly discovered missing key"), Actor->DependsOnResource(MissingKey));
+    bPassed &= TestTrue(TEXT("failure names the missing resource"), Actor->GetLastPlacementError().Contains(MissingName));
+    AddInfo(FString::Printf(TEXT("RECOVERY failed key=%s retained=%d current=%d seed=%d serial=%llu error=%s"),
+        *MissingKey.ToString(), Actor->DependsOnResource(MissingKey), Actor->GetResolvedPlan() != nullptr,
+        Actor->GetSeed(), MHCompositePreviewInvalidationSerial(), *Actor->GetLastPlacementError()));
+
+    UStaticMesh* RestoredMesh = Fixture.Mesh(MissingName);
+    if (!TestNotNull(TEXT("the formerly missing resource is now a managed mesh"), RestoredMesh)) return false;
+    // AssetCreated may queue a GLOBAL refresh; it must not be allowed to heal
+    // this test. There is deliberately no ticker call anywhere in this test.
+    bPassed &= TestNull(TEXT("creating the resource has not silently performed a global refresh"), Actor->GetResolvedPlan());
+    const uint64 BeforeTargetedNotify = MHCompositePreviewInvalidationSerial();
+    MHNotifyGeneratedResourceChanged(MissingKey);
+    const FMHResolvedCompositePlan* Healed = Actor->GetResolvedPlan();
+    AddInfo(FString::Printf(TEXT("RECOVERY targeted_notify key=%s ticks=0 serial_before=%llu serial_after=%llu current=%d seed=%d error=%s"),
+        *MissingKey.ToString(), BeforeTargetedNotify, MHCompositePreviewInvalidationSerial(),
+        Healed != nullptr, Actor->GetSeed(), *Actor->GetLastPlacementError()));
+    bPassed &= TestNotNull(TEXT("only the targeted missing-key notification heals the placement before any tick"), Healed);
+    bPassed &= TestEqual(TEXT("targeted healing preserves the placement seed"), Actor->GetSeed(), 100);
+    bPassed &= TestTrue(TEXT("targeted healing preserves the placement basis"), Actor->GetActorTransform().Equals(InitialBasis, 0.0));
+    bPassed &= TestTrue(TEXT("targeted healing clears the rejected-admission diagnostic"), Actor->GetLastPlacementError().IsEmpty());
+    if (Healed != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("healed plan contains exactly one leaf"), Healed->Leaves.Num(), 1);
+        if (Healed->Leaves.Num() == 1)
+            bPassed &= TestEqual(TEXT("healed leaf uses the newly created resource"), Healed->Leaves[0].Resource, MissingName);
+        bPassed &= TestTrue(TEXT("selected dependencies contain the healed key"), Healed->SelectedDependencies.Contains(MissingKey.ToString()));
+        bPassed &= TestNotEqual(TEXT("new closure has a new signature"), Healed->ResolvedSignature, InitialSignature);
+    }
+    return bPassed;
+}
+
+} // namespace UE::MimirComposite::Tests

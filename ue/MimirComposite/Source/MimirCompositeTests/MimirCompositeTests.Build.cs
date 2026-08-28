@@ -20,6 +20,8 @@ public class MimirCompositeTests : ModuleRules
                 "MimirCompositeEditor",
                 "MimirCompositeRuntime",
                 "Projects",
+                "RenderCore",
+                "RHI",
                 "StaticMeshDescription",
                 "UnrealEd"
             });

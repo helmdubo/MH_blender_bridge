@@ -47,6 +47,9 @@ V5-S0 означает ратификацию; до него production-код �
 10. **Квитанция честная.** Разделять automated gates, Blender/UE field checks,
     внешний audit и owner acceptance. WIP commit, focused test или STOP receipt
     не являются acceptance следующего gate.
+11. **Исправление дефекта начинается с failing-теста на текущем `origin/main`.**
+    Квитанция содержит его вывод до изменений. Без него изменение не является
+    исправлением дефекта и требует отдельной ратификации как новая работа.
 
 ---
 
@@ -290,6 +293,36 @@ Gate: V5-S5 owner-accepted.
 Acceptance: Python reference = UE Automation = Editor preview = PIE = packaged
 по choices, samples, world transforms, SelectedDependencies и
 ResolvedSignature на seed set; двойной unity gate и packaged smoke.
+
+---
+
+## V5-S6.0 — Composite preview defects
+
+Owner-approved минимальный срез перед S6.1. База — свежий `origin/main`,
+ветка `v5/s6.0-preview-defects`, квитанция `docs/receipts/v5_s6_0.md`.
+Не выделяется cherry-pick'ом из доказательной ветки
+`codex/fix-ue-composite-preview`; та ветка сохраняется без reset/delete.
+
+Scope определяется тремя красными baseline-пробами:
+
+1. Rendering flag: видимость composite leaves при Game View (`G on`).
+2. Организационная привязка leaves к существующим top-level authoring handles,
+   с absolute T/R/S и мировыми матрицами плана, без нового resolver metadata.
+3. Build preflight до создания source payload, папки, UObject package и UAsset.
+
+Acceptance: `BuildPreflightRejectsBeforeMutation`, `SemanticHierarchy` и
+`RenderedNativeHitProxy` становятся постоянными Automation-тестами;
+квитанция содержит красный вывод неизменённого main и зелёный нового среза.
+RHI-проба выполняется с настоящим viewport, не под `-nullrhi`.
+Полный Automation и оба C++ build-гейта §9 обязательны.
+
+Shared cache, idempotent assignment, nonblocking pending-mesh, watcher-import
+scope и per-operation lookup сюда не входят; они вынесены в
+[отдельный кандидат](proposals/shared_composite_preview_cache.md).
+G-off selection после загрузки уровня и `PostLoad` остаются за S6.1;
+полное глубокое semantic tree этим срезом не заявляется.
+Дальнейшие S6.1/S6.2 описаны в [кандидате 12](12_v5_s6_1_s6_2_slices.md),
+который требует собственного owner freeze.
 
 ---
 

@@ -80,6 +80,14 @@ bool PlanViewPreflight(const FMHResolvedCompositePlan& Plan, const FMHRandomComp
     const FTransform& Placement, FString& Error)
 {
     if (!MHValidateResolvedPlacementTransforms(Plan, Placement, Error)) return false;
+    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+    {
+        if (!Root.Nodes.IsValidIndex(Leaf.RootNodeIndex))
+        {
+            Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: resolved leaf has no authored root handle: ") + Leaf.Origin;
+            return false;
+        }
+    }
     for (int32 Index = 0; Index < Root.Nodes.Num(); ++Index)
     {
         if (!MHIsRepresentableTransformMatrix(PlanViewTrsMatrix(Root.Nodes[Index].Transform) * Placement.ToMatrixWithScale()))
@@ -167,6 +175,11 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         }
         else if (Component == nullptr) Component = PlanViewNew(Target, Class, TEXT("MH_Leaf_") + Leaf.Resource, Key, Result);
         else Result.Components.Add(Component);
+        // Organizational ancestry only: keep the admitted full world matrix,
+        // never recompose it through the author's handle using FTransform.
+        // Apply this to reused leaves and placeholder roots as well.
+        Component->SetAbsolute(true, true, true);
+        Component->AttachToComponent(Result.TopLevelComponents[Leaf.RootNodeIndex], FAttachmentTransformRules::KeepWorldTransform);
         PlanViewSetWorld(*Component, Leaf.WorldMatrix * Basis);
         if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) Mesh->SetStaticMesh(Endpoint.Mesh);
         if (UChildActorComponent* Child = Cast<UChildActorComponent>(Component))
