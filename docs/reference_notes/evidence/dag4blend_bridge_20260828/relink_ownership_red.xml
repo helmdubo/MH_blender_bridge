@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="16" time="1.134" timestamp="2026-08-28T20:25:40.927448+04:00" hostname="DESKTOP-MM2SBHU"><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_mixed_empty_option_keeps_weight_and_order" time="0.180" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_all_empty_options_do_not_create_an_entity_or_discard_children" time="0.046" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_external_placements_are_relinked_without_mutating_legacy" time="0.054" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_invalid_empty_weight_still_fails_closed[-1.0]" time="0.045" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_invalid_empty_weight_still_fails_closed[nan]" time="0.044" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_invalid_empty_weight_still_fails_closed[inf]" time="0.045" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_all_empty_list_is_cleared_even_with_zero_total[0.0]" time="0.044" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_all_empty_list_is_cleared_even_with_zero_total[1.0]" time="0.044" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_all_empty_list_is_cleared_even_with_zero_total[2.0]" time="0.044" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_relink_does_not_touch_helper_service_or_other_scene_objects" time="0.048" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_relink_rollback_restores_external_pointer_and_entire_delta" time="0.047" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_conversion_from_service_scene_never_relinks_service_contents" time="0.048" /><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_relink_protects_definition_ownership_outside_service_scenes[managed]" time="0.047"><failure message="AssertionError: assert bpy.data.collections['bridge_root.composite'] is bpy.data.collections['bridge_root']&#10; +  where bpy.data.collections['bridge_root.composite'] = bpy.data.objects['protected_internal'].instance_collection">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-892/test_relink_protects_definitio0')
+owner_kind = 'managed'
+
+    @pytest.mark.parametrize("owner_kind", ["managed", "dagor_owner_type"])
+    def test_relink_protects_definition_ownership_outside_service_scenes(
+            tmp_path, owner_kind):
+        root = legacy("bridge_root")
+        working = bpy.context.scene
+        definition = bpy.data.collections.new("other_definition")
+        working.collection.children.link(definition)
+        internal = empty("protected_internal", definition, root)
+        if owner_kind == "managed":
+            stamp_resource_collection(definition, "composite", "other_definition")
+        else:
+            # This is the other legitimate _resource_identity path: collection
+            # name + type:t on the instance owner, with no collection['type'].
+            definition["name"] = "other_definition"
+            placement = empty("other_instance", working.collection, definition)
+            placement["type:t"] = "composit"
+        outside = empty("external", working.collection, root)
+        report = import_dag4blend_composite_collection(root, source_root=tmp_path)
+&gt;       assert internal.instance_collection is root
+E       AssertionError: assert bpy.data.collections['bridge_root.composite'] is bpy.data.collections['bridge_root']
+E        +  where bpy.data.collections['bridge_root.composite'] = bpy.data.objects['protected_internal'].instance_collection
+
+tests\test_dag4blend_bridge_bpy.py:201: AssertionError</failure></testcase><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_relink_protects_definition_ownership_outside_service_scenes[dagor_owner_type]" time="0.048"><failure message="AssertionError: assert bpy.data.collections['bridge_root.composite'] is bpy.data.collections['bridge_root']&#10; +  where bpy.data.collections['bridge_root.composite'] = bpy.data.objects['protected_internal'].instance_collection">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-892/test_relink_protects_definitio1')
+owner_kind = 'dagor_owner_type'
+
+    @pytest.mark.parametrize("owner_kind", ["managed", "dagor_owner_type"])
+    def test_relink_protects_definition_ownership_outside_service_scenes(
+            tmp_path, owner_kind):
+        root = legacy("bridge_root")
+        working = bpy.context.scene
+        definition = bpy.data.collections.new("other_definition")
+        working.collection.children.link(definition)
+        internal = empty("protected_internal", definition, root)
+        if owner_kind == "managed":
+            stamp_resource_collection(definition, "composite", "other_definition")
+        else:
+            # This is the other legitimate _resource_identity path: collection
+            # name + type:t on the instance owner, with no collection['type'].
+            definition["name"] = "other_definition"
+            placement = empty("other_instance", working.collection, definition)
+            placement["type:t"] = "composit"
+        outside = empty("external", working.collection, root)
+        report = import_dag4blend_composite_collection(root, source_root=tmp_path)
+&gt;       assert internal.instance_collection is root
+E       AssertionError: assert bpy.data.collections['bridge_root.composite'] is bpy.data.collections['bridge_root']
+E        +  where bpy.data.collections['bridge_root.composite'] = bpy.data.objects['protected_internal'].instance_collection
+
+tests\test_dag4blend_bridge_bpy.py:201: AssertionError</failure></testcase><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_full_route_adopts_mesh_through_writer_before_composite" time="0.049"><failure message="ModuleNotFoundError: No module named 'mh4blend.scene.dag4blend_publication'">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-892/test_full_route_adopts_mesh_th0')
+
+    def test_full_route_adopts_mesh_through_writer_before_composite(tmp_path):
+        source = legacy("bridge_root")
+        mesh = legacy("bridge_mesh", "rendinst")
+        bpy.context.scene.collection.children.link(mesh)
+        data = bpy.data.meshes.new("triangle_data")
+        data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+        obj = bpy.data.objects.new("triangle", data)
+        mesh.objects.link(obj)
+        empty("mesh_placement", source, mesh)
+&gt;       report = bridge.publish_dag4blend_composite_collection(
+            source, tmp_path, source_root=tmp_path)
+
+tests\test_dag4blend_bridge_bpy.py:215: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+collection = bpy.data.collections['bridge_root']
+output_dir = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-892/test_full_route_adopts_mesh_th0')
+source_root = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-892/test_full_route_adopts_mesh_th0')
+definition_policy = 'reuse', lock_root = None, _boundary_hook = None
+
+    def publish_dag4blend_composite_collection(
+            collection, output_dir, *, source_root,
+            definition_policy=DEFINITION_REUSE, lock_root=None,
+            _boundary_hook=None) -&gt; dict:
+        """Explicit bridge publication; never called by ordinary MH exporters.
+    
+        This S6.1 checkpoint is deliberately not wired to the UI until the owner
+        resolves OPEN-V5-19/20/21. It exercises the independent writer/adoption
+        path without admitting unsupported metadata or guessing gameObj meaning.
+        """
+        from ..core.batch_publish import BatchPartialPublishError
+&gt;       from .dag4blend_publication import prepare_dag4blend_publication
+E       ModuleNotFoundError: No module named 'mh4blend.scene.dag4blend_publication'
+
+addon\mh4blend\scene\import_dagor_composite.py:943: ModuleNotFoundError</failure></testcase><testcase classname="tests.test_dag4blend_bridge_bpy" name="test_inline_p2_failure_names_canonical_path_and_every_parameter" time="0.046" /></testsuite></testsuites>

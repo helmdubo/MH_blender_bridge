@@ -1,0 +1,2062 @@
+{
+  "root": "H:\\_Gaijin_Entertainment\\EnlistedCDK\\ActiveMatterCDK.2024.11.11\\EnlistedCDK\\develop\\assets",
+  "scope": "all *.composit.blk; includes not expanded",
+  "file_count": 26089,
+  "mall_file_count": 291,
+  "path_inventory_stable": true,
+  "manifest_sha256": "fca1b1f644b6f73ae2a83e89ee9f87321e9bb69850facbba02498b1ed6bb0d4f",
+  "previous_manifest_sha256": "fca1b1f644b6f73ae2a83e89ee9f87321e9bb69850facbba02498b1ed6bb0d4f",
+  "matches_previous_manifest": true,
+  "counts": {
+    "all_empty_nodes": {
+      "files": 4,
+      "occurrences": 9,
+      "mall_files": 1,
+      "mall_occurrences": 1
+    },
+    "all_nonempty_nodes": {
+      "files": 3399,
+      "occurrences": 5045,
+      "mall_files": 15,
+      "mall_occurrences": 18
+    },
+    "dag4blend_default:all_empty_nodes": {
+      "files": 14,
+      "occurrences": 185,
+      "mall_files": 1,
+      "mall_occurrences": 1
+    },
+    "dag4blend_default:empty_ent": {
+      "files": 1223,
+      "occurrences": 6541,
+      "mall_files": 39,
+      "mall_occurrences": 136
+    },
+    "dag4blend_default:mixed_empty_nonempty_nodes": {
+      "files": 1213,
+      "occurrences": 6341,
+      "mall_files": 39,
+      "mall_occurrences": 132
+    },
+    "dag4blend_default:nodes_with_empty": {
+      "files": 1223,
+      "occurrences": 6526,
+      "mall_files": 39,
+      "mall_occurrences": 133
+    },
+    "empty_plus_unknown_name_nodes": {
+      "files": 2,
+      "occurrences": 2,
+      "mall_files": 0,
+      "mall_occurrences": 0
+    },
+    "ent:explicit_empty": {
+      "files": 443,
+      "occurrences": 1219,
+      "mall_files": 35,
+      "mall_occurrences": 128
+    },
+    "ent:explicit_nonempty": {
+      "files": 4363,
+      "occurrences": 34134,
+      "mall_files": 51,
+      "mall_occurrences": 281
+    },
+    "ent:missing_name": {
+      "files": 795,
+      "occurrences": 5322,
+      "mall_files": 4,
+      "mall_occurrences": 8
+    },
+    "ent:nonliteral_or_wrongtype_name": {
+      "files": 1,
+      "occurrences": 1,
+      "mall_files": 0,
+      "mall_occurrences": 0
+    },
+    "ent_blocks": {
+      "files": 4372,
+      "occurrences": 40676,
+      "mall_files": 51,
+      "mall_occurrences": 417
+    },
+    "mixed_empty_nonempty_nodes": {
+      "files": 440,
+      "occurrences": 1195,
+      "mall_files": 35,
+      "mall_occurrences": 124
+    },
+    "nodes_with_direct_ent": {
+      "files": 4372,
+      "occurrences": 11572,
+      "mall_files": 51,
+      "mall_occurrences": 151
+    },
+    "nodes_with_explicit_empty_ent": {
+      "files": 443,
+      "occurrences": 1206,
+      "mall_files": 35,
+      "mall_occurrences": 125
+    },
+    "unknown_name_nodes": {
+      "files": 794,
+      "occurrences": 5321,
+      "mall_files": 4,
+      "mall_occurrences": 8
+    }
+  },
+  "examples": {
+    "missing_name": [
+      {
+        "path": "gameproj/africa_east/entities/buildings/decor/m_east_windows/composits/barricades/m_east_window_1200x1900_barricade_random.composit.blk",
+        "sha256": "e2e995f4ab4055c7dc9d957203c602378c9e87d1b806319c0ad812ebd3fc9dd5",
+        "nodepath": "$.node[0].ent[7]",
+        "line": 12,
+        "name_attributes": []
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/decor/m_east_windows/composits/barricades/m_east_window_1700x1900_barricade_random.composit.blk",
+        "sha256": "ab2fa0ad25afabcd8b175abb593477bf0bd9d4cdebeb7553a8f86bd778ff5c53",
+        "nodepath": "$.node[0].ent[7]",
+        "line": 12,
+        "name_attributes": []
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_j_4fl_a_cmp/composit_parts/windows/composit/barricades/m_east_window_2000x2800_barricade_random.composit.blk",
+        "sha256": "f2c6bb693dda026828e6b2c7247f4a3faf24b9c65c7f69cb8ef64eb99d75e4c5",
+        "nodepath": "$.node[0].ent[3]",
+        "line": 8,
+        "name_attributes": []
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_j_4fl_a_cmp/composit_parts/windows/composit/barricades/m_east_window_3300x3500_barricade_random.composit.blk",
+        "sha256": "ba8c2ce7786bc74a3bd091821ebd06b63f79da74500e3dbba92f623b73e80dad",
+        "nodepath": "$.node[0].ent[3]",
+        "line": 8,
+        "name_attributes": []
+      },
+      {
+        "path": "gameproj/africa_east/entities/town_stuff/lamp_post/middle_east_lamp_post_f_decor_b_random.composit.blk",
+        "sha256": "352481fe7df972c108bbad92192122db7a0ed7da9126eb57d98bcbdda298cb09",
+        "nodepath": "$.node[0].ent[3]",
+        "line": 8,
+        "name_attributes": []
+      },
+      {
+        "path": "gameproj/africa_east/entities/town_stuff/lamp_post/middle_east_lamp_post_f_decor_c_random.composit.blk",
+        "sha256": "c348b44ad803d8c8471156f518be4ad7df31b31f3618214690eaeedf521d6eaf",
+        "nodepath": "$.node[0].ent[2]",
+        "line": 7,
+        "name_attributes": []
+      },
+      {
+        "path": "gameproj/africa_east/entities/town_stuff/stall/composit_parts/wastepaper_pile_random.composit.blk",
+        "sha256": "fec3dd951bf0c5cc8f11718480032ade9e1081637cb984a6ee20af975400ae17",
+        "nodepath": "$.node[0].ent[7]",
+        "line": 12,
+        "name_attributes": []
+      },
+      {
+        "path": "gameproj/africa_east/entities/vehicles/honda_scooter/honda_scooter_a_random.composit.blk",
+        "sha256": "874805afed8fe99c98e7220224b9ef03c891a9846c4d979fa95efdfbd454fde4",
+        "nodepath": "$.node[1].ent[1]",
+        "line": 12,
+        "name_attributes": []
+      }
+    ],
+    "mixed_empty_nonempty_nodes": [
+      {
+        "path": "gameproj/africa_east/entities/buildings/decor/m_east_windows/m_east_window_1600x1500_random.composit.blk",
+        "sha256": "4c528ecae5cfafb5c1cc3082e824ec135ea5fade6367b6f367843b5462577370",
+        "nodepath": "$.node[1]",
+        "line": 12,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[1]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_f_5fl_a_cmp/composits/m_east_building_type_f_5fl_a_1st_floor_stuff_cmp.composit.blk",
+        "sha256": "c3dc4f7d3c304abb3dd41100b9bccd4dcfc3f7881846e18b1c5f966597f620a1",
+        "nodepath": "$.node[159]",
+        "line": 926,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[159].ent[1]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_f_5fl_a_cmp/composits/m_east_building_type_f_5fl_a_1st_floor_stuff_cmp.composit.blk",
+        "sha256": "c3dc4f7d3c304abb3dd41100b9bccd4dcfc3f7881846e18b1c5f966597f620a1",
+        "nodepath": "$.node[160]",
+        "line": 939,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[160].ent[1]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_f_5fl_a_cmp/composits/m_east_building_type_f_5fl_a_1st_floor_stuff_cmp.composit.blk",
+        "sha256": "c3dc4f7d3c304abb3dd41100b9bccd4dcfc3f7881846e18b1c5f966597f620a1",
+        "nodepath": "$.node[161]",
+        "line": 952,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[161].ent[1]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_f_5fl_a_cmp/composits/m_east_building_type_f_5fl_a_1st_floor_stuff_cmp.composit.blk",
+        "sha256": "c3dc4f7d3c304abb3dd41100b9bccd4dcfc3f7881846e18b1c5f966597f620a1",
+        "nodepath": "$.node[162]",
+        "line": 965,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[162].ent[1]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_f_5fl_a_cmp/composits/m_east_building_type_f_5fl_a_1st_floor_stuff_cmp.composit.blk",
+        "sha256": "c3dc4f7d3c304abb3dd41100b9bccd4dcfc3f7881846e18b1c5f966597f620a1",
+        "nodepath": "$.node[163]",
+        "line": 978,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[163].ent[1]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_f_5fl_a_cmp/composits/m_east_building_type_f_5fl_a_1st_floor_stuff_cmp.composit.blk",
+        "sha256": "c3dc4f7d3c304abb3dd41100b9bccd4dcfc3f7881846e18b1c5f966597f620a1",
+        "nodepath": "$.node[164]",
+        "line": 991,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[164].ent[1]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_east/entities/buildings/m_east_building_type_f_5fl_a_cmp/composits/m_east_building_type_f_5fl_a_1st_floor_stuff_cmp.composit.blk",
+        "sha256": "c3dc4f7d3c304abb3dd41100b9bccd4dcfc3f7881846e18b1c5f966597f620a1",
+        "nodepath": "$.node[165]",
+        "line": 1004,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[165].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/atrium/sovmod_mall_omsky_atrium_bench_brach_random_cmp.composit.blk",
+        "sha256": "6e75c15644246a8a73cf41ae0b91f214a20e38aba3955f79233dbaf5d0068fc1",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/canteen_tables/sovmod_mall_omsky_canteen_chairs_random.composit.blk",
+        "sha256": "1d55cb64671bd73a69a7234a6e31719ecf012de6e1fe2787425ec750655d16e2",
+        "nodepath": "$.node[0]",
+        "line": 4,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/canteen_tables/sovmod_mall_omsky_canteen_table_set_random.composit.blk",
+        "sha256": "ba6d58cbff5f75511765e81174224fd6d0cd94343091ebe188c7389ec50bff33",
+        "nodepath": "$.node[0]",
+        "line": 4,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_balls_random_cmp.composit.blk",
+        "sha256": "c256c393dfd51e4a659deaa1fa49580d732e7c344272060027c65c4d9490874a",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_hp_fabric_pile_random_cmp.composit.blk",
+        "sha256": "469ae535b2c8c7fea4c6c6d76adafe430d21d38e92f230c39e8225283b1dd25b",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[3]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_kindergarten_dolls_debris_random_cmp.composit.blk",
+        "sha256": "09c8b5a57c96d29929d9348206cdd7e1c3e74223b5c92adaefd9d983417f87a6",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[3]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_kindergarten_dolls_random_cmp.composit.blk",
+        "sha256": "3c25ad7ccd56abc471927ea6cc404d40c17468ad5af9c7ab375fa2125f78fed7",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_kindergarten_dolls_random_cmp.composit.blk",
+        "sha256": "3c25ad7ccd56abc471927ea6cc404d40c17468ad5af9c7ab375fa2125f78fed7",
+        "nodepath": "$.node[1]",
+        "line": 22,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_kindergarten_dolls_random_cmp.composit.blk",
+        "sha256": "3c25ad7ccd56abc471927ea6cc404d40c17468ad5af9c7ab375fa2125f78fed7",
+        "nodepath": "$.node[2]",
+        "line": 41,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_kindergarten_dolls_random_cmp.composit.blk",
+        "sha256": "3c25ad7ccd56abc471927ea6cc404d40c17468ad5af9c7ab375fa2125f78fed7",
+        "nodepath": "$.node[3]",
+        "line": 60,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_f_cmp.composit.blk",
+        "sha256": "c87f4d2d818f18e8f0a55992dd18fa46a4ccd69a39dea248e17df6a1be7023c2",
+        "nodepath": "$.node[10]",
+        "line": 52,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[10].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_f_cmp.composit.blk",
+        "sha256": "c87f4d2d818f18e8f0a55992dd18fa46a4ccd69a39dea248e17df6a1be7023c2",
+        "nodepath": "$.node[11]",
+        "line": 66,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[11].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_f_cmp.composit.blk",
+        "sha256": "c87f4d2d818f18e8f0a55992dd18fa46a4ccd69a39dea248e17df6a1be7023c2",
+        "nodepath": "$.node[12]",
+        "line": 80,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[12].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_f_cmp.composit.blk",
+        "sha256": "c87f4d2d818f18e8f0a55992dd18fa46a4ccd69a39dea248e17df6a1be7023c2",
+        "nodepath": "$.node[13]",
+        "line": 94,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[13].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_f_cmp.composit.blk",
+        "sha256": "c87f4d2d818f18e8f0a55992dd18fa46a4ccd69a39dea248e17df6a1be7023c2",
+        "nodepath": "$.node[14]",
+        "line": 108,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[14].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_f_cmp.composit.blk",
+        "sha256": "c87f4d2d818f18e8f0a55992dd18fa46a4ccd69a39dea248e17df6a1be7023c2",
+        "nodepath": "$.node[15]",
+        "line": 122,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[15].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[10]",
+        "line": 53,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[10].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[11]",
+        "line": 67,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[11].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[12]",
+        "line": 81,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[12].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[13]",
+        "line": 95,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[13].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[14]",
+        "line": 109,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[14].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[15]",
+        "line": 123,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[15].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[16]",
+        "line": 137,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[16].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[17]",
+        "line": 151,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[17].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[18]",
+        "line": 165,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[18].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[19]",
+        "line": 179,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[19].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[20]",
+        "line": 193,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[20].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[21]",
+        "line": 207,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[21].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[22]",
+        "line": 221,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[22].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[23]",
+        "line": 235,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[23].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[24]",
+        "line": 249,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[24].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[25]",
+        "line": 263,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[25].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[26]",
+        "line": 277,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[26].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[27]",
+        "line": 291,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[27].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[28]",
+        "line": 305,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[28].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[29]",
+        "line": 319,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[29].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[30]",
+        "line": 333,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[30].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_mall_omsky_int_store_rack_g_cmp.composit.blk",
+        "sha256": "8f8c0c7ad48011235b89f8ac3600f1f23e9bd9f552ab6df7127b3fa94778ff39",
+        "nodepath": "$.node[31]",
+        "line": 347,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[31].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_rc_toy_apc_box_random_cmp.composit.blk",
+        "sha256": "9a59f6cb03209b043cabcf1b1ced1b08b59004c0bd6a78f61fa423023f8b2423",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_rc_toy_car_box_random_cmp.composit.blk",
+        "sha256": "915a5afa00f97837498042adf621286f93d8d1b88f5c5b2dc6f6d43aa23d1780",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_bear_a_random_cmp.composit.blk",
+        "sha256": "60353f0c725d5a5ea7391d55c41252c5c91ebbbdb2db7c440c6e0848a81ee084",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_bear_a_random_cmp.composit.blk",
+        "sha256": "60353f0c725d5a5ea7391d55c41252c5c91ebbbdb2db7c440c6e0848a81ee084",
+        "nodepath": "$.node[1]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_bear_a_random_cmp.composit.blk",
+        "sha256": "60353f0c725d5a5ea7391d55c41252c5c91ebbbdb2db7c440c6e0848a81ee084",
+        "nodepath": "$.node[2]",
+        "line": 31,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_bear_a_random_cmp.composit.blk",
+        "sha256": "60353f0c725d5a5ea7391d55c41252c5c91ebbbdb2db7c440c6e0848a81ee084",
+        "nodepath": "$.node[3]",
+        "line": 45,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[1]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[2]",
+        "line": 31,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[3]",
+        "line": 45,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[4]",
+        "line": 59,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[6]",
+        "line": 82,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_b_random_cmp.composit.blk",
+        "sha256": "32e451f2afd8841b7dcdc43c1a2c82407a010599154061187754e62840cecf20",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_b_random_cmp.composit.blk",
+        "sha256": "32e451f2afd8841b7dcdc43c1a2c82407a010599154061187754e62840cecf20",
+        "nodepath": "$.node[1]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_b_random_cmp.composit.blk",
+        "sha256": "32e451f2afd8841b7dcdc43c1a2c82407a010599154061187754e62840cecf20",
+        "nodepath": "$.node[2]",
+        "line": 31,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_b_random_cmp.composit.blk",
+        "sha256": "32e451f2afd8841b7dcdc43c1a2c82407a010599154061187754e62840cecf20",
+        "nodepath": "$.node[3]",
+        "line": 45,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_b_random_cmp.composit.blk",
+        "sha256": "32e451f2afd8841b7dcdc43c1a2c82407a010599154061187754e62840cecf20",
+        "nodepath": "$.node[4]",
+        "line": 59,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_b_random_cmp.composit.blk",
+        "sha256": "32e451f2afd8841b7dcdc43c1a2c82407a010599154061187754e62840cecf20",
+        "nodepath": "$.node[5]",
+        "line": 73,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_b_random_cmp.composit.blk",
+        "sha256": "32e451f2afd8841b7dcdc43c1a2c82407a010599154061187754e62840cecf20",
+        "nodepath": "$.node[6]",
+        "line": 87,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_d_random_cmp.composit.blk",
+        "sha256": "9be67e7a3f728394471571bea463acba9d51a1ee53b1ea00a723136e0cdf03b5",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_d_random_cmp.composit.blk",
+        "sha256": "9be67e7a3f728394471571bea463acba9d51a1ee53b1ea00a723136e0cdf03b5",
+        "nodepath": "$.node[1]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_d_random_cmp.composit.blk",
+        "sha256": "9be67e7a3f728394471571bea463acba9d51a1ee53b1ea00a723136e0cdf03b5",
+        "nodepath": "$.node[2]",
+        "line": 31,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_d_random_cmp.composit.blk",
+        "sha256": "9be67e7a3f728394471571bea463acba9d51a1ee53b1ea00a723136e0cdf03b5",
+        "nodepath": "$.node[3]",
+        "line": 45,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_d_random_cmp.composit.blk",
+        "sha256": "9be67e7a3f728394471571bea463acba9d51a1ee53b1ea00a723136e0cdf03b5",
+        "nodepath": "$.node[4]",
+        "line": 59,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_d_random_cmp.composit.blk",
+        "sha256": "9be67e7a3f728394471571bea463acba9d51a1ee53b1ea00a723136e0cdf03b5",
+        "nodepath": "$.node[5]",
+        "line": 73,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_d_random_cmp.composit.blk",
+        "sha256": "9be67e7a3f728394471571bea463acba9d51a1ee53b1ea00a723136e0cdf03b5",
+        "nodepath": "$.node[6]",
+        "line": 87,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_e_random_cmp.composit.blk",
+        "sha256": "a25ba23f8895801e5a3d83c91730e56d850791180ebfb5456338e5d39cc2a91c",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_e_random_cmp.composit.blk",
+        "sha256": "a25ba23f8895801e5a3d83c91730e56d850791180ebfb5456338e5d39cc2a91c",
+        "nodepath": "$.node[1]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_e_random_cmp.composit.blk",
+        "sha256": "a25ba23f8895801e5a3d83c91730e56d850791180ebfb5456338e5d39cc2a91c",
+        "nodepath": "$.node[2]",
+        "line": 31,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_e_random_cmp.composit.blk",
+        "sha256": "a25ba23f8895801e5a3d83c91730e56d850791180ebfb5456338e5d39cc2a91c",
+        "nodepath": "$.node[3]",
+        "line": 45,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_e_random_cmp.composit.blk",
+        "sha256": "a25ba23f8895801e5a3d83c91730e56d850791180ebfb5456338e5d39cc2a91c",
+        "nodepath": "$.node[4]",
+        "line": 59,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_e_random_cmp.composit.blk",
+        "sha256": "a25ba23f8895801e5a3d83c91730e56d850791180ebfb5456338e5d39cc2a91c",
+        "nodepath": "$.node[5]",
+        "line": 73,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_random_cmp.composit.blk",
+        "sha256": "adc864bab357729651d2eb05bc800e6d2c7159aa92d6ac66b44845be45ff8c87",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 5,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[5]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toys_set_a_doll_random_cmp.composit.blk",
+        "sha256": "1f69865d72125bf7550ae9cf28c8399518a65464014e40dae7a91b1fe05c5c60",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toys_set_a_doll_random_cmp.composit.blk",
+        "sha256": "1f69865d72125bf7550ae9cf28c8399518a65464014e40dae7a91b1fe05c5c60",
+        "nodepath": "$.node[1]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toys_set_a_doll_random_cmp.composit.blk",
+        "sha256": "1f69865d72125bf7550ae9cf28c8399518a65464014e40dae7a91b1fe05c5c60",
+        "nodepath": "$.node[2]",
+        "line": 31,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toys_set_a_doll_random_cmp.composit.blk",
+        "sha256": "1f69865d72125bf7550ae9cf28c8399518a65464014e40dae7a91b1fe05c5c60",
+        "nodepath": "$.node[3]",
+        "line": 45,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toys_set_a_doll_random_cmp.composit.blk",
+        "sha256": "1f69865d72125bf7550ae9cf28c8399518a65464014e40dae7a91b1fe05c5c60",
+        "nodepath": "$.node[4]",
+        "line": 59,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toys_set_a_doll_random_cmp.composit.blk",
+        "sha256": "1f69865d72125bf7550ae9cf28c8399518a65464014e40dae7a91b1fe05c5c60",
+        "nodepath": "$.node[5]",
+        "line": 73,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toys_set_a_doll_random_cmp.composit.blk",
+        "sha256": "1f69865d72125bf7550ae9cf28c8399518a65464014e40dae7a91b1fe05c5c60",
+        "nodepath": "$.node[6]",
+        "line": 87,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/library/sovmod_mall_omsky_library_book_random_a_a_cmp.composit.blk",
+        "sha256": "badc5a2992cf2ba8ae6a22520d87ef412443f77283b4070f369489964c356d60",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 6,
+          "explicit_empty": 2
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[6]",
+          "$.node[0].ent[7]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/library/sovmod_mall_omsky_library_book_random_a_b_cmp.composit.blk",
+        "sha256": "f902fa50b3d81d2b7aa487fe7aa43db25c080f96e51487b033a50a91bb77ffd7",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 2
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[1]",
+          "$.node[0].ent[3]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/library/sovmod_mall_omsky_library_book_random_a_c_cmp.composit.blk",
+        "sha256": "908f4081f088e432078c3356da01e1326001fcd7272c8246026301c019409737",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/library/sovmod_mall_omsky_library_book_random_a_d_cmp.composit.blk",
+        "sha256": "3763ce70345197ed624d7159686d81cc672ec557a9c505f95cb606cce94dee87",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/library/sovmod_mall_omsky_library_newspaper_random_a_cmp.composit.blk",
+        "sha256": "02a1897f6ad2b48820c4b514de86a2f89554c0ecd4d5d449cb93f75e5787bdd3",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 2
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[4]",
+          "$.node[0].ent[5]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/library/sovmod_mall_omsky_library_table_a_cmp.composit.blk",
+        "sha256": "ce0436c90bc5979fbcd02c2d85686e1274a8be69e764a425d702a4b49aac3405",
+        "nodepath": "$.node[1].node[0]",
+        "line": 19,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/library/sovmod_mall_omsky_library_table_a_cmp.composit.blk",
+        "sha256": "ce0436c90bc5979fbcd02c2d85686e1274a8be69e764a425d702a4b49aac3405",
+        "nodepath": "$.node[3]",
+        "line": 36,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_a_cmp.composit.blk",
+        "sha256": "3b3b099bedf89a4dfbbfb10f1651e96d984263e6adab9daa74db321fc311808c",
+        "nodepath": "$.node[12]",
+        "line": 63,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[12].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_a_cmp.composit.blk",
+        "sha256": "3b3b099bedf89a4dfbbfb10f1651e96d984263e6adab9daa74db321fc311808c",
+        "nodepath": "$.node[13]",
+        "line": 77,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[13].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_c_cmp.composit.blk",
+        "sha256": "f7ed737998dab61b08ff8e84f56d938659f72f06264e3dfef564dfea1a17d579",
+        "nodepath": "$.node[9]",
+        "line": 48,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[9].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_c_cmp.composit.blk",
+        "sha256": "f7ed737998dab61b08ff8e84f56d938659f72f06264e3dfef564dfea1a17d579",
+        "nodepath": "$.node[10]",
+        "line": 62,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[10].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_c_cmp.composit.blk",
+        "sha256": "f7ed737998dab61b08ff8e84f56d938659f72f06264e3dfef564dfea1a17d579",
+        "nodepath": "$.node[11]",
+        "line": 76,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[11].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_c_cmp.composit.blk",
+        "sha256": "f7ed737998dab61b08ff8e84f56d938659f72f06264e3dfef564dfea1a17d579",
+        "nodepath": "$.node[12]",
+        "line": 90,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[12].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_c_cmp.composit.blk",
+        "sha256": "f7ed737998dab61b08ff8e84f56d938659f72f06264e3dfef564dfea1a17d579",
+        "nodepath": "$.node[13]",
+        "line": 104,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[13].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/is_steel_shelf_c_cmp.composit.blk",
+        "sha256": "f7ed737998dab61b08ff8e84f56d938659f72f06264e3dfef564dfea1a17d579",
+        "nodepath": "$.node[14]",
+        "line": 118,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[14].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_cardboard_boxes_random_a_cmp.composit.blk",
+        "sha256": "5d7d906ba43b340560762230c850f316e42d7eec26b1c325be0adad5b05bfd98",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[3]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_cardboard_boxes_random_b_cmp.composit.blk",
+        "sha256": "4da8ae6f817b598355b207ca3e0c765a5f91082bcf9594a3cb345d0aaa3059e9",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[3]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_pallet_trashyard_a_random_cmp.composit.blk",
+        "sha256": "e211ee3eff116063e4d6ca275475b6c629fd9c5809f4e45c95721ee7ed5b65d1",
+        "nodepath": "$.node[4]",
+        "line": 23,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_pallet_trashyard_a_random_cmp.composit.blk",
+        "sha256": "e211ee3eff116063e4d6ca275475b6c629fd9c5809f4e45c95721ee7ed5b65d1",
+        "nodepath": "$.node[5]",
+        "line": 42,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_pallet_trashyard_a_random_cmp.composit.blk",
+        "sha256": "e211ee3eff116063e4d6ca275475b6c629fd9c5809f4e45c95721ee7ed5b65d1",
+        "nodepath": "$.node[6]",
+        "line": 61,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_pallet_trashyard_a_random_cmp.composit.blk",
+        "sha256": "e211ee3eff116063e4d6ca275475b6c629fd9c5809f4e45c95721ee7ed5b65d1",
+        "nodepath": "$.node[7]",
+        "line": 80,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[7].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_pallet_trashyard_a_random_cmp.composit.blk",
+        "sha256": "e211ee3eff116063e4d6ca275475b6c629fd9c5809f4e45c95721ee7ed5b65d1",
+        "nodepath": "$.node[8]",
+        "line": 94,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[8].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_pallet_trashyard_a_random_cmp.composit.blk",
+        "sha256": "e211ee3eff116063e4d6ca275475b6c629fd9c5809f4e45c95721ee7ed5b65d1",
+        "nodepath": "$.node[9]",
+        "line": 108,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[9].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_pallet_trashyard_a_random_cmp.composit.blk",
+        "sha256": "e211ee3eff116063e4d6ca275475b6c629fd9c5809f4e45c95721ee7ed5b65d1",
+        "nodepath": "$.node[10]",
+        "line": 122,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[10].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_vacuum_cleaner_random_cmp.composit.blk",
+        "sha256": "56e54ba2417594a47a11051bbebde9bac51018efe937862340ff9f9b0383c085",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_washingmachine_a_random_cmp.composit.blk",
+        "sha256": "26bd567f9deca48b3693e4a331ae0595db1724a046a72d68185c75ac2bc3e41c",
+        "nodepath": "$.node[4]",
+        "line": 23,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_washingmachine_a_random_cmp.composit.blk",
+        "sha256": "26bd567f9deca48b3693e4a331ae0595db1724a046a72d68185c75ac2bc3e41c",
+        "nodepath": "$.node[5]",
+        "line": 37,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_washingmachine_a_random_cmp.composit.blk",
+        "sha256": "26bd567f9deca48b3693e4a331ae0595db1724a046a72d68185c75ac2bc3e41c",
+        "nodepath": "$.node[6]",
+        "line": 51,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_washingmachine_a_random_cmp.composit.blk",
+        "sha256": "26bd567f9deca48b3693e4a331ae0595db1724a046a72d68185c75ac2bc3e41c",
+        "nodepath": "$.node[7]",
+        "line": 65,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[7].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_washingmachine_a_random_cmp.composit.blk",
+        "sha256": "26bd567f9deca48b3693e4a331ae0595db1724a046a72d68185c75ac2bc3e41c",
+        "nodepath": "$.node[8]",
+        "line": 79,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[8].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_washingmachine_a_random_cmp.composit.blk",
+        "sha256": "26bd567f9deca48b3693e4a331ae0595db1724a046a72d68185c75ac2bc3e41c",
+        "nodepath": "$.node[9]",
+        "line": 93,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[9].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_wooden_box_random_a_cmp.composit.blk",
+        "sha256": "94fffdc6e98729a5eaa29427847ceea73071a52d7a19178431f78b3e24b7b231",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/loading_dock/sovmod_wooden_box_random_b_cmp.composit.blk",
+        "sha256": "8f6d09da25c68aecc3617091c3e8bcea673f57ff0cde31ebeb0fad4c61e20f40",
+        "nodepath": "$.node[0]",
+        "line": 3,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[0].ent[3]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[1].node[0]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[2].node[0]",
+        "line": 32,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[3].node[0]",
+        "line": 47,
+        "option_counts": {
+          "explicit_nonempty": 6,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].node[0].ent[5]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[4].node[0]",
+        "line": 64,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[5].node[0]",
+        "line": 76,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[6].node[0]",
+        "line": 88,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[7].node[0]",
+        "line": 103,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[7].node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[8].node[0]",
+        "line": 116,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[8].node[0].ent[3]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[9].node[0]",
+        "line": 130,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[9].node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_bench_a_cmp.composit.blk",
+        "sha256": "de366d42725ed4593d0a28ccb9c3ce0058e728cef6df17da6e62188312e2626f",
+        "nodepath": "$.node[10].node[0]",
+        "line": 142,
+        "option_counts": {
+          "explicit_nonempty": 2,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[10].node[0].ent[2]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_table_a_cmp.composit.blk",
+        "sha256": "b6c475f4dba5d398ca7d53568d622a300ad2856181bd8b340ed855bdde03c93d",
+        "nodepath": "$.node[1].node[0]",
+        "line": 17,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].node[0].ent[1]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_table_a_cmp.composit.blk",
+        "sha256": "b6c475f4dba5d398ca7d53568d622a300ad2856181bd8b340ed855bdde03c93d",
+        "nodepath": "$.node[4].node[0]",
+        "line": 55,
+        "option_counts": {
+          "explicit_nonempty": 4,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].node[0].ent[4]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_laboratory_table_a_cmp.composit.blk",
+        "sha256": "b6c475f4dba5d398ca7d53568d622a300ad2856181bd8b340ed855bdde03c93d",
+        "nodepath": "$.node[6].node[0]",
+        "line": 82,
+        "option_counts": {
+          "explicit_nonempty": 3,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].node[0].ent[3]"
+        ]
+      }
+    ],
+    "nonliteral_or_wrongtype_name": [
+      {
+        "path": "gameproj/africa_forsaken/entities/buildings/african_city_houses/african_city_house_e_abandoned/composits/african_city_house_e_abandoned_roof_metal_a_cmp.composit.blk",
+        "sha256": "d2d2756a4c98efa1c10ec22004e280e451d5d174f9bbe014ebf4b51f48d2fabb",
+        "nodepath": "$.node[1].ent[0]",
+        "line": 10,
+        "name_attributes": [
+          {
+            "type": "t",
+            "value": "",
+            "line": 10,
+            "quoted": false
+          }
+        ]
+      }
+    ],
+    "empty_plus_unknown_name_nodes": [
+      {
+        "path": "gameproj/africa_forsaken/entities/vehicle/hummer_hmmwv_damaged/hummer_hmmwv_damaged_a_random.composit.blk",
+        "sha256": "42b89d161d7652715eefc68f61074d2021ae8fda65258cfa05420f1f6e28a9b6",
+        "nodepath": "$.node[4]",
+        "line": 34,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "missing_name": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[2]"
+        ]
+      },
+      {
+        "path": "gameproj/africa_forsaken/entities/vehicle/hummer_hmmwv_damaged/hummer_hmmwv_damaged_b_random.composit.blk",
+        "sha256": "114f7c60a09e3c381a7901eec0df7f6930bf951dbd57a3e4b19acb3b0c174e17",
+        "nodepath": "$.node[2]",
+        "line": 24,
+        "option_counts": {
+          "explicit_nonempty": 1,
+          "missing_name": 1,
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[2]"
+        ]
+      }
+    ],
+    "all_empty_nodes": [
+      {
+        "path": "gameproj/battlefield/bf_power_plant/factory_parts/factory_window_skylight_blocked_cmp.composit.blk",
+        "sha256": "84a40cc71c182da89886d48dd8576cce8cf53a492663378bafc42e4f4a08b29c",
+        "nodepath": "$.node[1]",
+        "line": 19,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[0]"
+        ]
+      },
+      {
+        "path": "gameproj/battlefield/bf_power_plant/factory_parts/factory_window_skylight_blocked_cmp.composit.blk",
+        "sha256": "84a40cc71c182da89886d48dd8576cce8cf53a492663378bafc42e4f4a08b29c",
+        "nodepath": "$.node[2]",
+        "line": 34,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[2].ent[0]"
+        ]
+      },
+      {
+        "path": "gameproj/sovmod/entities/buildings/draft_buildings/mall_omsky_a/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[5]",
+        "line": 73,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[0]"
+        ]
+      },
+      {
+        "path": "gameproj/sovmod/entities/props_indoor/equipment/fire_safety/sovmod_fire_shield_a.composit.blk",
+        "sha256": "3e352e0fe40b9b611720a24d3474e52def315d46354865275e1e04f004da5ac2",
+        "nodepath": "$.node[1]",
+        "line": 18,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[1].ent[0]"
+        ]
+      },
+      {
+        "path": "gameproj/sovmod/entities/props_indoor/equipment/fire_safety/sovmod_fire_shield_a.composit.blk",
+        "sha256": "3e352e0fe40b9b611720a24d3474e52def315d46354865275e1e04f004da5ac2",
+        "nodepath": "$.node[3]",
+        "line": 43,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[3].ent[0]"
+        ]
+      },
+      {
+        "path": "gameproj/sovmod/entities/props_indoor/equipment/fire_safety/sovmod_fire_shield_a.composit.blk",
+        "sha256": "3e352e0fe40b9b611720a24d3474e52def315d46354865275e1e04f004da5ac2",
+        "nodepath": "$.node[4]",
+        "line": 53,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[4].ent[0]"
+        ]
+      },
+      {
+        "path": "gameproj/sovmod/entities/props_indoor/equipment/fire_safety/sovmod_fire_shield_a.composit.blk",
+        "sha256": "3e352e0fe40b9b611720a24d3474e52def315d46354865275e1e04f004da5ac2",
+        "nodepath": "$.node[6]",
+        "line": 69,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[6].ent[0]"
+        ]
+      },
+      {
+        "path": "gameproj/sovmod/entities/props_indoor/equipment/fire_safety/sovmod_fire_shield_a.composit.blk",
+        "sha256": "3e352e0fe40b9b611720a24d3474e52def315d46354865275e1e04f004da5ac2",
+        "nodepath": "$.node[8]",
+        "line": 85,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[8].ent[0]"
+        ]
+      },
+      {
+        "path": "rendinst_1lod/mall_omsky/composites/kids_store/sovmod_toy_car_b_type_a_random_cmp.composit.blk",
+        "sha256": "32948117e220fa4b583f2ddf7715f356b66fd37e82bc56c4e8679ef73e3b1d4f",
+        "nodepath": "$.node[5]",
+        "line": 73,
+        "option_counts": {
+          "explicit_empty": 1
+        },
+        "empty_nodepaths": [
+          "$.node[5].ent[0]"
+        ]
+      }
+    ]
+  },
+  "issues": [],
+  "scanner_sha256": "510e4af12a81f07fc856e541408abd347c923107757095c1c2c34e1bf63b1aee",
+  "census_script_sha256": "f45436db6dd05182f4d18463c3403df9589c12111d357fddf769327eebf4d7c6",
+  "definitions": {
+    "empty": "exactly one quoted name:t whose value is exactly the empty string; no trimming",
+    "mixed": "a node's direct ent children include both explicit-empty and explicit-nonempty and no unknown name",
+    "all_empty": "every direct ent child has an explicit-empty name; no topology/runtime inference",
+    "unknown": "missing, duplicate, wrong-type or nonliteral name; never silently classified as explicitly empty",
+    "dag4blend_default": "separate model-derived counts: omitted name defaults to empty in actual cmp_ent; explicit-empty and missing-name source counts retained separately; wrong-type/nonliteral/duplicate remain unknown"
+  },
+  "limitations": [
+    "comment/string-aware structural declaration scanner, not complete BLK syntax validation",
+    "counts are source facts, not MH/Dagor import-success counts",
+    "no include expansion or effective type/runtime semantics",
+    "file sets overlap; do not sum file counts across categories",
+    "per-file stability checks are not a global atomic filesystem snapshot"
+  ]
+}

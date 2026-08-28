@@ -1,5 +1,12 @@
 # 12 — Срезы V5-S6.1 и V5-S6.2 (pre-S7)
 
+> **Перенумерация owner, документ 13.** Перед описанными ниже срезами
+> вставлен V5-S6.1 — dag4blend bridge unblock
+> (`13_v5_s6_1_dag4blend_bridge.md`). Placement lifecycle теперь **V5-S6.2**,
+> Pre-S7 freeze — **V5-S6.3**. Ниже сохранена редакция 2; редакцию 3 готовит
+> owner. По пересекающимся решениям действует документ 13, включая постоянный
+> metadata-only `placement` и единое правило placeholder для `gameObj`.
+
 Статус: **owner freeze, редакция 2**. Аудитория — исполнитель без контекста сессии
 и внешний ai-аудитор. До любых правок прочитать целиком
 `docs/10_source_protocol_v5_plan.md`, `docs/11_v5_agent_slices.md` и `README.md`.

@@ -7,11 +7,89 @@ STOP до owner-решения.
 
 `OPEN-V5-1`…`OPEN-V5-14` РЕШЕНЫ owner — нормативный текст в 10 §§6.3, 6.4,
 13. Вопросы `OPEN-V5-15`…`OPEN-V5-18` перенесены из owner freeze
-`12_v5_s6_1_s6_2_slices.md` §9 до реализации затронутых частей S6.2.
+`12_v5_s6_1_s6_2_slices.md` §9 до реализации затронутых частей S6.3
+(новая нумерация — `13_v5_s6_1_dag4blend_bridge.md`). OPEN-V5-17/18 закрыты
+owner'ом в документе 13 §8; OPEN-V5-15/16 остаются открытыми.
 Их временные правила не блокируют S6.1 и не разрешают начинать следующий
 production-срез до приёмки/merge предыдущего.
 Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
 `OPEN-V4-24` document-world прямо superseded parent-local контрактом v5.
+
+## OPEN-V5-19 — неисполняемый gameObj и исполняемый MH actor
+
+**Контекст.** Документ 13 §1.4 требует для всех `gameObj` сохранять имя/TRS,
+не создавая UE actor/code даже при совпадении имени с ActorClassRegistry.
+Существующее представление `gameobj → kind: actor` (10 §6.4) не содержит
+происхождения. Source admission (`MHCompositeCompiler::ResolveActorClass`)
+и applied graph отклоняют отсутствующий registry token; зарегистрированный
+token материализуется через `UChildActorComponent::SetChildActorClass`.
+На базе `5f566c7` независимый Automation probe получил два RED:
+unknown ordinary/random actor не проходит admission; registry collision
+создаёт настоящий AStaticMeshActor. Отдельный низкоуровневый placeholder
+GREEN сохраняет имя/TRS, но обычный импорт до него не доходит.
+`name` — display-only, а у options поля `name` нет; скрытым discriminator
+он служить не может. Подробности и исходники пробы — квитанция V5-S6.1.
+
+**Вопрос.** Какое wire-представление/carrier owner утверждает для
+неисполняемого `gameObj` на source → asset → plan → runtime → обратный export,
+включая random options, без изменения семантики существующих MH actor leaves?
+
+**Временное fail-closed правило.** STOP gameObj end-to-end части нового
+моста; его новая публикация не пропускает actor-bearing closure до решения.
+Не ослаблять общий actor admission, не отключать все actor leaves, не
+назначать поведение по имени/пустому registry и не вводить скрытый carrier.
+
+**Статус. ОТКРЫТ — V5-S6.1, требуется решение owner.**
+
+## OPEN-V5-20 — dag4blend теряет корневые placement controls
+
+**Контекст.** Документ 13 §2.1 требует измерить наследование на реальной
+`normandy_vernacular_debris_wood.composit.blk` и при необходимости разрешить
+его по иерархии Empty. Проба настоящего `bpy.ops.dt.cmp_import` в dag4blend
+2.12.0 показала: исходный root `placeOnCollision=no`, а также синтетические
+root `placeOnCollision=yes` и `place_type=3` дают одинаковые два parent=None
+Empty без корневых controls. Root Collection содержит только name/type;
+root Empty не существует. Локальные свойства parent Empty сохраняются,
+child без локального свойства его не получает. Значит одноуровневое
+наследование внутри Empty-дерева восстановимо, document-root значение — нет.
+Измерения выполнялись на private copy установленного dag4blend без правок
+его parser/model; они сохранены в квитанции V5-S6.1.
+
+**Вопрос.** Как доставлять потерянные корневые controls: разрешить явный
+carrier в dag4blend с именем/типом, заданным owner, либо отдельно разрешить
+чтение исходного root-блока с точной привязкой к legacy Collection? Текущий
+путь `.composit.blk` в 13 §7 вне scope, а угадывать нулевое значение нельзя.
+
+**Временное fail-closed правило.** STOP acceptance наследования и
+lossless placement carrier для этого маршрута. Не объявлять отсутствие
+данных равным `place_type=0`, не патчить установленный/reference dag4blend
+и не вводить скрытое чтение исходника. Рабочие explicit/local controls
+не доказывают сохранность document-root controls.
+
+**Статус. ОТКРЫТ — V5-S6.1, требуется решение owner.**
+
+## OPEN-V5-21 — полный canonical node order с profile и новыми metadata
+
+**Контекст.** Документ 13 §2.1 отсылает к формату документа 12 §1, где
+порядок узла задан как `kind → resource → name → transform → placement →
+appearance_seed_boundary → options → children`. Существующее нормативное
+поле `profile` в этой последовательности пропущено. Оба действующих codec
+пишут его после transform, перед options. Узел может одновременно иметь
+profile и два новых поля, поэтому их относительный порядок влияет на
+canonical bytes, raw hash, AppliedHash и closure hash.
+
+**Вопрос.** Каков полный порядок полей такого узла? Например, сохраняется
+ли `... transform → profile → placement → appearance_seed_boundary →
+options → children`? Нужен точный порядок, не выбор реализации.
+
+**Временное fail-closed правило.** STOP новых canonical codec-векторов
+и записи двух metadata-полей до ратификации порядка. Existing profile,
+формула ResolvedSignature и замороженные random goldens не меняются.
+«Не затрагивать подпись» трактуется как неизменность формулы и подписей
+неизменённых документов (13 acceptance 11), не как исключение metadata
+из source/closure hash или canonical extract.
+
+**Статус. ОТКРЫТ — V5-S6.1, требуется решение owner.**
 
 ## OPEN-V5-15 — inline `p2` в даговском узле
 
@@ -26,7 +104,7 @@ production-срез до приёмки/merge предыдущего.
 `_lossless_stop` сохраняется; ни новое имя ресурса, ни inline-грамматика
 исполнителем не изобретаются.
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть S6.2.**
+**Статус. ОТКРЫТ — owner freeze 12 §9 и 13 §8; затронутая часть S6.3.**
 
 ## OPEN-V5-16 — значение `MH_APPEARANCE_CHANNELS`
 
@@ -40,7 +118,7 @@ production-срез до приёмки/merge предыдущего.
 appearance-goldens. Это дословная временная policy 12 §9, не новый выбор
 исполнителя и не разрешение менять существующие layout/random goldens.
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть S6.2.**
+**Статус. ОТКРЫТ — owner freeze 12 §9 и 13 §8; затронутая часть S6.3.**
 
 ## OPEN-V5-17 — `project_max_trace_distance`
 
@@ -54,7 +132,9 @@ placement, но не исполняет мировое прижатие.
 самостоятельно. Настройка не входит ни в один cross-host хэш; мировой
 placement-provider в S6.2 не реализуется.
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть pre-S7 контракта.**
+**Статус. РЕШЕНО OWNER — закрыт как неприменимый, документ 13 §§2.1, 8.**
+Прижатия не будет; дистанция и настройка не вводятся. Прежнее временное
+правило выше сохранено только как история и больше не блокирует работу.
 
 ## OPEN-V5-18 — роль служебных `gameObj`-маркеров
 
@@ -71,9 +151,10 @@ placement-provider в S6.2 не реализуется.
 `Marker` или `ActorClass` по имени. Роль `Marker` после явного маппинга
 сохраняет узел с transform/placement, но не порождает leaf (12 §8).
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть S6.2.**
-Инвентаризация корпуса собирает факты и кандидатов для owner, не закрывает
-вопрос автоматически и не меняет registry.
+**Статус. РЕШЕНО OWNER — документ 13 §§1.4, 8, единое правило placeholder.**
+Все `gameObj` сохраняют имя и трансформ, но не порождают UE actor/code;
+реестр ролей не вводится. Это owner-решение, не вывод из инвентаризации.
+Прежнее временное правило выше сохранено только как история.
 
 ## OPEN-V5-14 — thumbnail в S5 после отключения renderer и authority его Seed
 

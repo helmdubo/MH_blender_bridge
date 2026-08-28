@@ -1,0 +1,105 @@
+"""Owner doc13 regression gates for the explicit dag4blend bridge."""
+
+from pathlib import Path
+import sys
+
+import pytest
+
+bpy = pytest.importorskip("bpy")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addon"))
+
+from mh4blend.scene.import_dagor_composite import (  # noqa: E402
+    convert_dag4blend_collection,
+    import_dag4blend_composite_collection,
+)
+from mh4blend.ui import composite_authoring, ops  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def properties():
+    own_material = not hasattr(bpy.types.Material, "mh4blend")
+    own_object = not hasattr(bpy.types.Object, "mh4blend")
+    if own_material:
+        ops.register()
+    if own_object:
+        composite_authoring.register()
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    yield
+    if own_object:
+        composite_authoring.unregister()
+    if own_material:
+        ops.unregister()
+
+
+def legacy(name, kind="composit"):
+    collection = bpy.data.collections.new(name)
+    collection["name"] = name
+    collection["type"] = kind
+    return collection
+
+
+def empty(name, collection, instance=None, parent=None):
+    obj = bpy.data.objects.new(name, None)
+    collection.objects.link(obj)
+    if instance is not None:
+        obj.instance_type = "COLLECTION"
+        obj.instance_collection = instance
+    obj.parent = parent
+    return obj
+
+
+def test_mixed_empty_option_keeps_weight_and_order():
+    source = legacy("bridge_root")
+    child = legacy("bridge_child")
+    helper = bpy.data.collections.new("random.bridge")
+    empty("choice", source, helper)
+    empty("absent", helper)["weight:r"] = 2.0
+    empty("present", helper, child)["weight:r"] = 1.0
+    document, resources = convert_dag4blend_collection(source)
+    assert [(row.kind, row.resource, row.weight)
+            for row in document.nodes[0].options] == [
+        ("empty", None, 2.0), ("composite", "bridge_child", 1.0)]
+    assert list(resources) == [("composite", "bridge_child")]
+
+
+def test_all_empty_options_do_not_create_an_entity_or_discard_children():
+    source = legacy("bridge_empty")
+    helper = bpy.data.collections.new("random.empty")
+    parent = empty("choice", source, helper)
+    parent.location.x = 2.0
+    empty("absent", helper)["weight:r"] = 2.0
+    empty("structural_child", source, parent=parent).location.x = 0.25
+    document, resources = convert_dag4blend_collection(source)
+    assert document.nodes[0].kind == "group"
+    assert document.nodes[0].options == []
+    assert len(document.nodes[0].children) == 1
+    assert document.nodes[0].children[0].kind == "group"
+    assert resources == {}
+
+
+def test_external_placements_are_relinked_without_mutating_legacy(tmp_path):
+    working_scene = bpy.context.scene
+    source = legacy("bridge_root")
+    child = legacy("bridge_child")
+    legacy_inner = empty("legacy_inner", source, child)
+    outside = empty("external", working_scene.collection, source)
+    report = import_dag4blend_composite_collection(source, source_root=tmp_path)
+    assert outside.instance_collection is report["collection"]
+    assert legacy_inner.instance_collection is child
+    assert bpy.data.collections.get(source.name) is source
+    assert bpy.data.collections.get(child.name) is child
+
+
+def test_full_route_adopts_mesh_through_writer_before_composite(tmp_path):
+    source = legacy("bridge_root")
+    mesh = legacy("bridge_mesh", "rendinst")
+    bpy.context.scene.collection.children.link(mesh)
+    data = bpy.data.meshes.new("triangle_data")
+    data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+    obj = bpy.data.objects.new("triangle", data)
+    mesh.objects.link(obj)
+    empty("mesh_placement", source, mesh)
+    report = import_dag4blend_composite_collection(source, source_root=tmp_path)
+    assert (tmp_path / "bridge_mesh.mesh.fbx").is_file()
+    assert (tmp_path / "bridge_root.composite").is_file()
+    assert report["ok"]

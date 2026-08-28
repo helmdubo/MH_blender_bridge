@@ -1,0 +1,251 @@
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeCompiler.h"
+#include "Composite/MHCompositePlacementCompiler.h"
+#include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositeResolvedPlan.h"
+#include "Components/ChildActorComponent.h"
+#include "Components/SceneComponent.h"
+#include "Components/TextRenderComponent.h"
+#include "CoreMinimal.h"
+#include "Engine/StaticMeshActor.h"
+#include "Engine/World.h"
+#include "Misc/AutomationTest.h"
+#include "Misc/Guid.h"
+#include "Random/MHRandomStream.h"
+#include "Settings/MHCompositeSettings.h"
+#include "Source/MHPayloadHashes.h"
+#include "Source/MHSourceResolver.h"
+#include "UObject/Package.h"
+
+namespace UE::MimirComposite::Tests
+{
+namespace
+{
+class FGameObjAuditResolver final : public IMHSourceResolver
+{
+public:
+    virtual FMHSourceSnapshot GetSnapshot() const override { return FMHSourceSnapshot(); }
+    virtual FMHResolveOutcome Resolve(const FMHResourceKey&) override
+    {
+        FMHResolveOutcome Outcome;
+        Outcome.Status = EMHResolveStatus::Unresolved;
+        return Outcome;
+    }
+};
+
+struct FGameObjAuditFixture
+{
+    FAutomationTestBase& Test;
+    UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+    TMap<FString, FSoftClassPath> PreviousRegistry = Settings->ActorClassRegistry;
+    FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    UWorld* World = nullptr;
+    TArray<UMHCompositeAsset*> Assets;
+    FGameObjAuditResolver Resolver;
+
+    explicit FGameObjAuditFixture(FAutomationTestBase& InTest) : Test(InTest)
+    {
+        World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+        Settings->ActorClassRegistry.Reset();
+    }
+
+    ~FGameObjAuditFixture()
+    {
+        if (World != nullptr) World->DestroyWorld(false);
+        Settings->ActorClassRegistry = PreviousRegistry;
+        for (UMHCompositeAsset* Asset : Assets)
+        {
+            FAssetRegistryModule::AssetDeleted(Asset);
+            Asset->ClearFlags(RF_Public | RF_Standalone);
+            Asset->MarkAsGarbage();
+        }
+    }
+
+    FMHCompositeDocument Document(const FString& Token, const bool bRandom) const
+    {
+        FMHCompositeDocument Result;
+        FMHCompositeNode Node;
+        Node.Kind = bRandom ? EMHCompositeNodeKind::Random : EMHCompositeNodeKind::Actor;
+        Node.Name = Token;
+        Node.Transform.TranslationCm = FVector(123.0, -45.0, 67.0);
+        Node.Transform.RotationQuat = FRotator(0.0, 90.0, 0.0).Quaternion();
+        Node.Transform.Scale = FVector(1.0, 2.0, 3.0);
+        if (bRandom)
+        {
+            FMHCompositeOption Option;
+            Option.Kind = EMHCompositeOptionKind::Actor;
+            Option.Resource = Token;
+            Option.Weight = 1.0f;
+            Node.Options.Add(Option);
+        }
+        else Node.Resource = Token;
+        Result.Nodes.Add(Node);
+        return Result;
+    }
+
+    UMHCompositeAsset* Applied(const FMHCompositeDocument& Document, const FString& Label)
+    {
+        const FString Name = TEXT("gameobj_audit_") + Label + TEXT("_") + Suffix;
+        UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(
+            CreatePackage(*(TEXT("/Game/MH/Generated/Composites/") + Name)),
+            FName(*Name), RF_Public | RF_Standalone);
+        Asset->LogicalName = Name;
+        FString Error;
+        TArray<uint8> Bytes;
+        if (!MHApplyCompositeV5(*Asset, Document, Error) || !MHWriteCanonicalCompositeV5(Document, Bytes, Error))
+        {
+            Test.AddError(TEXT("Audit fixture apply failed: ") + Error);
+            return nullptr;
+        }
+        Asset->SourceRelativePath = Name + TEXT(".composite");
+        Asset->SourceHash = MHRawPayloadHash(Bytes);
+        Asset->AppliedHash = Asset->SourceHash;
+        FAssetRegistryModule::AssetCreated(Asset);
+        Assets.Add(Asset);
+        return Asset;
+    }
+
+    AMHCompositeActor* Spawn(UMHCompositeAsset& Asset)
+    {
+        AMHCompositeActor* Actor = World != nullptr ? World->SpawnActor<AMHCompositeActor>() : nullptr;
+        if (Actor != nullptr)
+        {
+            Actor->SetSeed(100);
+            Actor->SetCompositeAsset(&Asset);
+        }
+        return Actor;
+    }
+};
+
+int32 GameObjAuditSpawnedChildren(const AMHCompositeActor& Actor)
+{
+    int32 Count = 0;
+    for (UActorComponent* Component : Actor.GetDerivedComponents())
+    {
+        if (const UChildActorComponent* Child = Cast<UChildActorComponent>(Component))
+            if (Child->GetChildActor() != nullptr) ++Count;
+    }
+    return Count;
+}
+} // namespace
+
+// Diagnostic snapshot only: expected RED on main 5f566c7 under doc13 section1.4.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHGameObjUnknownAdmissionAudit,
+    "Mimir.Audit.GameObj.UnknownMustAdmitPlaceholder",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHGameObjUnknownAdmissionAudit::RunTest(const FString& Parameters)
+{
+    FGameObjAuditFixture Fixture(*this);
+    for (const bool bRandom : {false, true})
+    {
+        const FString Token = bRandom ? TEXT("loot_audit_gameobj") : TEXT("dummy_pivot");
+        const FMHCompositeDocument Document = Fixture.Document(Token, bRandom);
+        FString SourceError;
+        const bool bSourceAdmitted = MHProbeCompositeBuildV5(TEXT("gameobj_audit_source"),
+            Document, Fixture.Resolver, *Fixture.Settings, SourceError);
+        UMHCompositeAsset* Root = Fixture.Applied(Document, bRandom ? TEXT("unknown_option") : TEXT("unknown_node"));
+        if (!TestNotNull(TEXT("applied-shape diagnostic fixture exists"), Root)) return false;
+        FMHRandomSourceGraph Graph;
+        TSet<FMHResourceKey> Dependencies;
+        FString GraphError;
+        const bool bGraphAdmitted = MHBuildAppliedCompositeGraph(*Root, *Fixture.Settings, Graph, Dependencies, GraphError);
+        AMHCompositeActor* Actor = Fixture.Spawn(*Root);
+        if (!TestNotNull(TEXT("fresh diagnostic placement exists"), Actor)) return false;
+        AddInfo(FString::Printf(TEXT("GAMEOBJ_UNKNOWN token=%s random=%d source=%d source_error=[%s] applied=%d applied_error=[%s] preview_plan=%d spawned=%d placement_error=[%s]"),
+            *Token, bRandom, bSourceAdmitted, *SourceError, bGraphAdmitted, *GraphError,
+            Actor->GetResolvedPlan() != nullptr, GameObjAuditSpawnedChildren(*Actor), *Actor->GetLastPlacementError()));
+        TestTrue(TEXT("doc13 gameObj source admission must accept placeholder token without registry"), bSourceAdmitted);
+        TestTrue(TEXT("doc13 gameObj applied graph must accept placeholder token without registry"), bGraphAdmitted);
+        TestNotNull(TEXT("doc13 fresh gameObj placement must have a per-leaf resolved plan"), Actor->GetResolvedPlan());
+        TestEqual(TEXT("unregistered gameObj currently executes no child actor"), GameObjAuditSpawnedChildren(*Actor), 0);
+    }
+    return true;
+}
+
+// Diagnostic snapshot only: expected RED; MH actor tokens carry no Dagor provenance.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHGameObjRegistryCollisionAudit,
+    "Mimir.Audit.GameObj.RegistryCollisionMustNotSpawn",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHGameObjRegistryCollisionAudit::RunTest(const FString& Parameters)
+{
+    FGameObjAuditFixture Fixture(*this);
+    for (const bool bRandom : {false, true})
+    {
+        const FString Token = bRandom ? TEXT("loot_audit_gameobj") : TEXT("dummy_pivot");
+        Fixture.Settings->ActorClassRegistry.Add(Token, FSoftClassPath(AStaticMeshActor::StaticClass()));
+        const FMHCompositeDocument Document = Fixture.Document(Token, bRandom);
+        FString Error;
+        TestTrue(TEXT("registry-backed native MH actor remains admitted"), MHProbeCompositeBuildV5(
+            TEXT("gameobj_audit_source"), Document, Fixture.Resolver, *Fixture.Settings, Error));
+        UMHCompositeAsset* Root = Fixture.Applied(Document, bRandom ? TEXT("registered_option") : TEXT("registered_node"));
+        if (!TestNotNull(TEXT("registered applied fixture exists"), Root)) return false;
+        AMHCompositeActor* Actor = Fixture.Spawn(*Root);
+        if (!TestNotNull(TEXT("registered diagnostic placement exists"), Actor)) return false;
+        TestNotNull(TEXT("registry-backed native MH actor gets the ordinary plan"), Actor->GetResolvedPlan());
+        const int32 Spawned = GameObjAuditSpawnedChildren(*Actor);
+        AddInfo(FString::Printf(TEXT("GAMEOBJ_COLLISION token=%s random=%d preview_plan=%d spawned=%d class=%s"),
+            *Token, bRandom, Actor->GetResolvedPlan() != nullptr, Spawned, *AStaticMeshActor::StaticClass()->GetPathName()));
+        TestEqual(TEXT("doc13 gameObj must remain placeholder even when registry token matches"), Spawned, 0);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHGameObjExistingCompilerPlaceholderAudit,
+    "Mimir.Audit.GameObj.LowLevelPlaceholderPreservesNameAndTrs",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHGameObjExistingCompilerPlaceholderAudit::RunTest(const FString& Parameters)
+{
+    FGameObjAuditFixture Fixture(*this);
+    const FString Token = TEXT("dummy_pivot");
+    Fixture.Settings->ActorClassRegistry.Add(Token, FSoftClassPath(AStaticMeshActor::StaticClass()));
+    const FMHCompositeDocument Document = Fixture.Document(Token, false);
+    UMHCompositeAsset* Root = Fixture.Applied(Document, TEXT("low_level"));
+    if (!TestNotNull(TEXT("low-level diagnostic fixture exists"), Root)) return false;
+    FMHRandomSourceGraph Graph;
+    TSet<FMHResourceKey> Dependencies;
+    FString Error;
+    if (!TestTrue(TEXT("admit ordinary MH actor first"), MHBuildAppliedCompositeGraph(*Root, *Fixture.Settings, Graph, Dependencies, Error)))
+    {
+        AddError(Error);
+        return false;
+    }
+    FMHResolvedCompositePlan Plan;
+    if (!TestTrue(TEXT("ordinary single resolver succeeds"), MHResolveCompositePlan(Graph, 100, Plan, Error))) return false;
+    if (!TestEqual(TEXT("one admitted actor leaf"), Plan.Leaves.Num(), 1)) return false;
+    Fixture.Settings->ActorClassRegistry.Remove(Token);
+    AMHCompositeActor* Target = Fixture.World != nullptr ? Fixture.World->SpawnActor<AMHCompositeActor>() : nullptr;
+    if (!TestNotNull(TEXT("standalone low-level compiler target exists"), Target)) return false;
+    const FMHRandomComposite* Definition = Graph.Composites.Find(Root->LogicalName);
+    if (!TestNotNull(TEXT("admitted root definition exists"), Definition)) return false;
+    const FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
+        *Target, Plan, *Definition, *Fixture.Settings, {});
+    TestTrue(TEXT("existing low-level compiler already tolerates removed actor registry entry"), View.Succeeded());
+    if (!TestEqual(TEXT("low-level compiler preserves one placeholder leaf"), View.LeafComponents.Num(), 1)) return false;
+    TestTrue(TEXT("placeholder full world matrix preserved"), View.LeafComponents[0]->GetComponentTransform().ToMatrixWithScale().Equals(Plan.Leaves[0].WorldMatrix, 0.000001));
+    int32 ChildActors = 0;
+    bool bLabelPreserved = false;
+    for (UActorComponent* Component : View.Components)
+    {
+        if (Cast<UChildActorComponent>(Component) != nullptr) ++ChildActors;
+        if (const UTextRenderComponent* Text = Cast<UTextRenderComponent>(Component))
+            bLabelPreserved |= Text->Text.ToString() == Token;
+    }
+    TestEqual(TEXT("placeholder compiler creates no child actor component"), ChildActors, 0);
+    TestTrue(TEXT("placeholder visible label preserves gameObj token"), bLabelPreserved);
+    FMHCompositeDocument Extracted;
+    TArray<uint8> Before;
+    TArray<uint8> After;
+    TestTrue(TEXT("reverse extract succeeds"), MHExtractCompositeV5(*Root, Extracted, Error));
+    TestTrue(TEXT("canonical pre-extract bytes available"), MHWriteCanonicalCompositeV5(Document, Before, Error));
+    TestTrue(TEXT("canonical reverse bytes available"), MHWriteCanonicalCompositeV5(Extracted, After, Error));
+    TestTrue(TEXT("reverse extract preserves token/name/TRS canonical bytes"), Before == After);
+    AddInfo(FString::Printf(TEXT("GAMEOBJ_LOW_LEVEL leaves=%d child_components=%d label=%d reverse_bytes_equal=%d warning_count=%d"),
+        View.LeafComponents.Num(), ChildActors, bLabelPreserved, Before == After, View.Warnings.Num()));
+    return true;
+}
+} // namespace UE::MimirComposite::Tests
