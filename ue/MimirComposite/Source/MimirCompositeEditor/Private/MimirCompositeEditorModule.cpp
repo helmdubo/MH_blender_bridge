@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositePreviewCache.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
@@ -183,6 +184,7 @@ void ExecuteReimportManagedMaterials(const FToolMenuContext& MenuContext)
 void FMimirCompositeEditorModule::StartupModule()
 {
     UE::MimirComposite::MHStartupRuntimeCompositeBridge();
+    UE::MimirComposite::MHStartupCompositePreviewCache();
     AssetRegistryTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(
         &AddMimirAssetRegistryTags);
     if (IsRunningCommandlet())
@@ -212,6 +214,7 @@ void FMimirCompositeEditorModule::StartupModule()
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
+    UE::MimirComposite::MHShutdownCompositePreviewCache();
     UE::MimirComposite::MHShutdownRuntimeCompositeBridge();
     UE::MimirComposite::MHShutdownProjectIndex();
     if (EnginePreExitHandle.IsValid())

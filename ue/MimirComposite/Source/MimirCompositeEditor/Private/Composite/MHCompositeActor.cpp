@@ -1,10 +1,12 @@
 #include "Composite/MHCompositeActor.h"
 
 #include "Composite/MHCompositePlacementCompiler.h"
+#include "Composite/MHCompositePreviewCache.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
 #include "LevelEditor.h"
 #include "Logging/MessageLog.h"
 #include "Misc/Guid.h"
@@ -31,8 +33,10 @@ void BroadcastMHCompositeComponentsEdited()
 void DestroyMHRetiredComponents(const TArray<TObjectPtr<UActorComponent>>& Previous,
     const TArray<TObjectPtr<UActorComponent>>& Current)
 {
+    TSet<UActorComponent*> Retained;
+    for (UActorComponent* Component : Current) Retained.Add(Component);
     for (int32 Index = Previous.Num() - 1; Index >= 0; --Index)
-        if (IsValid(Previous[Index]) && !Current.Contains(Previous[Index])) Previous[Index]->DestroyComponent();
+        if (IsValid(Previous[Index]) && !Retained.Contains(Previous[Index])) Previous[Index]->DestroyComponent();
 }
 }
 
@@ -101,12 +105,21 @@ void AMHCompositeActor::SetAutoSeed(const bool bEnabled)
 
 const UE::MimirComposite::FMHResolvedCompositePlan* AMHCompositeActor::GetResolvedPlan() const
 {
+    // Break/inspection must not consume an old admission after an applied
+    // asset or registry claim changed. An active Edit has its own explicit
+    // prospective graph snapshot; it is not a lease on the applied cache.
     return bPlanAvailable && ResolvedPlan.IsValid() && ResolvedPlan->Seed == Seed &&
+        (bPlacementEditMode || AppliedGraphRevision == UE::MimirComposite::MHCompositePreviewRevision(PlacementDependencies)) &&
         LastPlacementError.IsEmpty() ? ResolvedPlan.Get() : nullptr;
 }
 
 void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
 {
+    // UE's placement subsystem calls the factory for both PlaceAsset and
+    // PostPlaceAsset. The second assignment is not a request to revalidate the
+    // same closure or rebuild its components. Explicit Rebuild remains separate.
+    if (CompositeAsset.Get() == Asset && ((GetResolvedPlan() != nullptr &&
+        AppliedGraphRevision == UE::MimirComposite::MHCompositePreviewRevision(PlacementDependencies)) || PendingPreviewMesh.IsValid())) return;
     Modify();
     SetPlacementEditMode(false);
     if (CompositeAsset.Get() != Asset)
@@ -116,7 +129,7 @@ void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
         bPlanAvailable = false;
     }
     CompositeAsset = Asset;
-    RebuildComposite();
+    RebuildComposite(false);
 }
 
 UMHCompositeAsset* AMHCompositeActor::GetCompositeAsset() const
@@ -174,6 +187,7 @@ void AMHCompositeActor::ClearDerivedComponents()
     const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
     DestroyMHRetiredComponents(Previous, DerivedComponents);
     TopLevelPlacementComponents.Reset();
+    NodePlacementComponents.Reset();
     LeafPlacementComponents.Reset();
     PlacementDependencies.Reset();
     LastPlacementWarnings.Reset();
@@ -182,6 +196,7 @@ void AMHCompositeActor::ClearDerivedComponents()
     ResolvedPlan.Reset();
     AppliedGraph.Reset();
     bPlanAvailable = false;
+    PendingPreviewMesh.Reset();
     bBasisRejected = false;
     BroadcastMHCompositeComponentsEdited();
 }
@@ -196,8 +211,33 @@ void AMHCompositeActor::ReportPlacementError()
     if (!IsRunningCommandlet()) FMessageLog(TEXT("Mimir")).Warning(FText::FromString(Diagnostic));
 }
 
-void AMHCompositeActor::RebuildComposite()
+void AMHCompositeActor::DeferPreviewForMesh(UStaticMesh& Mesh)
 {
+    using namespace UE::MimirComposite;
+    bPlanAvailable = false;
+    AppliedGraph.Reset();
+    ResolvedSignature.Reset();
+    PendingPreviewMesh = &Mesh;
+    LastPlacementError = TEXT("Preview pending mesh compilation; rebuild will resume automatically");
+    MHDeferCompositePreview(*this, Mesh);
+    if (DerivedComponents.IsEmpty())
+    {
+        FMHCompositePlacementCompileResult View = MHBuildCompositeDiagnosticView(
+            *this, CompositeAsset.ToSoftObjectPath().GetAssetName() + TEXT(" (compiling)"), LastPlacementError);
+        DerivedComponents = MoveTemp(View.Components);
+        BroadcastMHCompositeComponentsEdited();
+    }
+}
+
+void AMHCompositeActor::RebuildComposite(const bool bRefreshAppliedGraph)
+{
+    if (bRefreshAppliedGraph && !CompositeAsset.IsNull())
+    {
+        UE::MimirComposite::FMHResourceKey Key;
+        Key.Kind = EMHResourceKind::Composite;
+        Key.LogicalName = CompositeAsset.ToSoftObjectPath().GetAssetName();
+        UE::MimirComposite::MHInvalidateCompositePreviewCache(&Key);
+    }
     RebuildPlacement(false);
 }
 
@@ -210,6 +250,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     if (bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
+    PendingPreviewMesh.Reset();
     bBasisRejected = false;
     AttachRootTransformHook();
     if (CompositeAsset.ToSoftObjectPath().IsNull())
@@ -228,13 +269,15 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
 
     TSharedPtr<const FMHRandomSourceGraph> CandidateGraph = AppliedGraph;
     FString Error;
-    if (!bSeedOnly || !bPlanAvailable || !CandidateGraph.IsValid())
+    UStaticMesh* PendingMesh = nullptr;
+    const bool bGraphLeaseCurrent = AppliedGraphRevision == MHCompositePreviewRevision(PlacementDependencies);
+    if (!bSeedOnly || !bPlanAvailable || !CandidateGraph.IsValid() || !bGraphLeaseCurrent)
     {
-        TSharedRef<FMHRandomSourceGraph> Graph = MakeShared<FMHRandomSourceGraph>();
         TSet<FMHResourceKey> Dependencies;
         if (Asset == nullptr)
             Error = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:") + Name + TEXT(" has no generated asset");
-        else if (MHBuildAppliedCompositeGraph(*Asset, *Settings, *Graph, Dependencies, Error))
+        else if (TSharedPtr<const FMHRandomSourceGraph> Graph = MHGetCompositePreviewGraph(
+            *Asset, *Settings, Dependencies, Error, PendingMesh); Graph.IsValid())
         {
             CandidateGraph = Graph;
             PlacementDependencies = MoveTemp(Dependencies);
@@ -247,10 +290,18 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         }
     }
 
+    if (PendingMesh != nullptr)
+    {
+        // Pending compilation is not a broken resource. Never enter the normal
+        // fallback compiler: even its SetStaticMesh can wait on the same mesh.
+        DeferPreviewForMesh(*PendingMesh);
+        return;
+    }
+
     TSharedRef<FMHResolvedCompositePlan> CandidatePlan = MakeShared<FMHResolvedCompositePlan>();
     if (Error.IsEmpty() && CandidateGraph.IsValid())
     {
-        if (bSeedOnly && bPlanAvailable && ResolvedPlan.IsValid() &&
+        if (bSeedOnly && bGraphLeaseCurrent && bPlanAvailable && ResolvedPlan.IsValid() &&
             ResolvedPlan->Draws.IsEmpty() && ResolvedPlan->Decisions.IsEmpty())
         {
             *CandidatePlan = *ResolvedPlan;
@@ -282,12 +333,14 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             if (PreviousRoot != nullptr)
                 View = MHCompileCompositePlacementV5(*this, *ResolvedPlan, *PreviousRoot, *Settings, DerivedComponents);
         }
+        if (View.PendingMesh != nullptr) { DeferPreviewForMesh(*View.PendingMesh); return; }
         FMHCompositePlacementCompileResult Marker = MHBuildCompositeDiagnosticView(*this, TEXT("composite:") + Name, Error);
         View.Components.Append(Marker.Components);
         View.Warnings.Append(Marker.Warnings);
         const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
         DerivedComponents = MoveTemp(View.Components);
         TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
+        NodePlacementComponents = MoveTemp(View.NodeComponents);
         LeafPlacementComponents = MoveTemp(View.LeafComponents);
         LastPlacementWarnings = MoveTemp(View.Warnings);
         DestroyMHRetiredComponents(Previous, DerivedComponents);
@@ -301,9 +354,10 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     SeedAffectsResult = MHClassifyCompositeGraph(*CandidateGraph);
     // None means visual invariance, not absence of random draws. Resolve above
     // still refreshes decision traces for single-option and zero-deviation nodes.
-    if (!(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
+    if (!(bSeedOnly && bGraphLeaseCurrent && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
     {
         FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(*this, *CandidatePlan, *Root, *Settings, DerivedComponents);
+        if (View.PendingMesh != nullptr) { DeferPreviewForMesh(*View.PendingMesh); return; }
         if (!View.Succeeded())
         {
             LastPlacementError = View.Error;
@@ -315,12 +369,14 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
         DerivedComponents = MoveTemp(View.Components);
         TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
+        NodePlacementComponents = MoveTemp(View.NodeComponents);
         LeafPlacementComponents = MoveTemp(View.LeafComponents);
         LastPlacementWarnings = MoveTemp(View.Warnings);
         DestroyMHRetiredComponents(Previous, DerivedComponents);
         if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
     }
     AppliedGraph = CandidateGraph;
+    AppliedGraphRevision = MHCompositePreviewRevision(PlacementDependencies);
     ResolvedPlan = CandidatePlan;
     ResolvedSignature = CandidatePlan->ResolvedSignature;
     bPlanAvailable = true;
@@ -337,6 +393,11 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
     }
     if (!ResolvedPlan.IsValid() ||
         !AppliedGraph.IsValid() || ResolvedPlan->Seed != Seed) return;
+    if (AppliedGraphRevision != MHCompositePreviewRevision(PlacementDependencies))
+    {
+        RebuildComposite(false);
+        return;
+    }
     if (!bPlanAvailable && !bBasisRejected)
     {
         // The cached plan may predate a rejected dependency update. Never let
@@ -348,7 +409,7 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
     if (Root == nullptr) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
     FString Error;
-    if (!MHUpdateCompositePlacementBasis(*this, *ResolvedPlan, *Root, TopLevelPlacementComponents, LeafPlacementComponents, Error))
+    if (!MHUpdateCompositePlacementBasis(*this, *ResolvedPlan, *Root, TopLevelPlacementComponents, NodePlacementComponents, LeafPlacementComponents, Error))
     {
         LastPlacementError = Error;
         ResolvedSignature.Reset();
@@ -384,7 +445,7 @@ void AMHCompositeActor::PostLoad()
 {
     Super::PostLoad();
     AttachRootTransformHook();
-    RebuildComposite();
+    RebuildComposite(false);
 }
 
 void AMHCompositeActor::PostDuplicate(const EDuplicateMode::Type DuplicateMode)
@@ -392,7 +453,7 @@ void AMHCompositeActor::PostDuplicate(const EDuplicateMode::Type DuplicateMode)
     Super::PostDuplicate(DuplicateMode);
     if (DuplicateMode == EDuplicateMode::Normal && !IsTemplate() && bAutoSeed) Seed = GenerateAutoSeed(Seed);
     AttachRootTransformHook();
-    RebuildComposite();
+    RebuildComposite(false);
 }
 
 void AMHCompositeActor::Destroyed()
@@ -472,6 +533,7 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
         return;
     }
     FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(*this, *Plan, *Root, *Settings, DerivedComponents);
+    if (View.PendingMesh != nullptr) { DeferPreviewForMesh(*View.PendingMesh); return; }
     if (!View.Succeeded())
     {
         LastPlacementError = View.Error;
@@ -482,6 +544,7 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
     DerivedComponents = MoveTemp(View.Components);
     TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
+    NodePlacementComponents = MoveTemp(View.NodeComponents);
     LeafPlacementComponents = MoveTemp(View.LeafComponents);
     DestroyMHRetiredComponents(Previous, DerivedComponents);
     LastEditHandleTransforms.Reset();

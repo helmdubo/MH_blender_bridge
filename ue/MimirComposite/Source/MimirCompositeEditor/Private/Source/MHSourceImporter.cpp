@@ -43,6 +43,7 @@ constexpr double StartupImportDelaySeconds = 1.0;
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void(EMHResourceKind)> GImportStageObserverForTests;
 TFunction<void(const FMHResourceKey&)> GProfileFreshnessAssetLoadObserverForTests;
+TFunction<void(const FMHResourceKey&)> GNoChangeAssetLoadObserverForTests;
 #endif
 
 void ObserveImportStage(const EMHResourceKind Kind)
@@ -93,6 +94,48 @@ bool MaterialReferencesFailedTexture(
     }
     return false;
 }
+
+class FScopedSourceResolver final : public IMHSourceResolver
+{
+public:
+    FScopedSourceResolver(IMHSourceResolver& InResolver, const TArray<FMHResourceKey>& Keys)
+        : Resolver(InResolver)
+    {
+        for (const FMHResourceKey& Key : Keys) Included.Add(Key);
+    }
+    virtual FMHSourceSnapshot GetSnapshot() const override
+    {
+        FMHSourceSnapshot Snapshot = Resolver.GetSnapshot();
+        // Global integrity errors/quarantine remain visible. Only per-resource
+        // planning is narrowed, before any importer-owned UObject policy load.
+        Snapshot.ResourceKeys.RemoveAll([this](const FMHResourceKey& Key) { return !Included.Contains(Key); });
+        return Snapshot;
+    }
+    virtual FMHResolveOutcome Resolve(const FMHResourceKey& Key) override { return Resolver.Resolve(Key); }
+
+private:
+    IMHSourceResolver& Resolver;
+    TSet<FMHResourceKey> Included;
+};
+
+class FWatcherDiagnosticResolver final : public IMHSourceResolver
+{
+public:
+    FWatcherDiagnosticResolver(TUniquePtr<IMHSourceResolver> InResolver, TSet<FString> InExcludedMessages)
+        : Resolver(MoveTemp(InResolver)), ExcludedMessages(MoveTemp(InExcludedMessages)) {}
+    virtual FMHSourceSnapshot GetSnapshot() const override
+    {
+        FMHSourceSnapshot Snapshot = Resolver->GetSnapshot();
+        Snapshot.Errors.RemoveAll([this](const FString& Message) { return ExcludedMessages.Contains(Message); });
+        Snapshot.Warnings.RemoveAll([this](const FString& Message) { return ExcludedMessages.Contains(Message); });
+        return Snapshot;
+    }
+    virtual FMHResolveOutcome Resolve(const FMHResourceKey& Key) override { return Resolver->Resolve(Key); }
+
+private:
+    TUniquePtr<IMHSourceResolver> Resolver;
+    TSet<FString> ExcludedMessages;
+};
 
 void BlockProfileFreshnessCheck(
     FMHSourceAnalysisEntry& Entry,
@@ -238,6 +281,9 @@ bool ExecutePreparedSourceImports(
         {
             continue;
         }
+#if WITH_DEV_AUTOMATION_TESTS
+        if (bNoChangePolicyCheck && GNoChangeAssetLoadObserverForTests) GNoChangeAssetLoadObserverForTests(Entry.Key);
+#endif
         FMHTextureOperationResult TextureResult = MHEnsureTextureV4(
             Entry,
             SourceRoot,
@@ -306,6 +352,9 @@ bool ExecutePreparedSourceImports(
         }
         if (Entry.Change == EMHSourceChange::NoChange)
         {
+#if WITH_DEV_AUTOMATION_TESTS
+            if (GNoChangeAssetLoadObserverForTests) GNoChangeAssetLoadObserverForTests(Entry.Key);
+#endif
             const FString PackageName = FString(TEXT("/Game/MH/Generated/Meshes/")) +
                 Entry.Key.LogicalName;
             const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;
@@ -371,7 +420,7 @@ void MHFilterAnalysisToScope(
     const FMHImportSourcesScope& Scope,
     FMHSourceAnalysis& InOutAnalysis)
 {
-    if (Scope.ResourceKeys.IsEmpty())
+    if (Scope.IsAll())
     {
         return;
     }
@@ -446,7 +495,12 @@ bool MHBuildSourceImportPlan(
 {
     OutAnalysis = FMHSourceAnalysis();
     bOutExecuted = false;
-    MHAnalyzeSources(ChangeDetector, Resolver, SourceRoot, OutAnalysis);
+    if (Scope.IsAll()) MHAnalyzeSources(ChangeDetector, Resolver, SourceRoot, OutAnalysis);
+    else
+    {
+        FScopedSourceResolver ScopedResolver(Resolver, Scope.ResourceKeys);
+        MHAnalyzeSources(ChangeDetector, ScopedResolver, SourceRoot, OutAnalysis);
+    }
     MHFilterAnalysisToScope(Scope, OutAnalysis);
     return !OutAnalysis.HasErrors();
 }
@@ -526,11 +580,96 @@ void MHSetImportStageObserverForTests(TFunction<void(EMHResourceKind)> Observer)
 {
     GImportStageObserverForTests = MoveTemp(Observer);
 }
+#endif
 
+bool MHImportChangedSourcesHeadless(
+    const FString& SourceRoot,
+    const TArray<FString>& Paths,
+    const UMHCompositeSettings& Settings,
+    FMHSourceAnalysis& OutAnalysis,
+    FMHProjectIndexUpdateResult& OutUpdate,
+    bool& bOutUsedFullScan,
+    bool& bOutExecuted)
+{
+    OutAnalysis = FMHSourceAnalysis();
+    OutUpdate = FMHProjectIndexUpdateResult();
+    bOutUsedFullScan = false;
+    bOutExecuted = false;
+    if (!IsInGameThread())
+    {
+        OutAnalysis.Errors.Add(TEXT("MH_E_IMPORT_THREAD_INVALID: watcher import must run on the game thread"));
+        return false;
+    }
+    if (SourceRoot.IsEmpty())
+    {
+        OutAnalysis.Errors.Add(TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured"));
+        return false;
+    }
+    if (Paths.IsEmpty()) return true;
+    FMHSourceAnalysisServices Services;
+    FString Error;
+    if (!MHCreateIncrementalSourceAnalysisServices(SourceRoot, Paths, Services, OutUpdate, bOutUsedFullScan, Error))
+    {
+        OutAnalysis.Errors.Add(MoveTemp(Error));
+        return false;
+    }
+    // A recreated cache has no old-edge snapshot. Bootstrap it exactly as a
+    // full scan; ordinary watcher events use their explicit (possibly empty)
+    // affected scope and never reinterpret empty as All.
+    TArray<FMHResourceKey> CurrentAffectedKeys = OutUpdate.AffectedResourceKeys;
+    if (!bOutUsedFullScan)
+    {
+        const FMHSourceSnapshot Snapshot = Services.Resolver->GetSnapshot();
+        TSet<FMHResourceKey> CurrentKeys;
+        for (const FMHResourceKey& Key : Snapshot.ResourceKeys) CurrentKeys.Add(Key);
+        // A removed, wholly unreferenced source key has no row by contract.
+        // Its old parents are retained above, but it is not a phantom request
+        // for an import that no longer has either a source or applied state.
+        CurrentAffectedKeys.RemoveAll([&CurrentKeys](const FMHResourceKey& Key) { return !CurrentKeys.Contains(Key); });
+
+        TArray<FMHProjectIndexDiagnostic> Diagnostics;
+        if (!Services.Index->GetDiagnostics(Diagnostics, Error))
+        {
+            OutAnalysis.Errors.Add(MoveTemp(Error));
+            return false;
+        }
+        TSet<FMHResourceKey> Affected;
+        for (const FMHResourceKey& Key : OutUpdate.AffectedResourceKeys) Affected.Add(Key);
+        TSet<FString> ExcludedMessages;
+        TSet<FString> RetainedMessages;
+        for (const FMHProjectIndexDiagnostic& Diagnostic : Diagnostics)
+        {
+            FMHResourceKey Owner;
+            Owner.LogicalName = Diagnostic.OwnerName;
+            const bool bOwnerKnown = MHResourceKindFromLabel(Diagnostic.OwnerKind, Owner.Kind) && Owner.IsCanonical();
+            FMHResourceKey Target;
+            Target.LogicalName = Diagnostic.TargetName;
+            const bool bTargetKnown = MHResourceKindFromLabel(Diagnostic.TargetKind, Target.Kind) && Target.IsCanonical();
+            // Exclusion is based solely on typed provenance, never parsing a
+            // human-readable diagnostic. Unknown/global integrity failures
+            // remain fail-closed; diagnostics attached to affected keys remain.
+            const bool bExcluded = bOwnerKnown && !Affected.Contains(Owner) && (!bTargetKnown || !Affected.Contains(Target));
+            (bExcluded ? ExcludedMessages : RetainedMessages).Add(Diagnostic.Message);
+        }
+        for (const FString& Message : RetainedMessages) ExcludedMessages.Remove(Message);
+        Services.Resolver = MakeUnique<FWatcherDiagnosticResolver>(MoveTemp(Services.Resolver), MoveTemp(ExcludedMessages));
+    }
+    const FMHImportSourcesScope Scope = bOutUsedFullScan
+        ? FMHImportSourcesScope::All()
+        : FMHImportSourcesScope::Only(MoveTemp(CurrentAffectedKeys));
+    return ExecutePreparedSourceImports(SourceRoot, Scope, Settings, Services, OutAnalysis, bOutExecuted);
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
 void MHSetProfileFreshnessAssetLoadObserverForTests(
     TFunction<void(const FMHResourceKey&)> Observer)
 {
     GProfileFreshnessAssetLoadObserverForTests = MoveTemp(Observer);
+}
+
+void MHSetNoChangeAssetLoadObserverForTests(TFunction<void(const FMHResourceKey&)> Observer)
+{
+    GNoChangeAssetLoadObserverForTests = MoveTemp(Observer);
 }
 #endif
 
@@ -883,30 +1022,10 @@ bool UMHSourceImporter::ImportChangedSourcePaths(const TArray<FString>& Paths)
         return false;
     }
 
-    FMHSourceAnalysisServices Services;
     FMHProjectIndexUpdateResult Update;
     bool bUsedFullScan = false;
-    FString Error;
-    if (!MHCreateIncrementalSourceAnalysisServices(
-            SourceRoot,
-            Paths,
-            Services,
-            Update,
-            bUsedFullScan,
-            Error))
-    {
-        Analysis.Errors.Add(MoveTemp(Error));
-        PresentPlan(Analysis);
-        return false;
-    }
-
-    const bool bSucceeded = ExecutePreparedSourceImports(
-        SourceRoot,
-        FMHImportSourcesScope::All(),
-        *Settings,
-        Services,
-        Analysis,
-        bExecuted);
+    const bool bSucceeded = MHImportChangedSourcesHeadless(
+        SourceRoot, Paths, *Settings, Analysis, Update, bUsedFullScan, bExecuted);
     FMessageLog Log(TEXT("Mimir"));
     for (const FString& Event : Update.SessionEvents)
     {
@@ -916,7 +1035,11 @@ bool UMHSourceImporter::ImportChangedSourcePaths(const TArray<FString>& Paths)
     {
         Log.Info(INVTEXT("Project index was recreated; watcher batch used one full projection"));
     }
-    if (bUsedFullScan || !Update.SessionEvents.IsEmpty() ||
+    const bool bAffectedPlanChanged = Analysis.Entries.ContainsByPredicate([](const FMHSourceAnalysisEntry& Entry)
+    {
+        return Entry.Change != EMHSourceChange::NoChange || !Entry.Warnings.IsEmpty() || !Entry.Errors.IsEmpty();
+    });
+    if (bUsedFullScan || !Update.SessionEvents.IsEmpty() || !Analysis.Errors.IsEmpty() || bAffectedPlanChanged ||
         MHShouldPresentWatcherAnalysis(Paths, Analysis))
     {
         PresentPlan(Analysis);

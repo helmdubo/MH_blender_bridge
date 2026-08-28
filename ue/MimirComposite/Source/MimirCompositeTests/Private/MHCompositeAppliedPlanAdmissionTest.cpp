@@ -7,6 +7,7 @@
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "CoreMinimal.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
@@ -305,7 +306,7 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     AMHCompositeActor* Actor = Fixture.Spawn(*Root);
     if (Actor == nullptr || !TestNotNull(TEXT("Edit starts from admitted placement"), Actor->GetResolvedPlan())) return false;
     if (!TestEqual(TEXT("one authored root edit handle"), Actor->GetTopLevelPlacementComponents().Num(), 1) ||
-        !TestEqual(TEXT("one handle plus one flattened leaf"), Actor->GetDerivedComponents().Num(), 2)) return false;
+        !TestEqual(TEXT("authored handle, sampled group, child node and leaf"), Actor->GetDerivedComponents().Num(), 4)) return false;
     const FMHResolvedCompositePlan AppliedPlan = *Actor->GetResolvedPlan();
     const FString SourceHash = Root->SourceHash;
     const FString AppliedHash = Root->AppliedHash;
@@ -313,7 +314,9 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     TArray<uint8> AppliedBytes;
     if (!MHWriteCanonicalCompositeV5(Document, AppliedBytes, Error)) return false;
     USceneComponent* Handle = Actor->GetTopLevelPlacementComponents()[0];
-    USceneComponent* Leaf = Cast<USceneComponent>(Actor->GetDerivedComponents()[1]);
+    USceneComponent* Leaf = nullptr;
+    for (UActorComponent* Component : Actor->GetDerivedComponents())
+        if (UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(Component)) Leaf = MeshComponent;
     if (!TestNotNull(TEXT("edit leaf is a scene component"), Leaf)) return false;
 
     Actor->SetPlacementEditMode(true);
@@ -327,7 +330,7 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("placement basis alone does not change raw closure receipts"),
         Actor->GetResolvedPlan()->Closure.OrderedRawHashes == AppliedPlan.Closure.OrderedRawHashes);
     TestEqual(TEXT("moving in Edit keeps authored handle object"), Actor->GetTopLevelPlacementComponents()[0].Get(), Handle);
-    TestEqual(TEXT("moving in Edit keeps leaf object"), Actor->GetDerivedComponents()[1].Get(), static_cast<UActorComponent*>(Leaf));
+    TestTrue(TEXT("moving in Edit keeps leaf object"), Actor->GetDerivedComponents().Contains(Leaf));
     TestTrue(TEXT("authored handle follows placement basis without baking profile"), MHMatrixElementsWithinTrsTolerance(
         Handle->GetComponentTransform().ToMatrixWithScale(), FTransform(FVector(100.0, 0.0, 0.0)).ToMatrixWithScale() * MovedBasis.ToMatrixWithScale()));
     TestTrue(TEXT("resolved leaf follows placement basis"), MHMatrixElementsWithinTrsTolerance(

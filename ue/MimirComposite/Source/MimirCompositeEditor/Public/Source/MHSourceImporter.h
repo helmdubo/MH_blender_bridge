@@ -15,12 +15,23 @@ struct FFileChangeData;
 namespace UE::MimirComposite
 {
 
-/** Empty ResourceKeys means the complete stable source snapshot. */
+struct FMHProjectIndexUpdateResult;
+
+/** Legacy empty ResourceKeys means All; Only({}) explicitly means no resources. */
 struct MIMIRCOMPOSITEEDITOR_API FMHImportSourcesScope
 {
     TArray<FMHResourceKey> ResourceKeys;
+    bool bExplicitSelection = false;
 
     static FMHImportSourcesScope All() { return FMHImportSourcesScope(); }
+    static FMHImportSourcesScope Only(TArray<FMHResourceKey> Keys)
+    {
+        FMHImportSourcesScope Result;
+        Result.ResourceKeys = MoveTemp(Keys);
+        Result.bExplicitSelection = true;
+        return Result;
+    }
+    bool IsAll() const { return !bExplicitSelection && ResourceKeys.IsEmpty(); }
 };
 
 /**
@@ -47,6 +58,16 @@ MIMIRCOMPOSITEEDITOR_API bool MHImportSourcesHeadless(
     FMHSourceAnalysis& OutAnalysis,
     bool& bOutExecuted);
 
+/** Watcher coordinator: one upsert and only the old/new affected source closure. */
+MIMIRCOMPOSITEEDITOR_API bool MHImportChangedSourcesHeadless(
+    const FString& SourceRoot,
+    const TArray<FString>& Paths,
+    const UMHCompositeSettings& Settings,
+    FMHSourceAnalysis& OutAnalysis,
+    FMHProjectIndexUpdateResult& OutUpdate,
+    bool& bOutUsedFullScan,
+    bool& bOutExecuted);
+
 /** True when a watcher batch changed or blocked one of the paths it observed. */
 MIMIRCOMPOSITEEDITOR_API bool MHShouldPresentWatcherAnalysis(
     const TArray<FString>& Paths,
@@ -59,6 +80,10 @@ MIMIRCOMPOSITEEDITOR_API void MHSetImportStageObserverForTests(
 
 /** Observes the exact composite keys whose inline profile receipts require UObject loading. */
 MIMIRCOMPOSITEEDITOR_API void MHSetProfileFreshnessAssetLoadObserverForTests(
+    TFunction<void(const FMHResourceKey&)> Observer);
+
+/** Observes NO_CHANGE texture/mesh policy loads after watcher-scope filtering. */
+MIMIRCOMPOSITEEDITOR_API void MHSetNoChangeAssetLoadObserverForTests(
     TFunction<void(const FMHResourceKey&)> Observer);
 #endif
 

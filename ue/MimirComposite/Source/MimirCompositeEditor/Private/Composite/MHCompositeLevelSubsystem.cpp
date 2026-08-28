@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeCompiler.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -15,6 +16,7 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
+#include "Index/MHProjectResourceIndex.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -173,6 +175,40 @@ FBox MHSelectionBounds(const TArray<AActor*>& Actors)
     return Bounds;
 }
 
+bool MHValidateBuildSourceDependencies(
+    const TArray<FMHCompositeNode>& Nodes,
+    const FMHProjectResourceIndex& Index,
+    TSet<FMHResourceKey>& CheckedKeys,
+    FString& OutError)
+{
+    const auto CheckKey = [&](const EMHResourceKind Kind, const FString& Name)
+    {
+        FMHResourceKey Key;
+        Key.Kind = Kind;
+        Key.LogicalName = Name;
+        if (CheckedKeys.Contains(Key)) return true;
+        // This is the source closure, not the chosen preview. The index walks
+        // every transitive option/profile and mesh -> material -> texture edge,
+        // including invalid receipts and duplicate claims, without importing.
+        if (Index.IsImportBlocked(Key, OutError)) return false;
+        CheckedKeys.Add(Key);
+        return true;
+    };
+    for (const FMHCompositeNode& Node : Nodes)
+    {
+        if (!Node.Profile.IsEmpty() && !CheckKey(EMHResourceKind::PlacementProfile, Node.Profile)) return false;
+        if (Node.Kind == EMHCompositeNodeKind::Mesh && !CheckKey(EMHResourceKind::StaticMesh, Node.Resource)) return false;
+        if (Node.Kind == EMHCompositeNodeKind::Composite && !CheckKey(EMHResourceKind::Composite, Node.Resource)) return false;
+        for (const FMHCompositeOption& Option : Node.Options)
+        {
+            if (Option.Kind == EMHCompositeOptionKind::Mesh && !CheckKey(EMHResourceKind::StaticMesh, Option.Resource)) return false;
+            if (Option.Kind == EMHCompositeOptionKind::Composite && !CheckKey(EMHResourceKind::Composite, Option.Resource)) return false;
+        }
+        if (!MHValidateBuildSourceDependencies(Node.Children, Index, CheckedKeys, OutError)) return false;
+    }
+    return true;
+}
+
 bool MHCollectBreakSpecs(
     const FMHResolvedCompositePlan& Plan,
     const FTransform& PlacementTransform,
@@ -185,6 +221,7 @@ bool MHCollectBreakSpecs(
         return false;
     }
     const FMatrix PlacementWorld = PlacementTransform.ToMatrixWithScale();
+    FMHAppliedResourceLookup Lookup;
     for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
     {
         if (Leaf.Kind != EMHRandomSemanticKind::Mesh && Leaf.Kind != EMHRandomSemanticKind::Actor)
@@ -206,7 +243,7 @@ bool MHCollectBreakSpecs(
             FMHResourceKey Key;
             Key.Kind = EMHResourceKind::StaticMesh;
             Key.LogicalName = Leaf.Resource;
-            Spec.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, OutError));
+            Spec.Mesh = Cast<UStaticMesh>(Lookup.Load(Key, OutError));
             if (!OutError.IsEmpty()) return false;
             if (Spec.Mesh == nullptr)
             {
@@ -384,19 +421,40 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     {
         return false;
     }
-    FMHPayloadScanResolver SourceResolver(SourceRoot);
-    if (!SourceResolver.Initialize(OutError))
+    // Use the same fresh, whole-root projection as source import. Checking only
+    // the destination filename misses duplicate identities in other folders;
+    // checking only the selected UAsset receipts misses deleted source files.
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
     {
         return false;
     }
     FMHResourceKey Key;
     Key.Kind = EMHResourceKind::Composite;
     Key.LogicalName = AdoptTarget.LogicalName;
-    if (SourceResolver.Resolve(Key).Status != EMHResolveStatus::Unresolved)
+    if (Services.Resolver->Resolve(Key).Status != EMHResolveStatus::Unresolved)
     {
         OutError = FString::Printf(
             TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME: composite:%s already exists in source_root"),
             *Key.LogicalName);
+        return false;
+    }
+
+    TSet<FMHResourceKey> CheckedDependencies;
+    if (!MHValidateBuildSourceDependencies(Document.Nodes, *Services.Index, CheckedDependencies, OutError) ||
+        !MHProbeCompositeBuildV5(Key.LogicalName, Document, *Services.Resolver, *Settings, OutError))
+    {
+        OutError += FString::Printf(TEXT("; Build composite:%s was not published"), *Key.LogicalName);
+        return false;
+    }
+
+    TArray<FMHProjectIndexGeneratedAssetState> ExistingClaims;
+    if (!Services.Index->GetGeneratedAssets(Key, ExistingClaims, OutError)) return false;
+    if (!ExistingClaims.IsEmpty())
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: generated claim already exists for %s"),
+            *Key.ToString());
         return false;
     }
 

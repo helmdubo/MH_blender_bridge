@@ -3,6 +3,7 @@
 #include "AssetCompilingManager.h"
 #include "AssetImportTask.h"
 #include "AssetToolsModule.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Engine/Texture.h"
 #include "Materials/MaterialInterface.h"
@@ -280,6 +281,7 @@ FMHTextureOperationResult MHEnsureTextureV4(
     }
     Result.Texture = Texture;
     Result.bImported = true;
+    MHNotifyGeneratedResourceChanged(Entry.Key);
     return Result;
 }
 

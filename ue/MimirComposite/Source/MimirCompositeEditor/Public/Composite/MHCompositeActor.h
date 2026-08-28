@@ -12,6 +12,7 @@
 class UActorComponent;
 class UMHCompositeAsset;
 class USceneComponent;
+class UStaticMesh;
 
 /** Persisted level instance of one managed composite; its component view is always derived. */
 UCLASS(NotBlueprintable)
@@ -22,8 +23,11 @@ class MIMIRCOMPOSITEEDITOR_API AMHCompositeActor final : public AActor
 public:
     AMHCompositeActor();
 
-    /** Source placement is replaced by a runtime-only wrapper at PIE/cook handoff. */
-    virtual bool IsEditorOnly() const override { return true; }
+    // IsEditorOnly also suppresses the owner's primitive scene proxies in Game
+    // View (but not their shadows). Exclude the source actor from cooked loads,
+    // not from normal editor rendering/hit proxies. PIE/cook still use the bridge.
+    virtual bool NeedsLoadForClient() const override { return false; }
+    virtual bool NeedsLoadForServer() const override { return false; }
     virtual void Serialize(FArchive& Archive) override;
 
     void SetCompositeAsset(UMHCompositeAsset* Asset);
@@ -45,7 +49,7 @@ public:
     bool GetEditedCompositeDocument(UE::MimirComposite::FMHCompositeDocument& OutDocument) const;
 
     /** Rebuild from managed applied assets, never from the source filesystem. */
-    void RebuildComposite();
+    void RebuildComposite(bool bRefreshAppliedGraph = true);
 
     const TArray<TObjectPtr<UActorComponent>>& GetDerivedComponents() const
     {
@@ -96,6 +100,7 @@ private:
     void UpdatePlacementBasis(USceneComponent*, EUpdateTransformFlags, ETeleportType);
     void AttachRootTransformHook();
     void ReportPlacementError();
+    void DeferPreviewForMesh(UStaticMesh& Mesh);
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     TObjectPtr<USceneComponent> CompositeRoot;
@@ -122,6 +127,9 @@ private:
     TArray<TObjectPtr<USceneComponent>> TopLevelPlacementComponents;
 
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
+    TArray<TObjectPtr<USceneComponent>> NodePlacementComponents;
+
+    UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> LeafPlacementComponents;
 
     TSet<UE::MimirComposite::FMHResourceKey> PlacementDependencies;
@@ -135,6 +143,8 @@ private:
     FTransform LastEditBasis = FTransform::Identity;
     EMHCompositeSeedEffect SeedAffectsResult = EMHCompositeSeedEffect::None;
     bool bPlanAvailable = false;
+    uint64 AppliedGraphRevision = 0;
+    TWeakObjectPtr<UStaticMesh> PendingPreviewMesh;
     // Only a rejected placement basis can recover by reapplying the old plan.
     // A rejected newer definition must pass full graph admission again.
     bool bBasisRejected = false;

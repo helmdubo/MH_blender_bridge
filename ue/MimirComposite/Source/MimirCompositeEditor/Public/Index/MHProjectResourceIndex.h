@@ -81,6 +81,9 @@ struct MIMIRCOMPOSITEEDITOR_API FMHProjectIndexUpdateResult
 {
     int64 Generation = 0;
     TArray<FString> SessionEvents;
+    /** Ephemeral watcher scope: changed keys, reverse dependents and their full
+     * forward closures over the union of pre/post-upsert edges. Never stored. */
+    TArray<FMHResourceKey> AffectedResourceKeys;
 };
 
 /**

@@ -7,12 +7,30 @@
 #include "Source/MHSourceResolver.h"
 
 class UMHCompositeSettings;
+class UStaticMesh;
 
 namespace UE::MimirComposite
 {
 
 /** Unique generated claim by ResourceKey; no source-tree lookup or fallback winner. */
 MIMIRCOMPOSITEEDITOR_API UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError);
+
+/**
+ * One-operation Asset Registry claim snapshot. Duplicate and malformed-class
+ * claims anywhere in the project remain visible; no source or durable cache.
+ * Reuse within one graph/materialization operation, never across notifications.
+ */
+class MIMIRCOMPOSITEEDITOR_API FMHAppliedResourceLookup
+{
+public:
+    FMHAppliedResourceLookup();
+    ~FMHAppliedResourceLookup();
+    UObject* Load(const FMHResourceKey& Key, FString& OutError);
+
+private:
+    class FImpl;
+    TUniquePtr<FImpl> Impl;
+};
 
 MIMIRCOMPOSITEEDITOR_API bool MHIsSpawnableCompositeActorClass(const UClass* Class);
 
@@ -22,7 +40,9 @@ MIMIRCOMPOSITEEDITOR_API bool MHBuildAppliedCompositeGraph(
     const UMHCompositeSettings& Settings,
     FMHRandomSourceGraph& OutGraph,
     TSet<FMHResourceKey>& OutDependencies,
-    FString& OutError);
+    FString& OutError,
+    bool bAllowBlockingCompilation = true,
+    UStaticMesh** OutPendingMesh = nullptr);
 
 /** Visual impact classification; even a visually constant random node still consumes draws. */
 MIMIRCOMPOSITEEDITOR_API EMHCompositeSeedEffect MHClassifyCompositeGraph(

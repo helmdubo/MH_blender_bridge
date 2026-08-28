@@ -68,9 +68,13 @@ FString SeedTestSignature(const AMHCompositeActor& Actor)
 
 USceneComponent* SeedTestLeafComponent(const AMHCompositeActor& Actor, const int32 Index)
 {
-    const int32 ComponentIndex = Actor.GetTopLevelPlacementComponents().Num() + Index;
-    return Actor.GetDerivedComponents().IsValidIndex(ComponentIndex)
-        ? Cast<USceneComponent>(Actor.GetDerivedComponents()[ComponentIndex]) : nullptr;
+    const FMHResolvedCompositePlan* Plan = Actor.GetResolvedPlan();
+    if (Plan == nullptr || !Plan->Leaves.IsValidIndex(Index)) return nullptr;
+    const FMHResolvedCompositeLeaf& Leaf = Plan->Leaves[Index];
+    const FName Key(*FString::Printf(TEXT("MH.Leaf:%s:%d:%s"), *Leaf.Origin, static_cast<int32>(Leaf.Kind), *Leaf.Resource));
+    for (UActorComponent* Component : Actor.GetDerivedComponents())
+        if (IsValid(Component) && Component->ComponentTags.Contains(Key)) return Cast<USceneComponent>(Component);
+    return nullptr;
 }
 
 bool SeedTestTraceEqual(const FMHResolvedCompositePlan& A, const FMHResolvedCompositePlan& B)

@@ -2,6 +2,7 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetCompilingManager.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Engine/AssetUserData.h"
 #include "Engine/Texture.h"
 #include "HAL/FileManager.h"
@@ -727,6 +728,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
     Result.Material = Material;
+    MHNotifyGeneratedResourceChanged(Entry.Key);
     return Result;
 }
 
@@ -850,6 +852,10 @@ FMHMaterialOperationResult MHPublishMaterialV4(
         return Result;
     }
     Result.Material = &Material;
+    FMHResourceKey ChangedKey;
+    ChangedKey.Kind = EMHResourceKind::Material;
+    ChangedKey.LogicalName = LogicalName;
+    MHNotifyGeneratedResourceChanged(ChangedKey);
     return Result;
 }
 

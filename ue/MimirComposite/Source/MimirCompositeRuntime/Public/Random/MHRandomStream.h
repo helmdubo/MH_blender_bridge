@@ -144,6 +144,9 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeNode
     /** Full parent-local product in root-placement space, before actor transform. */
     FMatrix WorldMatrix = FMatrix::Identity;
     int32 RootNodeIndex = INDEX_NONE;
+    /** Index in Plan.Nodes; derived hierarchy only, never signature input. */
+    int32 ParentNodeIndex = INDEX_NONE;
+    bool bHasProfile = false;
 };
 
 struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeLeaf
@@ -157,6 +160,8 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeLeaf
     FMatrix WorldMatrix = FMatrix::Identity;
     FString DisplayName;
     int32 RootNodeIndex = INDEX_NONE;
+    /** Node owning this leaf, including the selected option of a random node. */
+    int32 NodeIndex = INDEX_NONE;
 };
 
 /** Immutable semantic result consumed by later preview/runtime/cook slices. */

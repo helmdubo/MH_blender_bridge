@@ -258,6 +258,10 @@ bool ExportPlainStaticMeshFbx(
         Root->RemoveChild(Child);
         Child->Destroy(true);
     }
+    // New nodes below are authored in Blender XYZ, not in the template's
+    // X-forward transport basis. Encode that basis at the export boundary just
+    // as Blender does, preserving the tests' authored rotations and positions.
+    Scene->GetGlobalSettings().SetAxisSystem(FbxAxisSystem::MayaZUp);
     FbxSurfacePhong* Material = FbxSurfacePhong::Create(
         Scene,
         TCHAR_TO_UTF8(*MaterialName));
@@ -303,6 +307,12 @@ bool ExportPlainStaticMeshFbx(
         Scene->GetRootNode()->AddChild(Socket);
     }
 
+    const FbxAxisSystem TransportAxis(
+        FbxAxisSystem::eZAxis,
+        static_cast<FbxAxisSystem::EFrontVector>(-FbxAxisSystem::eParityEven),
+        FbxAxisSystem::eRightHanded);
+    TransportAxis.ConvertScene(Scene);
+    Scene->GetAnimationEvaluator()->Reset();
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
     const int32 WriterId = Manager->GetIOPluginRegistry()->GetNativeWriterFormat();

@@ -7,8 +7,8 @@
 namespace UE::MimirComposite
 {
 
-/** Current owner-ratified static-mesh build semantics. */
-inline constexpr int32 MHStaticMeshImporterVersion = 2;
+/** Current owner-ratified static-mesh build semantics; v3 normalizes FBX transport axes. */
+inline constexpr int32 MHStaticMeshImporterVersion = 3;
 
 /**
  * Suppresses managed-mesh local-edit tracking for importer-owned mutations.

@@ -244,7 +244,7 @@ bool MHRuntimeBridgeValidateSceneReferences(UWorld& World,
         if (Level != nullptr)
             for (AActor* Actor : Level->Actors)
             {
-                if (!IsValid(Actor) || Actor->IsEditorOnly() || Actor->HasAnyFlags(RF_Transient)) continue;
+                if (!IsValid(Actor) || Sources.Contains(Actor) || Actor->IsEditorOnly() || Actor->HasAnyFlags(RF_Transient)) continue;
                 TArray<UObject*> Objects;
                 GetObjectsWithOuter(Actor, Objects, true, RF_Transient | RF_ClassDefaultObject | RF_ArchetypeObject);
                 Objects.AddUnique(Actor);

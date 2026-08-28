@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositePreviewCache.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 
@@ -10,6 +11,7 @@ namespace UE::MimirComposite
 
 int32 MHRebuildAllLoadedCompositeActors()
 {
+    MHInvalidateCompositePreviewCache();
     int32 RebuiltCount = 0;
     for (TObjectIterator<AMHCompositeActor> It; It; ++It)
     {
@@ -21,7 +23,7 @@ int32 MHRebuildAllLoadedCompositeActors()
         {
             continue;
         }
-        Actor->RebuildComposite();
+        Actor->RebuildComposite(false);
         ++RebuiltCount;
     }
     return RebuiltCount;
@@ -34,6 +36,8 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         return;
     }
 
+    MHInvalidateCompositePreviewCache(&Key);
+
     for (TObjectIterator<AMHCompositeActor> It; It; ++It)
     {
         AMHCompositeActor* Actor = *It;
@@ -44,7 +48,7 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         {
             continue;
         }
-        Actor->RebuildComposite();
+        Actor->RebuildComposite(false);
     }
 }
 

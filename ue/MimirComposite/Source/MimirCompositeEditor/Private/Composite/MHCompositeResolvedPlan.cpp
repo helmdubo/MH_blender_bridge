@@ -168,6 +168,9 @@ struct FAppliedPlanBuilder
     FMHRandomSourceGraph& Graph;
     TSet<FMHResourceKey>& Dependencies;
     FString& Error;
+    bool bAllowBlockingCompilation;
+    UStaticMesh** OutPendingMesh;
+    FMHAppliedResourceLookup Lookup;
     TSet<FString> Visiting;
     TSet<FString> Finished;
     TMap<FString, TArray<uint8>> ProfileBytes;
@@ -193,7 +196,7 @@ struct FAppliedPlanBuilder
     UObject* Load(const FMHResourceKey& Key)
     {
         Dependencies.Add(Key);
-        return MHLoadAppliedResource(Key, Error);
+        return Lookup.Load(Key, Error);
     }
 
     bool Resource(const EMHRandomSemanticKind Kind, const FString& Name)
@@ -217,6 +220,16 @@ struct FAppliedPlanBuilder
         UStaticMesh* Mesh = Cast<UStaticMesh>(Load(Key));
         if (Mesh != nullptr && Mesh->IsCompiling())
         {
+            if (!bAllowBlockingCompilation)
+            {
+                // Locked mesh properties and live tags cannot be inspected
+                // before compilation finishes. Preview retries asynchronously;
+                // neither a partial graph nor a receipt is admitted here.
+                if (OutPendingMesh != nullptr) *OutPendingMesh = Mesh;
+                Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: ") + Key.ToString() +
+                    TEXT(" is compiling; preview rebuild deferred");
+                return false;
+            }
             // Cold PostLoad may start async compilation. Until it finishes,
             // UStaticMesh::GetAssetRegistryTags returns before the inherited
             // tag provider, hiding all six valid receipt tags. Join only this
@@ -257,11 +270,13 @@ struct FAppliedPlanBuilder
         {
             const FMHResourceKey TextureKey = AppliedPlanKey(EMHResourceKind::Texture, TextureName);
             Graph.ResourceDependencies.FindOrAdd(Key.ToString()).AddUnique(TextureKey.ToString());
+            if (Finished.Contains(TextureKey.ToString())) continue;
             UTexture* Texture = Cast<UTexture>(Load(TextureKey));
             const UMHTextureSourceData* TextureReceipt = Texture != nullptr ? Cast<UMHTextureSourceData>(Texture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass())) : nullptr;
             if (TextureReceipt == nullptr || TextureReceipt->LogicalName != TextureName) return Fail(TextureKey.ToString() + TEXT(" has no matching managed texture receipt"));
             if (!AppliedPlanReceipt(*Texture, TextureKey, TextureReceipt->SourceRelativePath, TextureReceipt->SourceHash, TextureReceipt->SourceHash, Error)) return false;
             if (!AddHash(TextureKey, TextureReceipt->SourceHash)) return false;
+            Finished.Add(TextureKey.ToString());
         }
         Finished.Add(Key.ToString());
         return true;
@@ -325,52 +340,85 @@ bool MHIsSpawnableCompositeActorClass(const UClass* Class)
         !Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists);
 }
 
-UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
+class FMHAppliedResourceLookup::FImpl
+{
+public:
+    bool bInitialized = false;
+    TMap<FMHResourceKey, TArray<FAssetData>> ClaimsByKey;
+
+    void Initialize()
+    {
+        if (bInitialized) return;
+        bInitialized = true;
+        FARFilter Filter;
+        Filter.TagsAndValues.Add(TEXT("MH.LogicalName"), TOptional<FString>());
+        TArray<FAssetData> Claims;
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssets(Filter, Claims);
+        for (const FAssetData& Claim : Claims)
+        {
+            FMHResourceKey Key;
+            FString Kind;
+            if (Claim.GetTagValue(TEXT("MH.Kind"), Kind) && MHResourceKindFromLabel(Kind, Key.Kind) &&
+                Claim.GetTagValue(TEXT("MH.LogicalName"), Key.LogicalName))
+            {
+                ClaimsByKey.FindOrAdd(Key).Add(Claim);
+            }
+        }
+    }
+};
+
+FMHAppliedResourceLookup::FMHAppliedResourceLookup()
+    : Impl(MakeUnique<FImpl>())
+{
+}
+
+FMHAppliedResourceLookup::~FMHAppliedResourceLookup() = default;
+
+UObject* FMHAppliedResourceLookup::Load(const FMHResourceKey& Key, FString& OutError)
 {
     if (!Key.IsCanonical())
     {
         OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: ") + Key.ToString();
         return nullptr;
     }
-    FARFilter Filter;
-    Filter.TagsAndValues.Add(TEXT("MH.LogicalName"), Key.LogicalName);
-    TArray<FAssetData> Claims;
-    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssets(Filter, Claims);
-    Claims.RemoveAll([&](const FAssetData& Claim)
-    {
-        FString Kind;
-        FString Name;
-        return !Claim.GetTagValue(TEXT("MH.Kind"), Kind) || Kind != MHResourceKindLabel(Key.Kind) ||
-            !Claim.GetTagValue(TEXT("MH.LogicalName"), Name) || Name != Key.LogicalName;
-    });
-    if (Claims.Num() > 1)
+    Impl->Initialize();
+    const TArray<FAssetData>* Claims = Impl->ClaimsByKey.Find(Key);
+    if (Claims != nullptr && Claims->Num() > 1)
     {
         OutError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: ") + Key.ToString();
         return nullptr;
     }
     const FString Path = AppliedPlanObjectPath(Key);
-    if (Claims.Num() == 1)
+    if (Claims != nullptr && Claims->Num() == 1)
     {
-        if (Claims[0].GetSoftObjectPath().ToString() != Path)
+        if ((*Claims)[0].GetSoftObjectPath().ToString() != Path)
         {
             OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid generated path for ") + Key.ToString();
             return nullptr;
         }
-        return Claims[0].GetAsset();
+        return (*Claims)[0].GetAsset();
     }
     // An in-place import may not yet have refreshed the registry. Its sole
     // canonical object still has to pass the caller's live-receipt validation.
     return Path.IsEmpty() ? nullptr : LoadObject<UObject>(nullptr, *Path);
 }
 
+UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
+{
+    FMHAppliedResourceLookup Lookup;
+    return Lookup.Load(Key, OutError);
+}
+
 bool MHBuildAppliedCompositeGraph(const UMHCompositeAsset& Root, const UMHCompositeSettings& Settings,
-    FMHRandomSourceGraph& OutGraph, TSet<FMHResourceKey>& OutDependencies, FString& OutError)
+    FMHRandomSourceGraph& OutGraph, TSet<FMHResourceKey>& OutDependencies, FString& OutError,
+    const bool bAllowBlockingCompilation, UStaticMesh** OutPendingMesh)
 {
     OutGraph = FMHRandomSourceGraph();
     OutGraph.RootComposite = Root.LogicalName;
     OutDependencies.Reset();
     OutError.Reset();
-    FAppliedPlanBuilder Builder{Settings, OutGraph, OutDependencies, OutError};
+    if (OutPendingMesh != nullptr) *OutPendingMesh = nullptr;
+    FAppliedPlanBuilder Builder{Settings, OutGraph, OutDependencies, OutError, bAllowBlockingCompilation, OutPendingMesh};
     if (!Builder.Composite(Root, Root.LogicalName)) return false;
     FMHRandomSourceClosure Closure;
     return MHBuildRandomSourceClosure(OutGraph, Closure, OutError);
@@ -417,6 +465,7 @@ EMHCompositeSeedEffect MHClassifyCompositeDefinition(const UMHCompositeAsset& As
     FMHRandomSourceGraph Graph;
     Graph.RootComposite = Asset.LogicalName;
     TSet<FString> Seen;
+    FMHAppliedResourceLookup Lookup;
     TFunction<void(const UMHCompositeAsset&)> Gather = [&](const UMHCompositeAsset& Definition)
     {
         if (Seen.Contains(Definition.LogicalName)) return;
@@ -435,7 +484,7 @@ EMHCompositeSeedEffect MHClassifyCompositeDefinition(const UMHCompositeAsset& As
             {
                 if (Kind != EMHRandomSemanticKind::Composite) return;
                 FString LookupError;
-                if (const UMHCompositeAsset* Child = Cast<UMHCompositeAsset>(MHLoadAppliedResource(AppliedPlanKey(EMHResourceKind::Composite, Name), LookupError))) Gather(*Child);
+                if (const UMHCompositeAsset* Child = Cast<UMHCompositeAsset>(Lookup.Load(AppliedPlanKey(EMHResourceKind::Composite, Name), LookupError))) Gather(*Child);
             };
             Nested(Node.Kind, Node.Resource);
             for (const FMHRandomOption& Option : Node.Options) Nested(Option.Kind, Option.Resource);

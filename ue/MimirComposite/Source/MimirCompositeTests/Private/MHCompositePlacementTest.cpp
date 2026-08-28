@@ -298,7 +298,7 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
             TEXT("nested placement retains one root-document edit handle"),
             Actor->GetTopLevelPlacementComponents().Num(),
             1);
-        bPassed &= TestEqual(TEXT("nested empty group creates no structural component"), Actor->GetDerivedComponents().Num(), 1);
+        bPassed &= TestEqual(TEXT("nested empty group retains a structural component"), Actor->GetDerivedComponents().Num(), 2);
         const FMHResolvedCompositePlan* InitialPlan = Actor->GetResolvedPlan();
         bPassed &= TestNotNull(TEXT("nested empty group still has a resolved plan"), InitialPlan);
         if (InitialPlan != nullptr && InitialPlan->Nodes.Num() == 2)

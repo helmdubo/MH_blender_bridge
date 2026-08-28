@@ -563,6 +563,45 @@ public:
             }
         }
 
+        TSet<FMHResourceKey> ChangedKeys;
+        for (const FString& Absolute : AbsolutePaths)
+        {
+            FMHResourceKey Key;
+            FString ClassificationError;
+            if (MHResourceKeyFromSourceFile(Absolute, Key, ClassificationError)) ChangedKeys.Add(Key);
+        }
+        // Capture the old identity and edges before DeleteCandidateByPath.
+        // Removing/renaming a file must still notify parents through its old
+        // edges; no persistent event history is added to the pure projection.
+        for (const FString& Relative : RelativePaths)
+        {
+            FSQLitePreparedStatement Previous = Database->PrepareStatement(
+                TEXT("SELECT kind,name FROM ResourceCandidates WHERE path=?1 AND kind IS NOT NULL AND name IS NOT NULL;"));
+            if (!Previous.IsValid() || !Previous.SetBindingValueByIndex(1, Relative))
+            {
+                OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: cannot read previous watcher candidate identity");
+                return false;
+            }
+            while (true)
+            {
+                const ESQLitePreparedStatementStepResult Step = Previous.Step();
+                if (Step == ESQLitePreparedStatementStepResult::Done) break;
+                FMHResourceKey Key;
+                FString Kind;
+                if (Step != ESQLitePreparedStatementStepResult::Row ||
+                    !Previous.GetColumnValueByIndex(0, Kind) || !Previous.GetColumnValueByIndex(1, Key.LogicalName) ||
+                    !MHResourceKindFromLabel(Kind, Key.Kind) || !Key.IsCanonical())
+                {
+                    OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid previous watcher candidate identity");
+                    return false;
+                }
+                ChangedKeys.Add(Key);
+            }
+        }
+        TMap<FMHResourceKey, TSet<FMHResourceKey>> ForwardEdges;
+        TMap<FMHResourceKey, TSet<FMHResourceKey>> ReverseEdges;
+        if (!AppendDependencyGraph(ForwardEdges, ReverseEdges, OutError)) return false;
+
         const TSet<FMHResourceKey> PreviousPendingOrphanRebinds =
             PendingOrphanRebindDivergences;
         if (!CaptureOrphanRebindTransitions(Candidates, OutError))
@@ -592,6 +631,7 @@ public:
             !RecomputeDerivedState(
                 CandidateKeyTransitions(CandidateKeysBefore, CandidateKeysAfter),
                 OutError) ||
+            !AppendDependencyGraph(ForwardEdges, ReverseEdges, OutError) ||
             !WriteGeneration(NextGeneration, OutError) ||
             !CommitTransaction(OutError))
         {
@@ -602,6 +642,28 @@ public:
         Generation = NextGeneration;
         ConsumeMatchingTokens(Candidates, PreviousGeneration, OutResult.SessionEvents);
         OutResult.Generation = Generation;
+        TSet<FMHResourceKey> Affected = ChangedKeys;
+        const auto Expand = [](const TMap<FMHResourceKey, TSet<FMHResourceKey>>& Edges, TSet<FMHResourceKey>& Keys)
+        {
+            TArray<FMHResourceKey> Pending = Keys.Array();
+            for (int32 Index = 0; Index < Pending.Num(); ++Index)
+            {
+                const TSet<FMHResourceKey>* Adjacent = Edges.Find(Pending[Index]);
+                if (Adjacent == nullptr) continue;
+                for (const FMHResourceKey& Key : *Adjacent)
+                {
+                    if (!Keys.Contains(Key))
+                    {
+                        Keys.Add(Key);
+                        Pending.Add(Key);
+                    }
+                }
+            }
+        };
+        Expand(ReverseEdges, Affected);
+        Expand(ForwardEdges, Affected);
+        OutResult.AffectedResourceKeys = Affected.Array();
+        OutResult.AffectedResourceKeys.Sort(ResourceKeyLess);
         return true;
     }
 
@@ -737,6 +799,40 @@ public:
     TSet<FMHResourceKey> PendingOrphanRebindDivergences;
 
 private:
+    bool AppendDependencyGraph(
+        TMap<FMHResourceKey, TSet<FMHResourceKey>>& ForwardEdges,
+        TMap<FMHResourceKey, TSet<FMHResourceKey>>& ReverseEdges,
+        FString& OutError) const
+    {
+        FSQLitePreparedStatement Edges = Database->PrepareStatement(
+            TEXT("SELECT DISTINCT owner_kind,owner_name,target_kind,target_name FROM Dependencies;"));
+        if (!Edges.IsValid())
+        {
+            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: cannot read watcher dependency graph");
+            return false;
+        }
+        while (true)
+        {
+            const ESQLitePreparedStatementStepResult Step = Edges.Step();
+            if (Step == ESQLitePreparedStatementStepResult::Done) return true;
+            FMHResourceKey Owner;
+            FMHResourceKey Target;
+            FString OwnerKind;
+            FString TargetKind;
+            if (Step != ESQLitePreparedStatementStepResult::Row ||
+                !Edges.GetColumnValueByIndex(0, OwnerKind) || !Edges.GetColumnValueByIndex(1, Owner.LogicalName) ||
+                !Edges.GetColumnValueByIndex(2, TargetKind) || !Edges.GetColumnValueByIndex(3, Target.LogicalName) ||
+                !MHResourceKindFromLabel(OwnerKind, Owner.Kind) || !MHResourceKindFromLabel(TargetKind, Target.Kind) ||
+                !Owner.IsCanonical() || !Target.IsCanonical())
+            {
+                OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid watcher dependency graph row");
+                return false;
+            }
+            ForwardEdges.FindOrAdd(Owner).Add(Target);
+            ReverseEdges.FindOrAdd(Target).Add(Owner);
+        }
+    }
+
     bool EnsureOpen(FString& OutError) const
     {
         if (IsOpen())

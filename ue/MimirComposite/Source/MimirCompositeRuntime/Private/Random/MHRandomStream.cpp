@@ -747,7 +747,7 @@ bool MHResolveCompositePlan(
         const FMatrix& WorldMatrix,
         const FString& Origin,
         const FString& DisplayName,
-        const int32 RootNodeIndex)
+        const int32 RootNodeIndex, const int32 NodeIndex)
     {
         FMHResolvedCompositeLeaf& Leaf = OutPlan.Leaves.AddDefaulted_GetRef();
         Leaf.Kind = Kind;
@@ -757,18 +757,19 @@ bool MHResolveCompositePlan(
         Leaf.WorldMatrix = WorldMatrix;
         Leaf.DisplayName = DisplayName;
         Leaf.RootNodeIndex = RootNodeIndex;
+        Leaf.NodeIndex = NodeIndex;
         if (Kind == EMHRandomSemanticKind::Mesh) AddSelectedResource(TEXT("static_mesh:") + Resource);
         else if (Kind == EMHRandomSemanticKind::Actor) AddSelected(TEXT("actor:") + Resource);
     };
 
-    TFunction<bool(const FString&, const FMHRandomTrs&, const FMatrix&, const FString&, int32)> WalkComposite;
-    TFunction<bool(const FMHRandomNode&, const FMHRandomTrs&, const FMatrix&, const FString&, int32)> WalkNode;
+    TFunction<bool(const FString&, const FMHRandomTrs&, const FMatrix&, const FString&, int32, int32)> WalkComposite;
+    TFunction<bool(const FMHRandomNode&, const FMHRandomTrs&, const FMatrix&, const FString&, int32, int32)> WalkNode;
     WalkComposite = [&](
         const FString& Name,
         const FMHRandomTrs& Parent,
         const FMatrix& ParentMatrix,
         const FString& Prefix,
-        const int32 RootNodeIndex)
+        const int32 RootNodeIndex, const int32 ParentNodeIndex)
     {
         const FMHRandomComposite* Composite = Graph.Composites.Find(Name);
         if (Composite == nullptr)
@@ -783,7 +784,7 @@ bool MHResolveCompositePlan(
                     Parent,
                     ParentMatrix,
                     FString::Printf(TEXT("%s:nodes[%d]"), *Prefix, Index),
-                    RootNodeIndex == INDEX_NONE ? Index : RootNodeIndex)) return false;
+                    RootNodeIndex == INDEX_NONE ? Index : RootNodeIndex, ParentNodeIndex)) return false;
         }
         return true;
     };
@@ -792,7 +793,7 @@ bool MHResolveCompositePlan(
         const FMHRandomTrs& Parent,
         const FMatrix& ParentMatrix,
         const FString& NodePath,
-        const int32 RootNodeIndex)
+        const int32 RootNodeIndex, const int32 ParentNodeIndex)
     {
         TOptional<FMHRandomStream1> NodeStream;
         if (Node.Kind == EMHRandomSemanticKind::Random || !Node.Profile.IsEmpty())
@@ -838,6 +839,7 @@ bool MHResolveCompositePlan(
         const FTransform LocalTransform(
             FQuat(Local.RotationQuat), FVector(Local.TranslationCm), FVector(Local.Scale));
         const FMatrix WorldMatrix = LocalTransform.ToMatrixWithScale() * ParentMatrix;
+        const int32 NodeIndex = OutPlan.Nodes.Num();
         FMHResolvedCompositeNode& ResolvedNode = OutPlan.Nodes.AddDefaulted_GetRef();
         ResolvedNode.NodePath = NodePath;
         ResolvedNode.DisplayName = Node.DisplayName;
@@ -845,15 +847,17 @@ bool MHResolveCompositePlan(
         ResolvedNode.LocalTrs = Local;
         ResolvedNode.WorldMatrix = WorldMatrix;
         ResolvedNode.RootNodeIndex = RootNodeIndex;
+        ResolvedNode.ParentNodeIndex = ParentNodeIndex;
+        ResolvedNode.bHasProfile = !Node.Profile.IsEmpty();
 
         if (Node.Kind == EMHRandomSemanticKind::Mesh || Node.Kind == EMHRandomSemanticKind::Actor)
         {
-            AddLeaf(Node.Kind, Node.Resource, World, WorldMatrix, NodePath, Node.DisplayName, RootNodeIndex);
+            AddLeaf(Node.Kind, Node.Resource, World, WorldMatrix, NodePath, Node.DisplayName, RootNodeIndex, NodeIndex);
         }
         else if (Node.Kind == EMHRandomSemanticKind::Composite)
         {
             AddSelectedResource(TEXT("composite:") + Node.Resource);
-            if (!WalkComposite(Node.Resource, World, WorldMatrix, NodePath + TEXT(">") + Node.Resource, RootNodeIndex)) return false;
+            if (!WalkComposite(Node.Resource, World, WorldMatrix, NodePath + TEXT(">") + Node.Resource, RootNodeIndex, NodeIndex)) return false;
         }
         else if (Node.Kind == EMHRandomSemanticKind::Random)
         {
@@ -862,11 +866,11 @@ bool MHResolveCompositePlan(
             if (Option.Kind == EMHRandomSemanticKind::Composite)
             {
                 AddSelectedResource(TEXT("composite:") + Option.Resource);
-                if (!WalkComposite(Option.Resource, World, WorldMatrix, OptionPath + TEXT(">") + Option.Resource, RootNodeIndex)) return false;
+                if (!WalkComposite(Option.Resource, World, WorldMatrix, OptionPath + TEXT(">") + Option.Resource, RootNodeIndex, NodeIndex)) return false;
             }
             else if (Option.Kind == EMHRandomSemanticKind::Mesh || Option.Kind == EMHRandomSemanticKind::Actor)
             {
-                AddLeaf(Option.Kind, Option.Resource, World, WorldMatrix, OptionPath, Node.DisplayName, RootNodeIndex);
+                AddLeaf(Option.Kind, Option.Resource, World, WorldMatrix, OptionPath, Node.DisplayName, RootNodeIndex, NodeIndex);
             }
         }
         for (int32 ChildIndex = 0; ChildIndex < Node.Children.Num(); ++ChildIndex)
@@ -876,13 +880,13 @@ bool MHResolveCompositePlan(
                     World,
                     WorldMatrix,
                     FString::Printf(TEXT("%s/children[%d]"), *NodePath, ChildIndex),
-                    RootNodeIndex)) return false;
+                    RootNodeIndex, NodeIndex)) return false;
         }
         return true;
     };
 
     FMHRandomTrs Identity;
-    if (!WalkComposite(Graph.RootComposite, Identity, FMatrix::Identity, Graph.RootComposite, INDEX_NONE)) return false;
+    if (!WalkComposite(Graph.RootComposite, Identity, FMatrix::Identity, Graph.RootComposite, INDEX_NONE, INDEX_NONE)) return false;
     MHRefreshResolvedCompositeSignature(OutPlan);
     return true;
 }

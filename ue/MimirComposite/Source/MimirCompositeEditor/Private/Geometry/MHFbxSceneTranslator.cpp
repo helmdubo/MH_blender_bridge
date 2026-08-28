@@ -469,6 +469,25 @@ bool FMHFbxSceneTranslator::Translate(
         return false;
     }
 
+    // X-forward FBX is the transport basis, not Blender's authored XYZ basis.
+    // With use_space_transform=true Blender places this conversion on the
+    // scene's root nodes; reading their evaluated transforms without undoing
+    // that transport rotates authored +X to UE +Y. Normalize the entire scene
+    // to the same +Z/-Y/right-handed import basis used by the ratified R1 stock
+    // FBX path, then apply our existing Y reflection. ConvertScene adjusts root
+    // transforms, so nested authored transforms, geometry, normals, sockets
+    // and collision all pass through the same seam without per-node repairs.
+    const FbxAxisSystem AuthoringAxis = FbxAxisSystem::MayaZUp;
+    AuthoringAxis.ConvertScene(Scene);
+    Scene->GetAnimationEvaluator()->Reset();
+    if (Scene->GetGlobalSettings().GetAxisSystem() != AuthoringAxis ||
+        Scene->GetGlobalSettings().GetSystemUnit() != FbxSystemUnit::cm)
+    {
+        OutError = TransportError(TEXT("axis or units differ after FBX transport normalization"));
+        Manager->Destroy();
+        return false;
+    }
+
     FbxGeometryConverter Converter(Manager);
     if (!Converter.Triangulate(Scene, true))
     {
