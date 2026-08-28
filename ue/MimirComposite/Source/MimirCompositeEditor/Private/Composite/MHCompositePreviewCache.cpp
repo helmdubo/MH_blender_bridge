@@ -18,6 +18,9 @@
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "Texture/MHTextureSourceData.h"
 #include "UObject/UObjectGlobals.h"
+#include "UObject/UObjectIterator.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogMHCompositePreview, Display, All);
 
 namespace UE::MimirComposite
 {
@@ -42,11 +45,48 @@ uint64 PreviewRevision = 1;
 uint64 PreviewGlobalRevision = 1;
 TMap<FMHResourceKey, uint64> PreviewResourceRevisions;
 FTSTicker::FDelegateHandle PreviewRetry;
+FTSTicker::FDelegateHandle PreviewRefresh;
 
-void PreviewInvalidateAsset(const FAssetData&)
+void PreviewQueueRefresh()
+{
+    if (!bPreviewStarted || PreviewRefresh.IsValid() || IsRunningCookCommandlet()) return;
+    // Revoke immediately, rebuild once after the synchronous publication/event
+    // burst settles. Break never refreshes or consumes the expired plan itself.
+    PreviewRefresh = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+    {
+        PreviewRefresh.Reset();
+        if (!bPreviewStarted) return false;
+        TArray<TWeakObjectPtr<AMHCompositeActor>> Pending;
+        for (TObjectIterator<AMHCompositeActor> It; It; ++It)
+        {
+            AMHCompositeActor* Actor = *It;
+            UWorld* World = IsValid(Actor) ? Actor->GetWorld() : nullptr;
+            if (IsValid(Actor) && !Actor->IsTemplate() && !Actor->IsActorBeingDestroyed() &&
+                World != nullptr && !World->IsGameWorld() && !World->IsBeingCleanedUp() && !World->IsCleanedUp() &&
+                Actor->NeedsDeferredPreviewRefresh()) Pending.Add(Actor);
+        }
+        // Component creation/destruction happens after the UObject iterator has
+        // been closed. Weak references also tolerate a world closing meanwhile.
+        for (const TWeakObjectPtr<AMHCompositeActor>& Weak : Pending)
+        {
+            AMHCompositeActor* Actor = Weak.Get();
+            UWorld* World = IsValid(Actor) ? Actor->GetWorld() : nullptr;
+            if (IsValid(Actor) && !Actor->IsActorBeingDestroyed() && World != nullptr &&
+                !World->IsBeingCleanedUp() && !World->IsCleanedUp() && Actor->NeedsDeferredPreviewRefresh())
+            {
+                UE_LOG(LogMHCompositePreview, Verbose, TEXT("Deferred refresh actor=%s"), *Actor->GetPathName());
+                Actor->RebuildComposite(false);
+            }
+        }
+        return false;
+    }));
+}
+
+void PreviewInvalidateAsset(const FAssetData& Asset)
 {
     // Claims can be malformed, wrong-class, or outside generated folders.
     // Do not filter these events by class/path and accidentally cache a winner.
+    UE_LOG(LogMHCompositePreview, Verbose, TEXT("Registry event asset=%s"), *Asset.GetObjectPathString());
     MHInvalidateCompositePreviewCache();
 }
 
@@ -174,6 +214,8 @@ void MHShutdownCompositePreviewCache()
     FAssetCompilingManager::Get().OnAssetPostCompileEvent().Remove(PreviewCompiled);
     FTSTicker::GetCoreTicker().RemoveTicker(PreviewRetry);
     PreviewRetry.Reset();
+    FTSTicker::GetCoreTicker().RemoveTicker(PreviewRefresh);
+    PreviewRefresh.Reset();
     PreviewPending.Reset();
     PreviewGraphs.Reset();
     PreviewResourceRevisions.Reset();
@@ -182,6 +224,9 @@ void MHShutdownCompositePreviewCache()
 void MHInvalidateCompositePreviewCache(const FMHResourceKey* ChangedKey)
 {
     ++PreviewRevision;
+    UE_LOG(LogMHCompositePreview, Verbose, TEXT("Invalidate serial=%llu key=%s"), PreviewRevision,
+        ChangedKey != nullptr ? *ChangedKey->ToString() : TEXT("<all claims>"));
+    PreviewQueueRefresh();
     if (ChangedKey == nullptr)
     {
         PreviewGlobalRevision = PreviewRevision;
@@ -202,6 +247,11 @@ uint64 MHCompositePreviewRevision(const TSet<FMHResourceKey>& Dependencies)
     return Revision;
 }
 
+uint64 MHCompositePreviewInvalidationSerial()
+{
+    return PreviewRevision;
+}
+
 TSharedPtr<const FMHRandomSourceGraph> MHGetCompositePreviewGraph(
     const UMHCompositeAsset& Root, const UMHCompositeSettings& Settings,
     TSet<FMHResourceKey>& Dependencies, FString& Error, UStaticMesh*& PendingMesh)
@@ -216,7 +266,11 @@ TSharedPtr<const FMHRandomSourceGraph> MHGetCompositePreviewGraph(
         return Entry->Graph;
     }
     TSharedRef<FMHRandomSourceGraph> Graph = MakeShared<FMHRandomSourceGraph>();
+    const uint64 AdmissionSerial = PreviewRevision;
     if (!MHBuildAppliedCompositeGraph(Root, Settings, *Graph, Dependencies, Error, false, &PendingMesh)) return nullptr;
+    // A load callback may have changed claims while the graph was assembled.
+    // Do not put that result back into the cache invalidated by the callback.
+    if (MHCompositePreviewRevision(Dependencies) > AdmissionSerial) return Graph;
     FPreviewGraphEntry Entry;
     Entry.Settings = &Settings;
     Entry.MasterRoot = Settings.MasterRoot;

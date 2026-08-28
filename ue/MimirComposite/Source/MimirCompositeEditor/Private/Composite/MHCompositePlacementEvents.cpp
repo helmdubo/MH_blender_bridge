@@ -6,13 +6,15 @@
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogMHCompositePlacementEvents, Display, All);
+
 namespace UE::MimirComposite
 {
 
 int32 MHRebuildAllLoadedCompositeActors()
 {
     MHInvalidateCompositePreviewCache();
-    int32 RebuiltCount = 0;
+    TArray<TWeakObjectPtr<AMHCompositeActor>> Actors;
     for (TObjectIterator<AMHCompositeActor> It; It; ++It)
     {
         AMHCompositeActor* Actor = *It;
@@ -23,9 +25,15 @@ int32 MHRebuildAllLoadedCompositeActors()
         {
             continue;
         }
-        Actor->RebuildComposite(false);
-        ++RebuiltCount;
+        Actors.Add(Actor);
     }
+    int32 RebuiltCount = 0;
+    for (const TWeakObjectPtr<AMHCompositeActor>& Weak : Actors)
+        if (AMHCompositeActor* Actor = Weak.Get(); IsValid(Actor) && !Actor->IsActorBeingDestroyed())
+        {
+            Actor->RebuildComposite(false);
+            ++RebuiltCount;
+        }
     return RebuiltCount;
 }
 
@@ -38,18 +46,28 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
 
     MHInvalidateCompositePreviewCache(&Key);
 
+    TArray<TWeakObjectPtr<AMHCompositeActor>> Actors;
     for (TObjectIterator<AMHCompositeActor> It; It; ++It)
     {
         AMHCompositeActor* Actor = *It;
         UWorld* World = IsValid(Actor) ? Actor->GetWorld() : nullptr;
         if (!IsValid(Actor) || Actor->IsTemplate() || Actor->IsActorBeingDestroyed() ||
-            World == nullptr || World->IsBeingCleanedUp() || World->IsCleanedUp() ||
+            Actor->IsPlacementEditMode() || World == nullptr || World->IsGameWorld() ||
+            World->IsBeingCleanedUp() || World->IsCleanedUp() ||
             !Actor->DependsOnResource(Key))
         {
             continue;
         }
-        Actor->RebuildComposite(false);
+        Actors.Add(Actor);
     }
+    UE_LOG(LogMHCompositePlacementEvents, Verbose, TEXT("Notify begin key=%s actors=%d"), *Key.ToString(), Actors.Num());
+    for (const TWeakObjectPtr<AMHCompositeActor>& Weak : Actors)
+        if (AMHCompositeActor* Actor = Weak.Get(); IsValid(Actor) && !Actor->IsActorBeingDestroyed())
+        {
+            UE_LOG(LogMHCompositePlacementEvents, Verbose, TEXT("Notify key=%s actor=%s"), *Key.ToString(), *Actor->GetPathName());
+            Actor->RebuildComposite(false);
+        }
+    UE_LOG(LogMHCompositePlacementEvents, Verbose, TEXT("Notify end key=%s"), *Key.ToString());
 }
 
 void MHNotifyCompositeAssetChanged(UMHCompositeAsset& Asset)

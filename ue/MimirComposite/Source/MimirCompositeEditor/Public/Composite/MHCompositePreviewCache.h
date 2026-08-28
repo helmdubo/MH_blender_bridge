@@ -16,6 +16,8 @@ MIMIRCOMPOSITEEDITOR_API void MHStartupCompositePreviewCache();
 MIMIRCOMPOSITEEDITOR_API void MHShutdownCompositePreviewCache();
 MIMIRCOMPOSITEEDITOR_API void MHInvalidateCompositePreviewCache(const FMHResourceKey* ChangedKey = nullptr);
 MIMIRCOMPOSITEEDITOR_API uint64 MHCompositePreviewRevision(const TSet<FMHResourceKey>& Dependencies);
+/** Monotonic event serial captured before admission, including not-yet-discovered keys. */
+MIMIRCOMPOSITEEDITOR_API uint64 MHCompositePreviewInvalidationSerial();
 MIMIRCOMPOSITEEDITOR_API TSharedPtr<const FMHRandomSourceGraph> MHGetCompositePreviewGraph(
     const UMHCompositeAsset& Root, const UMHCompositeSettings& Settings,
     TSet<FMHResourceKey>& Dependencies, FString& Error, UStaticMesh*& PendingMesh);

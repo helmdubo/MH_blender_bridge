@@ -51,6 +51,9 @@ public:
     /** Rebuild from managed applied assets, never from the source filesystem. */
     void RebuildComposite(bool bRefreshAppliedGraph = true);
 
+    /** A dependency changed since the last admission attempt, not merely a failed plan. */
+    bool NeedsDeferredPreviewRefresh() const;
+
     const TArray<TObjectPtr<UActorComponent>>& GetDerivedComponents() const
     {
         return DerivedComponents;
@@ -144,6 +147,7 @@ private:
     EMHCompositeSeedEffect SeedAffectsResult = EMHCompositeSeedEffect::None;
     bool bPlanAvailable = false;
     uint64 AppliedGraphRevision = 0;
+    uint64 LastPreviewAttemptSerial = 0;
     TWeakObjectPtr<UStaticMesh> PendingPreviewMesh;
     // Only a rejected placement basis can recover by reapplying the old plan.
     // A rejected newer definition must pass full graph admission again.

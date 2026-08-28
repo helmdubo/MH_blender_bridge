@@ -10,6 +10,7 @@
 #include "LevelEditor.h"
 #include "Logging/MessageLog.h"
 #include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/Archive.h"
 #include "Serialization/ArchiveSavePackageData.h"
@@ -241,6 +242,13 @@ void AMHCompositeActor::RebuildComposite(const bool bRefreshAppliedGraph)
     RebuildPlacement(false);
 }
 
+bool AMHCompositeActor::NeedsDeferredPreviewRefresh() const
+{
+    return !CompositeAsset.IsNull() && !bRebuildInProgress && !bPlacementEditMode &&
+        (!PendingPreviewMesh.IsValid() || !PendingPreviewMesh->IsCompiling()) &&
+        UE::MimirComposite::MHCompositePreviewRevision(PlacementDependencies) > LastPreviewAttemptSerial;
+}
+
 void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
 {
     using namespace UE::MimirComposite;
@@ -250,6 +258,17 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     if (bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
+    // Capture before loading anything: a relevant notification during admission
+    // must schedule another attempt, not be consumed by this attempt's failure.
+    const uint64 AttemptSerial = MHCompositePreviewInvalidationSerial();
+    LastPreviewAttemptSerial = AttemptSerial;
+    UE_LOG(LogMHCompositeActor, Verbose, TEXT("Preview begin actor=%s seed=%d seedOnly=%d attempt=%llu"),
+        *GetPathName(), Seed, bSeedOnly, AttemptSerial);
+    ON_SCOPE_EXIT
+    {
+        UE_LOG(LogMHCompositeActor, Verbose, TEXT("Preview end actor=%s available=%d current=%d error=%s"),
+            *GetPathName(), bPlanAvailable, GetResolvedPlan() != nullptr, *LastPlacementError);
+    };
     PendingPreviewMesh.Reset();
     bBasisRejected = false;
     AttachRootTransformHook();
@@ -376,7 +395,9 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
     }
     AppliedGraph = CandidateGraph;
-    AppliedGraphRevision = MHCompositePreviewRevision(PlacementDependencies);
+    // Registration/loading can broadcast another event. Never bless the newer
+    // epoch with the graph resolved before it; the queued tick will re-admit it.
+    AppliedGraphRevision = FMath::Min(AttemptSerial, MHCompositePreviewRevision(PlacementDependencies));
     ResolvedPlan = CandidatePlan;
     ResolvedSignature = CandidatePlan->ResolvedSignature;
     bPlanAvailable = true;

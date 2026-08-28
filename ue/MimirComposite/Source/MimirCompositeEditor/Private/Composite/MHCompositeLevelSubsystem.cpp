@@ -6,6 +6,7 @@
 #include "Composite/MHCompositeCompiler.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositePreviewCache.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/SceneComponent.h"
@@ -828,6 +829,19 @@ bool UMHCompositeLevelSubsystem::RebuildComposites(
         return false;
     }
     const FScopedTransaction Transaction(INVTEXT("Rebuild MH Composites"));
+    TSet<FMHResourceKey> InvalidatedRoots;
+    for (const AMHCompositeActor* Actor : Actors)
+    {
+        const UMHCompositeAsset* Asset = IsValid(Actor) ? Actor->GetCompositeAsset() : nullptr;
+        if (Asset == nullptr) continue;
+        FMHResourceKey Key;
+        Key.Kind = EMHResourceKind::Composite;
+        Key.LogicalName = Asset->LogicalName;
+        InvalidatedRoots.Add(Key);
+    }
+    // Invalidate the entire batch first. Invalidating one actor at a time would
+    // revoke earlier rebuilt instances of the same root or a parent definition.
+    for (const FMHResourceKey& Key : InvalidatedRoots) MHInvalidateCompositePreviewCache(&Key);
     for (AMHCompositeActor* Actor : Actors)
     {
         if (Actor == nullptr)
@@ -835,7 +849,7 @@ bool UMHCompositeLevelSubsystem::RebuildComposites(
             continue;
         }
         Actor->Modify();
-        Actor->RebuildComposite();
+        Actor->RebuildComposite(false);
         OutWarnings.Append(Actor->GetLastPlacementWarnings());
     }
     return true;
