@@ -528,3 +528,43 @@ def test_public_api_has_neither_seed_nor_texture_publish_toggle(tmp_path):
     names = {name.casefold() for name in signature.parameters}
     assert "seed" not in names
     assert "include_textures" not in names
+
+
+def test_unmanaged_dag4blend_dependency_names_the_converter_and_managed_twin():
+    """The owner's second wall: say WHY it is unmanaged and what fixes it."""
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root = bpy.data.collections.new("gaz53_b_random_cmp")
+    stamp_resource_collection(root, "composite", "gaz53_b_random_cmp")
+
+    # A dag4blend definition left in the file by dt.cmp_import.
+    legacy = bpy.data.collections.new("gaz53_b_body_cmp")
+    legacy["type"] = "composit"
+    legacy["name"] = "gaz53_b_body_cmp"
+
+    placement = bpy.data.objects.new("gaz53_b_body_cmp", None)
+    root.objects.link(placement)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = legacy
+
+    with pytest.raises(MHValidationError) as caught:
+        prepare_composite_closure_export(
+            root, Path(bpy.app.tempdir), source_root=Path(bpy.app.tempdir),
+            mode=CLOSURE_MODE_COMPOSITES)
+    message = caught.value.message
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+    assert "is a dag4blend definition" in message
+    assert "mh.convert_dag4blend_composite" in message
+    assert "mh.import_dagor_composite" in message
+    assert "already exists in this file" not in message
+
+    # Once the converted definition exists, the error must point straight at it.
+    managed = bpy.data.collections.new("gaz53_b_body_cmp.composite")
+    stamp_resource_collection(managed, "composite", "gaz53_b_body_cmp")
+    with pytest.raises(MHValidationError) as rebound:
+        prepare_composite_closure_export(
+            root, Path(bpy.app.tempdir), source_root=Path(bpy.app.tempdir),
+            mode=CLOSURE_MODE_COMPOSITES)
+    assert "already exists in this file" in rebound.value.message
+    assert "'gaz53_b_body_cmp.composite'" in rebound.value.message
+    assert "repoint this placement" in rebound.value.message

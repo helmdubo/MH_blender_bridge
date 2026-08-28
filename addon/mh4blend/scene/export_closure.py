@@ -309,6 +309,31 @@ def _validate_root_marker(collection, root_name: str) -> None:
             "identity")
 
 
+def _unmanaged_reason(instance, kind: str, resource: str) -> str:
+    """Explain WHY a bound Collection is not an MH definition, and what fixes it."""
+
+    detail = ""
+    dagor_type = instance.get("type")
+    dagor_name = instance.get("name")
+    if isinstance(dagor_type, str) or isinstance(dagor_name, str):
+        detail += (
+            f". Collection {instance.name!r} is a dag4blend definition "
+            f"(type={dagor_type!r}, name={dagor_name!r}), not an MH one: its "
+            "contents are dag4blend-shaped and publishing them as a v5 source "
+            "would be wrong. Convert it with 'Convert dag4blend Scene "
+            "Composite' (mh.convert_dag4blend_composite), or convert the "
+            "authoritative *.composit.blk with 'Import Dagor Composite' "
+            "(mh.import_dagor_composite)")
+    existing = managed_resource_collections(kind, resource)
+    if existing:
+        names = ", ".join(repr(row.name) for row in existing)
+        detail += (
+            f". A managed definition for {kind}:{resource} already exists in "
+            f"this file as {names} — repoint this placement's "
+            f"instance_collection at it instead of {instance.name!r}")
+    return detail
+
+
 def _validate_direct_bindings(collection) -> None:
     """Reject direct unmanaged definitions before token-only graph fallback."""
 
@@ -337,7 +362,9 @@ def _validate_direct_bindings(collection) -> None:
                 [f"{settings.kind}:{explicit_resource}", obj.name,
                  obj.instance_collection.name],
                 "loaded closure dependency is unmanaged; exact MH Collection "
-                "identity stamps are required")
+                "identity stamps are required"
+                + _unmanaged_reason(
+                    obj.instance_collection, settings.kind, explicit_resource))
         kind, resource = _node_kind_and_resource(obj, option=is_option)
         if kind not in {"mesh", "composite"} or resource is None:
             continue
@@ -351,7 +378,8 @@ def _validate_direct_bindings(collection) -> None:
                 "MH_E_INVALID_RESOURCE_SOURCE",
                 [f"{kind}:{resource}", obj.name, instance.name],
                 "loaded closure dependency is unmanaged; exact MH Collection "
-                "identity stamps are required")
+                "identity stamps are required"
+                + _unmanaged_reason(instance, kind, resource))
 
 
 def _managed_collection(kind: str, name: str):
