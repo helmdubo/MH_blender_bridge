@@ -1,0 +1,357 @@
+{
+  "root": "H:\\_Gaijin_Entertainment\\EnlistedCDK\\ActiveMatterCDK.2024.11.11\\EnlistedCDK\\develop\\assets",
+  "scope": "all *.composit.blk recursively under assets, no includes expanded",
+  "file_count": 26089,
+  "mall_file_count": 291,
+  "bytes": 241577444,
+  "inventory_paths_stable": true,
+  "manifest_sha256": "fca1b1f644b6f73ae2a83e89ee9f87321e9bb69850facbba02498b1ed6bb0d4f",
+  "elapsed_seconds": 109.999,
+  "declarations": {
+    "block:polygon": {
+      "files": 176,
+      "mall_files": 0
+    },
+    "block:spline": {
+      "files": 492,
+      "mall_files": 0
+    },
+    "field:aboveHt": {
+      "files": 14,
+      "mall_files": 0
+    },
+    "field:ignoreParentInstSeed": {
+      "files": 190,
+      "mall_files": 0
+    },
+    "field:placeOnCollision": {
+      "files": 52,
+      "mall_files": 0
+    },
+    "field:place_type": {
+      "files": 1710,
+      "mall_files": 7
+    },
+    "field:quantizeTm": {
+      "files": 3,
+      "mall_files": 0
+    },
+    "field:useCollisionNormal": {
+      "files": 8,
+      "mall_files": 0
+    },
+    "include": {
+      "files": 257,
+      "mall_files": 1
+    },
+    "inline_p2": {
+      "files": 453,
+      "mall_files": 6
+    },
+    "inline_p2:offset_x": {
+      "files": 171,
+      "mall_files": 3
+    },
+    "inline_p2:offset_y": {
+      "files": 61,
+      "mall_files": 0
+    },
+    "inline_p2:offset_z": {
+      "files": 169,
+      "mall_files": 3
+    },
+    "inline_p2:rot_x": {
+      "files": 56,
+      "mall_files": 0
+    },
+    "inline_p2:rot_y": {
+      "files": 365,
+      "mall_files": 6
+    },
+    "inline_p2:rot_z": {
+      "files": 76,
+      "mall_files": 0
+    },
+    "inline_p2:scale": {
+      "files": 52,
+      "mall_files": 0
+    },
+    "inline_p2:yScale": {
+      "files": 20,
+      "mall_files": 0
+    },
+    "name_suffix:gameObj": {
+      "files": 3305,
+      "mall_files": 35
+    },
+    "name_suffix:physObj": {
+      "files": 5,
+      "mall_files": 0
+    },
+    "name_suffix:prefab": {
+      "files": 641,
+      "mall_files": 0
+    },
+    "resource_type_any:dynModel": {
+      "files": 1,
+      "mall_files": 0
+    },
+    "resource_type_any:gameObj": {
+      "files": 3674,
+      "mall_files": 35
+    },
+    "resource_type_any:physObj": {
+      "files": 6,
+      "mall_files": 0
+    },
+    "resource_type_any:prefab": {
+      "files": 807,
+      "mall_files": 0
+    },
+    "root_control_child_override": {
+      "files": 10,
+      "mall_files": 0
+    },
+    "same_block_placement_controls": {
+      "files": 8,
+      "mall_files": 0
+    },
+    "type_field:dynModel": {
+      "files": 1,
+      "mall_files": 0
+    },
+    "type_field:gameObj": {
+      "files": 922,
+      "mall_files": 0
+    },
+    "type_field:physObj": {
+      "files": 6,
+      "mall_files": 0
+    },
+    "type_field:prefab": {
+      "files": 296,
+      "mall_files": 0
+    }
+  },
+  "values": {
+    "aboveHt:r=0": {
+      "files": 1,
+      "mall_files": 0,
+      "occurrences": 4
+    },
+    "aboveHt:r=2": {
+      "files": 13,
+      "mall_files": 0,
+      "occurrences": 13
+    },
+    "ignoreParentInstSeed:b=yes": {
+      "files": 190,
+      "mall_files": 0,
+      "occurrences": 660
+    },
+    "placeOnCollision:b=no": {
+      "files": 14,
+      "mall_files": 0,
+      "occurrences": 14
+    },
+    "placeOnCollision:b=yes": {
+      "files": 46,
+      "mall_files": 0,
+      "occurrences": 188
+    },
+    "place_type:i=0": {
+      "files": 104,
+      "mall_files": 3,
+      "occurrences": 2528
+    },
+    "place_type:i=1": {
+      "files": 1213,
+      "mall_files": 3,
+      "occurrences": 13177
+    },
+    "place_type:i=2": {
+      "files": 111,
+      "mall_files": 1,
+      "occurrences": 1337
+    },
+    "place_type:i=3": {
+      "files": 641,
+      "mall_files": 0,
+      "occurrences": 9678
+    },
+    "place_type:i=4": {
+      "files": 303,
+      "mall_files": 0,
+      "occurrences": 3783
+    },
+    "place_type:i=6": {
+      "files": 78,
+      "mall_files": 0,
+      "occurrences": 465
+    },
+    "quantizeTm:b=yes": {
+      "files": 3,
+      "mall_files": 0,
+      "occurrences": 3
+    },
+    "useCollisionNormal:b=yes": {
+      "files": 8,
+      "mall_files": 0,
+      "occurrences": 8
+    }
+  },
+  "lexical_word_mentions_including_comments_strings": {
+    "aboveht": {
+      "files": 14,
+      "mall_files": 0
+    },
+    "dynmodel": {
+      "files": 1,
+      "mall_files": 0
+    },
+    "gameobj": {
+      "files": 3720,
+      "mall_files": 35
+    },
+    "ignoreparentinstseed": {
+      "files": 206,
+      "mall_files": 0
+    },
+    "include": {
+      "files": 258,
+      "mall_files": 1
+    },
+    "offset_x": {
+      "files": 171,
+      "mall_files": 3
+    },
+    "offset_y": {
+      "files": 61,
+      "mall_files": 0
+    },
+    "offset_z": {
+      "files": 169,
+      "mall_files": 3
+    },
+    "physobj": {
+      "files": 6,
+      "mall_files": 0
+    },
+    "place_type": {
+      "files": 1716,
+      "mall_files": 7
+    },
+    "placeoncollision": {
+      "files": 53,
+      "mall_files": 0
+    },
+    "polygon": {
+      "files": 176,
+      "mall_files": 0
+    },
+    "prefab": {
+      "files": 809,
+      "mall_files": 0
+    },
+    "quantizetm": {
+      "files": 3,
+      "mall_files": 0
+    },
+    "rot_x": {
+      "files": 56,
+      "mall_files": 0
+    },
+    "rot_y": {
+      "files": 387,
+      "mall_files": 6
+    },
+    "rot_z": {
+      "files": 76,
+      "mall_files": 0
+    },
+    "scale": {
+      "files": 52,
+      "mall_files": 0
+    },
+    "spline": {
+      "files": 493,
+      "mall_files": 0
+    },
+    "usecollisionnormal": {
+      "files": 8,
+      "mall_files": 0
+    },
+    "yscale": {
+      "files": 29,
+      "mall_files": 0
+    }
+  },
+  "comments_word_mentions": {
+    "gameobj": {
+      "files": 62,
+      "mall_files": 0
+    },
+    "ignoreparentinstseed": {
+      "files": 17,
+      "mall_files": 0
+    },
+    "include": {
+      "files": 1,
+      "mall_files": 0
+    },
+    "place_type": {
+      "files": 11,
+      "mall_files": 0
+    },
+    "placeoncollision": {
+      "files": 1,
+      "mall_files": 0
+    },
+    "prefab": {
+      "files": 4,
+      "mall_files": 0
+    },
+    "rot_y": {
+      "files": 22,
+      "mall_files": 0
+    },
+    "spline": {
+      "files": 1,
+      "mall_files": 0
+    }
+  },
+  "type_spellings": {
+    "gameObj": {
+      "gameobj": 1373,
+      "gameObj": 11633
+    },
+    "prefab": {
+      "prefab": 1929
+    },
+    "dynModel": {
+      "dynmodel": 1
+    },
+    "physObj": {
+      "physObj": 11
+    }
+  },
+  "gameobj_unique_names": 386,
+  "gameobj_records": 11880,
+  "name_fields": {
+    "quoted_fields": 1297881,
+    "nonempty_no_suffix": 693502,
+    "suffix_present": 603144,
+    "empty": 1235
+  },
+  "issues": [],
+  "script_sha256": "510e4af12a81f07fc856e541408abd347c923107757095c1c2c34e1bf63b1aee",
+  "limitations": [
+    "structural declaration scanner, not validated Dagor runtime parser",
+    "include contents excluded: closure/execution not measured",
+    "parent type candidates not assigned effective semantics",
+    "Marker role never inferred from name; dummy_pivot only a candidate",
+    "all field/value observations are source facts, not precedence or inheritance decisions",
+    "manifest hashes one captured read per file; metadata checked around read; no global atomic filesystem snapshot",
+    "fixture candidate capture bounded to first 250 occurrences per category plus all mall occurrences before preference sorting"
+  ]
+}

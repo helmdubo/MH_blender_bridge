@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeCompiler.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -15,6 +16,7 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
+#include "Index/MHProjectResourceIndex.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -384,15 +386,18 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     {
         return false;
     }
-    FMHPayloadScanResolver SourceResolver(SourceRoot);
-    if (!SourceResolver.Initialize(OutError))
+    // Use the same fresh source/receipt projection as import, before Build can
+    // create a package or publish a source document. A valid old placement is
+    // not proof that its transitive source dependencies are still available.
+    FMHSourceAnalysisServices Services;
+    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
     {
         return false;
     }
     FMHResourceKey Key;
     Key.Kind = EMHResourceKind::Composite;
     Key.LogicalName = AdoptTarget.LogicalName;
-    if (SourceResolver.Resolve(Key).Status != EMHResolveStatus::Unresolved)
+    if (Services.Resolver->Resolve(Key).Status != EMHResolveStatus::Unresolved)
     {
         OutError = FString::Printf(
             TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME: composite:%s already exists in source_root"),
@@ -408,6 +413,37 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
         OutError = FString::Printf(
             TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: generated target already exists: %s"),
             *ObjectPath);
+        return false;
+    }
+
+    // Build produces one direct mesh/composite/actor node per selected actor.
+    // The existing index walks each resource's full source closure, including
+    // zero-weight random options, profiles and mesh/material dependencies.
+    for (const FMHCompositeNode& Node : Document.Nodes)
+    {
+        FMHResourceKey Dependency;
+        if (Node.Kind == EMHCompositeNodeKind::Mesh)
+        {
+            Dependency.Kind = EMHResourceKind::StaticMesh;
+        }
+        else if (Node.Kind == EMHCompositeNodeKind::Composite)
+        {
+            Dependency.Kind = EMHResourceKind::Composite;
+        }
+        else
+        {
+            continue;
+        }
+        Dependency.LogicalName = Node.Resource;
+        if (Services.Index->IsImportBlocked(Dependency, OutError))
+        {
+            return false;
+        }
+    }
+    // Reuse the importer's seed-free admission for generated endpoints and
+    // transforms as well; a late import rejection must not be the first check.
+    if (!MHProbeCompositeBuildV5(Key.LogicalName, Document, *Services.Resolver, *Settings, OutError))
+    {
         return false;
     }
 

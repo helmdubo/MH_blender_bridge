@@ -1,0 +1,55 @@
+"""Focused metadata-only audit; no source payload copies or mutations."""
+from collections import Counter, defaultdict
+import hashlib
+import json
+import subprocess
+import inventory
+
+
+def main():
+    inventory.self_test()
+    assert inventory.scan("node{")[3], "unclosed block must be reported"
+    assert inventory.scan("}")[3], "unmatched close must be reported"
+    pattern = r"place_type|placeOnCollision|place_on_collision|useCollisionNormal|use_collision_norm"
+    paths = subprocess.run(["rg", "-l", "--hidden", "--no-ignore", "-g", "*.composit.blk", pattern,
+                            str(inventory.ROOT)], capture_output=True, text=True, check=True).stdout.splitlines()
+    cases = []
+    issues = []
+    for filename in paths:
+        path = inventory.Path(filename)
+        raw = path.read_bytes()
+        blocks, _, _, errors = inventory.scan(raw.decode("utf-8-sig"))
+        issues.extend({"path": str(path), "error": e} for e in errors)
+        for block in blocks:
+            fields = {k: block.values[k] for k in inventory.PLACEMENT if k in block.values}
+            if block.name != "node" or not fields:
+                continue
+            for child_index in block.children:
+                child = blocks[child_index]
+                if child.name == "node" and not any(k in child.values for k in inventory.PLACEMENT):
+                    cases.append({"path": path.relative_to(inventory.ROOT).as_posix(),
+                                  "sha256": hashlib.sha256(raw).hexdigest(), "nodepath": block.path,
+                                  "line": block.line, "fields": fields, "child_nodepath": child.path,
+                                  "child_line": child.line, "runtime_semantics": "not measured"})
+    result = {"scope": "all depths of node nesting in files lexically containing placement controls",
+              "files_scanned": len(paths), "candidate_files": len({r["path"] for r in cases}),
+              "candidate_occurrences": len(cases), "candidates": cases[:16], "issues": issues,
+              "scanner_selftests": "comment/string masking, typed real fields, include, nodepaths, unclosed/unmatched braces passed"}
+    (inventory.OUT / "nontransitive_nested_nodes.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
+    records = [json.loads(line) for line in (inventory.OUT / "gameobj_occurrences.jsonl").read_text(encoding="utf-8").splitlines()]
+    mall = [r for r in records if r["path"].startswith(inventory.MALL)]
+    names = defaultdict(list)
+    for row in mall:
+        names[row["logical_name"]].append(row)
+    summary = {"scope": inventory.MALL, "files": len({r["path"] for r in mall}),
+               "unique_names": len(names), "occurrences": len(mall),
+               "evidence": dict(Counter(r["evidence"] for r in mall)),
+               "all_corpus_evidence": dict(Counter(r["evidence"] for r in records)),
+               "names": {name: {"occurrences": len(rows), "files": len({r["path"] for r in rows}),
+                                "marker_role": "unassigned", "example": rows[0]} for name, rows in sorted(names.items())}}
+    (inventory.OUT / "mall_gameobj_names.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(json.dumps({"nontransitive": result, "mall_gameobj": {k: v for k, v in summary.items() if k != "names"}}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

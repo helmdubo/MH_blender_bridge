@@ -805,8 +805,9 @@ bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parame
                 Group->GetComponentLocation().Equals(FVector(100, 0, 0), UE_KINDA_SMALL_NUMBER));
             bPassed &= TestTrue(TEXT("parent 100 plus child local 25 equals world 125"),
                 Child->GetComponentLocation().Equals(FVector(125, 0, 0), UE_KINDA_SMALL_NUMBER));
-            bPassed &= TestTrue(TEXT("sealed plan leaf remains attached to the placement root"),
-                Child->GetAttachParent() == Target->GetRootComponent());
+            bPassed &= TestTrue(TEXT("sealed leaf remains under its authored group with absolute T/R/S"),
+                Child->GetAttachParent() == Group && Child->IsUsingAbsoluteLocation() &&
+                Child->IsUsingAbsoluteRotation() && Child->IsUsingAbsoluteScale());
             const FMHResolvedCompositePlan* Plan = Target->GetResolvedPlan();
             bPassed &= TestTrue(TEXT("plan retains the accumulated parent-local leaf matrix"),
                 Plan != nullptr && Plan->Leaves.Num() == 1 &&
@@ -912,10 +913,10 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     {
         USceneComponent* First = MeshLeaves[0];
         USceneComponent* Second = MeshLeaves[1];
-        bPassed &= TestTrue(TEXT("first resolved leaf attached to placement root"),
-            First != nullptr && First->GetAttachParent() == PlacementRoot);
-        bPassed &= TestTrue(TEXT("second resolved leaf attached to placement root"),
-            Second != nullptr && Second->GetAttachParent() == PlacementRoot);
+        bPassed &= TestTrue(TEXT("first resolved leaf attached under its authored root"),
+            First != nullptr && First->GetAttachParent() == Target->GetTopLevelComponents()[0]);
+        bPassed &= TestTrue(TEXT("second resolved leaf attached under its authored root"),
+            Second != nullptr && Second->GetAttachParent() == Target->GetTopLevelComponents()[1]);
         for (const USceneComponent* Handle : Target->GetTopLevelComponents())
         {
             bPassed &= TestTrue(TEXT("authored edit handle remains attached to placement root"),

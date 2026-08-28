@@ -22,8 +22,11 @@ class MIMIRCOMPOSITEEDITOR_API AMHCompositeActor final : public AActor
 public:
     AMHCompositeActor();
 
-    /** Source placement is replaced by a runtime-only wrapper at PIE/cook handoff. */
-    virtual bool IsEditorOnly() const override { return true; }
+    // IsEditorOnly suppresses primitive rendering in Game View as well as cook.
+    // Keep ordinary editor rendering/native HActor picking; the existing bridge
+    // replaces this source placement at PIE/cook handoff.
+    virtual bool NeedsLoadForClient() const override { return false; }
+    virtual bool NeedsLoadForServer() const override { return false; }
     virtual void Serialize(FArchive& Archive) override;
 
     void SetCompositeAsset(UMHCompositeAsset* Asset);
