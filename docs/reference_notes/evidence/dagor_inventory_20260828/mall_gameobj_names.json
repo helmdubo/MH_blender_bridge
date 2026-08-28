@@ -1,0 +1,367 @@
+{
+  "scope": "rendinst_1lod/mall_omsky/",
+  "files": 35,
+  "unique_names": 22,
+  "occurrences": 466,
+  "evidence": {
+    "explicit_name_suffix": 466
+  },
+  "all_corpus_evidence": {
+    "explicit_name_suffix": 8855,
+    "explicit_same_block_type": 3025
+  },
+  "names": {
+    "civil_loot_box": {
+      "occurrences": 6,
+      "files": 4,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 5,
+        "local_fields": {},
+        "logical_name": "civil_loot_box",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0]",
+        "path": "rendinst_1lod/mall_omsky/composites/household/sovmod_mall_omsky_household_loot_cmp.composit.blk",
+        "raw_name": "civil_loot_box:gameobj",
+        "sha256": "2d2de8c4067307c2abf4f8f86b382f37fa61749effec8004b018087b4eb058b9"
+      }
+    },
+    "dummy_pivot": {
+      "occurrences": 19,
+      "files": 18,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 7,
+        "local_fields": {},
+        "logical_name": "dummy_pivot",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0].node[0]",
+        "path": "rendinst_1lod/mall_omsky/composites/atrium/sovmod_mall_omsky_atrium_a_loot_cmp.composit.blk",
+        "raw_name": "dummy_pivot:gameObj",
+        "sha256": "c4489794d5271dc5982b24e32c68aafa372cc587e87dca8c1d7e12d3b325d645"
+      }
+    },
+    "envi_probe_box": {
+      "occurrences": 105,
+      "files": 2,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 5,
+        "local_fields": {},
+        "logical_name": "envi_probe_box",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0]",
+        "path": "rendinst_1lod/mall_omsky/composites/sovmod_mall_omsky_envi_probes.composit.blk",
+        "raw_name": "envi_probe_box:gameobj",
+        "sha256": "929c5ec675049944183359ffb3b6a903516d92b48f65ae5aae1310d3e1b07d2c"
+      }
+    },
+    "loot_box": {
+      "occurrences": 90,
+      "files": 15,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 5,
+        "local_fields": {},
+        "logical_name": "loot_box",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0]",
+        "path": "rendinst_1lod/mall_omsky/composites/audio_shop/somvod_mall_omsky_audio_store_loot_cmp.composit.blk",
+        "raw_name": "loot_box:gameobj",
+        "sha256": "01141c964a339e36d250c4b28937f5f1caa8d2eed64d6bd53c6fcf05b4544292"
+      }
+    },
+    "loot_box_shop": {
+      "occurrences": 12,
+      "files": 7,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 10,
+        "local_fields": {},
+        "logical_name": "loot_box_shop",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[1]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_box_shop:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_box_special_a": {
+      "occurrences": 6,
+      "files": 3,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 37,
+        "local_fields": {},
+        "logical_name": "loot_box_special_a",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0].node[6]",
+        "path": "rendinst_1lod/mall_omsky/composites/restaurant/sovmod_mall_omsky_restaurant_a_loot_cmp.composit.blk",
+        "raw_name": "loot_box_special_a:gameObj",
+        "sha256": "77a6f535b44e99e1f7089e4bcefa78f3ea8f019df7c78e6f967cc33d500990b9"
+      }
+    },
+    "loot_box_vehicle_parts": {
+      "occurrences": 2,
+      "files": 1,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 20,
+        "local_fields": {},
+        "logical_name": "loot_box_vehicle_parts",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[3]",
+        "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_loot_cmp.composit.blk",
+        "raw_name": "loot_box_vehicle_parts:gameobj",
+        "sha256": "bc949e76d0e1696fe2705c7bd18bd28a15b890f164d96e5e09cf77935ad735f8"
+      }
+    },
+    "loot_crate": {
+      "occurrences": 4,
+      "files": 4,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 15,
+        "local_fields": {},
+        "logical_name": "loot_crate",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[2]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_crate:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_crate_rich": {
+      "occurrences": 6,
+      "files": 5,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 20,
+        "local_fields": {},
+        "logical_name": "loot_crate_rich",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[3]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_crate_rich:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_indoor_floor": {
+      "occurrences": 32,
+      "files": 8,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 25,
+        "local_fields": {},
+        "logical_name": "loot_indoor_floor",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[4]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_indoor_floor:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_indoor_medical": {
+      "occurrences": 29,
+      "files": 11,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 30,
+        "local_fields": {},
+        "logical_name": "loot_indoor_medical",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[5]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_indoor_medical:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_indoor_military_floor": {
+      "occurrences": 6,
+      "files": 4,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 35,
+        "local_fields": {},
+        "logical_name": "loot_indoor_military_floor",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[6]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_indoor_military_floor:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_indoor_military_shelves": {
+      "occurrences": 4,
+      "files": 3,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 40,
+        "local_fields": {},
+        "logical_name": "loot_indoor_military_shelves",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[7]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_indoor_military_shelves:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_indoor_shelves": {
+      "occurrences": 12,
+      "files": 5,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 45,
+        "local_fields": {},
+        "logical_name": "loot_indoor_shelves",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[8]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_indoor_shelves:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_indoor_shop": {
+      "occurrences": 20,
+      "files": 8,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 15,
+        "local_fields": {},
+        "logical_name": "loot_indoor_shop",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[2]",
+        "path": "rendinst_1lod/mall_omsky/composites/audio_shop/somvod_mall_omsky_audio_store_loot_cmp.composit.blk",
+        "raw_name": "loot_indoor_shop:gameobj",
+        "sha256": "01141c964a339e36d250c4b28937f5f1caa8d2eed64d6bd53c6fcf05b4544292"
+      }
+    },
+    "loot_indoor_table": {
+      "occurrences": 18,
+      "files": 8,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 55,
+        "local_fields": {},
+        "logical_name": "loot_indoor_table",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[10]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_indoor_table:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_medic_box_wall_old": {
+      "occurrences": 7,
+      "files": 3,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 5,
+        "local_fields": {},
+        "logical_name": "loot_medic_box_wall_old",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0]",
+        "path": "rendinst_1lod/mall_omsky/composites/laundry/sovmod_mall_omsky_laundry_a_loot_cmp.composit.blk",
+        "raw_name": "loot_medic_box_wall_old:gameobj",
+        "sha256": "efadfe61c02de3c9343d3c7894052b7f392f4cc392e83271675c36b98d30c4c6"
+      }
+    },
+    "loot_military_crate_big_180x80": {
+      "occurrences": 6,
+      "files": 5,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 12,
+        "local_fields": {},
+        "logical_name": "loot_military_crate_big_180x80",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0].node[1]",
+        "path": "rendinst_1lod/mall_omsky/composites/atrium/sovmod_mall_omsky_atrium_a_loot_cmp.composit.blk",
+        "raw_name": "loot_military_crate_big_180x80:gameObj",
+        "sha256": "c4489794d5271dc5982b24e32c68aafa372cc587e87dca8c1d7e12d3b325d645"
+      }
+    },
+    "loot_military_crate_long_weapon_160x40": {
+      "occurrences": 6,
+      "files": 5,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 65,
+        "local_fields": {},
+        "logical_name": "loot_military_crate_long_weapon_160x40",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[12]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_military_crate_long_weapon_160x40:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    },
+    "loot_military_crate_medium_120x60": {
+      "occurrences": 40,
+      "files": 9,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 22,
+        "local_fields": {},
+        "logical_name": "loot_military_crate_medium_120x60",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0].node[3]",
+        "path": "rendinst_1lod/mall_omsky/composites/atrium/sovmod_mall_omsky_atrium_a_loot_cmp.composit.blk",
+        "raw_name": "loot_military_crate_medium_120x60:gameObj",
+        "sha256": "c4489794d5271dc5982b24e32c68aafa372cc587e87dca8c1d7e12d3b325d645"
+      }
+    },
+    "loot_military_crate_small_50x40": {
+      "occurrences": 21,
+      "files": 10,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 32,
+        "local_fields": {},
+        "logical_name": "loot_military_crate_small_50x40",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[0].node[5]",
+        "path": "rendinst_1lod/mall_omsky/composites/atrium/sovmod_mall_omsky_atrium_a_loot_cmp.composit.blk",
+        "raw_name": "loot_military_crate_small_50x40:gameObj",
+        "sha256": "c4489794d5271dc5982b24e32c68aafa372cc587e87dca8c1d7e12d3b325d645"
+      }
+    },
+    "loot_military_crate_small_ammo_30x20": {
+      "occurrences": 15,
+      "files": 5,
+      "marker_role": "unassigned",
+      "example": {
+        "evidence": "explicit_name_suffix",
+        "line": 80,
+        "local_fields": {},
+        "logical_name": "loot_military_crate_small_ammo_30x20",
+        "marker_role": "unassigned",
+        "nodepath": "$.node[15]",
+        "path": "rendinst_1lod/mall_omsky/composites/clothing_store/sovmod_mall_omsky_clothing_store_a_loot_cmp.composit.blk",
+        "raw_name": "loot_military_crate_small_ammo_30x20:gameobj",
+        "sha256": "d2fb00e49a981b1c3efdd9c9a68c9ed5f8804acd27177fc95c600901384dee29"
+      }
+    }
+  }
+}

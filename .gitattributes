@@ -7,3 +7,6 @@ golden/fbxdump/*.json text eol=lf
 # protocol signatures, so git must never rewrite their line endings on any host.
 reference/dagor_fixtures/** text eol=lf
 golden/v5/** text eol=lf
+
+# Frozen diagnostic evidence, not protocol assets; preserve receipt SHA256.
+docs/reference_notes/evidence/dagor_inventory_20260828/** text eol=lf

@@ -1,0 +1,9 @@
+{
+  "scope": "all depths of node nesting in files lexically containing placement controls",
+  "files_scanned": 1767,
+  "candidate_files": 0,
+  "candidate_occurrences": 0,
+  "candidates": [],
+  "issues": [],
+  "scanner_selftests": "comment/string masking, typed real fields, include, nodepaths, unclosed/unmatched braces passed"
+}

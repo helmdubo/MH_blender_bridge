@@ -310,7 +310,7 @@ Scope определяется тремя красными baseline-пробам
    с absolute T/R/S и мировыми матрицами плана, без нового resolver metadata.
 3. Build preflight до создания source payload, папки, UObject package и UAsset.
 
-Acceptance: `BuildPreflightRejectsBeforeMutation`, `SemanticHierarchy` и
+Acceptance: `BuildPreflightRejectsBeforeMutation`, `TopLevelGrouping` и
 `RenderedNativeHitProxy` становятся постоянными Automation-тестами;
 квитанция содержит красный вывод неизменённого main и зелёный нового среза.
 RHI-проба выполняется с настоящим viewport, не под `-nullrhi`.
@@ -321,8 +321,9 @@ scope и per-operation lookup сюда не входят; они вынесен�
 [отдельный кандидат](proposals/shared_composite_preview_cache.md).
 G-off selection после загрузки уровня и `PostLoad` остаются за S6.1;
 полное глубокое semantic tree этим срезом не заявляется.
-Дальнейшие S6.1/S6.2 описаны в [кандидате 12](12_v5_s6_1_s6_2_slices.md),
-который требует собственного owner freeze.
+Дальнейшие S6.1/S6.2 описаны в [owner freeze 12, редакция 2](12_v5_s6_1_s6_2_slices.md).
+Freeze принят owner; реализация S6.1 начинается после merge S6.0,
+затем S6.2 — после owner acceptance S6.1, без параллельных production-срезов.
 
 ---
 

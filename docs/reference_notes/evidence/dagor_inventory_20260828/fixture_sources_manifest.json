@@ -1,0 +1,78 @@
+{
+  "status": "local raw fixture candidates only; not normative or accepted goldens",
+  "source_corpus_root": "H:/_Gaijin_Entertainment/EnlistedCDK/ActiveMatterCDK.2024.11.11/EnlistedCDK/develop/assets",
+  "copy_root": "fixture_sources",
+  "hash_algorithm": "SHA256",
+  "raw_source_copy_hash_equality_verified": true,
+  "file_count": 7,
+  "total_bytes": 7195,
+  "uncovered_cases": ["nontransitive_node_inheritance", "require", "colors", "explicit_priority3", "nonzero_placement_with_nonzero_height"],
+  "files": [
+    {
+      "path": "gameproj/normandy_invasion/entities/buildings/normandy_vernacular_buildings_large/composit_parts/normandy_vernacular_debris_wood.composit.blk",
+      "size": 294,
+      "sha256": "d2082dfb3c33754708a7eade0889ccb02dc67c40ad75665ce965d7ffa782acf2",
+      "cases": ["root_inheritance_candidate", "nonzero_aboveHt", "comment_exclusion"],
+      "nodepaths": ["$", "$.node[0]", "$.node[1]"],
+      "source_facts": "root collision=no, aboveHt=2; children omit placement controls; rot_y appears only in a comment",
+      "coverage_limit": "aboveHt=2 with collision=no does not establish nonzero-placement with nonzero-height acceptance",
+      "expected_runtime_semantics": "not assigned"
+    },
+    {
+      "path": "gameproj/normandy_invasion/entities/buildings/fences/normandy_fence_c/normandy_fence_2000_flat_c_breach_a_debris_a.composit.blk",
+      "size": 341,
+      "sha256": "de470f058f6f12a1993114863a9454bc65060ed4ed9d97799a1a018ac7f37ade",
+      "cases": ["legacy_root_child_override_candidate", "same_block_legacy_pair_candidate"],
+      "nodepaths": ["$", "$.node[1]"],
+      "source_facts": "root collision=no; child collision=yes and collision-normal=yes",
+      "expected_runtime_semantics": "not assigned; this is not an explicit priority3 fixture"
+    },
+    {
+      "path": "rendinst_1lod/mall_omsky/mall_omsky_office_building_a/composites/mall_omsky_office_building_a_window_d_cmp.composit.blk",
+      "size": 849,
+      "sha256": "ea5cbfeade64db76a652d6e1c46a04edda59947f9511f903f26fef4fd84a4bcf",
+      "cases": ["explicit_zero", "random_untyped_options"],
+      "nodepaths": ["$.node[0].node[0]", "$.node[0].node[1].node[0]", "$.node[0].node[1].node[1]"],
+      "source_facts": "two child nodes declare place_type=0; separate random node has three ent options",
+      "expected_runtime_semantics": "not assigned"
+    },
+    {
+      "path": "rendinst_1lod/mall_omsky/composites/canteen_tables/sovmod_mall_omsky_canteen_table_set_a_cmp.composit.blk",
+      "size": 544,
+      "sha256": "5dfec91eaa9d7371d47f5077eed5ce17d2044a84dab12f7214aabf358e6883fc",
+      "cases": ["gameObj_dummy_pivot_marker_candidate_only"],
+      "nodepaths": ["$.node[0].node[0]"],
+      "source_facts": "explicit name dummy_pivot:gameObj with identity transform",
+      "marker_role": "unassigned",
+      "expected_runtime_semantics": "not assigned"
+    },
+    {
+      "path": "gameproj/africa_forsaken/entities/vehicle/nasams_launcher/afr_airport_nasams_launcher_cmp.composit.blk",
+      "size": 266,
+      "sha256": "f43b53a674ebc20629b21b9a0e6408349b9ed150774dc6894d78c569da4f0aec",
+      "cases": ["quantizeTm", "explicit_prefab"],
+      "nodepaths": ["$", "$.node[1]"],
+      "source_facts": "root quantizeTm=yes, one child explicitly type=prefab",
+      "expected_runtime_semantics": "not assigned"
+    },
+    {
+      "path": "rendinst_1lod/mall_omsky/composites/sovmod_mall_omsky_bunker_loot_cmp.composit.blk",
+      "size": 4737,
+      "sha256": "125ab87fc8876a85ca50f6e4dbf048ed5107b0d68f23a9efed44f76443ae51f7",
+      "cases": ["explicit_nonzero_place_type_1"],
+      "nodepaths": ["$.node[0].node[0]", "$.node[0].node[1]"],
+      "source_facts": "nested gameObj nodes explicitly declare place_type=1, including line 9 and line 15",
+      "selection_limit": "selected from bounded fixture_candidates.json, not claimed globally smallest",
+      "expected_runtime_semantics": "not assigned"
+    },
+    {
+      "path": "gameproj/africa_forsaken/entities/indoor_stuff/clothes/composits/default/clothes_pile_a_cmp.composit.blk",
+      "size": 164,
+      "sha256": "b02e852346fb447d904b7215f888c298e7e905a4485cb2d51b07147526e4d2b9",
+      "cases": ["ignoreParentInstSeed_yes"],
+      "nodepaths": ["$.node[0]"],
+      "source_facts": "single rendInst node explicitly declares ignoreParentInstSeed=yes at line 7",
+      "expected_runtime_semantics": "not assigned"
+    }
+  ]
+}

@@ -1,0 +1,334 @@
+"""Read-only structural evidence inventory, not a Dagor interpreter/importer.
+
+Outputs are metadata/receipts only in this script's fresh directory. Includes
+are recorded but deliberately not expanded; no effective type/placement or
+Marker semantics are inferred. Blocks use source-order, zero-based name indices.
+"""
+from __future__ import annotations
+
+import bisect
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import time
+
+ROOT = Path(r"H:\_Gaijin_Entertainment\EnlistedCDK\ActiveMatterCDK.2024.11.11\EnlistedCDK\develop\assets")
+OUT = Path(__file__).resolve().parent
+MALL = "rendinst_1lod/mall_omsky/"
+FIELDS = ("place_type", "aboveHt", "placeOnCollision", "place_on_collision",
+          "useCollisionNormal", "use_collision_norm", "ignoreParentInstSeed",
+          "useParentInstSeed", "quantizeTm", "colors", "require", "label")
+P2 = ("rot_x", "rot_y", "rot_z", "offset_x", "offset_y", "offset_z", "scale", "yScale")
+TYPES = ("fx", "dynModel", "physObj", "animChar", "landClass", "prefab", "gameObj")
+PLACEMENT = ("place_type", "placeOnCollision", "place_on_collision", "useCollisionNormal", "use_collision_norm")
+INTEREST = set(FIELDS + P2 + ("name", "type", "className", "seed", "instSeed"))
+
+# String/comment alternatives precede declarations so embedded fake source is
+# never counted. This scanner does not validate BLK numeric or resource grammar.
+EVENT = re.compile(r'''(?P<comment>//[^\r\n]*|/\*[\s\S]*?\*/)
+|(?P<string>"(?:\\.|~.|[^"\\~])*")
+|(?P<field>[A-Za-z_][A-Za-z0-9_]*\s*:\s*[A-Za-z_][A-Za-z0-9_]*\s*=)
+|(?P<include>\binclude(?=\s+"))
+|(?P<open>[A-Za-z_][A-Za-z0-9_]*\s*\{)
+|(?P<close>\})
+|(?P<badopen>\{)''', re.X)
+FIELD_HEAD = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+@dataclass
+class Block:
+    name: str
+    path: str
+    parent: int | None
+    line: int
+    values: dict[str, list[dict]] = field(default_factory=lambda: defaultdict(list))
+    children: list[int] = field(default_factory=list)
+    indices: Counter = field(default_factory=Counter)
+
+
+def scan(text: str):
+    newlines = [m.start() for m in re.finditer("\n", text)]
+    blocks = [Block("$", "$", None, 1)]
+    stack = [0]
+    pending = None
+    includes = []
+    problems = []
+    comments = []
+
+    def line(pos):
+        return bisect.bisect_right(newlines, pos) + 1
+
+    def flush(end):
+        nonlocal pending
+        if pending is None:
+            return
+        block, key, typ, begin, lineno, literal = pending
+        raw = text[begin:end].strip().rstrip(";").strip()
+        if key in INTEREST:
+            # Only the typed string token is identity-bearing; arbitrary string
+            # literals attached to other fields are not resource declarations.
+            blocks[block].values[key].append({
+                "type": typ, "value": literal if literal is not None else raw,
+                "line": lineno, "quoted": literal is not None,
+            })
+        pending = None
+
+    for match in EVENT.finditer(text):
+        kind = match.lastgroup
+        if kind == "comment":
+            # A comment terminates the preceding simple value. Numeric matrix
+            # contents with comments are irrelevant to this metadata inventory.
+            flush(match.start())
+            comments.append((line(match.start()), match.group()))
+            continue
+        if kind == "string":
+            if pending is not None:
+                block, key, typ, begin, lineno, literal = pending
+                if literal is None and not text[begin:match.start()].strip():
+                    pending = (block, key, typ, begin, lineno, match.group()[1:-1])
+            continue
+        flush(match.start())
+        if kind == "field":
+            key, typ = FIELD_HEAD.fullmatch(match.group()).groups()
+            pending = (stack[-1], key, typ, match.end(), line(match.start()), None)
+        elif kind == "include":
+            tail = re.match(r'\s+"((?:\\.|~.|[^"\\~])*)"', text[match.end():])
+            includes.append({"nodepath": blocks[stack[-1]].path, "line": line(match.start()),
+                             "value": tail.group(1) if tail else None})
+        elif kind == "open":
+            name = match.group().split("{")[0].strip()
+            parent = stack[-1]
+            index = blocks[parent].indices[name]
+            blocks[parent].indices[name] += 1
+            path = f"{blocks[parent].path}.{name}[{index}]"
+            child = len(blocks)
+            blocks.append(Block(name, path, parent, line(match.start())))
+            blocks[parent].children.append(child)
+            stack.append(child)
+        elif kind == "close":
+            if len(stack) > 1:
+                stack.pop()
+            else:
+                problems.append(f"unmatched closing brace line {line(match.start())}")
+        else:
+            problems.append(f"unrecognized opening brace line {line(match.start())}")
+    flush(len(text))
+    if len(stack) != 1:
+        problems.append("unclosed blocks: " + ",".join(blocks[i].path for i in stack[1:]))
+    return blocks, includes, comments, problems
+
+
+def self_test():
+    sample = '''// place_type:i=99 node { name:t="fake:gameObj" }
+className:t="composit"; note:t="place_type:i=98 { }";
+node { name:t="real:gameObj"; place_type:i=0; ent { name:t=""; weight:r=1; } }
+/* quantizeTm:b=yes */ include "profile.blk"
+'''
+    blocks, includes, comments, errors = scan(sample)
+    assert not errors and len(blocks) == 3
+    assert blocks[1].path == "$.node[0]" and blocks[2].path == "$.node[0].ent[0]"
+    assert blocks[1].values["place_type"][0]["value"] == "0"
+    assert blocks[1].values["name"][0]["value"] == "real:gameObj"
+    assert not blocks[0].values["place_type"] and len(includes) == 1
+    assert len(comments) == 2
+
+
+def main():
+    assert OUT == Path(r"E:\MimirComposite_DagorInventory_20260828_R2")
+    self_test()
+    start = time.monotonic()
+    command = ["rg", "--files", "--hidden", "--no-ignore", "-g", "*.composit.blk", str(ROOT)]
+    initial = subprocess.run(command, capture_output=True, check=True, text=True).stdout.splitlines()
+    files = sorted(Path(p) for p in initial)
+    file_sets = defaultdict(set)
+    value_files = defaultdict(set)
+    value_occurrences = Counter()
+    type_spellings = defaultdict(Counter)
+    gameobj = []
+    cases = defaultdict(list)
+    manifest = []
+    issues = []
+    lexical_files = defaultdict(set)
+    comment_files = defaultdict(set)
+    wanted = re.compile(r"\b(?:" + "|".join(FIELDS + P2 + ("spline", "polygon", "include") + TYPES) + r")\b", re.I)
+    name_stats = Counter()
+
+    def record_case(category, relative, sha, block, detail):
+        # Keep bounded candidates with provenance; preferentially small/mall
+        # candidates are selected after scanning, not by undocumented semantics.
+        if len(cases[category]) < 250 or relative.startswith(MALL):
+            cases[category].append({"path": relative, "sha256": sha, "nodepath": block.path,
+                                    "line": block.line, "detail": detail})
+
+    for number, path in enumerate(files, 1):
+        relative = path.relative_to(ROOT).as_posix()
+        before = path.stat()
+        raw = path.read_bytes()
+        after = path.stat()
+        sha = hashlib.sha256(raw).hexdigest()
+        manifest.append({"path": relative, "size": len(raw), "sha256": sha})
+        if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+            issues.append({"path": relative, "error": "changed during read"})
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            # ASCII metadata bytes are unaffected; explicitly report fallback.
+            text = raw.decode("cp1251", errors="replace")
+            issues.append({"path": relative, "warning": "non-UTF8 decoded as cp1251 for metadata only"})
+        for token in set(m.group().casefold() for m in wanted.finditer(text)):
+            lexical_files[token].add(relative)
+        blocks, includes, comments, problems = scan(text)
+        for problem in problems:
+            issues.append({"path": relative, "error": problem})
+        for _, comment in comments:
+            for token in set(m.group().casefold() for m in wanted.finditer(comment)):
+                comment_files[token].add(relative)
+        if includes:
+            file_sets["include"].add(relative)
+            record_case("include", relative, sha, blocks[0], includes)
+
+        for block in blocks:
+            if block.name in ("spline", "polygon", "colors", "require"):
+                file_sets["block:" + block.name].add(relative)
+                record_case(block.name, relative, sha, block, "real named block")
+            for key in FIELDS:
+                for attr in block.values.get(key, []):
+                    file_sets["field:" + key].add(relative)
+                    value_key = key + ":" + attr["type"] + "=" + str(attr["value"])
+                    value_files[value_key].add(relative)
+                    value_occurrences[value_key] += 1
+                    record_case(key, relative, sha, block, {key: attr})
+                    if key == "place_type":
+                        if attr["value"] == "0":
+                            record_case("explicit_zero", relative, sha, block, attr)
+                        elif re.fullmatch(r"[+-]?\d+", str(attr["value"])):
+                            record_case("nonzero_place_type", relative, sha, block, attr)
+                    if key == "aboveHt" and attr["value"] not in ("0", "0.0"):
+                        record_case("nonzero_aboveHt", relative, sha, block, attr)
+            for key in P2:
+                for attr in block.values.get(key, []):
+                    if attr["type"] == "p2":
+                        file_sets["inline_p2"].add(relative)
+                        file_sets["inline_p2:" + key].add(relative)
+                        record_case("inline_p2", relative, sha, block, {key: attr})
+            placement_fields = {key: block.values[key] for key in PLACEMENT if key in block.values}
+            if len(placement_fields) > 1:
+                file_sets["same_block_placement_controls"].add(relative)
+                record_case("priority_same_block", relative, sha, block, placement_fields)
+            if block.parent == 0 and placement_fields:
+                for child_index in block.children:
+                    child = blocks[child_index]
+                    if child.name == "node" and not any(key in child.values for key in PLACEMENT):
+                        file_sets["parent_control_child_omits"].add(relative)
+                        record_case("nontransitive_inheritance_candidate", relative, sha, block,
+                                    {"parent_fields": placement_fields, "child_nodepath": child.path,
+                                     "child_placement_fields": "absent; runtime meaning unmeasured"})
+            if block.parent is None and placement_fields:
+                for child_index in block.children:
+                    child = blocks[child_index]
+                    child_fields = {key: child.values[key] for key in PLACEMENT if key in child.values}
+                    record_case("root_inheritance_candidate", relative, sha, block,
+                                {"root_fields": placement_fields, "child_nodepath": child.path,
+                                 "child_fields": child_fields})
+                    if child_fields:
+                        file_sets["root_control_child_override"].add(relative)
+                        record_case("priority_root_child_candidate", relative, sha, block,
+                                    {"root_fields": placement_fields, "child_nodepath": child.path,
+                                     "child_fields": child_fields})
+            local_types = [a for a in block.values.get("type", []) if a["type"] == "t" and a["quoted"]]
+            for attr in local_types:
+                value = str(attr["value"])
+                folded = value.casefold()
+                for typ in TYPES:
+                    if folded == typ.casefold():
+                        file_sets["type_field:" + typ].add(relative)
+                        file_sets["resource_type_any:" + typ].add(relative)
+                        type_spellings[typ][value] += 1
+            for attr in block.values.get("name", []):
+                if attr["type"] != "t" or not attr["quoted"]:
+                    continue
+                token = str(attr["value"])
+                name_stats["quoted_fields"] += 1
+                if not token:
+                    name_stats["empty"] += 1
+                    continue
+                suffix = token.rsplit(":", 1)[1] if ":" in token else None
+                logical = token.rsplit(":", 1)[0] if suffix is not None else token
+                name_stats["suffix_present" if suffix else "nonempty_no_suffix"] += 1
+                if suffix is not None:
+                    for typ in TYPES:
+                        if suffix.casefold() == typ.casefold():
+                            file_sets["name_suffix:" + typ].add(relative)
+                            file_sets["resource_type_any:" + typ].add(relative)
+                            type_spellings[typ][suffix] += 1
+                evidence = None
+                if suffix is not None and suffix.casefold() == "gameobj":
+                    evidence = "explicit_name_suffix"
+                elif suffix is None and any(str(a["value"]).casefold() == "gameobj" for a in local_types):
+                    evidence = "explicit_same_block_type"
+                elif suffix is None and block.name == "ent" and block.parent is not None:
+                    parent_types = blocks[block.parent].values.get("type", [])
+                    if any(a["type"] == "t" and str(a["value"]).casefold() == "gameobj" for a in parent_types):
+                        evidence = "parent_random_type_candidate_not_resolved"
+                if evidence:
+                    gameobj.append({"logical_name": logical, "raw_name": token, "evidence": evidence,
+                                    "path": relative, "sha256": sha, "nodepath": block.path,
+                                    "line": attr["line"], "marker_role": "unassigned",
+                                    "local_fields": {k: block.values[k] for k in FIELDS if k in block.values}})
+        if number % 4000 == 0:
+            print(f"scanned {number}/{len(files)} ({time.monotonic()-start:.1f}s)", flush=True)
+
+    final = subprocess.run(command, capture_output=True, check=True, text=True).stdout.splitlines()
+    inventory_stable = sorted(initial) == sorted(final)
+    def counts(mapping):
+        return {key: {"files": len(values), "mall_files": sum(p.startswith(MALL) for p in values)}
+                for key, values in sorted(mapping.items())}
+
+    manifest_bytes = b"".join((json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode() for row in manifest)
+    (OUT / "manifest.jsonl").write_bytes(manifest_bytes)
+    (OUT / "gameobj_occurrences.jsonl").write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in gameobj), encoding="utf-8", newline="\n")
+    names = defaultdict(list)
+    for row in gameobj:
+        names[row["logical_name"]].append(row)
+    name_summary = {name: {"occurrences": len(rows), "files": len({r["path"] for r in rows}),
+                           "mall_occurrences": sum(r["path"].startswith(MALL) for r in rows),
+                           "evidence": dict(Counter(r["evidence"] for r in rows)),
+                           "marker_role": "unassigned", "examples": rows[:4]}
+                    for name, rows in sorted(names.items())}
+    (OUT / "gameobj_names.json").write_text(json.dumps(name_summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    size_by_path = {row["path"]: row["size"] for row in manifest}
+    candidates = {}
+    for category, rows in sorted(cases.items()):
+        unique = {(row["path"], row["nodepath"]): row for row in rows}
+        candidates[category] = sorted(unique.values(), key=lambda r: (not r["path"].startswith(MALL), size_by_path[r["path"]], r["path"], r["nodepath"]))[:8]
+    candidate_markers = [r for r in gameobj if r["logical_name"] == "dummy_pivot"]
+    candidates["marker_candidate_unassigned"] = sorted(candidate_markers, key=lambda r: (not r["path"].startswith(MALL), size_by_path[r["path"]], r["path"], r["nodepath"]))[:8]
+    candidates["require"] = candidates.get("require", [])
+    (OUT / "fixture_candidates.json").write_text(json.dumps(candidates, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    summary = {"root": str(ROOT), "scope": "all *.composit.blk recursively under assets, no includes expanded",
+               "file_count": len(files), "mall_file_count": sum(row["path"].startswith(MALL) for row in manifest),
+               "bytes": sum(row["size"] for row in manifest), "inventory_paths_stable": inventory_stable,
+               "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+               "elapsed_seconds": round(time.monotonic()-start, 3), "declarations": counts(file_sets),
+               "values": {k: {**counts({k: v})[k], "occurrences": value_occurrences[k]} for k, v in sorted(value_files.items())},
+               "lexical_word_mentions_including_comments_strings": counts(lexical_files),
+               "comments_word_mentions": counts(comment_files), "type_spellings": dict(type_spellings),
+               "gameobj_unique_names": len(names), "gameobj_records": len(gameobj), "name_fields": dict(name_stats),
+               "issues": issues, "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+               "limitations": ["structural declaration scanner, not validated Dagor runtime parser",
+                               "include contents excluded: closure/execution not measured",
+                               "parent type candidates not assigned effective semantics",
+                               "Marker role never inferred from name; dummy_pivot only a candidate",
+                               "all field/value observations are source facts, not precedence or inheritance decisions",
+                               "manifest hashes one captured read per file; metadata checked around read; no global atomic filesystem snapshot",
+                               "fixture candidate capture bounded to first 250 occurrences per category plus all mall occurrences before preference sorting"]}
+    (OUT / "inventory.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(json.dumps({k: summary[k] for k in ("file_count", "mall_file_count", "bytes", "manifest_sha256", "elapsed_seconds", "gameobj_unique_names", "gameobj_records", "issues")}, ensure_ascii=False), flush=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -115,10 +115,10 @@ UStaticMeshComponent* ReviewPreviewRegressionLeaf(AMHCompositeActor& Actor)
 }
 
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHReviewMainHierarchy,
-    "Mimir.Audit.MainBaseline.SemanticHierarchy",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHReviewMainTopLevelGrouping,
+    "Mimir.Audit.MainBaseline.TopLevelGrouping",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FMHReviewMainHierarchy::RunTest(const FString& Parameters)
+bool FMHReviewMainTopLevelGrouping::RunTest(const FString& Parameters)
 {
     FReviewPreviewRegressionFixture Fixture;
     if (!Fixture.Build(*this, false)) return false;
@@ -129,10 +129,10 @@ bool FMHReviewMainHierarchy::RunTest(const FString& Parameters)
     UStaticMeshComponent* Leaf = ReviewPreviewRegressionLeaf(*Actor);
     if (TestNotNull(TEXT("mesh leaf exists"), Leaf) && Actor->GetTopLevelComponents().Num() > 0)
     {
-        bPassed &= TestTrue(TEXT("leaf is attached under its semantic group, not flattened under actor root"),
+        bPassed &= TestTrue(TEXT("leaf is attached under its top-level handle, not flattened under actor root"),
             Leaf->GetAttachParent() != Actor->GetRootComponent() &&
             Leaf->IsAttachedTo(Actor->GetTopLevelComponents()[0]));
-        AddInfo(FString::Printf(TEXT("hierarchy leaf-parent=%s actor-root=%s editor-only=%d"),
+        AddInfo(FString::Printf(TEXT("top-level grouping leaf-parent=%s actor-root=%s editor-only=%d"),
             *GetNameSafe(Leaf->GetAttachParent()), *GetNameSafe(Actor->GetRootComponent()), Actor->IsEditorOnly()));
     }
     Actor->Destroy();
