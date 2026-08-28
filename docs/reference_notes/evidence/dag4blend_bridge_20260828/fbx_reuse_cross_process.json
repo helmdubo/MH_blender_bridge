@@ -1,0 +1,187 @@
+{
+  "runs": [
+    "process_one",
+    "process_two"
+  ],
+  "pids": [
+    37392,
+    27500
+  ],
+  "baseline_raw_equal": false,
+  "baseline_sha256": [
+    "ead327a2cd7bcfd58ffae3e2fd305102b151f3fed6dc151ea3192cf6b38b285b",
+    "101a26bffcd93db0a6be52399e3bc7a76b2c9d17d4e2a48377871f0a64ae8e30"
+  ],
+  "classification_plan_equal": true,
+  "full_parsed_tree_equal": false,
+  "parsed_tree_differences": [
+    {
+      "path": "/Connections[0]/C[0]",
+      "left": {
+        "props": [
+          {
+            "bytes_hex": "4f4f"
+          },
+          383937508,
+          0
+        ],
+        "types": [
+          83,
+          76,
+          76
+        ]
+      },
+      "right": {
+        "props": [
+          {
+            "bytes_hex": "4f4f"
+          },
+          804225165,
+          0
+        ],
+        "types": [
+          83,
+          76,
+          76
+        ]
+      }
+    },
+    {
+      "path": "/Connections[0]/C[1]",
+      "left": {
+        "props": [
+          {
+            "bytes_hex": "4f4f"
+          },
+          234105948,
+          383937508
+        ],
+        "types": [
+          83,
+          76,
+          76
+        ]
+      },
+      "right": {
+        "props": [
+          {
+            "bytes_hex": "4f4f"
+          },
+          731130887,
+          804225165
+        ],
+        "types": [
+          83,
+          76,
+          76
+        ]
+      }
+    },
+    {
+      "path": "/Documents[0]/Document[0]",
+      "left": {
+        "props": [
+          898645846,
+          {
+            "bytes_hex": "5363656e65"
+          },
+          {
+            "bytes_hex": "5363656e65"
+          }
+        ],
+        "types": [
+          76,
+          83,
+          83
+        ]
+      },
+      "right": {
+        "props": [
+          912564615,
+          {
+            "bytes_hex": "5363656e65"
+          },
+          {
+            "bytes_hex": "5363656e65"
+          }
+        ],
+        "types": [
+          76,
+          83,
+          83
+        ]
+      }
+    },
+    {
+      "path": "/Objects[0]/Geometry[0]",
+      "left": {
+        "props": [
+          234105948,
+          {
+            "bytes_hex": "72657573655f70726f62655f67656f2e303031000147656f6d65747279"
+          },
+          {
+            "bytes_hex": "4d657368"
+          }
+        ],
+        "types": [
+          76,
+          83,
+          83
+        ]
+      },
+      "right": {
+        "props": [
+          731130887,
+          {
+            "bytes_hex": "72657573655f70726f62655f67656f2e303031000147656f6d65747279"
+          },
+          {
+            "bytes_hex": "4d657368"
+          }
+        ],
+        "types": [
+          76,
+          83,
+          83
+        ]
+      }
+    },
+    {
+      "path": "/Objects[0]/Model[0]",
+      "left": {
+        "props": [
+          383937508,
+          {
+            "bytes_hex": "72657573655f70726f62655f6d65736800014d6f64656c"
+          },
+          {
+            "bytes_hex": "4d657368"
+          }
+        ],
+        "types": [
+          76,
+          83,
+          83
+        ]
+      },
+      "right": {
+        "props": [
+          804225165,
+          {
+            "bytes_hex": "72657573655f70726f62655f6d65736800014d6f64656c"
+          },
+          {
+            "bytes_hex": "4d657368"
+          }
+        ],
+        "types": [
+          76,
+          83,
+          83
+        ]
+      }
+    }
+  ],
+  "normalization_or_semantic_hash_performed": false
+}

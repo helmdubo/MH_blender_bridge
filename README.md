@@ -3,8 +3,13 @@
 > **ACTIVE AUTHORITY: MH SOURCE PROTOCOL V5.** Норматив —
 > [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md),
 > порядок срезов — [`docs/11_v5_agent_slices.md`](docs/11_v5_agent_slices.md).
-> V5-S0…V5-S5 приняты owner'ом; текущая ветка реализует V5-S6 и остаётся
+> V5-S6 и V5-S6.0 смержены (PR #28 / #29). Текущий V5-S6.1 остаётся
 > кандидатом до отдельного owner review/merge.
+
+> **Текущий follow-up: V5-S6.1.** S6.0 принят (PR #29); прямой маршрут
+> dag4blend выполняется по [13 R2](docs/13_v5_s6_1_dag4blend_bridge.md).
+> [12 R3](docs/12_v5_s6_2_s6_3_slices.md) относится к последующим S6.2/S6.3,
+> которые не начинаются до приёмки предыдущего среза.
 
 ## Source Protocol v5 в одном экране
 
@@ -57,7 +62,7 @@ preview / Break / Show Choices / Show Decision Trace и выборочное о�
 Lock/Unlock, Keep Seed on Duplicate; для нескольких размещений — Individual
 и Equal. Break материализует выбранные leaves без nested wrappers.
 Custom asset-thumbnails отключены по решению `OPEN-V5-14` (10 §13.12).
-Кандидат V5-S6 добавляет `AMHRuntimeCompositeActor`: сериализуемый полный
+Принятый V5-S6 добавляет `AMHRuntimeCompositeActor`: сериализуемый полный
 seed-free граф и hard references всего source closure передаются тому же
 резолверу. PIE/cook создают временные runtime-размещения, не записывая вторую
 authority в authoring-map; source tree и editor-сервисы игре не нужны.
@@ -80,6 +85,32 @@ python -m pytest tests/ -q
 Каждый C++-срез проходит stock UE 5.7.4 guarded build,
 `BuildPlugin -StrictIncludes` без unity/PCH, force-unity без adaptive unity и
 `Automation RunTests Mimir`. Engine не форкается.
+
+## Прямой экспорт импортированной dag4blend-сцены (V5-S6.1)
+
+Выбирается корневая коллекция. Три обычные команды Composite читают native MH
+или dag4blend-форму через строгий read-only диспетчер и общий DTO/writer.
+Даговские коллекции не получают `mh_resource_*`, двойники и перепривязка
+при экспорте не создаются. Охватывается только достижимое замыкание корня,
+включая все random options, а не все датаблоки `.blend`.
+
+На свежем CDK-импорте рабочий режим — **Export Composite Include All Stuff**:
+он публикует профили, материалы, меши и композиты, root последним. Root-only
+и Composite Closure требуют, чтобы исключённые зависимости уже находились
+в Source Root; отказ на свежей сцене ожидаем. Текстуры заранее вносит художник
+командами Copy/Remap, экспорт их не копирует.
+
+Сценовый адаптер имеет частичную совместимость, не lossless BLK round-trip:
+корневые настройки и другие потерянные dag4blend данные перечисляются в
+отчёте как невосстановимые. `gameObj` становится неисполняемым `marker`.
+Прижатия в UE и обратного экспорта в Dagor не будет. Отдельная команда
+Convert остаётся явной миграцией сцены; external relink — отдельный opt-in.
+Текущая степень готовности и незакрытые acceptance — в
+[квитанции S6.1](docs/receipts/v5_s6_1.md), а не в этом описании целевого UX.
+Сейчас повторная публикация загруженного FBX и новые metadata-carriers
+ограничены OPEN-V5-22/23. Неизменённый JSON и незагруженный managed source
+переиспользуются. Prefab требует явного `Allow Prefab as Mesh (Lossy)`;
+потеря collision/gameplay-семантики сообщается предупреждением.
 
 ## Структура репозитория
 

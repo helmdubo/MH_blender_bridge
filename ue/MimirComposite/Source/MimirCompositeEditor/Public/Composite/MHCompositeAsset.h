@@ -20,7 +20,8 @@ enum class EMHCompositeNodeKind : uint8
     Actor,
     Composite,
     Group,
-    Random
+    Random,
+    Marker
 };
 
 UENUM()
@@ -29,7 +30,8 @@ enum class EMHCompositeOptionKind : uint8
     Mesh,
     Actor,
     Composite,
-    Empty
+    Empty,
+    Marker
 };
 
 USTRUCT()

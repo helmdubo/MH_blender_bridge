@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="12" skipped="0" tests="12" time="2.767" timestamp="2026-08-28T21:54:33.494243+04:00" hostname="DESKTOP-MM2SBHU"><testcase classname="test_dag4blend_direct_export_bpy" name="test_direct_export_three_modes_do_not_create_or_modify_scene[root_only]" time="0.525"><failure message="AssertionError: assert ((('Scene', 1...1843055677192) == ((('Scene', 1...1843055677192)&#10;  &#10;  At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843055673608,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843055673608,), ()),)&#10;  Use -v to get more diff">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_direct_export_three_modes0')
+mode = 'root_only'
+
+    @pytest.mark.parametrize("mode", ["root_only", "composite_closure", "include_all"])
+    def test_direct_export_three_modes_do_not_create_or_modify_scene(tmp_path, mode):
+        root = legacy("direct_root")
+        empty("frame", root).location.x = 1
+        external = empty("external", bpy.context.scene.collection, root)
+        external.select_set(True)
+        bpy.context.view_layer.objects.active = external
+        before = snapshot()
+        report = export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode=mode)
+&gt;       assert snapshot() == before
+E       AssertionError: assert ((('Scene', 1...1843055677192) == ((('Scene', 1...1843055677192)
+E         
+E         At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843055673608,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843055673608,), ()),)
+E         Use -v to get more diff
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:90: AssertionError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_direct_export_three_modes_do_not_create_or_modify_scene[composite_closure]" time="0.075"><failure message="AssertionError: assert ((('Scene', 1...1843054413832) == ((('Scene', 1...1843054413832)&#10;  &#10;  At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843054412040,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843054412040,), ()),)&#10;  Use -v to get more diff">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_direct_export_three_modes1')
+mode = 'composite_closure'
+
+    @pytest.mark.parametrize("mode", ["root_only", "composite_closure", "include_all"])
+    def test_direct_export_three_modes_do_not_create_or_modify_scene(tmp_path, mode):
+        root = legacy("direct_root")
+        empty("frame", root).location.x = 1
+        external = empty("external", bpy.context.scene.collection, root)
+        external.select_set(True)
+        bpy.context.view_layer.objects.active = external
+        before = snapshot()
+        report = export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode=mode)
+&gt;       assert snapshot() == before
+E       AssertionError: assert ((('Scene', 1...1843054413832) == ((('Scene', 1...1843054413832)
+E         
+E         At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843054412040,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843054412040,), ()),)
+E         Use -v to get more diff
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:90: AssertionError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_direct_export_three_modes_do_not_create_or_modify_scene[include_all]" time="0.076"><failure message="AssertionError: assert ((('Scene', 1...1843053419784) == ((('Scene', 1...1843053419784)&#10;  &#10;  At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843053426952,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843053426952,), ()),)&#10;  Use -v to get more diff">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_direct_export_three_modes2')
+mode = 'include_all'
+
+    @pytest.mark.parametrize("mode", ["root_only", "composite_closure", "include_all"])
+    def test_direct_export_three_modes_do_not_create_or_modify_scene(tmp_path, mode):
+        root = legacy("direct_root")
+        empty("frame", root).location.x = 1
+        external = empty("external", bpy.context.scene.collection, root)
+        external.select_set(True)
+        bpy.context.view_layer.objects.active = external
+        before = snapshot()
+        report = export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode=mode)
+&gt;       assert snapshot() == before
+E       AssertionError: assert ((('Scene', 1...1843053419784) == ((('Scene', 1...1843053419784)
+E         
+E         At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843053426952,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843053426952,), ()),)
+E         Use -v to get more diff
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:90: AssertionError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_root_command_accepts_dag4blend_without_materializing" time="0.075"><failure message="AssertionError: assert ((('Scene', 1...800, (), None) == ((('Scene', 1...800, (), None)&#10;  &#10;  At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843053798408,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843053798408,), ()),)&#10;  Use -v to get more diff">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_root_command_accepts_dag40')
+
+    def test_root_command_accepts_dag4blend_without_materializing(tmp_path):
+        root = legacy("direct_root")
+        empty("frame", root)
+        before = snapshot()
+        assert export_composite_collection(root, tmp_path, source_root=tmp_path)["ok"]
+&gt;       assert snapshot() == before
+E       AssertionError: assert ((('Scene', 1...800, (), None) == ((('Scene', 1...800, (), None)
+E         
+E         At index 1 diff: (('direct_root', 1842971527176, (('mh_resource_kind', 'composite'), ('mh_resource_name', 'direct_root'), ('name', 'direct_root'), ('type', 'composit')), (1843053798408,), ()),) != (('direct_root', 1842971527176, (('name', 'direct_root'), ('type', 'composit')), (1843053798408,), ()),)
+E         Use -v to get more diff
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:103: AssertionError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_second_direct_json_export_reuses_source_without_replace" time="0.116"><failure message="AssertionError: assert ['composite:direct_root'] == []&#10;  &#10;  Left contains one more item: 'composite:direct_root'&#10;  Use -v to get more diff">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_second_direct_json_export0')
+
+    def test_second_direct_json_export_reuses_source_without_replace(tmp_path):
+        root = legacy("direct_root")
+        empty("frame", root)
+        export_composite_collection(root, tmp_path, source_root=tmp_path)
+        before = snapshot()
+        target = tmp_path / "direct_root.composite"
+        previous = target.stat().st_mtime_ns
+        events = []
+        report = export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode="include_all",
+            _boundary_hook=lambda *event: events.append(event))
+&gt;       assert report["published"] == []
+E       AssertionError: assert ['composite:direct_root'] == []
+E         
+E         Left contains one more item: 'composite:direct_root'
+E         Use -v to get more diff
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:117: AssertionError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_mixed_or_partial_authority_rejected_before_any_write[markers0]" time="0.062"><failure message="AssertionError: Regex pattern did not match.&#10;  Expected regex: 'MH_E_INVALID_RESOURCE_SOURCE'&#10;  Actual message: &quot;MH_E_RESOURCE_KIND_MISMATCH: subjects ['direct_root', 'direct_root']: selected root carries a partial or conflicting managed resource identity&quot;">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_mixed_or_partial_authorit0')
+markers = {'mh_resource_kind': 'composite'}
+
+    @pytest.mark.parametrize("markers", [
+        {"mh_resource_kind": "composite"},
+        {"mh_resource_name": "direct_root"},
+        {"mh_resource_kind": "composite", "mh_resource_name": "direct_root"},
+    ])
+    def test_mixed_or_partial_authority_rejected_before_any_write(tmp_path, markers):
+        root = legacy("direct_root")
+        for key, value in markers.items():
+            root[key] = value
+        before = snapshot()
+&gt;       with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE") as error:
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'MH_E_INVALID_RESOURCE_SOURCE'
+E         Actual message: "MH_E_RESOURCE_KIND_MISMATCH: subjects ['direct_root', 'direct_root']: selected root carries a partial or conflicting managed resource identity"
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:134: AssertionError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_mixed_or_partial_authority_rejected_before_any_write[markers1]" time="0.069"><failure message="AssertionError: Regex pattern did not match.&#10;  Expected regex: 'MH_E_INVALID_RESOURCE_SOURCE'&#10;  Actual message: &quot;MH_E_RESOURCE_KIND_MISMATCH: subjects ['direct_root', 'direct_root']: selected root carries a partial or conflicting managed resource identity&quot;">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_mixed_or_partial_authorit1')
+markers = {'mh_resource_name': 'direct_root'}
+
+    @pytest.mark.parametrize("markers", [
+        {"mh_resource_kind": "composite"},
+        {"mh_resource_name": "direct_root"},
+        {"mh_resource_kind": "composite", "mh_resource_name": "direct_root"},
+    ])
+    def test_mixed_or_partial_authority_rejected_before_any_write(tmp_path, markers):
+        root = legacy("direct_root")
+        for key, value in markers.items():
+            root[key] = value
+        before = snapshot()
+&gt;       with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE") as error:
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'MH_E_INVALID_RESOURCE_SOURCE'
+E         Actual message: "MH_E_RESOURCE_KIND_MISMATCH: subjects ['direct_root', 'direct_root']: selected root carries a partial or conflicting managed resource identity"
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:134: AssertionError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_mixed_or_partial_authority_rejected_before_any_write[markers2]" time="0.095"><failure message="Failed: DID NOT RAISE ValueError">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_mixed_or_partial_authorit2')
+markers = {'mh_resource_kind': 'composite', 'mh_resource_name': 'direct_root'}
+
+    @pytest.mark.parametrize("markers", [
+        {"mh_resource_kind": "composite"},
+        {"mh_resource_name": "direct_root"},
+        {"mh_resource_kind": "composite", "mh_resource_name": "direct_root"},
+    ])
+    def test_mixed_or_partial_authority_rejected_before_any_write(tmp_path, markers):
+        root = legacy("direct_root")
+        for key, value in markers.items():
+            root[key] = value
+        before = snapshot()
+&gt;       with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE") as error:
+E       Failed: DID NOT RAISE ValueError
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:134: Failed</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[before_replace-composite:direct_child]" time="0.058"><failure message="mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_direct_partial_boundary_a0')
+failed_key = 'composite:direct_child', boundary = 'before_replace'
+
+    @pytest.mark.parametrize("failed_key", ["composite:direct_child", "composite:direct_root"])
+    @pytest.mark.parametrize("boundary", ["before_replace", "after_replace"])
+    def test_direct_partial_boundary_and_retry_do_not_mutate_scene(
+            tmp_path, failed_key, boundary):
+        root = legacy("direct_root")
+        child = legacy("direct_child")
+        empty("nested", root, child)
+        empty("frame", child)
+        before = snapshot()
+    
+        def inject(event, item, _published):
+            if event == boundary and item.identity == failed_key:
+                raise OSError("injected direct boundary")
+        with pytest.raises((OSError, BatchPartialPublishError)):
+&gt;           export_composite_closure_collection(
+                root, tmp_path, source_root=tmp_path, mode="composite_closure",
+                _boundary_hook=inject)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:951: in export_composite_closure_collection
+    plan = prepare_composite_closure_export(
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:439: in prepare_composite_closure_export
+    _validate_direct_bindings(collection)
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:377: in _validate_direct_bindings
+    _raise(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+code = 'MH_E_INVALID_RESOURCE_SOURCE'
+subjects = ['composite:direct_child', 'nested', 'direct_child']
+message = "loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' i...lend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)"
+
+    def _raise(code: str, subjects, message: str) -&gt; None:
+&gt;       raise MHValidationError(code, subjects, message)
+E       mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:168: MHValidationError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[before_replace-composite:direct_root]" time="0.068"><failure message="mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_direct_partial_boundary_a1')
+failed_key = 'composite:direct_root', boundary = 'before_replace'
+
+    @pytest.mark.parametrize("failed_key", ["composite:direct_child", "composite:direct_root"])
+    @pytest.mark.parametrize("boundary", ["before_replace", "after_replace"])
+    def test_direct_partial_boundary_and_retry_do_not_mutate_scene(
+            tmp_path, failed_key, boundary):
+        root = legacy("direct_root")
+        child = legacy("direct_child")
+        empty("nested", root, child)
+        empty("frame", child)
+        before = snapshot()
+    
+        def inject(event, item, _published):
+            if event == boundary and item.identity == failed_key:
+                raise OSError("injected direct boundary")
+        with pytest.raises((OSError, BatchPartialPublishError)):
+&gt;           export_composite_closure_collection(
+                root, tmp_path, source_root=tmp_path, mode="composite_closure",
+                _boundary_hook=inject)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:951: in export_composite_closure_collection
+    plan = prepare_composite_closure_export(
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:439: in prepare_composite_closure_export
+    _validate_direct_bindings(collection)
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:377: in _validate_direct_bindings
+    _raise(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+code = 'MH_E_INVALID_RESOURCE_SOURCE'
+subjects = ['composite:direct_child', 'nested', 'direct_child']
+message = "loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' i...lend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)"
+
+    def _raise(code: str, subjects, message: str) -&gt; None:
+&gt;       raise MHValidationError(code, subjects, message)
+E       mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:168: MHValidationError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[after_replace-composite:direct_child]" time="0.068"><failure message="mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_direct_partial_boundary_a2')
+failed_key = 'composite:direct_child', boundary = 'after_replace'
+
+    @pytest.mark.parametrize("failed_key", ["composite:direct_child", "composite:direct_root"])
+    @pytest.mark.parametrize("boundary", ["before_replace", "after_replace"])
+    def test_direct_partial_boundary_and_retry_do_not_mutate_scene(
+            tmp_path, failed_key, boundary):
+        root = legacy("direct_root")
+        child = legacy("direct_child")
+        empty("nested", root, child)
+        empty("frame", child)
+        before = snapshot()
+    
+        def inject(event, item, _published):
+            if event == boundary and item.identity == failed_key:
+                raise OSError("injected direct boundary")
+        with pytest.raises((OSError, BatchPartialPublishError)):
+&gt;           export_composite_closure_collection(
+                root, tmp_path, source_root=tmp_path, mode="composite_closure",
+                _boundary_hook=inject)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:951: in export_composite_closure_collection
+    plan = prepare_composite_closure_export(
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:439: in prepare_composite_closure_export
+    _validate_direct_bindings(collection)
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:377: in _validate_direct_bindings
+    _raise(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+code = 'MH_E_INVALID_RESOURCE_SOURCE'
+subjects = ['composite:direct_child', 'nested', 'direct_child']
+message = "loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' i...lend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)"
+
+    def _raise(code: str, subjects, message: str) -&gt; None:
+&gt;       raise MHValidationError(code, subjects, message)
+E       mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:168: MHValidationError</failure></testcase><testcase classname="test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[after_replace-composite:direct_root]" time="0.065"><failure message="mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-914/test_direct_partial_boundary_a3')
+failed_key = 'composite:direct_root', boundary = 'after_replace'
+
+    @pytest.mark.parametrize("failed_key", ["composite:direct_child", "composite:direct_root"])
+    @pytest.mark.parametrize("boundary", ["before_replace", "after_replace"])
+    def test_direct_partial_boundary_and_retry_do_not_mutate_scene(
+            tmp_path, failed_key, boundary):
+        root = legacy("direct_root")
+        child = legacy("direct_child")
+        empty("nested", root, child)
+        empty("frame", child)
+        before = snapshot()
+    
+        def inject(event, item, _published):
+            if event == boundary and item.identity == failed_key:
+                raise OSError("injected direct boundary")
+        with pytest.raises((OSError, BatchPartialPublishError)):
+&gt;           export_composite_closure_collection(
+                root, tmp_path, source_root=tmp_path, mode="composite_closure",
+                _boundary_hook=inject)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_direct_export_bpy.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:951: in export_composite_closure_collection
+    plan = prepare_composite_closure_export(
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:439: in prepare_composite_closure_export
+    _validate_direct_bindings(collection)
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:377: in _validate_direct_bindings
+    _raise(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+code = 'MH_E_INVALID_RESOURCE_SOURCE'
+subjects = ['composite:direct_child', 'nested', 'direct_child']
+message = "loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' i...lend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)"
+
+    def _raise(code: str, subjects, message: str) -&gt; None:
+&gt;       raise MHValidationError(code, subjects, message)
+E       mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['composite:direct_child', 'direct_child', 'nested']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'direct_child' is a dag4blend definition (type='composit', name='direct_child'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\export_closure.py:168: MHValidationError</failure></testcase></testsuite></testsuites>

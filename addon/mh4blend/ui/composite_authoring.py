@@ -15,7 +15,7 @@ WEIGHT_MIRROR_KEY = "mh_random_weight"
 OPTION_INDEX_MIRROR_KEY = "mh_random_option_index"
 PROFILE_MIRROR_KEY = "mh_composite_profile"
 
-_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty"})
+_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "marker"})
 
 
 def _set_or_remove_mirror(owner, key, value, *, present=True):
@@ -90,6 +90,7 @@ class MHCompositeObjectProperties(bpy.types.PropertyGroup):
             ("empty", "Empty", "Option which resolves to no resource"),
             ("group", "Group", "Transform-bearing structural node"),
             ("random", "Random", "Weighted random selection node"),
+            ("marker", "Marker", "Named non-executable point; no resource asset"),
         ),
         default="unset",
         update=_update_kind,
@@ -184,7 +185,7 @@ def _indexed_options(random_node, *, require_nonempty=True,
         if kind == "empty" and resource is not None:
             raise _grammar(
                 f"empty random option {option.name!r} forbids a resource")
-        if (kind != "empty" and resource is None
+        if (kind not in {"empty", "marker"} and resource is None
                 and not bool(option.get("mh_unresolved_placement", False))):
             raise _grammar(
                 f"random option {option.name!r} requires a resource")

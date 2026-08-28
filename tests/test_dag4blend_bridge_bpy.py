@@ -96,7 +96,8 @@ def test_external_placements_are_relinked_without_mutating_legacy(tmp_path):
     child = legacy("bridge_child")
     legacy_inner = empty("legacy_inner", source, child)
     outside = empty("external", working_scene.collection, source)
-    report = import_dag4blend_composite_collection(source, source_root=tmp_path)
+    report = import_dag4blend_composite_collection(
+        source, source_root=tmp_path, relink_external=True)
     assert outside.instance_collection is report["collection"]
     assert legacy_inner.instance_collection is child
     assert bpy.data.collections.get(source.name) is source
@@ -142,7 +143,8 @@ def test_relink_does_not_touch_helper_service_or_other_scene_objects(tmp_path):
     other = bpy.data.scenes.new("other_working_scene")
     elsewhere = empty("elsewhere", other.collection, root)
     outside = empty("outside", working.collection, child)
-    report = import_dag4blend_composite_collection(root, source_root=tmp_path)
+    report = import_dag4blend_composite_collection(
+            root, source_root=tmp_path, relink_external=True)
     assert outside.instance_collection is bpy.data.collections["bridge_child.composite"]
     assert option.instance_collection is child
     assert ordinary.instance_collection is child
@@ -169,7 +171,8 @@ def test_relink_rollback_restores_external_pointer_and_entire_delta(
 
     monkeypatch.setattr(bridge, "_schedule_dag4blend_relinks", inject)
     with pytest.raises(RuntimeError, match="injected after external relink"):
-        import_dag4blend_composite_collection(root, source_root=tmp_path)
+        import_dag4blend_composite_collection(
+            root, source_root=tmp_path, relink_external=True)
     assert external.instance_collection is root
     assert (len(bpy.data.objects), len(bpy.data.collections), len(bpy.data.scenes)) == counts
 
@@ -179,7 +182,8 @@ def test_conversion_from_service_scene_never_relinks_service_contents(tmp_path):
     service = bpy.data.scenes.new("COMPOSITS")
     external = empty("service_placement", service.collection, root)
     bpy.context.window.scene = service
-    report = import_dag4blend_composite_collection(root, source_root=tmp_path)
+    report = import_dag4blend_composite_collection(
+            root, source_root=tmp_path, relink_external=True)
     assert external.instance_collection is root
     assert report["relinked_placements"] == []
 
@@ -201,7 +205,8 @@ def test_relink_protects_definition_ownership_outside_service_scenes(
         placement = empty("other_instance", working.collection, definition)
         placement["type:t"] = "composit"
     outside = empty("external", working.collection, root)
-    report = import_dag4blend_composite_collection(root, source_root=tmp_path)
+    report = import_dag4blend_composite_collection(
+            root, source_root=tmp_path, relink_external=True)
     assert internal.instance_collection is root
     assert outside.instance_collection is report["collection"]
     assert report["relinked_placements"] == [outside.name]
@@ -225,14 +230,15 @@ def test_relink_revalidates_ownership_at_commit_without_changing_any_pointer(
 
     monkeypatch.setattr(bridge, "_schedule_dag4blend_relinks", inject)
     with pytest.raises(ValueError, match="ownership changed"):
-        import_dag4blend_composite_collection(root, source_root=tmp_path)
+        import_dag4blend_composite_collection(
+            root, source_root=tmp_path, relink_external=True)
     assert first.instance_collection is root
     assert second.instance_collection is root
     assert root.objects.get(second.name) is None
     assert bpy.data.collections.get("bridge_root.composite") is None
 
 
-def test_full_route_adopts_mesh_through_writer_before_composite(tmp_path):
+def test_direct_route_writes_mesh_before_composite_without_adoption(tmp_path):
     source = legacy("bridge_root")
     mesh = legacy("bridge_mesh", "rendinst")
     bpy.context.scene.collection.children.link(mesh)
@@ -281,7 +287,7 @@ def _nested_mesh_bridge(tmp_path):
     return source, root, child, mesh, outside
 
 
-def test_partial_bridge_adopts_only_published_mesh_and_retry_relinks(tmp_path):
+def test_partial_bridge_never_adopts_or_relinks(tmp_path):
     source, root, child, mesh, outside = _nested_mesh_bridge(tmp_path)
 
     def fail(event, item, _published):
@@ -296,42 +302,37 @@ def test_partial_bridge_adopts_only_published_mesh_and_retry_relinks(tmp_path):
         "material:bridge_surface", "static_mesh:bridge_mesh")
     assert caught.value.unpublished == (
         "composite:bridge_child", "composite:bridge_root")
-    assert mesh[COLLECTION_KIND_KEY] == "mesh"
+    assert COLLECTION_KIND_KEY not in mesh
     assert COLLECTION_KIND_KEY not in root
     assert COLLECTION_KIND_KEY not in child
     assert outside.instance_collection is root
     assert not (source / "bridge_child.composite").exists()
     assert not (source / "bridge_root.composite").exists()
-    report = bridge.publish_dag4blend_composite_collection(
-        root, source, source_root=source, lock_root=tmp_path / "locks")
-    assert outside.instance_collection is report["collection"]
-    assert report["publication"]["published"] == [
-        "material:bridge_surface", "static_mesh:bridge_mesh",
-        "composite:bridge_child", "composite:bridge_root"]
-    assert root.objects["child_placement"].instance_collection is child
-    assert child.objects["mesh_placement"].instance_collection is mesh
 
 
-def test_postpublication_blender_failure_reports_full_durable_set(
-        tmp_path, monkeypatch):
+def test_direct_export_never_calls_blender_materializer(tmp_path, monkeypatch):
     source, root, _child, mesh, outside = _nested_mesh_bridge(tmp_path)
+    counts = (len(bpy.data.objects), len(bpy.data.collections), len(bpy.data.scenes))
 
     def fail(*_args, **_kwargs):
-        raise RuntimeError("injected Blender finalization failure")
+        raise AssertionError("direct export must never materialize Blender data")
 
-    with monkeypatch.context() as patch:
-        patch.setattr(bridge, "materialize_composite_documents", fail)
-        with pytest.raises(BatchPartialPublishError) as caught:
-            bridge.publish_dag4blend_composite_collection(
-                root, source, source_root=source, lock_root=tmp_path / "locks")
-    assert caught.value.published == (
-        "material:bridge_surface", "static_mesh:bridge_mesh",
-        "composite:bridge_child", "composite:bridge_root")
-    assert caught.value.unpublished == ()
-    assert "Blender finalization" in str(caught.value)
-    assert (source / "bridge_root.composite").exists()
-    assert mesh[COLLECTION_KIND_KEY] == "mesh"
-    assert outside.instance_collection is root
+    monkeypatch.setattr(bridge, "materialize_composite_documents", fail)
     report = bridge.publish_dag4blend_composite_collection(
         root, source, source_root=source, lock_root=tmp_path / "locks")
-    assert outside.instance_collection is report["collection"]
+    assert report["published"] == [
+        "material:bridge_surface", "static_mesh:bridge_mesh",
+        "composite:bridge_child", "composite:bridge_root"]
+    assert (source / "bridge_root.composite").exists()
+    assert COLLECTION_KIND_KEY not in mesh
+    assert outside.instance_collection is root
+    assert (len(bpy.data.objects), len(bpy.data.collections), len(bpy.data.scenes)) == counts
+
+
+def test_optional_scene_conversion_does_not_relink_by_default(tmp_path):
+    root = legacy("bridge_root")
+    outside = empty("outside", bpy.context.scene.collection, root)
+    report = import_dag4blend_composite_collection(root, source_root=tmp_path)
+    assert report["collection"] is not root
+    assert report["relinked_placements"] == []
+    assert outside.instance_collection is root

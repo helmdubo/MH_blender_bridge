@@ -1,0 +1,152 @@
+{
+  "run": "process_one",
+  "pid": 37392,
+  "blender_version": "4.5.12 LTS",
+  "binary": "C:\\Program Files\\Blender Foundation\\Blender 4.5\\blender.exe",
+  "source_snapshot_commit": "5f566c7b16e36fa68e1e5ef1391675d1c5febf2d",
+  "mh_writer_path": "E:\\MimirComposite_V5S6_1_DirectReuseProbe_20260828\\snapshot\\addon\\mh4blend\\scene\\export_fbx.py",
+  "mh_writer_sha256": "32f2a5ac0a8eadd7b24e562de3cc84b0aa6efc29728a629eef5af3323f8d6831",
+  "fbx_exporter_path": "C:\\Program Files\\Blender Foundation\\Blender 4.5\\4.5\\scripts\\addons_core\\io_scene_fbx\\export_fbx_bin.py",
+  "fbx_uuid_path": "C:\\Program Files\\Blender Foundation\\Blender 4.5\\4.5\\scripts\\addons_core\\io_scene_fbx\\fbx_utils.py",
+  "stages": [
+    {
+      "label": "a",
+      "path": "E:\\MimirComposite_V5S6_1_DirectReuseProbe_20260828\\process_one\\a\\reuse_probe.mesh.fbx",
+      "bytes": 11068,
+      "sha256": "ead327a2cd7bcfd58ffae3e2fd305102b151f3fed6dc151ea3192cf6b38b285b",
+      "fbx_version": 7400,
+      "authority_fingerprint_equals_baseline": true
+    },
+    {
+      "label": "b",
+      "path": "E:\\MimirComposite_V5S6_1_DirectReuseProbe_20260828\\process_one\\b\\reuse_probe.mesh.fbx",
+      "bytes": 11068,
+      "sha256": "92d0ea6c1d9b88304d7cd728399d2b858c21e7d4cb6e2dc48033d0098b150b9e",
+      "fbx_version": 7400,
+      "authority_fingerprint_equals_baseline": true
+    },
+    {
+      "label": "vertex_edit",
+      "path": "E:\\MimirComposite_V5S6_1_DirectReuseProbe_20260828\\process_one\\vertex_edit\\reuse_probe.mesh.fbx",
+      "bytes": 11068,
+      "sha256": "2e806986efa99c10199950ef148f96b4f46619d6fa8c2716000357794daa15f5",
+      "fbx_version": 7400,
+      "authority_fingerprint_equals_baseline": true
+    }
+  ],
+  "unchanged_raw_equal": false,
+  "unchanged_tree_differences": [
+    {
+      "path": "/FBXHeaderExtension[0]/CreationTimeStamp[0]/Millisecond[0]",
+      "left": {
+        "props": [
+          830
+        ],
+        "types": [
+          73
+        ]
+      },
+      "right": {
+        "props": [
+          887
+        ],
+        "types": [
+          73
+        ]
+      }
+    }
+  ],
+  "vertex_edit_tree_differences": [
+    {
+      "path": "/FBXHeaderExtension[0]/CreationTimeStamp[0]/Millisecond[0]",
+      "left": {
+        "props": [
+          887
+        ],
+        "types": [
+          73
+        ]
+      },
+      "right": {
+        "props": [
+          939
+        ],
+        "types": [
+          73
+        ]
+      }
+    },
+    {
+      "path": "/Objects[0]/Geometry[0]/Vertices[0]",
+      "left": {
+        "props": [
+          {
+            "array_type": "d",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              100.0,
+              0.0,
+              0.0,
+              0.0,
+              100.0,
+              0.0
+            ]
+          }
+        ],
+        "types": [
+          100
+        ]
+      },
+      "right": {
+        "props": [
+          {
+            "array_type": "d",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              200.0,
+              0.0,
+              0.0,
+              0.0,
+              100.0,
+              0.0
+            ]
+          }
+        ],
+        "types": [
+          100
+        ]
+      }
+    }
+  ],
+  "classification_plan_unchanged_equal": true,
+  "classification_plan_vertex_edit_equal": true,
+  "classification_plan": {
+    "resource_name": "reuse_probe",
+    "nodes": [
+      {
+        "name": "reuse_probe_mesh",
+        "node_type": "MESH",
+        "kind": "render",
+        "lod_level": 0,
+        "collision_mode": null,
+        "parent": null,
+        "material_slots": [],
+        "geometry_name": "reuse_probe_geo.001"
+      }
+    ],
+    "lod_levels": [
+      0
+    ],
+    "material_names": [],
+    "uses_lod_collections": false
+  },
+  "scene_collection_properties": {
+    "type": "rendinst",
+    "name": "reuse_probe"
+  },
+  "source_files_created": []
+}

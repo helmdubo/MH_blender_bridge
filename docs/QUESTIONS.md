@@ -39,7 +39,9 @@ GREEN сохраняет имя/TRS, но обычный импорт до не�
 Не ослаблять общий actor admission, не отключать все actor leaves, не
 назначать поведение по имени/пустому registry и не вводить скрытый carrier.
 
-**Статус. ОТКРЫТ — V5-S6.1, требуется решение owner.**
+**Статус. РЕШЕНО OWNER — документ 13 R2 §6.4: новый kind `marker`.**
+Обычный узел и random option сохраняют имя/TRS в производном плане без
+исполняемых leaves и registry lookup; блокировка выше — история checkpoint.
 
 ## OPEN-V5-20 — dag4blend теряет корневые placement controls
 
@@ -66,7 +68,10 @@ lossless placement carrier для этого маршрута. Не объявл
 и не вводить скрытое чтение исходника. Рабочие explicit/local controls
 не доказывают сохранность document-root controls.
 
-**Статус. ОТКРЫТ — V5-S6.1, требуется решение owner.**
+**Статус. РЕШЕНО OWNER — документ 13 R2 §§3, 8: частичная совместимость.**
+Сценовый адаптер не восстанавливает корневые настройки и не объявляет
+отсутствие свойства доказательством нуля в BLK. Отчёт называет
+невосстановимые данные; базовый экспорт этим не блокируется.
 
 ## OPEN-V5-21 — полный canonical node order с profile и новыми metadata
 
@@ -89,7 +94,70 @@ options → children`? Нужен точный порядок, не выбор �
 неизменённых документов (13 acceptance 11), не как исключение metadata
 из source/closure hash или canonical extract.
 
-**Статус. ОТКРЫТ — V5-S6.1, требуется решение owner.**
+**Статус. РЕШЕНО OWNER — подтверждено при передаче 13 R2 / 12 R3.**
+Полный порядок: `kind → resource → name → transform → profile → placement →
+appearance_seed_boundary → options → children`, закреплён в 10 §6.1.
+Пропущенный profile в приложенной редакции 12 не удаляет действующее поле.
+
+## OPEN-V5-22 — доказательство равенства повторно экспортируемого FBX
+
+**Контекст.** 13 R2 §§5, 9.8 требует переиспользовать существующий payload
+по инвентаризации и сравнению содержимого Source Root, без scene stamps.
+Реальный `prepare_fbx_collection → stage_prepared_fbx` на неизменённом
+writer `5f566c7`, Blender 4.5.12, дал разные raw bytes при двух экспортах
+неизменённой сцены: изменился `CreationTimeStamp/Millisecond`.
+В двух свежих процессах различаются также пять мест с numeric FBX IDs
+(Document/Geometry/Model/Connections). Это не гипотеза о serializer.
+Существующий `parse_mesh_fbx` возвращает одинаковый план не только для этих
+файлов, но и после изменения вершины x=1 → x=2; `_authority_fingerprint`
+тоже не изменился. Оба являются структурным admission, не полной выжимкой
+геометрии. Их равенство не даёт права пропустить публикацию изменённого меша.
+Измерения: `docs/reference_notes/evidence/dag4blend_bridge_20260828/`
+(`fbx_reuse_process_*.json`, `fbx_reuse_cross_process.json`).
+
+**Вопрос.** Какой контракт равенства owner утверждает для direct-export:
+детерминированные transport bytes (фиксированная политика служебного времени
+и IDs в принадлежащем MH writer), либо точное сравнение полного содержимого
+FBX с явно заданными исключениями служебных полей и переименованием IDs?
+Второй вариант требует полной выжимки, а не текущего structural scan.
+В обоих случаях raw hash исходного файла остаётся raw hash; новые stamps,
+manifest или «тот же размер/имя значит тот же mesh» не предлагаются.
+
+**Временное fail-closed правило.** STOP только повторной публикации direct
+dag4blend mesh, когда одновременно есть загруженный authoring input и
+существующий source FBX: отказ до staging/replace. Не объявлять равенство по
+структурному скану, не переписывать молча каждый FBX и не нормализовать его
+байты самовольно. Первая публикация нового mesh, source-only unloaded reuse
+и canonical JSON reuse остаются открыты. Native MH export не переопределён.
+
+**Статус. ОТКРЫТ — блокирует repeat-export/partial-retry acceptance с mesh.**
+
+## OPEN-V5-23 — Blender-carrier двух новых узловых metadata
+
+**Контекст.** 13 R2 §7 задаёт wire-поля `placement` и
+`appearance_seed_boundary`, а §9.3 требует равенство native-MH и dag4blend
+DTO/байтов. 10 §6.4 задаёт typed-authority и точные имена существующих
+Blender-свойств (`kind/weight/option_index/profile`) и их зеркал; двух новых
+носителей в PropertyGroup и правила зеркал ни в 10, ни в 13 R2/12 R3 нет.
+После обычного импорта `.composite` в native MH-сцену хранить эти поля
+негде. Просто принять их в кодеке и не сохранить при materialize/extract
+означало бы тихую потерю при следующем экспорте. Неприкреплённый hidden
+JSON/datablock означал бы новую authority, как в прежнем OPEN-V5-9.
+
+**Вопрос.** Подтверждает ли owner typed `mh4blend.placement_mode`
+(отсутствие/none + шесть wire-режимов) и
+`mh4blend.appearance_seed_boundary` (bool, false по умолчанию)?
+Нужны ли неавторитетные ID-зеркала, и если нужны — каковы точные имена?
+Это только носители metadata, не Seed в Blender и не исполнение placement.
+Canonical order уже решён OPEN-V5-21 и не переоткрывается.
+
+**Временное fail-closed правило.** STOP новых metadata-carrier/codecs и
+их round-trip acceptance; наблюдаемые соответствующие свойства даговской
+сцены блокируют export до staging с именами свойств и NodePath.
+Не опускать их молча, не придумывать hidden carrier/зеркала. Базовый direct
+export без этих полей, marker, empty, режимы и compatibility report открыты.
+
+**Статус. ОТКРЫТ — требуются точные native Blender-carrier имена/типы.**
 
 ## OPEN-V5-15 — inline `p2` в даговском узле
 

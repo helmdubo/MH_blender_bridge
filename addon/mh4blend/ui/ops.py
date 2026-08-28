@@ -377,10 +377,50 @@ class MH_OT_remap_all_textures_to_project(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _prefab_lossy_option():
+    return bpy.props.BoolProperty(
+        name="Allow Prefab as Mesh (Lossy)",
+        description="Explicitly export Dagor prefab geometry without collision/gameplay semantics",
+        default=False,
+    )
+
+
+def _invoke_composite_export(operator, context):
+    from ..scene.composite_scene_adapter import composite_scene_form
+    collection = context.scene.mh_composite_export_collection
+    try:
+        if collection is not None and composite_scene_form(collection) == "dag4blend":
+            return context.window_manager.invoke_props_dialog(operator)
+    except ValueError:
+        # The regular execution path reports the same fail-closed diagnostic.
+        pass
+    return operator.execute(context)
+
+
+def _report_export_warnings(operator, report):
+    for warning in report.get("warnings", []):
+        operator.report({"WARNING"},
+                        f"{warning['code']}: {warning.get('node_path', '')}: "
+                        f"{warning.get('message', '')}")
+
+
+def _export_failure_report(exc):
+    failure = {"ok": False, "error": str(exc)}
+    for field in ("code", "published", "unpublished", "warnings", "compatibility"):
+        if hasattr(exc, field):
+            failure[field] = getattr(exc, field)
+    return failure
+
+
 class MH_OT_export_composite(bpy.types.Operator):
     bl_idname = "mh.export_composite"
     bl_label = "Export Composite"
     bl_description = "Export one Source Protocol v5 composite"
+
+    allow_prefab_as_mesh_lossy: _prefab_lossy_option()
+
+    def invoke(self, context, _event):
+        return _invoke_composite_export(self, context)
 
     def execute(self, context):
         collection = context.scene.mh_composite_export_collection
@@ -392,18 +432,25 @@ class MH_OT_export_composite(bpy.types.Operator):
             report = export_composite_collection(
                 collection,
                 _directory(context.scene.mh_composite_export_directory),
-                source_root=_directory(preferences.source_root))
+                source_root=_directory(preferences.source_root),
+                allow_prefab_as_mesh_lossy=self.allow_prefab_as_mesh_lossy)
         except (OSError, RuntimeError, ValueError) as exc:
-            _log("export_composite", {"ok": False, "error": str(exc)})
+            failure = _export_failure_report(exc)
+            _log("export_composite", failure)
+            _report_export_warnings(self, failure)
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         _log("export_composite", report)
+        _report_export_warnings(self, report)
         self.report({"INFO"}, "Composite exported")
         return {"FINISHED"}
 
 
 class _MH_OT_export_composite_closure_base:
     closure_mode = ""
+
+    def invoke(self, context, _event):
+        return _invoke_composite_export(self, context)
 
     def execute(self, context):
         collection = context.scene.mh_composite_export_collection
@@ -417,16 +464,16 @@ class _MH_OT_export_composite_closure_base:
                 _directory(context.scene.mh_composite_export_directory),
                 source_root=_directory(preferences.source_root),
                 mode=self.closure_mode,
+                allow_prefab_as_mesh_lossy=self.allow_prefab_as_mesh_lossy,
             )
         except (OSError, RuntimeError, ValueError) as exc:
-            failure = {"ok": False, "error": str(exc)}
-            for field in ("code", "published", "unpublished"):
-                if hasattr(exc, field):
-                    failure[field] = getattr(exc, field)
+            failure = _export_failure_report(exc)
             _log(self.bl_idname.removeprefix("mh."), failure)
+            _report_export_warnings(self, failure)
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         _log(self.bl_idname.removeprefix("mh."), report)
+        _report_export_warnings(self, report)
         self.report(
             {"INFO"},
             f"Closure exported: {len(report['published'])} published, "
@@ -442,6 +489,7 @@ class MH_OT_export_composite_closure(
     bl_description = (
         "Export root, every nested composite option and placement profiles")
     closure_mode = CLOSURE_MODE_COMPOSITES
+    allow_prefab_as_mesh_lossy: _prefab_lossy_option()
 
 
 class MH_OT_export_composite_include_all(
@@ -451,6 +499,7 @@ class MH_OT_export_composite_include_all(
     bl_description = (
         "Export the full all-options closure including meshes and materials")
     closure_mode = CLOSURE_MODE_INCLUDE_ALL
+    allow_prefab_as_mesh_lossy: _prefab_lossy_option()
 
 
 class MH_OT_import_composite(bpy.types.Operator):
@@ -513,6 +562,15 @@ class MH_OT_convert_dag4blend_composite(bpy.types.Operator):
     bl_description = "Lift an imported dag4blend definition into MH authority"
     bl_options = {"REGISTER", "UNDO"}
 
+    relink_external: bpy.props.BoolProperty(
+        name="Relink External Placements",
+        description="Explicitly redirect eligible working-scene placements to the converted MH definitions",
+        default=False,
+    )
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(self)
+
     def execute(self, context):
         collection = context.scene.mh_dag4blend_composite_collection
         if collection is None:
@@ -524,7 +582,8 @@ class MH_OT_convert_dag4blend_composite(bpy.types.Operator):
                 collection,
                 source_root=_directory(preferences.source_root),
                 load_mode=_load_mode(context.scene),
-                definition_policy=_definition_policy(context.scene))
+                definition_policy=_definition_policy(context.scene),
+                relink_external=self.relink_external)
         except (OSError, RuntimeError, ValueError) as exc:
             _log("convert_dag4blend_composite", {
                 "ok": False, "error": str(exc)})

@@ -461,9 +461,9 @@ applied state не получают version-поля. Существующие v
 
 Корень — объект РОВНО с полями `v` и `nodes` в этом каноническом порядке.
 `nodes` — массив, может быть пустым. Kinds обычного узла:
-`mesh|actor|composite|group|random`.
+`mesh|actor|composite|group|random|marker`.
 
-- `kind` обязателен. `resource` обязателен для `mesh|actor|composite`,
+- `kind` обязателен. `resource` обязателен для `mesh|actor|composite|marker`,
   запрещён для `group|random`. Resource token каноничен по §2.
 - `name` опционален: непустая display-only строка, identity не несёт.
 - `transform` опционален и содержит parent-local T/R/S: `translation_cm`
@@ -475,7 +475,7 @@ applied state не получают version-поля. Существующие v
 - `options` обязателен и разрешён ТОЛЬКО у `random`. Это непустой
   упорядоченный массив объектов РОВНО с полями `kind`, `resource` где
   применимо и `weight`. Kind option принадлежит
-  `mesh|actor|composite|empty`. У `mesh|actor|composite` resource
+  `mesh|actor|composite|marker|empty`. У `mesh|actor|composite|marker` resource
   обязателен; у `empty` запрещён. `weight` обязателен, конечен и ≥ 0;
   хотя бы один option имеет weight > 0. Option не имеет `transform`,
   `children`, `options` или `name`: трансформ принадлежит random-узлу.
@@ -486,6 +486,16 @@ applied state не получают version-поля. Существующие v
   обходятся всегда и наследуют тот же random-node transform независимо от
   выбранного option. Selected composite разворачивается рекурсивно в этой
   parent-local basis.
+- **`marker` (owner, документ 13 редакция 2 §6.4).** Именованная
+  неисполняемая точка: `resource` — канонический токен, не внешний ресурс.
+  Обычный marker сохраняет имя и transform в производном `Plan.Nodes`,
+  выбранный marker-option — имя и world transform random-узла по пути
+  `options[i]`; выбор фиксируется обычным `Decisions`. Ни один marker не
+  создаёт `Leaves`, UE actor, Blueprint, ресурсный файл, registry binding
+  или dependency edge. Его обычные `children` обходятся как у group.
+  Это явная поправка протокола внутри V5-S6.1: необходима для gameObj,
+  старые документы не используют marker и остаются байт-идентичными.
+  Существующая исполняемая семантика MH `actor` не переопределяется.
 - Все числа конечны; `MH_E_NAN_INF_VALUE` и `MH_E_INVALID_SCALE` сохраняют
   семантику v4. Кватернион writer нормализует в float32 и приводит к
   каноническому знаку v4; reader применяет тот же norm-admission v4.
@@ -504,9 +514,17 @@ applied state не получают version-поля. Существующие v
 Канонические байты сохраняют режим v4 §5: UTF-8, LF, финальный LF, отступ 2,
 float32-shortest, целые без дробной части, identity-поля опускаются.
 Порядок полей корня `v → nodes`; узла
-`kind → resource → name → transform → options → children`; transform
+`kind → resource → name → transform → profile → placement → appearance_seed_boundary
+→ options → children`; transform
 `translation_cm → rotation_quat → scale`; option `kind → resource → weight`.
 Узлы и options не сортируются.
+
+`profile` сохраняет прежнее место после transform. Порядок двух новых
+опциональных носителей из документа 13 R2 §7 фиксируется после него
+(закрытие OPEN-V5-21 owner'ом); пропуск profile в документе 12 — редакционный
+остаток, не удаление действующего поля. Неизменённые документы дают прежние
+байты; новые поля не меняют формулу ResolvedSignature или RNG. Их source bytes
+участвуют в raw/closure hash обычным образом (§13.3).
 
 ### 6.2 Parent-local transform contract и shear
 
@@ -1336,3 +1354,39 @@ v5 больше нет.
 
 **Следствие для V5-S5: thumbnail-часть снята со среза целиком**, а не
 отложена внутри него. Остальной scope V5-S5 вопросом не затронут.
+
+### 13.13 Прямой dag4blend-адаптер (owner, документ 13 R2)
+
+Документ [13 R2](13_v5_s6_1_dag4blend_bridge.md) заменяет обязательную
+материализацию маршрута сценовой конвертации из §6.4 прямым read-only
+экспортом. Строгий BLK-reader не меняется; две формы сцены Blender дают один
+Composite DTO и используют один canonical writer / source-closure publisher.
+Диспетчер отвергает частичную MH identity и смешанную MH/dag4blend authority.
+
+Прямой экспорт не создаёт MH-двойников, не меняет `instance_collection`,
+parent, имена, custom properties, активную сцену и выделение, не ставит
+`mh_resource_*` на даговские определения. Публикация заканчивается файловой
+квитанцией; материализатор и Blender-finalizer не вызываются даже при
+частичном сбое. Optional Convert остаётся отдельной явной командой;
+перепривязка в ней разрешена только отдельным opt-in.
+
+Три export-команды §6.5 принимают обе формы сцены. Исключённые зависимости
+проверяются против Source Root; неизменённые опубликованные payload'ы
+переиспользуются по содержимому источника, не по меткам сцены. Все options,
+включая zero-weight, входят в closure; недостижимые датаблоки — нет.
+
+Сценовый адаптер имеет **частичную совместимость**, не lossless-конверсию
+исходного BLK. Потерянные dag4blend корневые controls не восстанавливаются;
+их отсутствие не означает известный ноль. Отчёт отдельно перечисляет
+сохранённое, невосстановимое и заблокированное. Inline p2 без typed profile
+по-прежнему блокируется с NodePath и именами параметров (OPEN-V5-15).
+Prefab по умолчанию блокируется; явный Allow Prefab as Mesh (Lossy) требует
+warning. Наблюдаемые label/require/colors опускаются с
+`MH_W_DAGOR_CONSTRUCT_DROPPED`, а не исполняются.
+
+`gameObj` сценового адаптера кодируется только как `marker` (§6.1).
+`placement` — provenance-only объект с обязательным закрытым `mode`, без
+`trace_start_above_cm`; `appearance_seed_boundary` — bool-носитель с omission
+false, без потребителя до S6.3. Прижатия в UE и обратной записи в Dagor
+не будет. Старые положения документа 12 о снапе, провайдере, warnings на
+каждое размещение и gameObj registry отменены owner'ом, не являются scope.

@@ -1,0 +1,251 @@
+{
+  "version": "4.5.12 LTS",
+  "repo": "E:\\MimirComposite_V5S6_1_Direct_Source_20260828",
+  "cases": {
+    "nested_partial": {
+      "returned": {
+        "ok": true,
+        "published": [
+          "composite:child",
+          "composite:root"
+        ],
+        "unpublished": [],
+        "reused": [],
+        "receipts": [
+          {
+            "target": "e:\\mimircomposite_v5s6_1_directreuseprobe_20260828\\direct_edges\\nested_partial\\child.composite",
+            "bytes": 65,
+            "lock_path": "C:\\Users\\helmd\\AppData\\Local\\MimirHead\\MHBridge\\payload-locks\\520c836d834e2a3cc3134f1757685cb878fb360e39ca05e79d91e24d4c7c591f.lock",
+            "parent_directory_fsynced": false,
+            "elapsed_ms": 0.0
+          },
+          {
+            "target": "e:\\mimircomposite_v5s6_1_directreuseprobe_20260828\\direct_edges\\nested_partial\\root.composite",
+            "bytes": 96,
+            "lock_path": "C:\\Users\\helmd\\AppData\\Local\\MimirHead\\MHBridge\\payload-locks\\53748cee89dbb3735bf8455dba0053b7bb64e7e03ca2e64d483027cb56e6edd8.lock",
+            "parent_directory_fsynced": false,
+            "elapsed_ms": 15.0
+          }
+        ],
+        "mode": "composite_closure",
+        "root": "composite:root",
+        "closure": [
+          "composite:child",
+          "composite:root"
+        ],
+        "staged": [
+          "composite:child",
+          "composite:root"
+        ],
+        "filepath": "E:\\MimirComposite_V5S6_1_DirectReuseProbe_20260828\\direct_edges\\nested_partial\\root.composite",
+        "resource_name": "root",
+        "nodes": 1,
+        "bytes": 96,
+        "written": true,
+        "warnings": [],
+        "compatibility": {
+          "route": "dag4blend_scene_partial_compatibility",
+          "preserved": [
+            "hierarchy",
+            "parent-local transforms",
+            "random options and weights",
+            "nested composites",
+            "mesh LODs",
+            "materials",
+            "gameObj markers"
+          ],
+          "unrecoverable": [
+            "document-root properties",
+            "aboveHt",
+            "useCollisionNormal",
+            "quantizeTm",
+            "label",
+            "require",
+            "colors",
+            "xScale",
+            "snake_case aliases"
+          ],
+          "blocked": [
+            "prefab without explicit lossy opt-in",
+            "inline p2 without typed profile"
+          ]
+        }
+      },
+      "files": [
+        "child.composite",
+        "root.composite"
+      ],
+      "standalone_dispatch": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'mh_resource_name', 'name', 'type']: partial MH identity cannot select an export adapter"
+    },
+    "nested_mixed": {
+      "returned": {
+        "ok": true,
+        "published": [
+          "composite:child",
+          "composite:root"
+        ],
+        "unpublished": [],
+        "reused": [],
+        "receipts": [
+          {
+            "target": "e:\\mimircomposite_v5s6_1_directreuseprobe_20260828\\direct_edges\\nested_mixed\\child.composite",
+            "bytes": 65,
+            "lock_path": "C:\\Users\\helmd\\AppData\\Local\\MimirHead\\MHBridge\\payload-locks\\097830b24ff4877a4a029f7f6f59631cd97a2ab7c2f87fc81495933451688293.lock",
+            "parent_directory_fsynced": false,
+            "elapsed_ms": 16.0
+          },
+          {
+            "target": "e:\\mimircomposite_v5s6_1_directreuseprobe_20260828\\direct_edges\\nested_mixed\\root.composite",
+            "bytes": 96,
+            "lock_path": "C:\\Users\\helmd\\AppData\\Local\\MimirHead\\MHBridge\\payload-locks\\da96896872685d5666e08e3ba29a9233de9d3fdc2bd8370499eda5abad79ea6f.lock",
+            "parent_directory_fsynced": false,
+            "elapsed_ms": 15.0
+          }
+        ],
+        "mode": "composite_closure",
+        "root": "composite:root",
+        "closure": [
+          "composite:child",
+          "composite:root"
+        ],
+        "staged": [
+          "composite:child",
+          "composite:root"
+        ],
+        "filepath": "E:\\MimirComposite_V5S6_1_DirectReuseProbe_20260828\\direct_edges\\nested_mixed\\root.composite",
+        "resource_name": "root",
+        "nodes": 1,
+        "bytes": 96,
+        "written": true,
+        "warnings": [],
+        "compatibility": {
+          "route": "dag4blend_scene_partial_compatibility",
+          "preserved": [
+            "hierarchy",
+            "parent-local transforms",
+            "random options and weights",
+            "nested composites",
+            "mesh LODs",
+            "materials",
+            "gameObj markers"
+          ],
+          "unrecoverable": [
+            "document-root properties",
+            "aboveHt",
+            "useCollisionNormal",
+            "quantizeTm",
+            "label",
+            "require",
+            "colors",
+            "xScale",
+            "snake_case aliases"
+          ],
+          "blocked": [
+            "prefab without explicit lossy opt-in",
+            "inline p2 without typed profile"
+          ]
+        }
+      },
+      "files": [
+        "child.composite",
+        "root.composite"
+      ],
+      "standalone_dispatch": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'mh_resource_kind', 'mh_resource_name', 'name', 'type']: mixed MH/dag4blend authority cannot select an export adapter"
+    },
+    "unregistered_raw_group": {
+      "returned": {
+        "ok": true,
+        "published": [
+          "composite:raw_props_root"
+        ],
+        "unpublished": [],
+        "reused": [],
+        "receipts": [
+          {
+            "target": "e:\\mimircomposite_v5s6_1_directreuseprobe_20260828\\direct_edges\\unregistered_raw_group\\raw_props_root.composite",
+            "bytes": 65,
+            "lock_path": "C:\\Users\\helmd\\AppData\\Local\\MimirHead\\MHBridge\\payload-locks\\2542d0027d213d1780165d7c607d845cad462399cbf28b7fb365b12611f1fa44.lock",
+            "parent_directory_fsynced": false,
+            "elapsed_ms": 16.0
+          }
+        ],
+        "mode": "composite_closure",
+        "root": "composite:raw_props_root",
+        "closure": [
+          "composite:raw_props_root"
+        ],
+        "staged": [
+          "composite:raw_props_root"
+        ],
+        "filepath": "E:\\MimirComposite_V5S6_1_DirectReuseProbe_20260828\\direct_edges\\unregistered_raw_group\\raw_props_root.composite",
+        "resource_name": "raw_props_root",
+        "nodes": 1,
+        "bytes": 65,
+        "written": true,
+        "warnings": [],
+        "compatibility": {
+          "route": "dag4blend_scene_partial_compatibility",
+          "preserved": [
+            "hierarchy",
+            "parent-local transforms",
+            "random options and weights",
+            "nested composites",
+            "mesh LODs",
+            "materials",
+            "gameObj markers"
+          ],
+          "unrecoverable": [
+            "document-root properties",
+            "aboveHt",
+            "useCollisionNormal",
+            "quantizeTm",
+            "label",
+            "require",
+            "colors",
+            "xScale",
+            "snake_case aliases"
+          ],
+          "blocked": [
+            "prefab without explicit lossy opt-in",
+            "inline p2 without typed profile"
+          ]
+        }
+      },
+      "files": [
+        "raw_props_root.composite"
+      ],
+      "raw_group_after": {
+        "rot_y:p2": [
+          0.0,
+          1.0
+        ],
+        "label:t": "retained_in_raw_group"
+      },
+      "dagorprops_rna_registered": false
+    },
+    "raw_weight": {
+      "actual_weights": [
+        1.0,
+        1.0
+      ],
+      "raw_authored_weight": 7.0
+    },
+    "partial_warning": {
+      "error": "MH_E_PARTIAL_PUBLISH: published=['composite:warning_child']; unpublished=['composite:warning_root']; cause=private injection before root",
+      "type": "BatchPartialPublishError",
+      "warnings_attribute": null,
+      "compatibility_attribute": null,
+      "files": [
+        "warning_child.composite"
+      ],
+      "python_warnings": []
+    }
+  },
+  "source_sha256": {
+    "addon/mh4blend/scene/composite_scene_adapter.py": "864cb581419890a3d0150d6a1eb753bd159c061e2940087be9afae777a967e4c",
+    "addon/mh4blend/scene/readonly_properties.py": "aaf1d9ed6f857f08a5d1004b9dc4b6166ad49a9563ef09f7d1d7055886cf91b2",
+    "addon/mh4blend/scene/import_dagor_composite.py": "053d833e49c6d6e681c95e3b2df93a42d7d466cf6874002d446ea9060847b5e3",
+    "addon/mh4blend/scene/dag4blend_publication.py": "46bc2b90b83b9005460b0f93c08b1b0dfe693839b3bdb4ba25b47f5318bea061",
+    "addon/mh4blend/scene/export_closure.py": "6b6fa952fb251d2b91ba0bbd9881fa3305b79024bbb481c14985a9668f63adab"
+  }
+}

@@ -246,6 +246,8 @@ bool WalkNodes(
         switch (Node.Kind)
         {
         case EMHCompositeNodeKind::Group:
+        case EMHCompositeNodeKind::Marker:
+            // A marker carries source identity/TRS, not a generated endpoint.
             break;
         case EMHCompositeNodeKind::Mesh:
         {

@@ -60,6 +60,19 @@ def _mesh(name, collection, material):
     return obj
 
 
+def test_dagor_material_preflight_does_not_allocate_missing_mh_settings(tmp_path, monkeypatch):
+    material = bpy.data.materials.new("untouched_material")
+    dagormat = SimpleNamespace(shader_class="rendinst_simple", sides=0,
+                              textures=SimpleNamespace(), optional={})
+    monkeypatch.setattr(export_material_module, "_authored_dagormat", lambda _material: dagormat)
+    before = dict(material.items())
+    assert "mh4blend" not in before
+    prepared = prepare_blender_material_export(material, tmp_path, source_root=tmp_path)
+    assert prepared.resource.material_class == "rendinst_simple"
+    assert dict(material.items()) == before
+    assert not list(tmp_path.iterdir())
+
+
 class _FakeDagorArray:
     def __init__(self, values):
         self._values = values

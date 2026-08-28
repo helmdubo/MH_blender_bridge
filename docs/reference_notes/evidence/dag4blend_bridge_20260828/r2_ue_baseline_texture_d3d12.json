@@ -1,0 +1,44 @@
+{
+	"devices": [
+		{
+			"deviceName": "DESKTOP-MM2SBHU",
+			"instance": "54DC6B7741EA5E83E8E5EC898AA6A3B3",
+			"instanceName": "DESKTOP-MM2SBHU-14904",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 11 (25H2) [10.0.26200.9168] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce RTX 3070",
+			"cPUModel": "AMD Ryzen 9 5900X 12-Core Processor            ",
+			"rAMInGB": 32,
+			"renderMode": "D3D12_SM5",
+			"rHI": "D3D12 (SM5)",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.08.28-18.24.58",
+	"succeeded": 1,
+	"succeededWithWarnings": 0,
+	"failed": 0,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 0.47810280323028564,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "TextureImportPersistence",
+			"fullTestPath": "Mimir.V4.Material.TextureImportPersistence",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"54DC6B7741EA5E83E8E5EC898AA6A3B3"
+			],
+			"duration": 0.47810280323028564,
+			"dateTime": "2026.08.28-18.24.57",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		}
+	]
+}

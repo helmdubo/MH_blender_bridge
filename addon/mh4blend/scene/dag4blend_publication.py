@@ -1,9 +1,7 @@
-"""Write-free publication planning for the explicit dag4blend bridge.
+"""Read-only DTO planning for direct dag4blend Source Protocol publication.
 
-Ordinary Composite exporters remain strict. This entry point accepts converted
-DTOs and explicit mesh conversion inputs, admits them through the real writers,
-and returns the existing closure publisher's immutable plan. It never stamps,
-relinks, renames, materializes, stages, or publishes Blender/source resources.
+The adapter supplies documents and original mesh inputs. This planner uses
+the canonical writers and S4 publisher, never adoption or Blender ID planning.
 """
 
 from __future__ import annotations
@@ -12,38 +10,34 @@ from dataclasses import replace
 
 import bpy
 
-from ..core.canonical import validate_resource_name
 from ..core.composites import composite_json_bytes, iter_resource_references
 from ..core.source_closure import ResourceKey, build_composite_source_closure
 from ..core.source_inventory import scan_source_inventory
 from ..core.validate import MHValidationError
 from .export_closure import (
+    CLOSURE_MODE_ROOT,
+    CLOSURE_MODE_COMPOSITES,
     CLOSURE_MODE_INCLUDE_ALL,
     ClosureExportPlan,
     PlannedClosurePayload,
+    _resolve_excluded_source,
     _resolve_texture_source,
     _resolved_output,
     _reuse_row,
+    _source_composite,
     _source_material,
     _source_profile,
     _target_for,
 )
-from .export_composite import (
-    _collection_instance_identity,
-    _extract_composite,
-    _node_kind_and_resource,
-)
+from .export_composite import _collection_instance_identity
 from .export_fbx import prepare_fbx_collection
 from .export_material import prepare_blender_material_export
-from .import_composite import _preflight, _validate_document_mapping
-from .import_fbx import classify_resource_definition, parse_mesh_fbx
+from .import_composite import _validate_document_mapping
+from .import_fbx import parse_mesh_fbx
 from .resource_markers import (
     COLLECTION_KIND_KEY,
     COLLECTION_RESOURCE_KEY,
-    DEFINITION_REUSE,
     INCOMPLETE_IMPORT_KEY,
-    is_managed_resource_collection,
-    managed_resource_collections,
 )
 
 __all__ = ["prepare_dag4blend_publication"]
@@ -53,142 +47,117 @@ def _fail(code, subjects, message):
     raise MHValidationError(code, [str(subject) for subject in subjects], message)
 
 
-def _admission_for_mesh_input(key, collection):
-    """Validate prospective adoption without simulating it with live stamps."""
+def _validate_mesh_input(key, collection):
+    """Validate this read-only input, not future adoption or competing IDs."""
     if (collection is None
             or bpy.data.collections.get(collection.name) is not collection):
         _fail("MH_E_INVALID_RESOURCE_SOURCE", [key],
-              "mesh conversion input must be a live Blender Collection")
-    has_kind = COLLECTION_KIND_KEY in collection
-    has_name = COLLECTION_RESOURCE_KEY in collection
-    if has_kind != has_name:
+              "mesh input must be a live Blender Collection")
+    markers = [name for name in (COLLECTION_KIND_KEY, COLLECTION_RESOURCE_KEY)
+               if name in collection]
+    if markers:
+        _fail("MH_E_INVALID_RESOURCE_SOURCE", [key, collection.name, *markers],
+              "direct dag4blend mesh input cannot carry MH identity markers")
+    if not ("type" in collection and "name" in collection):
         _fail("MH_E_INVALID_RESOURCE_SOURCE", [key, collection.name],
-              "partial MH identity cannot be adopted")
-    if has_kind and not is_managed_resource_collection(
-            collection, "mesh", key.name):
-        _fail("MH_E_RESOURCE_KIND_MISMATCH", [key, collection.name],
-              "mesh conversion input carries a conflicting MH identity")
-    if not has_kind and not ("type" in collection and "name" in collection):
-        _fail("MH_E_INVALID_RESOURCE_SOURCE", [key, collection.name],
-              "mesh adoption requires explicit dag4blend type/name identity")
+              "mesh input requires explicit dag4blend type/name identity")
     if _collection_instance_identity(collection) != ("mesh", key.name):
         _fail("MH_E_RESOURCE_KIND_MISMATCH", [key, collection.name],
-              "mesh conversion input disagrees with its ResourceKey")
+              "mesh input disagrees with its ResourceKey")
     if bool(collection.get(INCOMPLETE_IMPORT_KEY, False)):
         _fail("MH_E_INVALID_RESOURCE_SOURCE", [key, collection.name],
-              "incomplete mesh definitions cannot be adopted or published")
-
-    # The ordinary classifier cannot admit an unstamped occupant of its own
-    # future ID. Check competing/malformed claims without temporarily stamping
-    # that occupant; actual adoption belongs after successful publication.
-    for other in bpy.data.collections:
-        other_kind = COLLECTION_KIND_KEY in other
-        other_name = COLLECTION_RESOURCE_KEY in other
-        touches = (other.name == collection.name
-                   or other.get(COLLECTION_RESOURCE_KEY) == key.name
-                   or (other.get(COLLECTION_KIND_KEY) == "mesh" and not other_name))
-        malformed = other_kind != other_name
-        if other_kind and other_name:
-            claimed_kind = other.get(COLLECTION_KIND_KEY)
-            claimed_name = other.get(COLLECTION_RESOURCE_KEY)
-            malformed = (not isinstance(claimed_kind, str)
-                         or claimed_kind not in {"mesh", "actor", "composite"})
-            try:
-                validate_resource_name(claimed_name)
-            except (TypeError, ValueError):
-                malformed = True
-        if malformed and touches:
-            _fail("MH_E_IMPORT_TARGET_OCCUPIED", [key, other.name],
-                  "malformed or partial MH claim blocks mesh adoption")
-    twins = [candidate for candidate in managed_resource_collections(
-        "mesh", key.name) if candidate is not collection]
-    if twins:
-        _fail("MH_E_AMBIGUOUS_RESOURCE_NAME",
-              [key, collection.name, *(candidate.name for candidate in twins)],
-              "mesh adoption would create a second managed ResourceKey claim")
-    if has_kind:
-        classify_resource_definition(
-            "mesh", key.name, collection.name, definition_policy=DEFINITION_REUSE)
+              "incomplete mesh definitions cannot be published")
 
 
-def _validate_reused_composite_bindings(collection, mesh_inputs):
-    """A reused definition must remain strict after the planned mesh adoption."""
-    for obj in collection.objects:
-        settings = getattr(obj, "mh4blend", None)
-        parent_settings = getattr(getattr(obj, "parent", None), "mh4blend", None)
-        option = (settings is not None and parent_settings is not None
-                  and parent_settings.kind == "random"
-                  and settings.is_property_set("option_index"))
-        kind, name = _node_kind_and_resource(obj, option=option)
-        instance = obj.instance_collection
-        if kind not in {"mesh", "composite"} or name is None or instance is None:
-            continue
-        if kind == "mesh" and mesh_inputs.get((kind, name)) is instance:
-            continue  # This exact input is admitted by the real mesh writer.
-        if not is_managed_resource_collection(instance, kind, name):
-            _fail("MH_E_INVALID_RESOURCE_SOURCE", [f"{kind}:{name}", obj.name],
-                  "reused composite still binds an unmanaged definition; "
-                  "publication does not rewrite internal legacy placements")
+def _json_row(inventory, output, key, extension, payload, prepared=None):
+    """Reuse exact canonical Source Root bytes, never scene stamps."""
+    target, existing = _target_for(inventory, output, key, extension)
+    if existing is not None and existing.read_bytes() == payload:
+        return _reuse_row(key, existing, payload)
+    if prepared is not None:
+        prepared = replace(prepared, target=target)
+    return PlannedClosurePayload(
+        key, target, "publish", payload,
+        existing.snapshot() if existing is not None else None, prepared)
 
 
 def prepare_dag4blend_publication(
         documents, mesh_inputs, *, root_name, source_root, output_dir,
-        definition_policy=DEFINITION_REUSE) -> ClosureExportPlan:
-    """Preflight every payload and future Blender ID before the first write.
+        mode=CLOSURE_MODE_INCLUDE_ALL) -> ClosureExportPlan:
+    """Prepare requested writes and validate the complete source closure.
 
-    The caller stages/publishes this plan through export_closure, stamps only
-    mesh identities actually published, then materializes with those explicit
-    managed overrides. Composite rows intentionally have no Blender authority:
-    legacy definitions must never be stamped by the publisher's finalizer.
+    Root-only reads excluded composites from Source Root, as the MH adapter
+    does. Excluded meshes/materials are also source authorities. Marker tokens,
+    like actor tokens, have no filesystem payload. The caller stages/publishes
+    through S4, without a Blender finalizer.
     """
-    if definition_policy != DEFINITION_REUSE:
-        _fail("MH_E_INVALID_RESOURCE_SOURCE", [definition_policy],
-              "dag4blend publication refresh is implementation-pending; "
-              "this entry point currently supports reuse only")
+    if mode not in {CLOSURE_MODE_ROOT, CLOSURE_MODE_COMPOSITES,
+                    CLOSURE_MODE_INCLUDE_ALL}:
+        raise ValueError(f"unsupported closure export mode {mode!r}")
     documents = _validate_document_mapping(root_name, documents)
-    payloads = {name: composite_json_bytes(document)
-                for name, document in documents.items()}
-    for name, document in documents.items():
-        actors = tuple(iter_resource_references(document, kind="actor"))
-        if actors:
-            _fail("MH_E_INVALID_RESOURCE_SOURCE",
-                  [f"composite:{name}", *(f"actor:{actor}" for actor in actors)],
-                  "OPEN-V5-19: gameObj carrier is unresolved; actor-containing "
-                  "closures cannot use the new publication entry point")
-    closure = build_composite_source_closure(root_name, documents)
-    reachable = {key.name for key in closure.composites_postorder}
-    if set(documents) != reachable:
-        _fail("MH_E_INVALID_RESOURCE_SOURCE", sorted(set(documents) - reachable),
-              "publication documents must exactly match the root source closure")
     inventory = scan_source_inventory(source_root)
     output = _resolved_output(inventory.root, output_dir)
+    resolved = {root_name: documents[root_name]}
+    composite_rows = {}
+
+    def resolve_composite(name):
+        if name in resolved:
+            return resolved[name]
+        key = ResourceKey("composite", name)
+        owners = [ResourceKey("composite", owner)
+                  for owner, document in resolved.items()
+                  if name in iter_resource_references(document, kind="composite")]
+        if mode != CLOSURE_MODE_ROOT and name in documents:
+            resource = documents[name]
+        else:
+            candidate = (_resolve_excluded_source(inventory, key, owners)
+                         if mode == CLOSURE_MODE_ROOT else inventory.resolve(key))
+            resource, composite_rows[name] = _source_composite(candidate)
+        resolved[name] = resource
+        return resource
+
+    closure = build_composite_source_closure(root_name, resolve_composite)
     inputs = dict(mesh_inputs)
-    for key, collection in inputs.items():
+    for key in inputs:
         if (not isinstance(key, tuple) or len(key) != 2 or key[0] != "mesh"
                 or not isinstance(key[1], str)):
             _fail("MH_E_INVALID_RESOURCE_SOURCE", [repr(key)],
                   "mesh input key must be ('mesh', canonical_name)")
         resource_key = ResourceKey("static_mesh", key[1])
-        if resource_key not in closure.static_meshes:
+        if (mode == CLOSURE_MODE_INCLUDE_ALL
+                and resource_key not in closure.static_meshes):
             _fail("MH_E_INVALID_RESOURCE_SOURCE", [resource_key],
-                  "mesh conversion input is outside the root source closure")
-        _admission_for_mesh_input(resource_key, collection)
+                  "mesh input is outside the root source closure")
 
-    profiles = [_source_profile(inventory.resolve(key))
-                for key in sorted(closure.placement_profiles)]
+    # No Blender value carrier exists for profiles. Reuse their exact sources
+    # in all modes, following the existing source-closure planner.
+    profiles = []
+    for key in sorted(closure.placement_profiles):
+        candidate = (_resolve_excluded_source(
+            inventory, key, closure.referrers_for(key))
+            if mode != CLOSURE_MODE_INCLUDE_ALL else inventory.resolve(key))
+        profiles.append(_source_profile(candidate))
+
     meshes = []
     material_inputs = {}
     material_names = set()
     material_owners = {}
     for key in sorted(closure.static_meshes):
+        owners = closure.referrers_for(key)
         collection = inputs.get(("mesh", key.name))
-        target, existing = _target_for(inventory, output, key, ".mesh.fbx")
-        if collection is None:
-            candidate = inventory.resolve(key)
+        if mode != CLOSURE_MODE_INCLUDE_ALL:
+            candidate = _resolve_excluded_source(inventory, key, owners)
+        else:
+            candidate = inventory.resolve(key, allow_missing=True)
+        if mode != CLOSURE_MODE_INCLUDE_ALL or collection is None:
+            if candidate is None:
+                _fail("MH_E_RESOURCE_NOT_FOUND", [key, *owners],
+                      "mesh dependency has no supplied input or source payload")
             source_plan = parse_mesh_fbx(candidate.path)
             names = source_plan.material_names
             meshes.append(_reuse_row(key, candidate, candidate.read_bytes()))
         else:
+            _validate_mesh_input(key, collection)
             prepared = prepare_fbx_collection(
                 collection, output, source_root=inventory.root,
                 export_materials=False)
@@ -196,6 +165,12 @@ def prepare_dag4blend_publication(
                 _fail("MH_E_RESOURCE_KIND_MISMATCH", [key, collection.name],
                       "FBX writer identity differs from the converted token; "
                       "automatic renaming is forbidden")
+            if candidate is not None:
+                _fail("MH_E_INVALID_RESOURCE_SOURCE",
+                      [key, candidate.path, collection.name, *owners],
+                      "OPEN-V5-22: loaded FBX content reuse is awaiting a proven comparison; "
+                      "direct export cannot rewrite an unproven unchanged mesh")
+            target, existing = _target_for(inventory, output, key, ".mesh.fbx")
             prepared = replace(prepared, target=target)
             names = tuple(material.name for material in prepared.materials)
             for material in prepared.materials:
@@ -209,62 +184,50 @@ def prepare_dag4blend_publication(
                 existing.snapshot() if existing is not None else None, prepared))
         material_names.update(names)
         for name in names:
-            material_owners.setdefault(name, set()).update(closure.referrers_for(key))
+            material_owners.setdefault(name, set()).update(owners)
 
     materials = []
     textures = {}
     for name in sorted(material_names):
         key = ResourceKey("material", name)
+        owners = sorted(material_owners[name])
         material = material_inputs.get(name)
-        if material is None:
-            resource, row = _source_material(inventory.resolve(key))
+        if mode != CLOSURE_MODE_INCLUDE_ALL:
+            candidate = _resolve_excluded_source(inventory, key, owners)
+            resource, row = _source_material(candidate)
+        elif material is None:
+            candidate = inventory.resolve(key, allow_missing=True)
+            if candidate is None:
+                _fail("MH_E_RESOURCE_NOT_FOUND", [key, *owners],
+                      "material dependency has no supplied input or source payload")
+            resource, row = _source_material(candidate)
         else:
             if material.library is not None:
                 _fail("MH_E_INVALID_RESOURCE_SOURCE", [key, material.name],
                       "linked read-only material cannot be publication authority")
             prepared = prepare_blender_material_export(
                 material, output, source_root=inventory.root)
-            target, existing = _target_for(inventory, output, key, ".material")
-            prepared = replace(prepared, target=target)
             resource = prepared.resource
-            row = PlannedClosurePayload(
-                key, target, "publish", prepared.payload,
-                existing.snapshot() if existing is not None else None, prepared)
+            row = _json_row(
+                inventory, output, key, ".material", prepared.payload, prepared)
         materials.append(row)
         for token in resource.textures.values():
             texture_key = ResourceKey("texture", token)
-            candidate = _resolve_texture_source(
-                inventory, texture_key, sorted(material_owners[name]))
+            candidate = _resolve_texture_source(inventory, texture_key, owners)
             textures[texture_key] = candidate.snapshot()
 
-    # Mesh inputs are merely preloaded for ID planning, not falsely stamped.
-    # The ordinary materializer runs its full managed-override check after the
-    # caller's successful publication/adoption and uses these same datablocks.
-    _paths, _mesh_decisions, composite_decisions, _actors = _preflight(
-        documents, inventory.root, preloaded_resources=frozenset(inputs),
-        definition_policy=DEFINITION_REUSE)
-    for name, decision in composite_decisions.items():
-        if decision.action == "reuse":
-            actual = composite_json_bytes(_extract_composite(decision.collection))
-            if actual != payloads[name]:
-                _fail("MH_E_INVALID_RESOURCE_SOURCE",
-                      [f"composite:{name}", decision.collection.name],
-                      "reused managed composite differs from the converted DTO; "
-                      "reuse cannot silently refresh its contents")
-            _validate_reused_composite_bindings(decision.collection, inputs)
-
-    composites = []
     for key in closure.composites_postorder:
-        target, existing = _target_for(inventory, output, key, ".composite")
-        composites.append(PlannedClosurePayload(
-            key, target, "publish", payloads[key.name],
-            existing.snapshot() if existing is not None else None, None))
+        if key.name not in composite_rows:
+            composite_rows[key.name] = _json_row(
+                inventory, output, key, ".composite",
+                composite_json_bytes(resolved[key.name]))
     return ClosureExportPlan(
-        mode=CLOSURE_MODE_INCLUDE_ALL,
+        mode=mode,
         source_root=inventory.root,
         output_dir=output,
         closure=closure,
-        payloads=tuple(profiles + materials + meshes + composites),
+        payloads=tuple(profiles + materials + meshes + [
+            composite_rows[key.name] for key in closure.composites_postorder]),
         validated_only=tuple(sorted(textures.items())),
         texture_dependencies=tuple(sorted(textures)),
     )

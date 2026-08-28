@@ -469,6 +469,7 @@ bool ParseOption(const TSharedPtr<FJsonValue>& Value, FMHCompositeOption& Out, F
     else if (Kind == TEXT("actor")) Out.Kind = EMHCompositeOptionKind::Actor;
     else if (Kind == TEXT("composite")) Out.Kind = EMHCompositeOptionKind::Composite;
     else if (Kind == TEXT("empty")) Out.Kind = EMHCompositeOptionKind::Empty;
+    else if (Kind == TEXT("marker")) Out.Kind = EMHCompositeOptionKind::Marker;
     else
     {
         OutError = FString::Printf(TEXT("MH_E_UNSUPPORTED_NODE_KIND: unsupported random option kind '%s'"), *Kind);
@@ -529,6 +530,7 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     else if (Kind == TEXT("composite")) Out.Kind = EMHCompositeNodeKind::Composite;
     else if (Kind == TEXT("group")) Out.Kind = EMHCompositeNodeKind::Group;
     else if (Kind == TEXT("random")) Out.Kind = EMHCompositeNodeKind::Random;
+    else if (Kind == TEXT("marker")) Out.Kind = EMHCompositeNodeKind::Marker;
     else
     {
         OutError = FString::Printf(TEXT("MH_E_UNSUPPORTED_NODE_KIND: unsupported composite node kind '%s'"), *Kind);
@@ -546,7 +548,7 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     else if (!Object->TryGetStringField(TEXT("resource"), Out.Resource) ||
         !MHIsCanonicalCompositeToken(Out.Resource))
     {
-        return CompositeGrammarError(OutError, TEXT("mesh/actor/composite resource must be canonical [a-z0-9_]+"));
+        return CompositeGrammarError(OutError, TEXT("mesh/actor/composite/marker resource must be canonical [a-z0-9_]+"));
     }
 
     if (const TSharedPtr<FJsonValue>* Name = Object->Values.Find(TEXT("name")))
@@ -676,6 +678,7 @@ const TCHAR* CompositeNodeKindLabel(const EMHCompositeNodeKind Kind)
     case EMHCompositeNodeKind::Composite: return TEXT("composite");
     case EMHCompositeNodeKind::Group: return TEXT("group");
     case EMHCompositeNodeKind::Random: return TEXT("random");
+    case EMHCompositeNodeKind::Marker: return TEXT("marker");
     }
     return nullptr;
 }
@@ -688,6 +691,7 @@ const TCHAR* CompositeOptionKindLabel(const EMHCompositeOptionKind Kind)
     case EMHCompositeOptionKind::Actor: return TEXT("actor");
     case EMHCompositeOptionKind::Composite: return TEXT("composite");
     case EMHCompositeOptionKind::Empty: return TEXT("empty");
+    case EMHCompositeOptionKind::Marker: return TEXT("marker");
     }
     return nullptr;
 }

@@ -66,6 +66,7 @@ const TSet<FString>& MHRegisteredWarningCodes()
 {
     static const TSet<FString> Codes = {
         TEXT("MH_W_REGISTRY_INVALID"),
+        TEXT("MH_W_DAGOR_CONSTRUCT_DROPPED"),
         TEXT("MH_W_REGISTRY_STALE"),
         TEXT("MH_W_DUPLICATE_RESOURCE_NAME"),
         TEXT("MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED"),

@@ -319,11 +319,33 @@ RHI-проба выполняется с настоящим viewport, не по�
 Shared cache, idempotent assignment, nonblocking pending-mesh, watcher-import
 scope и per-operation lookup сюда не входят; они вынесены в
 [отдельный кандидат](proposals/shared_composite_preview_cache.md).
-G-off selection после загрузки уровня и `PostLoad` остаются за S6.1;
+G-off selection после загрузки уровня и `PostLoad` остаются за S6.2;
 полное глубокое semantic tree этим срезом не заявляется.
-Дальнейшие S6.1/S6.2 описаны в [owner freeze 12, редакция 2](12_v5_s6_1_s6_2_slices.md).
-Freeze принят owner; реализация S6.1 начинается после merge S6.0,
-затем S6.2 — после owner acceptance S6.1, без параллельных production-срезов.
+Дальнейшая последовательность уточнена owner-документами 13 R2 и 12 R3.
+
+## V5-S6.1 — Прямой экспорт dag4blend
+
+Gate: V5-S6.0 принят, PR #29 смержен. Ветка `v5/s6.1-dag4blend-bridge`,
+квитанция `docs/receipts/v5_s6_1.md`. Полный scope и acceptance —
+[документ 13, редакция 2](13_v5_s6_1_dag4blend_bridge.md).
+
+Две формы сцены → единый Composite DTO → существующие writers и S4 publisher.
+Прямой экспорт не материализует, не перепривязывает и не штампует исходные
+датаблоки. Три команды выбирают объём файлов; полный source closure всегда
+валидируется по всем options. Повторное использование проверяется против
+Source Root, не по меткам сцены. Marker — явная поправка 10 §6.1; новые
+носители не исполняют прижатие и не вводят Blender seed.
+
+Обязательны failing baseline, нулевая мутация сцены, реальный GAZ end-to-end,
+повтор без перезаписи, failure injection каждого replace, Python/Blender
+счётчики отдельно, оба unity gate, Automation и packaged smoke.
+
+## V5-S6.2 / V5-S6.3 — Только после приёмки S6.1
+
+[Документ 12, редакция 3](12_v5_s6_2_s6_3_slices.md) задаёт следующие срезы:
+placement lifecycle, затем pre-S7 freeze. Их реализация не входит в S6.1.
+Owner отменил прижатие и обратный экспорт в Dagor; старые пункты о провайдере,
+снапе и реестре gameObj не являются заданиями исполнителю.
 
 ---
 

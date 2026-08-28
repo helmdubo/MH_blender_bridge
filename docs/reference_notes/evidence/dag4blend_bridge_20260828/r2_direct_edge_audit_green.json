@@ -1,0 +1,186 @@
+{
+  "version": "4.5.12 LTS",
+  "repo": "E:\\MimirComposite_V5S6_1_Direct_Source_20260828",
+  "cases": {
+    "nested_partial": {
+      "error": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'collection:root/object:nested/resource:child/NodePath:root:nodes[0]', 'mh_resource_name']: dag4blend resource cannot carry partial or mixed MH identity",
+      "type": "MHValidationError",
+      "warnings_attribute": null,
+      "compatibility_attribute": null,
+      "ui_failure_report": {
+        "ok": false,
+        "error": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'collection:root/object:nested/resource:child/NodePath:root:nodes[0]', 'mh_resource_name']: dag4blend resource cannot carry partial or mixed MH identity",
+        "code": "MH_E_INVALID_RESOURCE_SOURCE"
+      },
+      "operator_warnings": [],
+      "files": [],
+      "standalone_dispatch": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'mh_resource_name', 'name', 'type']: partial MH identity cannot select an export adapter"
+    },
+    "nested_mixed": {
+      "error": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'collection:root/object:nested/resource:child/NodePath:root:nodes[0]', 'mh_resource_kind', 'mh_resource_name']: dag4blend resource cannot carry partial or mixed MH identity",
+      "type": "MHValidationError",
+      "warnings_attribute": null,
+      "compatibility_attribute": null,
+      "ui_failure_report": {
+        "ok": false,
+        "error": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'collection:root/object:nested/resource:child/NodePath:root:nodes[0]', 'mh_resource_kind', 'mh_resource_name']: dag4blend resource cannot carry partial or mixed MH identity",
+        "code": "MH_E_INVALID_RESOURCE_SOURCE"
+      },
+      "operator_warnings": [],
+      "files": [],
+      "standalone_dispatch": "MH_E_INVALID_RESOURCE_SOURCE: subjects ['child', 'mh_resource_kind', 'mh_resource_name', 'name', 'type']: mixed MH/dag4blend authority cannot select an export adapter"
+    },
+    "unregistered_raw_group": {
+      "error": "MH_E_COMPOSITE_GRAMMAR: subjects ['collection:raw_props_root/object:frame/NodePath:raw_props_root:nodes[0]', 'rot_y:p2']: dag4blend scene adapter refuses p2/include placement data without the exact typed mh4blend.profile authority; matrix_local is only a preview/base and cannot replace deviation semantics; parameters: rot_y:p2",
+      "type": "MHValidationError",
+      "warnings_attribute": null,
+      "compatibility_attribute": null,
+      "ui_failure_report": {
+        "ok": false,
+        "error": "MH_E_COMPOSITE_GRAMMAR: subjects ['collection:raw_props_root/object:frame/NodePath:raw_props_root:nodes[0]', 'rot_y:p2']: dag4blend scene adapter refuses p2/include placement data without the exact typed mh4blend.profile authority; matrix_local is only a preview/base and cannot replace deviation semantics; parameters: rot_y:p2",
+        "code": "MH_E_COMPOSITE_GRAMMAR"
+      },
+      "operator_warnings": [],
+      "files": [],
+      "raw_group_after": {
+        "rot_y:p2": [
+          0.0,
+          1.0
+        ],
+        "label:t": "retained_in_raw_group"
+      },
+      "dagorprops_rna_registered": false
+    },
+    "raw_weight": {
+      "actual_weights": [
+        7.0,
+        1.0
+      ],
+      "raw_authored_weight": 7.0
+    },
+    "partial_warning": {
+      "error": "MH_E_PARTIAL_PUBLISH: published=['composite:warning_child']; unpublished=['composite:warning_root']; cause=private injection before root",
+      "type": "BatchPartialPublishError",
+      "warnings_attribute": [
+        {
+          "code": "MH_W_DAGOR_CONSTRUCT_DROPPED",
+          "node_path": "warning_child:nodes[0]",
+          "subjects": [
+            "collection:warning_child/object:frame/NodePath:warning_child:nodes[0]"
+          ],
+          "message": "Dropped Dagor label:t; it is never executed"
+        }
+      ],
+      "compatibility_attribute": {
+        "route": "dag4blend_scene_partial_compatibility",
+        "preserved": [
+          "hierarchy",
+          "parent-local transforms",
+          "random options and weights",
+          "nested composites",
+          "mesh LODs",
+          "materials",
+          "gameObj markers"
+        ],
+        "unrecoverable": [
+          "document-root properties",
+          "aboveHt",
+          "useCollisionNormal",
+          "quantizeTm",
+          "label",
+          "require",
+          "colors",
+          "xScale",
+          "snake_case aliases"
+        ],
+        "blocked": [
+          "prefab without explicit lossy opt-in",
+          "inline p2 without typed profile",
+          "OPEN-V5-22: repeated loaded FBX",
+          "OPEN-V5-23: new metadata carriers"
+        ]
+      },
+      "ui_failure_report": {
+        "ok": false,
+        "error": "MH_E_PARTIAL_PUBLISH: published=['composite:warning_child']; unpublished=['composite:warning_root']; cause=private injection before root",
+        "code": "MH_E_PARTIAL_PUBLISH",
+        "published": [
+          "composite:warning_child"
+        ],
+        "unpublished": [
+          "composite:warning_root"
+        ],
+        "warnings": [
+          {
+            "code": "MH_W_DAGOR_CONSTRUCT_DROPPED",
+            "node_path": "warning_child:nodes[0]",
+            "subjects": [
+              "collection:warning_child/object:frame/NodePath:warning_child:nodes[0]"
+            ],
+            "message": "Dropped Dagor label:t; it is never executed"
+          }
+        ],
+        "compatibility": {
+          "route": "dag4blend_scene_partial_compatibility",
+          "preserved": [
+            "hierarchy",
+            "parent-local transforms",
+            "random options and weights",
+            "nested composites",
+            "mesh LODs",
+            "materials",
+            "gameObj markers"
+          ],
+          "unrecoverable": [
+            "document-root properties",
+            "aboveHt",
+            "useCollisionNormal",
+            "quantizeTm",
+            "label",
+            "require",
+            "colors",
+            "xScale",
+            "snake_case aliases"
+          ],
+          "blocked": [
+            "prefab without explicit lossy opt-in",
+            "inline p2 without typed profile",
+            "OPEN-V5-22: repeated loaded FBX",
+            "OPEN-V5-23: new metadata carriers"
+          ]
+        }
+      },
+      "operator_warnings": [
+        {
+          "category": [
+            "WARNING"
+          ],
+          "message": "MH_W_DAGOR_CONSTRUCT_DROPPED: warning_child:nodes[0]: Dropped Dagor label:t; it is never executed"
+        }
+      ],
+      "files": [
+        "warning_child.composite"
+      ],
+      "python_warnings": []
+    },
+    "unregistered_typed_mh_carrier": {
+      "error": "MH_E_INVALID_RESOURCE_SOURCE: saved mh4blend carrier is present on frame but its RNA is not registered",
+      "type": "ValueError",
+      "warnings_attribute": null,
+      "compatibility_attribute": null,
+      "ui_failure_report": {
+        "ok": false,
+        "error": "MH_E_INVALID_RESOURCE_SOURCE: saved mh4blend carrier is present on frame but its RNA is not registered"
+      },
+      "operator_warnings": [],
+      "files": []
+    }
+  },
+  "source_sha256": {
+    "addon/mh4blend/scene/composite_scene_adapter.py": "864cb581419890a3d0150d6a1eb753bd159c061e2940087be9afae777a967e4c",
+    "addon/mh4blend/scene/readonly_properties.py": "00940db988a5cd08054191e2254089ac43ad0bdd4353fc4450c7a2557c83340f",
+    "addon/mh4blend/scene/import_dagor_composite.py": "f5134ac7fc46a260b59a7dc3d31b795f3e0f7468981314a9fddb9a3f9fe655cc",
+    "addon/mh4blend/scene/dag4blend_publication.py": "76e5e791440a44566f6f5e08eed9c9cefa9e3e3373e6450b30a5289dd2ae6ac7",
+    "addon/mh4blend/scene/export_closure.py": "6b6fa952fb251d2b91ba0bbd9881fa3305b79024bbb481c14985a9668f63adab"
+  }
+}

@@ -122,6 +122,7 @@ const TCHAR* SemanticKindLabel(const EMHRandomSemanticKind Kind)
     case EMHRandomSemanticKind::Group: return TEXT("group");
     case EMHRandomSemanticKind::Random: return TEXT("random");
     case EMHRandomSemanticKind::Empty: return TEXT("empty");
+    case EMHRandomSemanticKind::Marker: return TEXT("marker");
     }
     return TEXT("unknown");
 }
@@ -841,6 +842,8 @@ bool MHResolveCompositePlan(
         FMHResolvedCompositeNode& ResolvedNode = OutPlan.Nodes.AddDefaulted_GetRef();
         ResolvedNode.NodePath = NodePath;
         ResolvedNode.DisplayName = Node.DisplayName;
+        ResolvedNode.SemanticKind = Node.Kind;
+        ResolvedNode.Resource = Node.Resource;
         ResolvedNode.AuthoredLocalTrs = AuthoredLocal;
         ResolvedNode.LocalTrs = Local;
         ResolvedNode.WorldMatrix = WorldMatrix;
@@ -867,6 +870,19 @@ bool MHResolveCompositePlan(
             else if (Option.Kind == EMHRandomSemanticKind::Mesh || Option.Kind == EMHRandomSemanticKind::Actor)
             {
                 AddLeaf(Option.Kind, Option.Resource, World, WorldMatrix, OptionPath, Node.DisplayName, RootNodeIndex);
+            }
+            else if (Option.Kind == EMHRandomSemanticKind::Marker)
+            {
+                // Preserve the selected marker token in the plan without making
+                // a leaf, registry lookup, dependency key, or additional draw.
+                // Options have no authored transform: their local TRS is identity.
+                FMHResolvedCompositeNode& Marker = OutPlan.Nodes.AddDefaulted_GetRef();
+                Marker.NodePath = OptionPath;
+                Marker.DisplayName = Node.DisplayName;
+                Marker.SemanticKind = EMHRandomSemanticKind::Marker;
+                Marker.Resource = Option.Resource;
+                Marker.WorldMatrix = WorldMatrix;
+                Marker.RootNodeIndex = RootNodeIndex;
             }
         }
         for (int32 ChildIndex = 0; ChildIndex < Node.Children.Num(); ++ChildIndex)

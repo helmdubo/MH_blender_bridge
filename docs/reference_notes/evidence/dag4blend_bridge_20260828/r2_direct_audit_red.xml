@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="26" time="2.188" timestamp="2026-08-28T22:20:06.437438+04:00" hostname="DESKTOP-MM2SBHU"><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_direct_export_three_modes_do_not_create_or_modify_scene[root_only]" time="0.206" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_direct_export_three_modes_do_not_create_or_modify_scene[composite_closure]" time="0.071" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_direct_export_three_modes_do_not_create_or_modify_scene[include_all]" time="0.070" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_root_command_accepts_dag4blend_without_materializing" time="0.071" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_nested_dagor_collection_cannot_bypass_mixed_authority_gate[False]" time="0.090"><failure message="Failed: DID NOT RAISE ValueError">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-938/test_nested_dagor_collection_c0')
+complete_mh_identity = False
+
+    @pytest.mark.parametrize("complete_mh_identity", [False, True])
+    def test_nested_dagor_collection_cannot_bypass_mixed_authority_gate(
+            tmp_path, complete_mh_identity):
+        root = legacy("direct_root")
+        child = legacy("direct_child")
+        child["mh_resource_kind"] = "composite"
+        if complete_mh_identity:
+            child["mh_resource_name"] = "direct_child"
+        empty("nested", root, child)
+        empty("frame", child)
+        before = snapshot()
+&gt;       with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+E       Failed: DID NOT RAISE ValueError
+
+tests\test_dag4blend_direct_export_bpy.py:119: Failed</failure></testcase><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_nested_dagor_collection_cannot_bypass_mixed_authority_gate[True]" time="0.090"><failure message="Failed: DID NOT RAISE ValueError">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-938/test_nested_dagor_collection_c1')
+complete_mh_identity = True
+
+    @pytest.mark.parametrize("complete_mh_identity", [False, True])
+    def test_nested_dagor_collection_cannot_bypass_mixed_authority_gate(
+            tmp_path, complete_mh_identity):
+        root = legacy("direct_root")
+        child = legacy("direct_child")
+        child["mh_resource_kind"] = "composite"
+        if complete_mh_identity:
+            child["mh_resource_name"] = "direct_child"
+        empty("nested", root, child)
+        empty("frame", child)
+        before = snapshot()
+&gt;       with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+E       Failed: DID NOT RAISE ValueError
+
+tests\test_dag4blend_direct_export_bpy.py:119: Failed</failure></testcase><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_saved_dagorprops_without_registered_rna_cannot_hide_p2" time="0.066"><failure message="Failed: DID NOT RAISE ValueError">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-938/test_saved_dagorprops_without_0')
+
+    def test_saved_dagorprops_without_registered_rna_cannot_hide_p2(tmp_path):
+        assert not hasattr(bpy.types.Object, "dagorprops")
+        root = legacy("direct_root")
+        empty("frame", root)["dagorprops"] = {"rot_y:p2": [0.0, 1.0]}
+        before = snapshot()
+&gt;       with pytest.raises(ValueError, match="rot_y:p2") as caught:
+E       Failed: DID NOT RAISE ValueError
+
+tests\test_dag4blend_direct_export_bpy.py:131: Failed</failure></testcase><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_saved_dagorprops_without_rna_keeps_weight_priority" time="0.047"><failure message="AssertionError: assert 2.0 == 7.0&#10; +  where 2.0 = RandomOption(kind='marker', weight=2.0, resource='loot_spawn_a').weight">def test_saved_dagorprops_without_rna_keeps_weight_priority():
+        assert not hasattr(bpy.types.Object, "dagorprops")
+        root = legacy("direct_root")
+        helper = bpy.data.collections.new("random.direct")
+        empty("choice", root, helper)
+        marker = legacy("loot_spawn_a")
+        marker["type"] = "gameobj"
+        option = empty("loot", helper, marker)
+        option["dagorprops"] = {"weight:r": 7.0}
+        option["weight:r"] = 2.0
+        before = snapshot()
+        doc, _ = convert_dag4blend_collection(root)
+&gt;       assert doc.nodes[0].options[0].weight == 7.0
+E       AssertionError: assert 2.0 == 7.0
+E        +  where 2.0 = RandomOption(kind='marker', weight=2.0, resource='loot_spawn_a').weight
+
+tests\test_dag4blend_direct_export_bpy.py:151: AssertionError</failure></testcase><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_partial_publish_preserves_reached_drop_warnings" time="0.073"><failure message="AttributeError: 'BatchPartialPublishError' object has no attribute 'warnings'">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-938/test_partial_publish_preserves0')
+
+    def test_partial_publish_preserves_reached_drop_warnings(tmp_path):
+        root = legacy("direct_root")
+        child = legacy("direct_child")
+        empty("nested", root, child)
+        empty("frame", child)["label:t"] = "discarded"
+        before = snapshot()
+    
+        def inject(event, item, _published):
+            if event == "before_replace" and item.identity == "composite:direct_root":
+                raise OSError("injected after labelled child")
+        with pytest.raises(BatchPartialPublishError) as caught:
+            export_composite_closure_collection(
+                root, tmp_path, source_root=tmp_path, mode="composite_closure",
+                _boundary_hook=inject)
+        assert caught.value.published == ("composite:direct_child",)
+&gt;       assert len(caught.value.warnings) == 1
+                   ^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'BatchPartialPublishError' object has no attribute 'warnings'
+
+tests\test_dag4blend_direct_export_bpy.py:170: AttributeError</failure></testcase><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_adapter_does_not_allocate_missing_registered_property_groups" time="0.046" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_unratified_native_metadata_carrier_stops_before_staging[place_type:i-3]" time="0.046" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_unratified_native_metadata_carrier_stops_before_staging[ignoreParentInstSeed:b-True]" time="0.047" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_reached_dropped_construct_is_reported_with_node_path[label:t]" time="0.067" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_reached_dropped_construct_is_reported_with_node_path[require]" time="0.067" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_reached_dropped_construct_is_reported_with_node_path[colors]" time="0.067" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_prefab_conversion_requires_explicit_lossy_policy" time="0.044" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_explicit_prefab_policy_retains_mesh_identity_and_reports_loss" time="0.044" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_marker_ordinary_and_option_match_native_mh_dto_without_resources" time="0.051" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_second_direct_json_export_reuses_source_without_replace" time="0.076" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_mixed_or_partial_authority_rejected_before_any_write[markers0]" time="0.047" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_mixed_or_partial_authority_rejected_before_any_write[markers1]" time="0.046" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_mixed_or_partial_authority_rejected_before_any_write[markers2]" time="0.047" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[before_replace-composite:direct_child]" time="0.100" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[before_replace-composite:direct_root]" time="0.102" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[after_replace-composite:direct_child]" time="0.099" /><testcase classname="tests.test_dag4blend_direct_export_bpy" name="test_direct_partial_boundary_and_retry_do_not_mutate_scene[after_replace-composite:direct_root]" time="0.110" /></testsuite></testsuites>

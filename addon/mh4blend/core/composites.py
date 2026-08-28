@@ -36,9 +36,9 @@ __all__ = [
 
 
 _TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
-_KINDS = frozenset({"mesh", "actor", "composite", "group", "random"})
-_RESOURCE_KINDS = frozenset({"mesh", "actor", "composite"})
-_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty"})
+_KINDS = frozenset({"mesh", "actor", "composite", "group", "random", "marker"})
+_RESOURCE_KINDS = frozenset({"mesh", "actor", "composite", "marker"})
+_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "marker"})
 _NODE_FIELDS = frozenset({
     "kind", "resource", "name", "transform", "profile", "options", "children",
 })
