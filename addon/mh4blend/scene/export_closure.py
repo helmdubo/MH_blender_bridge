@@ -886,8 +886,13 @@ def publish_composite_closure_export(
         raise ValueError("staged closure contains duplicate ResourceKeys")
     publish_rows = tuple(
         staged_by_key[row.key] for row in plan.to_publish)
-    if not publish_rows or publish_rows[-1].planned.key != plan.closure.root:
+    root_row = plan.row_for(plan.closure.root)
+    if (root_row.action == "publish"
+            and (not publish_rows or publish_rows[-1].planned.key != plan.closure.root)):
         raise ValueError("closure publish order must end with the root composite")
+    # Direct scene adapters can prove the root bytes already exist unchanged.
+    # Reuse is never a replace: a fully unchanged batch publishes zero items.
+    # The same exact-byte revalidation above still guards every source member.
 
     identity_to_key = {
         str(row.planned.key): row.planned.key for row in publish_rows}
@@ -944,9 +949,17 @@ def _finalize_published_blender_state(
 def export_composite_closure_collection(
         collection, output_dir, *, source_root,
         mode=CLOSURE_MODE_COMPOSITES,
-        lock_root=None,
+        lock_root=None, allow_prefab_as_mesh_lossy=False,
         _boundary_hook=None) -> dict:
     """Run write-free preflight, full staging, then ordered publication."""
+
+    from .composite_scene_adapter import composite_scene_form
+    if composite_scene_form(collection) == "dag4blend":
+        from .import_dagor_composite import publish_dag4blend_composite_collection
+        return publish_dag4blend_composite_collection(
+            collection, output_dir, source_root=source_root, mode=mode,
+            lock_root=lock_root, _boundary_hook=_boundary_hook,
+            allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy)
 
     plan = prepare_composite_closure_export(
         collection, output_dir, source_root=source_root, mode=mode)

@@ -367,6 +367,12 @@ def _build_definition(
         for node in nodes:
             obj = make_object(parent)
             stamp_kind(obj, node.kind, node.profile)
+            # Restore both source metadata carriers so the next export cannot
+            # silently drop what this document actually stated.
+            obj.mh4blend.place_type = (
+                -1 if node.place_type is None else int(node.place_type))
+            obj.mh4blend.appearance_seed_boundary = bool(
+                node.appearance_seed_boundary)
             if node.name is not None:
                 obj[NODE_NAME_KEY] = node.name
             bind_resource(obj, node.kind, node.resource)

@@ -115,14 +115,17 @@ def test_closure_export_operators_forward_only_the_two_ratified_modes(
             ops,
             "export_composite_closure_collection",
             lambda *_args, **kwargs: (
-                modes.append(kwargs["mode"]),
+                modes.append((kwargs["mode"], kwargs["allow_prefab_as_mesh_lossy"])),
                 {"published": ["composite:root"], "reused": []},
             )[1],
         )
 
         assert bpy.ops.mh.export_composite_closure() == {"FINISHED"}
         assert bpy.ops.mh.export_composite_include_all() == {"FINISHED"}
-        assert modes == ["composite_closure", "include_all"]
+        assert bpy.ops.mh.export_composite_include_all(
+            allow_prefab_as_mesh_lossy=True) == {"FINISHED"}
+        assert modes == [("composite_closure", False), ("include_all", False),
+                         ("include_all", True)]
     finally:
         mh4blend.unregister()
 
@@ -335,6 +338,7 @@ def test_dagor_conversion_operators_forward_explicit_sources(
                 "source_root": str(tmp_path),
                 "load_mode": "full-LOD",
                 "definition_policy": "reuse",
+                "relink_external": False,
             }),
         ]
     finally:

@@ -18,6 +18,7 @@ from ..core.materials import (
 )
 from ..core.model import MaterialResource
 from ..core.payload_publish_v2 import atomic_publish_bytes
+from .readonly_properties import existing_property_group
 
 __all__ = [
     "PreparedMaterialExport",
@@ -112,7 +113,7 @@ def _texture_token_from_path(authored_path, path: str) -> str:
 
 
 def _authored_dagormat(material):
-    dagormat = getattr(material, "dagormat", None)
+    dagormat = existing_property_group(material, "dagormat")
     shader_class = getattr(dagormat, "shader_class", "")
     if shader_class in (None, "", "None"):
         return None
@@ -120,7 +121,7 @@ def _authored_dagormat(material):
 
 
 def _dagor_texture_paths(dagormat) -> dict[str, str]:
-    textures = getattr(dagormat, "textures", None)
+    textures = existing_property_group(dagormat, "textures")
     if textures is None:
         return {}
     out = {}
@@ -164,7 +165,7 @@ def _dagor_parameter_value(value, path: str):
 
 
 def _dagor_params(dagormat) -> dict:
-    optional = getattr(dagormat, "optional", None)
+    optional = existing_property_group(dagormat, "optional")
     if optional is None:
         return {}
     try:
@@ -204,7 +205,7 @@ def material_class_for_export(material) -> str:
     every other value is returned verbatim and is still checked by the
     strict v4 codec.
     """
-    settings = getattr(material, "mh4blend", None)
+    settings = existing_property_group(material, "mh4blend")
     explicit = getattr(settings, "material_class", "")
     if explicit != "":
         return explicit
@@ -217,12 +218,13 @@ def _extract_resource(material) -> MaterialResource:
     # Preserve the canonical name diagnostic verbatim; identity is external to
     # the material grammar and must not be reclassified as a codec failure.
     validate_resource_name(material.name)
-    if not hasattr(material, "mh4blend"):
+    if not hasattr(type(material) if isinstance(material, bpy.types.ID) else material,
+                   "mh4blend"):
         raise MaterialValueError(
             "MH_E_MATERIAL_GRAMMAR", material.name,
             "material has no registered mh4blend property group")
-    settings = material.mh4blend
-    mode = settings.mode
+    settings = existing_property_group(material, "mh4blend")
+    mode = getattr(settings, "mode", "CLASS")
     if mode == "LIBRARY":
         if settings.twosided_override or settings.textures or settings.params:
             raise MaterialValueError(
@@ -238,7 +240,7 @@ def _extract_resource(material) -> MaterialResource:
         _dagor_texture_paths(dagormat) if dagormat is not None else {})
     textures = {}
     explicit_texture_slots = set()
-    for row in settings.textures:
+    for row in getattr(settings, "textures", ()):
         slot = f"tex{row.slot}"
         if slot in explicit_texture_slots:
             raise MaterialValueError(
@@ -254,7 +256,7 @@ def _extract_resource(material) -> MaterialResource:
 
     params = _dagor_params(dagormat) if dagormat is not None else {}
     explicit_param_names = set()
-    for row in settings.params:
+    for row in getattr(settings, "params", ()):
         if row.name in explicit_param_names:
             raise MaterialValueError(
                 "MH_E_MATERIAL_GRAMMAR", f"params.{row.name}",
@@ -267,7 +269,7 @@ def _extract_resource(material) -> MaterialResource:
             params[name], f"dagormat.optional.{name}")
 
     twosided = None
-    if settings.twosided_override:
+    if getattr(settings, "twosided_override", False):
         twosided = settings.twosided
     elif dagormat is not None:
         twosided = _dagor_twosided(dagormat)

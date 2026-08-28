@@ -1,0 +1,305 @@
+{
+	"devices": [
+		{
+			"deviceName": "DESKTOP-MM2SBHU",
+			"instance": "42107D144D932621A8B6F6A35B935684",
+			"instanceName": "DESKTOP-MM2SBHU-4784",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 11 (25H2) [10.0.26200.9168] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce RTX 3070",
+			"cPUModel": "AMD Ryzen 9 5900X 12-Core Processor            ",
+			"rAMInGB": 32,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.08.28-16.19.45",
+	"succeeded": 1,
+	"succeededWithWarnings": 0,
+	"failed": 2,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 0.42094990611076355,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "LowLevelPlaceholderPreservesNameAndTrs",
+			"fullTestPath": "Mimir.Audit.GameObj.LowLevelPlaceholderPreservesNameAndTrs",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"42107D144D932621A8B6F6A35B935684"
+			],
+			"duration": 0.015439499169588089,
+			"dateTime": "2026.08.28-16.19.44",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "GAMEOBJ_LOW_LEVEL leaves=1 child_components=0 label=1 reverse_bytes_equal=1 warning_count=1",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.44"
+				}
+			],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RegistryCollisionMustNotSpawn",
+			"fullTestPath": "Mimir.Audit.GameObj.RegistryCollisionMustNotSpawn",
+			"tags": [],
+			"state": "Fail",
+			"deviceInstance": [
+				"42107D144D932621A8B6F6A35B935684"
+			],
+			"duration": 0.35718020796775818,
+			"dateTime": "2026.08.28-16.19.44",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "GAMEOBJ_COLLISION token=dummy_pivot random=0 preview_plan=1 spawned=1 class=/Script/Engine.StaticMeshActor",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.44"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 gameObj must remain placeholder even when registry token matches' to be 0, but it was 1.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 192,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "GAMEOBJ_COLLISION token=loot_audit_gameobj random=1 preview_plan=1 spawned=1 class=/Script/Engine.StaticMeshActor",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 gameObj must remain placeholder even when registry token matches' to be 0, but it was 1.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 192,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_3.Untitled:PersistentLevel.DESTROYED_StaticMeshActor_CHILDACTOR_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_3.Untitled:PersistentLevel.DESTROYED_StaticMeshActor_CHILDACTOR_1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				}
+			],
+			"warnings": 2,
+			"errors": 2,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "UnknownMustAdmitPlaceholder",
+			"fullTestPath": "Mimir.Audit.GameObj.UnknownMustAdmitPlaceholder",
+			"tags": [],
+			"state": "Fail",
+			"deviceInstance": [
+				"42107D144D932621A8B6F6A35B935684"
+			],
+			"duration": 0.048330198973417282,
+			"dateTime": "2026.08.28-16.19.45",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/gameobj_audit_unknown_node_0b0294d14ea8c4cdb30a548406c2e2bf.gameobj_audit_unknown_node_0b0294d14ea8c4cdb30a548406c2e2bf: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:dummy_pivot is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/gameobj_audit_unknown_node_0b0294d14ea8c4cdb30a548406c2e2bf.gameobj_audit_unknown_node_0b0294d14ea8c4cdb30a548406c2e2bf: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:dummy_pivot is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "GAMEOBJ_UNKNOWN token=dummy_pivot random=0 source=0 source_error=[MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:dummy_pivot is absent from ActorClassRegistry] applied=0 applied_error=[MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:dummy_pivot is not a spawnable ActorClassRegistry entry] preview_plan=0 spawned=0 placement_error=[MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:dummy_pivot is not a spawnable ActorClassRegistry entry]",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 gameObj source admission must accept placeholder token without registry' to be true.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 161,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 gameObj applied graph must accept placeholder token without registry' to be true.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 162,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 fresh gameObj placement must have a per-leaf resolved plan' to be not null.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 162,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/gameobj_audit_unknown_option_0b0294d14ea8c4cdb30a548406c2e2bf.gameobj_audit_unknown_option_0b0294d14ea8c4cdb30a548406c2e2bf: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:loot_audit_gameobj is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/gameobj_audit_unknown_option_0b0294d14ea8c4cdb30a548406c2e2bf.gameobj_audit_unknown_option_0b0294d14ea8c4cdb30a548406c2e2bf: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:loot_audit_gameobj is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "GAMEOBJ_UNKNOWN token=loot_audit_gameobj random=1 source=0 source_error=[MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:loot_audit_gameobj is absent from ActorClassRegistry] applied=0 applied_error=[MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:loot_audit_gameobj is not a spawnable ActorClassRegistry entry] preview_plan=0 spawned=0 placement_error=[MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:loot_audit_gameobj is not a spawnable ActorClassRegistry entry]",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 gameObj source admission must accept placeholder token without registry' to be true.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 161,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 gameObj applied graph must accept placeholder token without registry' to be true.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 162,
+					"timestamp": "2026.08.28-16.19.45"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "Expected 'doc13 fresh gameObj placement must have a per-leaf resolved plan' to be not null.",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\MimirComposite_GameObj_Audit_20260828\\Plugins\\MimirComposite\\Source\\MimirCompositeTests\\Private\\MHGameObjAdmissionAudit.cpp",
+					"lineNumber": 162,
+					"timestamp": "2026.08.28-16.19.45"
+				}
+			],
+			"warnings": 4,
+			"errors": 6,
+			"artifacts": []
+		}
+	]
+}

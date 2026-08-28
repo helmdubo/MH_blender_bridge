@@ -1,0 +1,126 @@
+"""Isolated real dag4blend operator/datamodel probe; no MH reader involved."""
+import hashlib
+import json
+from pathlib import Path
+import pickle
+import sys
+import traceback
+
+import bpy
+import addon_utils
+
+OUT = Path(r"E:\MimirComposite_V5S6_1_DagorProbe_20260828")
+ADDON = OUT / "user/scripts/addons/dag4blend"
+CORPUS = Path(r"H:\_Gaijin_Entertainment\EnlistedCDK\ActiveMatterCDK.2024.11.11\EnlistedCDK\develop\assets")
+
+
+def plain(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "keys"):
+        return {str(k): plain(value[k]) for k in value.keys()}
+    try:
+        return [plain(v) for v in value]
+    except TypeError:
+        return repr(value)
+
+
+def snapshot():
+    return {
+        "objects": [{"name": o.name, "type": o.type, "parent": o.parent.name if o.parent else None,
+                     "collections": sorted(c.name for c in o.users_collection),
+                     "instance_collection": o.instance_collection.name if o.instance_collection else None,
+                     "id_properties": plain(o), "dagorprops": plain(o.dagorprops) if hasattr(o, "dagorprops") else None,
+                     "matrix_local": [list(row) for row in o.matrix_local]} for o in sorted(bpy.data.objects, key=lambda x:x.name)],
+        "collections": [{"name": c.name, "id_properties": plain(c),
+                         "objects": sorted(o.name for o in c.objects),
+                         "children": sorted(x.name for x in c.children)} for c in sorted(bpy.data.collections, key=lambda x:x.name)],
+        "scenes": [{"name": s.name, "id_properties": plain(s)} for s in bpy.data.scenes],
+        "texts": {t.name: t.as_string() for t in bpy.data.texts},
+    }
+
+
+def main():
+    sys.path.insert(0, str(ADDON.parent))
+    bpy.utils.refresh_script_paths()
+    addon_utils.enable("dag4blend", default_set=True, persistent=False)
+    import dag4blend
+    from dag4blend.cmp import cmp_import
+    from dag4blend.helpers import getters, texts
+    from dag4blend.popup import popup_functions
+
+    assert Path(dag4blend.__file__).resolve() == (ADDON / "__init__.py").resolve()
+    assert Path(getters.get_addon_directory()).resolve() == ADDON.resolve()
+    # Background-only UI sinks. Reader, node construction, property assignment,
+    # project cache lookup and the actual dt.cmp_import operator are unchanged.
+    ui_calls = []
+    texts.show_text = lambda *args, **kwargs: ui_calls.append({"kind": "show_text"})
+    cmp_import.show_popup = lambda *args, **kwargs: ui_calls.append({"kind": "popup", "args": plain(args)})
+    popup_functions.show_popup = cmp_import.show_popup
+
+    pref = getters.get_preferences()
+    project = pref.projects.add()
+    project.name = "dagor_probe"
+    project.path = str(OUT / "inputs")
+    pref.project_active = "0"
+    # Existing source paths, cache hints only: no DAG or nested geometry loads.
+    assets = {
+        "normandy_vernacular_debris_wood": [["rendinst", str(CORPUS / "gameproj/normandy_invasion/entities/buildings/normandy_vernacular_buildings_large/composit_parts/normandy_vernacular_debris_wood.lod00.dag")]],
+        "normandy_decal_vernacular_debris": [["prefab", str(CORPUS / "gameproj/normandy_invasion/entities/terrain_decals/normandy_decal_vernacular_debris.dag")]],
+    }
+    assert all(Path(row[1]).is_file() for rows in assets.values() for row in rows)
+    with (ADDON / "dagor_probe.bin").open("wb") as cache:
+        pickle.dump(assets, cache)
+    # Remove factory objects, not owner scene data: --factory-startup is required.
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    result = {
+        "blender_version": bpy.app.version_string,
+        "blender_binary": bpy.app.binary_path,
+        "dag4blend_version": list(dag4blend.bl_info["version"]),
+        "dag4blend_loaded_path": dag4blend.__file__,
+        "dag4blend_installed_origin": r"C:\Users\helmd\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\dag4blend",
+        "cmp_import_sha256": hashlib.sha256((ADDON / "cmp/cmp_import.py").read_bytes()).hexdigest(),
+        "operator": "bpy.ops.dt.cmp_import",
+        "flags": {"with_sub_cmp": False, "with_dags": False, "with_lods": False, "refresh_cache": False},
+        "asset_hints": assets,
+        "limitations": ["UI popup/show-text rendering redirected only", "no geometry, recursive closure, MH conversion or runtime acceptance", "private project cache contains two real existing DAG path/type hints"],
+        "cases": [],
+    }
+    inputs = ["normandy_vernacular_debris_wood", "probe_root_collision_yes", "probe_root_place_type_3", "probe_local_parent_collision_yes", "probe_omitted_ent_name"]
+    for stem in inputs:
+        for t in list(bpy.data.texts):
+            bpy.data.texts.remove(t)
+        source = OUT / "inputs" / f"{stem}.composit.blk"
+        props = getters.get_local_props().cmp.importer
+        props.filepath = str(source)
+        props.refresh_cache = False
+        props.with_sub_cmp = False
+        props.with_dags = False
+        props.with_lods = False
+        status = bpy.ops.dt.cmp_import()
+        data = snapshot()
+        collection = bpy.data.collections.get(stem)
+        assert collection is not None, stem
+        data.update({"input": str(source), "input_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                     "status": sorted(status), "root_collection": stem,
+                     "root_collection_id_properties": plain(collection),
+                     "root_objects": [{"name":o.name, "parent":o.parent.name if o.parent else None,
+                                       "dagorprops": plain(o.dagorprops), "id_properties": plain(o)} for o in collection.objects]})
+        result["cases"].append(data)
+        (OUT / "reports" / f"{stem}.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
+        print("CASE " + stem + " " + json.dumps(data["root_objects"]), flush=True)
+    result["ui_calls"] = ui_calls
+    (OUT / "reports/dag4blend_datamodel.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
+    bpy.ops.wm.save_as_mainfile(filepath=str(OUT / "reports/dag4blend_probe.blend"))
+    print("DAG4BLEND_PROBE_DONE", flush=True)
+
+
+try:
+    main()
+except BaseException:
+    failure = traceback.format_exc()
+    (OUT / "reports/probe_failure.txt").write_text(failure, encoding="utf-8")
+    print(failure, flush=True)
+    raise

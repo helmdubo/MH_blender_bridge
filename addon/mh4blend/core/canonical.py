@@ -115,6 +115,7 @@ ERROR_CODES = frozenset(
         "MH_E_NAME_MISMATCH",
         "MH_E_TARGET_NAME_COLLISION",
         # warnings
+        "MH_W_DAGOR_CONSTRUCT_DROPPED",
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",
         "MH_W_DUPLICATE_RESOURCE_NAME",

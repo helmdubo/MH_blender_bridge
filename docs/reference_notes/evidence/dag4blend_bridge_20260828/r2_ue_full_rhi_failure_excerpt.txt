@@ -1,0 +1,58 @@
+Excerpt of marker_full.log; trailing whitespace removed for archival.
+The original full log and its SHA256 are recorded in r2_marker_ue_evidence.md.
+
+[2026.08.28-18.17.49:397][176]LogSavePackage: Moving 'E:/MimirComposite_GameObj_Audit_20260828/Saved/round_trip87229F0142BC2184127B36875D0A4DB3.tmp' to 'E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Materials/round_trip.uasset'
+[2026.08.28-18.17.49:470][176]LogSavePackage: Moving output files for package: /Game/MH/Generated/Materials/round_trip
+[2026.08.28-18.17.49:470][176]LogSavePackage: Moving 'E:/MimirComposite_GameObj_Audit_20260828/Saved/round_trip46052BEA42A70E2C42CEC3A727DE4123.tmp' to 'E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Materials/round_trip.uasset'
+[2026.08.28-18.17.49:481][176]LogSavePackage: Moving output files for package: /Game/MH/Generated/Materials/round_trip
+[2026.08.28-18.17.49:481][176]LogSavePackage: Moving 'E:/MimirComposite_GameObj_Audit_20260828/Saved/round_trip7F58F6324233010601BF388C0B2ED912.tmp' to 'E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Materials/round_trip.uasset'
+[2026.08.28-18.17.49:563][176]LogMHMaterialPublish: Display: SELF_PUBLISHED: round_trip.material
+[2026.08.28-18.17.49:578][176]LogMHMaterialPublish: Display: SELF_PUBLISHED: round_trip_failed_adopt.material
+[2026.08.28-18.17.49:589][177]LogAutomationController: Display: Test Completed. Result={Success} Name={ManagedRoundTrip} Path={Mimir.V4.Material.ManagedRoundTrip}
+[2026.08.28-18.17.49:589][177]LogAutomationController: BeginEvents: Mimir.V4.Material.ManagedRoundTrip
+[2026.08.28-18.17.49:589][177]LogAutomationController: Warning: LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Materials/round_trip (0x210BD68DE4E811FA) - The package to load does not exist on disk or in the loader [log]
+[2026.08.28-18.17.49:589][177]LogAutomationController: Warning: LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Materials/round_trip.round_trip' [log]
+[2026.08.28-18.17.49:589][177]LogAutomationController: EndEvents: Mimir.V4.Material.ManagedRoundTrip
+[2026.08.28-18.17.49:589][177]LogAutomationController: Sending RunTest TextureImportPersistence to CAC089454174F22CC8A2318E2EC200D6
+[2026.08.28-18.17.49:589][178]LogAutomationController: Display: Test Started. Name={TextureImportPersistence} Path={Mimir.V4.Material.TextureImportPersistence}
+[2026.08.28-18.17.49:594][178]LogAutomationWorker: Received RunTests TextureImportPersistence from 8640AD2448012CC82E5F2485EB6B2C82
+[2026.08.28-18.17.49:604][178]LogStreaming: Display: FlushAsyncLoading(462): 1 QueuedPackages, 0 AsyncPackages
+[2026.08.28-18.17.49:604][178]LogStreaming: Warning: LoadPackage: SkipPackage: /Game/MH/Generated/Textures/s2_persist_tex_n (0x33E3871CB078DB5B) - The package to load does not exist on disk or in the loader
+[2026.08.28-18.17.49:604][178]LogUObjectGlobals: Warning: Failed to find object 'Object /Game/MH/Generated/Textures/s2_persist_tex_n.s2_persist_tex_n'
+[2026.08.28-18.17.49:605][178]LogFactory: FactoryCreateFile: Texture with TextureFactory (0 0 E:/MimirComposite_GameObj_Audit_20260828/Saved/Mimir/MaterialTexturePersistence/s2_persist_tex_n.png)
+[2026.08.28-18.17.49:605][178]LogEditorFactories: Display: Image imported as : TSF BGRA8
+[2026.08.28-18.17.49:624][178]LogWindows: Error: appError called: Assertion failed: MipView.GammaSpace == LayerData.SourceGammaSpace [File:D:\build\++UE5\Sync\Engine\Source\Runtime\Engine\Private\TextureDerivedDataTask.cpp] [Line: 422]
+
+
+[2026.08.28-18.17.49:624][178]LogWindows: Windows GetLastError: The operation completed successfully. (0)
+[2026.08.28-18.17.51:131][178]LogThreadingWindows: Error: Runnable thread Background Worker #18 crashed.
+[2026.08.28-18.17.51:131][178]LogWindows: Error: === Critical error: ===
+[2026.08.28-18.17.51:131][178]LogWindows: Error:
+[2026.08.28-18.17.51:131][178]LogWindows: Error: Assertion failed: MipView.GammaSpace == LayerData.SourceGammaSpace [File:D:\build\++UE5\Sync\Engine\Source\Runtime\Engine\Private\TextureDerivedDataTask.cpp] [Line: 422]
+[2026.08.28-18.17.51:131][178]LogWindows: Error:
+[2026.08.28-18.17.51:131][178]LogWindows: Error:
+[2026.08.28-18.17.51:131][178]LogWindows: Error:
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5a9a8448 UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe338f3ade UnrealEditor-Engine.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe338e66d3 UnrealEditor-Engine.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe338e8408 UnrealEditor-Engine.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe31bce631 UnrealEditor-Engine.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe31bce05e UnrealEditor-Engine.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5aac8418 UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe31e58a95 UnrealEditor-Engine.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ff677f81d6c UnrealEditor-Cmd.exe!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ff677f88dc5 UnrealEditor-Cmd.exe!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5a6143f7 UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5a6142cc UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5a63950e UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5a601185 UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5a88ecc4 UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5acf6cf8 UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007ffe5acefb0f UnrealEditor-Core.dll!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error: [Callstack] 0x00007fff358fccb7 KERNEL32.DLL!UnknownFunction []
+[2026.08.28-18.17.51:131][178]LogWindows: Error:
+[2026.08.28-18.17.51:131][178]LogWindows: Error: Crash in runnable thread Background Worker #18
+[2026.08.28-18.17.51:142][178]LogExit: Executing StaticShutdownAfterError
+[2026.08.28-18.17.51:149][178]LogWindows: FPlatformMisc::RequestExit(1, FRunnableThreadWin::GuardedRun.ExceptionHandler)
+[2026.08.28-18.17.51:149][178]LogWindows: FPlatformMisc::RequestExitWithStatus(1, 3, FRunnableThreadWin::GuardedRun.ExceptionHandler)
+[2026.08.28-18.17.51:149][178]LogCore: Engine exit requested (reason: Win RequestExit)

@@ -1,0 +1,2694 @@
+{
+  "blender_version": "4.5.12 LTS",
+  "blender_binary": "C:\\Program Files\\Blender Foundation\\Blender 4.5\\blender.exe",
+  "dag4blend_version": [
+    2,
+    12,
+    0
+  ],
+  "dag4blend_loaded_path": "E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\user\\scripts\\addons\\dag4blend\\__init__.py",
+  "dag4blend_installed_origin": "C:\\Users\\helmd\\AppData\\Roaming\\Blender Foundation\\Blender\\4.5\\scripts\\addons\\dag4blend",
+  "cmp_import_sha256": "e007ccff6231eaf230d54df33bb600ddb977cf22e30bff6d3d26869e2bbc28ba",
+  "operator": "bpy.ops.dt.cmp_import",
+  "flags": {
+    "with_sub_cmp": false,
+    "with_dags": false,
+    "with_lods": false,
+    "refresh_cache": false
+  },
+  "asset_hints": {
+    "normandy_vernacular_debris_wood": [
+      [
+        "rendinst",
+        "H:\\_Gaijin_Entertainment\\EnlistedCDK\\ActiveMatterCDK.2024.11.11\\EnlistedCDK\\develop\\assets\\gameproj\\normandy_invasion\\entities\\buildings\\normandy_vernacular_buildings_large\\composit_parts\\normandy_vernacular_debris_wood.lod00.dag"
+      ]
+    ],
+    "normandy_decal_vernacular_debris": [
+      [
+        "prefab",
+        "H:\\_Gaijin_Entertainment\\EnlistedCDK\\ActiveMatterCDK.2024.11.11\\EnlistedCDK\\develop\\assets\\gameproj\\normandy_invasion\\entities\\terrain_decals\\normandy_decal_vernacular_debris.dag"
+      ]
+    ]
+  },
+  "limitations": [
+    "UI popup/show-text rendering redirected only",
+    "no geometry, recursive closure, MH conversion or runtime acceptance",
+    "private project cache contains two real existing DAG path/type hints"
+  ],
+  "cases": [
+    {
+      "objects": [
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "collections": [
+        {
+          "name": "Collection",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "TRANSFER_COLLECTION",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "name": "normandy_decal_vernacular_debris",
+            "type": "prefab"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris",
+            "normandy_vernacular_debris_wood"
+          ],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "rendinst"
+          },
+          "objects": [],
+          "children": []
+        }
+      ],
+      "scenes": [
+        {
+          "name": "COMPOSITS",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/normandy_vernacular_debris_wood.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "GAMEOBJ",
+          "id_properties": {}
+        },
+        {
+          "name": "GEOMETRY",
+          "id_properties": {}
+        },
+        {
+          "name": "Scene",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/normandy_vernacular_debris_wood.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "TECH_STUFF",
+          "id_properties": {}
+        }
+      ],
+      "texts": {
+        "log": "'INFO': IMPORTING E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\normandy_vernacular_debris_wood.composit.blk\n'WARNING': Something went wrong on reading this line: \nplaceOnCollision:b=noaboveHt:r=2\n'INFO': IMPORTED normandy_vernacular_debris_wood\n"
+      },
+      "input": "E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\normandy_vernacular_debris_wood.composit.blk",
+      "input_sha256": "d2082dfb3c33754708a7eade0889ccb02dc67c40ad75665ce965d7ffa782acf2",
+      "status": [
+        "FINISHED"
+      ],
+      "root_collection": "normandy_vernacular_debris_wood",
+      "root_collection_id_properties": {
+        "name": "normandy_vernacular_debris_wood",
+        "type": "composit"
+      },
+      "root_objects": [
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          }
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          }
+        }
+      ]
+    },
+    {
+      "objects": [
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "collections": [
+        {
+          "name": "Collection",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "TRANSFER_COLLECTION",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "name": "normandy_decal_vernacular_debris",
+            "type": "prefab"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris",
+            "normandy_vernacular_debris_wood"
+          ],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "rendinst"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "probe_root_collision_yes",
+          "id_properties": {
+            "name": "probe_root_collision_yes",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris.001",
+            "normandy_vernacular_debris_wood.001"
+          ],
+          "children": []
+        }
+      ],
+      "scenes": [
+        {
+          "name": "COMPOSITS",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/probe_root_collision_yes.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "GAMEOBJ",
+          "id_properties": {}
+        },
+        {
+          "name": "GEOMETRY",
+          "id_properties": {}
+        },
+        {
+          "name": "Scene",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/normandy_vernacular_debris_wood.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "TECH_STUFF",
+          "id_properties": {}
+        }
+      ],
+      "texts": {
+        "log": "'INFO': IMPORTING E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_root_collision_yes.composit.blk\n'WARNING': Something went wrong on reading this line: \nplaceOnCollision:b=yes\n'INFO': IMPORTED probe_root_collision_yes\n"
+      },
+      "input": "E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_root_collision_yes.composit.blk",
+      "input_sha256": "640f25c921a2fa4cd26ced985ce3e515bc2b059da52a15453907c9c24cf3f473",
+      "status": [
+        "FINISHED"
+      ],
+      "root_collection": "probe_root_collision_yes",
+      "root_collection_id_properties": {
+        "name": "probe_root_collision_yes",
+        "type": "composit"
+      },
+      "root_objects": [
+        {
+          "name": "normandy_vernacular_debris_wood.001",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          }
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.001",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          }
+        }
+      ]
+    },
+    {
+      "objects": [
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.002",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_place_type_3"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.002",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_place_type_3"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "collections": [
+        {
+          "name": "Collection",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "TRANSFER_COLLECTION",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "name": "normandy_decal_vernacular_debris",
+            "type": "prefab"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris",
+            "normandy_vernacular_debris_wood"
+          ],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "rendinst"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "probe_root_collision_yes",
+          "id_properties": {
+            "name": "probe_root_collision_yes",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris.001",
+            "normandy_vernacular_debris_wood.001"
+          ],
+          "children": []
+        },
+        {
+          "name": "probe_root_place_type_3",
+          "id_properties": {
+            "name": "probe_root_place_type_3",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris.002",
+            "normandy_vernacular_debris_wood.002"
+          ],
+          "children": []
+        }
+      ],
+      "scenes": [
+        {
+          "name": "COMPOSITS",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/probe_root_place_type_3.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "GAMEOBJ",
+          "id_properties": {}
+        },
+        {
+          "name": "GEOMETRY",
+          "id_properties": {}
+        },
+        {
+          "name": "Scene",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/normandy_vernacular_debris_wood.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "TECH_STUFF",
+          "id_properties": {}
+        }
+      ],
+      "texts": {
+        "log": "'INFO': IMPORTING E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_root_place_type_3.composit.blk\n'WARNING': Something went wrong on reading this line: \nplace_type:i=3\n'INFO': IMPORTED probe_root_place_type_3\n"
+      },
+      "input": "E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_root_place_type_3.composit.blk",
+      "input_sha256": "764a1c2a0428c3276e16f1e0fb3a2138f5033d25fbf9c5e88b5e09b0ff4af245",
+      "status": [
+        "FINISHED"
+      ],
+      "root_collection": "probe_root_place_type_3",
+      "root_collection_id_properties": {
+        "name": "probe_root_place_type_3",
+        "type": "composit"
+      },
+      "root_objects": [
+        {
+          "name": "normandy_vernacular_debris_wood.002",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          }
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.002",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          }
+        }
+      ]
+    },
+    {
+      "objects": [
+        {
+          "name": "node",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_local_parent_collision_yes"
+          ],
+          "instance_collection": null,
+          "id_properties": {
+            "dagorprops": {
+              "placeOnCollision:b": true
+            }
+          },
+          "dagorprops": {
+            "placeOnCollision:b": true
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.002",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_place_type_3"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.003",
+          "type": "EMPTY",
+          "parent": "node",
+          "collections": [
+            "probe_local_parent_collision_yes"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "placeOnCollision:b": false,
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "placeOnCollision:b": false,
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.002",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_place_type_3"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.003",
+          "type": "EMPTY",
+          "parent": "node",
+          "collections": [
+            "probe_local_parent_collision_yes"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "collections": [
+        {
+          "name": "Collection",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "TRANSFER_COLLECTION",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "name": "normandy_decal_vernacular_debris",
+            "type": "prefab"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris",
+            "normandy_vernacular_debris_wood"
+          ],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "rendinst"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "probe_local_parent_collision_yes",
+          "id_properties": {
+            "name": "probe_local_parent_collision_yes",
+            "type": "composit"
+          },
+          "objects": [
+            "node",
+            "normandy_decal_vernacular_debris.003",
+            "normandy_vernacular_debris_wood.003"
+          ],
+          "children": []
+        },
+        {
+          "name": "probe_root_collision_yes",
+          "id_properties": {
+            "name": "probe_root_collision_yes",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris.001",
+            "normandy_vernacular_debris_wood.001"
+          ],
+          "children": []
+        },
+        {
+          "name": "probe_root_place_type_3",
+          "id_properties": {
+            "name": "probe_root_place_type_3",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris.002",
+            "normandy_vernacular_debris_wood.002"
+          ],
+          "children": []
+        }
+      ],
+      "scenes": [
+        {
+          "name": "COMPOSITS",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/probe_local_parent_collision_yes.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "GAMEOBJ",
+          "id_properties": {}
+        },
+        {
+          "name": "GEOMETRY",
+          "id_properties": {}
+        },
+        {
+          "name": "Scene",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/normandy_vernacular_debris_wood.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "TECH_STUFF",
+          "id_properties": {}
+        }
+      ],
+      "texts": {
+        "log": "'INFO': IMPORTING E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_local_parent_collision_yes.composit.blk\n'INFO': IMPORTED probe_local_parent_collision_yes\n"
+      },
+      "input": "E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_local_parent_collision_yes.composit.blk",
+      "input_sha256": "72c7a84bf8396ff2e1f0e6903692c3d8fe485b79cd3448345ae6c333632080b0",
+      "status": [
+        "FINISHED"
+      ],
+      "root_collection": "probe_local_parent_collision_yes",
+      "root_collection_id_properties": {
+        "name": "probe_local_parent_collision_yes",
+        "type": "composit"
+      },
+      "root_objects": [
+        {
+          "name": "node",
+          "parent": null,
+          "dagorprops": {
+            "placeOnCollision:b": true
+          },
+          "id_properties": {
+            "dagorprops": {
+              "placeOnCollision:b": true
+            }
+          }
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.003",
+          "parent": "node",
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          }
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.003",
+          "parent": "node",
+          "dagorprops": {
+            "placeOnCollision:b": false,
+            "type:t": "prefab"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "placeOnCollision:b": false,
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          }
+        }
+      ]
+    },
+    {
+      "objects": [
+        {
+          "name": "node",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_local_parent_collision_yes"
+          ],
+          "instance_collection": null,
+          "id_properties": {
+            "dagorprops": {
+              "placeOnCollision:b": true
+            }
+          },
+          "dagorprops": {
+            "placeOnCollision:b": true
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "node.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_omitted_ent_name"
+          ],
+          "instance_collection": "random.000",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "random"
+            },
+            "type:t": "random"
+          },
+          "dagorprops": {
+            "type:t": "random"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "node.002",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "random.000"
+          ],
+          "instance_collection": null,
+          "id_properties": {
+            "dagorprops": {
+              "weight:r": 2.0
+            },
+            "weight:r": 2.0
+          },
+          "dagorprops": {
+            "weight:r": 2.0
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "node.003",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_omitted_ent_name"
+          ],
+          "instance_collection": "random.001",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "random"
+            },
+            "type:t": "random"
+          },
+          "dagorprops": {
+            "type:t": "random"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "node.004",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "random.001"
+          ],
+          "instance_collection": null,
+          "id_properties": {
+            "dagorprops": {
+              "weight:r": 1.0
+            },
+            "weight:r": 1.0
+          },
+          "dagorprops": {
+            "weight:r": 1.0
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.002",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_place_type_3"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_decal_vernacular_debris.003",
+          "type": "EMPTY",
+          "parent": "node",
+          "collections": [
+            "probe_local_parent_collision_yes"
+          ],
+          "instance_collection": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "dagorprops": {
+              "placeOnCollision:b": false,
+              "type:t": "prefab"
+            },
+            "type:t": "prefab"
+          },
+          "dagorprops": {
+            "placeOnCollision:b": false,
+            "type:t": "prefab"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "normandy_vernacular_debris_wood"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.001",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_collision_yes"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.002",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "probe_root_place_type_3"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.003",
+          "type": "EMPTY",
+          "parent": "node",
+          "collections": [
+            "probe_local_parent_collision_yes"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "rendinst"
+            },
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.004",
+          "type": "EMPTY",
+          "parent": null,
+          "collections": [
+            "random.000"
+          ],
+          "instance_collection": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "dagorprops": {
+              "weight:r": 1.0,
+              "type:t": "rendinst"
+            },
+            "weight:r": 1.0,
+            "type:t": "rendinst"
+          },
+          "dagorprops": {
+            "weight:r": 1.0,
+            "type:t": "rendinst"
+          },
+          "matrix_local": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "collections": [
+        {
+          "name": "Collection",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "TRANSFER_COLLECTION",
+          "id_properties": {},
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_decal_vernacular_debris",
+          "id_properties": {
+            "name": "normandy_decal_vernacular_debris",
+            "type": "prefab"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris",
+            "normandy_vernacular_debris_wood"
+          ],
+          "children": []
+        },
+        {
+          "name": "normandy_vernacular_debris_wood.lods",
+          "id_properties": {
+            "name": "normandy_vernacular_debris_wood",
+            "type": "rendinst"
+          },
+          "objects": [],
+          "children": []
+        },
+        {
+          "name": "probe_local_parent_collision_yes",
+          "id_properties": {
+            "name": "probe_local_parent_collision_yes",
+            "type": "composit"
+          },
+          "objects": [
+            "node",
+            "normandy_decal_vernacular_debris.003",
+            "normandy_vernacular_debris_wood.003"
+          ],
+          "children": []
+        },
+        {
+          "name": "probe_omitted_ent_name",
+          "id_properties": {
+            "name": "probe_omitted_ent_name",
+            "type": "composit"
+          },
+          "objects": [
+            "node.001",
+            "node.003"
+          ],
+          "children": []
+        },
+        {
+          "name": "probe_root_collision_yes",
+          "id_properties": {
+            "name": "probe_root_collision_yes",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris.001",
+            "normandy_vernacular_debris_wood.001"
+          ],
+          "children": []
+        },
+        {
+          "name": "probe_root_place_type_3",
+          "id_properties": {
+            "name": "probe_root_place_type_3",
+            "type": "composit"
+          },
+          "objects": [
+            "normandy_decal_vernacular_debris.002",
+            "normandy_vernacular_debris_wood.002"
+          ],
+          "children": []
+        },
+        {
+          "name": "random.000",
+          "id_properties": {},
+          "objects": [
+            "node.002",
+            "normandy_vernacular_debris_wood.004"
+          ],
+          "children": []
+        },
+        {
+          "name": "random.001",
+          "id_properties": {},
+          "objects": [
+            "node.004"
+          ],
+          "children": []
+        }
+      ],
+      "scenes": [
+        {
+          "name": "COMPOSITS",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/probe_omitted_ent_name.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "GAMEOBJ",
+          "id_properties": {}
+        },
+        {
+          "name": "GEOMETRY",
+          "id_properties": {}
+        },
+        {
+          "name": "Scene",
+          "id_properties": {
+            "dag4blend": {
+              "cmp": {
+                "importer": {
+                  "filepath": "E:/MimirComposite_V5S6_1_DagorProbe_20260828/inputs/normandy_vernacular_debris_wood.composit.blk",
+                  "refresh_cache": 0,
+                  "with_sub_cmp": 0,
+                  "with_dags": 0,
+                  "with_lods": 0
+                },
+                "exporter": {
+                  "collection": {}
+                },
+                "tools": {
+                  "node": {},
+                  "collection": {},
+                  "parent_node": {},
+                  "parent_collection": {},
+                  "collection_to_convert": {}
+                }
+              },
+              "tools": {},
+              "importer": {
+                "includes": {},
+                "excludes": {},
+                "includes_re": {},
+                "excludes_re": {}
+              },
+              "exporter": {
+                "collection": {}
+              },
+              "baker": {
+                "lp_collection": {},
+                "hp_collection": {}
+              }
+            }
+          }
+        },
+        {
+          "name": "TECH_STUFF",
+          "id_properties": {}
+        }
+      ],
+      "texts": {
+        "log": "'INFO': IMPORTING E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_omitted_ent_name.composit.blk\n'INFO': IMPORTED probe_omitted_ent_name\n"
+      },
+      "input": "E:\\MimirComposite_V5S6_1_DagorProbe_20260828\\inputs\\probe_omitted_ent_name.composit.blk",
+      "input_sha256": "13517f45a5299c0aa0ef92e106fb3687737e0751b9c80f57bbc9ea827b89118b",
+      "status": [
+        "FINISHED"
+      ],
+      "root_collection": "probe_omitted_ent_name",
+      "root_collection_id_properties": {
+        "name": "probe_omitted_ent_name",
+        "type": "composit"
+      },
+      "root_objects": [
+        {
+          "name": "node.001",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "random"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "random"
+            },
+            "type:t": "random"
+          }
+        },
+        {
+          "name": "node.003",
+          "parent": null,
+          "dagorprops": {
+            "type:t": "random"
+          },
+          "id_properties": {
+            "dagorprops": {
+              "type:t": "random"
+            },
+            "type:t": "random"
+          }
+        }
+      ]
+    }
+  ],
+  "ui_calls": [
+    {
+      "kind": "show_text"
+    },
+    {
+      "kind": "popup",
+      "args": [
+        "finished in 0.0021 sec"
+      ]
+    },
+    {
+      "kind": "show_text"
+    },
+    {
+      "kind": "popup",
+      "args": [
+        "finished in 0.0015 sec"
+      ]
+    },
+    {
+      "kind": "show_text"
+    },
+    {
+      "kind": "popup",
+      "args": [
+        "finished in 0.001 sec"
+      ]
+    },
+    {
+      "kind": "popup",
+      "args": [
+        "finished in 0.001 sec"
+      ]
+    },
+    {
+      "kind": "popup",
+      "args": [
+        "finished in 0.0 sec"
+      ]
+    }
+  ]
+}

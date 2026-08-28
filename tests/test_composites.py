@@ -169,3 +169,73 @@ def test_read_rejects_noncanonical_filename_identity(tmp_path, filename):
     with pytest.raises(CompositeValueError) as excinfo:
         read_composite_file(path)
     assert excinfo.value.code == "MH_E_NONCANONICAL_RESOURCE_NAME"
+
+
+def test_place_type_and_seed_boundary_occupy_the_ratified_node_order():
+    resource = Composite("vehicle", [
+        Node("mesh", resource="hood", name="Hood",
+             transform=CompositeTransform(translation_cm=(1.0, 0.0, 0.0)),
+             profile="scatter", place_type=3, appearance_seed_boundary=True),
+    ])
+    document = composite_document(resource)
+    assert list(document["nodes"][0]) == [
+        "kind", "resource", "name", "transform", "profile", "place_type",
+        "appearance_seed_boundary"]
+    canonical = composite_json_bytes(resource)
+    assert composite_json_bytes(parse_composite(canonical)) == canonical
+    assert parse_composite(canonical, name="vehicle") == resource
+
+
+def test_absent_carriers_are_not_zero_and_defaults_stay_byte_identical():
+    plain = Composite("vehicle", [Node("group")])
+    assert composite_json_bytes(plain) == (
+        b'{\n  "v": 5,\n  "nodes": [\n    {\n      "kind": "group"\n    }\n  ]\n}\n')
+    node = parse_composite(composite_json_bytes(plain)).nodes[0]
+    assert node.place_type is None
+    assert node.appearance_seed_boundary is False
+    explicit_zero = Composite("vehicle", [Node("group", place_type=0)])
+    assert composite_json_bytes(explicit_zero) == (
+        b'{\n  "v": 5,\n  "nodes": [\n    {\n      "kind": "group",\n'
+        b'      "place_type": 0\n    }\n  ]\n}\n')
+    assert parse_composite(composite_json_bytes(explicit_zero)).nodes[0].place_type == 0
+    assert composite_json_bytes(
+        Composite("vehicle", [Node("group", appearance_seed_boundary=False)])
+    ) == composite_json_bytes(plain)
+
+
+@pytest.mark.parametrize("place_type", [7, 64, 2147483647])
+def test_unknown_nonnegative_place_type_passes_as_provenance(place_type):
+    document = {"v": 5, "nodes": [{"kind": "group", "place_type": place_type}]}
+    parsed = parse_composite(document)
+    assert parsed.nodes[0].place_type == place_type
+    assert json.loads(composite_json_bytes(parsed)) == document
+
+
+@pytest.mark.parametrize("place_type", [-1, 1.5, True, "3", None, 2147483648])
+def test_negative_or_non_integer_place_type_is_grammar(place_type):
+    with pytest.raises(CompositeValueError) as excinfo:
+        parse_composite({"v": 5, "nodes": [
+            {"kind": "group", "place_type": place_type}]})
+    assert excinfo.value.code == "MH_E_COMPOSITE_GRAMMAR"
+    if place_type is None:
+        # An absent DTO carrier is the "not stated" case, not a rejected value.
+        return
+    with pytest.raises(CompositeValueError) as writer:
+        composite_document(Composite("v", [Node("group", place_type=place_type)]))
+    assert writer.value.code == "MH_E_COMPOSITE_GRAMMAR"
+
+
+@pytest.mark.parametrize("value", [0, 1, "true", None])
+def test_non_boolean_seed_boundary_is_grammar(value):
+    with pytest.raises(CompositeValueError) as excinfo:
+        parse_composite({"v": 5, "nodes": [
+            {"kind": "group", "appearance_seed_boundary": value}]})
+    assert excinfo.value.code == "MH_E_COMPOSITE_GRAMMAR"
+
+
+@pytest.mark.parametrize("field", ["place_type", "appearance_seed_boundary"])
+def test_random_options_never_carry_node_metadata_carriers(field):
+    with pytest.raises(CompositeValueError) as excinfo:
+        parse_composite({"v": 5, "nodes": [{"kind": "random", "options": [
+            {"kind": "mesh", "resource": "hood", "weight": 1, field: 1}]}]})
+    assert excinfo.value.code == "MH_E_COMPOSITE_GRAMMAR"

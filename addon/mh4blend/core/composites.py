@@ -36,11 +36,12 @@ __all__ = [
 
 
 _TOKEN_RE = re.compile(r"^[a-z0-9_]+$")
-_KINDS = frozenset({"mesh", "actor", "composite", "group", "random"})
-_RESOURCE_KINDS = frozenset({"mesh", "actor", "composite"})
-_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty"})
+_KINDS = frozenset({"mesh", "actor", "composite", "group", "random", "gameobj"})
+_RESOURCE_KINDS = frozenset({"mesh", "actor", "composite", "gameobj"})
+_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "gameobj"})
 _NODE_FIELDS = frozenset({
-    "kind", "resource", "name", "transform", "profile", "options", "children",
+    "kind", "resource", "name", "transform", "profile", "place_type",
+    "appearance_seed_boundary", "options", "children",
 })
 _OPTION_FIELDS = frozenset({"kind", "resource", "weight"})
 _TRANSFORM_FIELDS = frozenset({"translation_cm", "rotation_quat", "scale"})
@@ -147,6 +148,30 @@ def _transform(value: Any, path: str, *, reader: bool) -> CompositeTransform:
     return CompositeTransform(translation, rotation, scale)
 
 
+def _place_type(value: Any, path: str) -> int:
+    """Admit one non-negative integer place_type as opaque source provenance.
+
+    Values outside the known ``0…6`` Dagor range are provenance and pass
+    unblocked; the field is never executed. Absence is decided by the caller
+    and is not the same statement as the explicit value zero.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _error(path, "place_type must be an integer")
+    if value < 0:
+        raise _error(path, "place_type must be greater than or equal to zero")
+    if value > 2147483647:
+        # The UE carrier stores this value in an int32; a wider integer could
+        # not round-trip and the two codecs must accept the same language.
+        raise _error(path, "place_type must be representable as a 32-bit integer")
+    return value
+
+
+def _appearance_seed_boundary(value: Any, path: str) -> bool:
+    if not isinstance(value, bool):
+        raise _error(path, "appearance_seed_boundary must be a boolean")
+    return value
+
+
 def _option_from_document(value: Any, path: str) -> RandomOption:
     if not isinstance(value, dict):
         raise _error(path, "option must be an object")
@@ -204,6 +229,14 @@ def _node_from_document(value: Any, path: str) -> Node:
     transform = (
         _transform(value["transform"], f"{path}.transform", reader=True)
         if "transform" in value else IDENTITY_TRANSFORM)
+    place_type = (
+        _place_type(value["place_type"], f"{path}.place_type")
+        if "place_type" in value else None)
+    appearance_seed_boundary = (
+        _appearance_seed_boundary(
+            value["appearance_seed_boundary"],
+            f"{path}.appearance_seed_boundary")
+        if "appearance_seed_boundary" in value else False)
     if kind == "random":
         if "options" not in value or not isinstance(value["options"], list):
             raise _error(f"{path}.options", "random requires a non-empty array")
@@ -224,7 +257,9 @@ def _node_from_document(value: Any, path: str) -> Node:
     children = [
         _node_from_document(child, f"{path}.children[{index}]")
         for index, child in enumerate(children_value)]
-    return Node(kind, transform, name, resource, profile, options, children)
+    return Node(
+        kind, transform, name, resource, profile, options, children,
+        place_type, appearance_seed_boundary)
 
 
 def _option_document(option: RandomOption, path: str) -> dict[str, Any]:
@@ -278,6 +313,14 @@ def _node_document(node: Node, path: str) -> dict[str, Any]:
         document["transform"] = transform_document
     if node.profile is not None:
         document["profile"] = _token(node.profile, f"{path}.profile")
+    # OPEN-V5-21 order: kind, resource, name, transform, profile, place_type,
+    # appearance_seed_boundary, options, children.  Both carriers are elided at
+    # their defaults so every existing document stays byte identical.
+    if node.place_type is not None:
+        document["place_type"] = _place_type(node.place_type, f"{path}.place_type")
+    if _appearance_seed_boundary(
+            node.appearance_seed_boundary, f"{path}.appearance_seed_boundary"):
+        document["appearance_seed_boundary"] = True
     if node.kind == "random":
         if not isinstance(node.options, list) or not node.options:
             raise _error(f"{path}.options", "random requires a non-empty list")

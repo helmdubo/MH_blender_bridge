@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.439" timestamp="2026-08-28T22:18:49.298896+04:00" hostname="DESKTOP-MM2SBHU"><testcase classname="tests.test_dag4blend_publication_bpy" name="test_public_command_exports_dagor_mesh_without_mutating_scene" time="0.168"><failure message="mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['bridge_mesh', 'mesh:bridge_mesh', 'mesh_placement']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'bridge_mesh' is a dag4blend definition (type='rendinst', name='bridge_mesh'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-935/test_public_command_exports_da0')
+
+    def test_public_command_exports_dagor_mesh_without_mutating_scene(tmp_path):
+        source, _documents, _inputs, mesh, _material, legacy = _fixture(tmp_path)
+        placement = bpy.data.objects.new("mesh_placement", None)
+        legacy.objects.link(placement)
+        placement.instance_type = "COLLECTION"
+        placement.instance_collection = mesh
+        placement.location.x = 2.0
+        placement.select_set(True)
+        bpy.context.view_layer.objects.active = placement
+        before = _snapshot()
+&gt;       report = export_composite_closure_collection(
+            legacy, source, source_root=source, mode=CLOSURE_MODE_INCLUDE_ALL)
+
+tests\test_dag4blend_publication_bpy.py:159: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+addon\mh4blend\scene\export_closure.py:951: in export_composite_closure_collection
+    plan = prepare_composite_closure_export(
+addon\mh4blend\scene\export_closure.py:439: in prepare_composite_closure_export
+    _validate_direct_bindings(collection)
+addon\mh4blend\scene\export_closure.py:377: in _validate_direct_bindings
+    _raise(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+code = 'MH_E_INVALID_RESOURCE_SOURCE'
+subjects = ['mesh:bridge_mesh', 'mesh_placement', 'bridge_mesh']
+message = "loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'bridge_mesh' is...lend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)"
+
+    def _raise(code: str, subjects, message: str) -&gt; None:
+&gt;       raise MHValidationError(code, subjects, message)
+E       mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ['bridge_mesh', 'mesh:bridge_mesh', 'mesh_placement']: loaded closure dependency is unmanaged; exact MH Collection identity stamps are required. Collection 'bridge_mesh' is a dag4blend definition (type='rendinst', name='bridge_mesh'), not an MH one: its contents are dag4blend-shaped and publishing them as a v5 source would be wrong. Convert it with 'Convert dag4blend Scene Composite' (mh.convert_dag4blend_composite), or convert the authoritative *.composit.blk with 'Import Dagor Composite' (mh.import_dagor_composite)
+
+addon\mh4blend\scene\export_closure.py:168: MHValidationError</failure></testcase></testsuite></testsuites>

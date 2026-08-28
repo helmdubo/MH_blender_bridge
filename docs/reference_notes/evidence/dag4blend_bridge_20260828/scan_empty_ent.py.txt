@@ -1,0 +1,134 @@
+"""Metadata-only source census; not the Dagor or MH production parser."""
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import time
+from collections import Counter, defaultdict
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, r"E:\MimirComposite_DagorInventory_20260828_R2")
+import inventory
+
+OUT = Path(r"E:\MimirComposite_V5S6_1_DagorProbe_20260828")
+
+
+def classify(block):
+    names = block.values.get("name", [])
+    if not names:
+        return "missing_name"
+    if len(names) != 1:
+        return "duplicate_name"
+    attr = names[0]
+    if attr["type"] != "t" or not attr["quoted"]:
+        return "nonliteral_or_wrongtype_name"
+    return "explicit_empty" if attr["value"] == "" else "explicit_nonempty"
+
+
+def main():
+    inventory.self_test()
+    test, _, _, errors = inventory.scan('node { ent { name:t=""; } ent { name:t="real:rendinst"; } } // ent{name:t="";}\n')
+    assert not errors and classify(test[2]) == "explicit_empty" and classify(test[3]) == "explicit_nonempty"
+    command = ["rg", "--files", "--hidden", "--no-ignore", "-g", "*.composit.blk", str(inventory.ROOT)]
+    initial = subprocess.run(command, capture_output=True, check=True, text=True).stdout.splitlines()
+    paths = sorted(Path(p) for p in initial)
+    filesets = defaultdict(set)
+    occurrences = Counter()
+    mall_occurrences = Counter()
+    examples = defaultdict(list)
+    issues = []
+    manifest = []
+    start = time.monotonic()
+    def bump(key, relative, n=1):
+        filesets[key].add(relative)
+        occurrences[key] += n
+        if relative.startswith(inventory.MALL):
+            mall_occurrences[key] += n
+    for index, path in enumerate(paths, 1):
+        before = path.stat()
+        raw = path.read_bytes()
+        after = path.stat()
+        relative = path.relative_to(inventory.ROOT).as_posix()
+        sha = hashlib.sha256(raw).hexdigest()
+        manifest.append({"path": relative, "sha256": sha, "size": len(raw)})
+        if (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
+            issues.append({"path": relative, "issue": "changed during read"})
+        blocks, _, _, errors = inventory.scan(raw.decode("utf-8-sig"))
+        issues.extend({"path": relative, "issue": e} for e in errors)
+        for block in blocks:
+            if block.name == "ent":
+                bump("ent_blocks", relative)
+                ent_kind = classify(block)
+                bump("ent:" + ent_kind, relative)
+                if ent_kind in ("explicit_empty", "missing_name"):
+                    bump("dag4blend_default:empty_ent", relative)
+                if ent_kind in ("missing_name", "nonliteral_or_wrongtype_name") and len(examples[ent_kind]) < 8:
+                    examples[ent_kind].append({"path": relative, "sha256": sha, "nodepath": block.path,
+                                              "line": block.line, "name_attributes": block.values.get("name", [])})
+            children = [blocks[child] for child in block.children if blocks[child].name == "ent"]
+            if block.name != "node" or not children:
+                continue
+            bump("nodes_with_direct_ent", relative)
+            kinds = Counter(classify(child) for child in children)
+            default_empty = kinds["explicit_empty"] + kinds["missing_name"]
+            if default_empty:
+                bump("dag4blend_default:nodes_with_empty", relative)
+                if default_empty == len(children):
+                    bump("dag4blend_default:all_empty_nodes", relative)
+                elif default_empty + kinds["explicit_nonempty"] == len(children):
+                    bump("dag4blend_default:mixed_empty_nonempty_nodes", relative)
+                else:
+                    bump("dag4blend_default:empty_plus_unknown_nodes", relative)
+            if kinds["explicit_empty"]:
+                bump("nodes_with_explicit_empty_ent", relative)
+                if kinds["explicit_empty"] == len(children):
+                    kind = "all_empty_nodes"
+                elif kinds["explicit_empty"] + kinds["explicit_nonempty"] == len(children):
+                    kind = "mixed_empty_nonempty_nodes"
+                else:
+                    kind = "empty_plus_unknown_name_nodes"
+                bump(kind, relative)
+                if len(examples[kind]) < 8 or relative.startswith(inventory.MALL):
+                    examples[kind].append({"path": relative, "sha256": sha,
+                                          "nodepath": block.path, "line": block.line,
+                                          "option_counts": dict(kinds),
+                                          "empty_nodepaths": [c.path for c in children if classify(c) == "explicit_empty"]})
+            elif kinds["explicit_nonempty"] == len(children):
+                bump("all_nonempty_nodes", relative)
+            else:
+                bump("unknown_name_nodes", relative)
+        if index % 4000 == 0:
+            print(f"empty-ent scan {index}/{len(paths)} ({time.monotonic()-start:.1f}s)", flush=True)
+    final = subprocess.run(command, capture_output=True, check=True, text=True).stdout.splitlines()
+    manifest_bytes = b"".join((json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode() for row in manifest)
+    digest = hashlib.sha256(manifest_bytes).hexdigest()
+    (OUT / "reports/empty_ent_manifest.jsonl").write_bytes(manifest_bytes)
+    results = {
+        "root": str(inventory.ROOT), "scope": "all *.composit.blk; includes not expanded",
+        "file_count": len(paths), "mall_file_count": sum(r["path"].startswith(inventory.MALL) for r in manifest),
+        "path_inventory_stable": sorted(initial) == sorted(final), "manifest_sha256": digest,
+        "previous_manifest_sha256": "fca1b1f644b6f73ae2a83e89ee9f87321e9bb69850facbba02498b1ed6bb0d4f",
+        "matches_previous_manifest": digest == "fca1b1f644b6f73ae2a83e89ee9f87321e9bb69850facbba02498b1ed6bb0d4f",
+        "counts": {k: {"files": len(v), "occurrences": occurrences[k],
+                       "mall_files": sum(p.startswith(inventory.MALL) for p in v),
+                       "mall_occurrences": mall_occurrences[k]} for k,v in sorted(filesets.items())},
+        "examples": dict(examples), "issues": issues,
+        "scanner_sha256": hashlib.sha256(Path(inventory.__file__).read_bytes()).hexdigest(),
+        "census_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "definitions": {"empty": "exactly one quoted name:t whose value is exactly the empty string; no trimming",
+                        "mixed": "a node's direct ent children include both explicit-empty and explicit-nonempty and no unknown name",
+                        "all_empty": "every direct ent child has an explicit-empty name; no topology/runtime inference",
+                        "unknown": "missing, duplicate, wrong-type or nonliteral name; never silently classified as explicitly empty",
+                        "dag4blend_default": "separate model-derived counts: omitted name defaults to empty in actual cmp_ent; explicit-empty and missing-name source counts retained separately; wrong-type/nonliteral/duplicate remain unknown"},
+        "limitations": ["comment/string-aware structural declaration scanner, not complete BLK syntax validation",
+                        "counts are source facts, not MH/Dagor import-success counts",
+                        "no include expansion or effective type/runtime semantics", "file sets overlap; do not sum file counts across categories",
+                        "per-file stability checks are not a global atomic filesystem snapshot"],
+    }
+    (OUT / "reports/empty_ent_inventory.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(json.dumps({k:results[k] for k in ("file_count", "mall_file_count", "manifest_sha256", "matches_previous_manifest", "counts", "issues")}, indent=2), flush=True)
+
+
+if __name__ == "__main__":
+    main()

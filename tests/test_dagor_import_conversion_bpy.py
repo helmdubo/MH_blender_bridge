@@ -508,7 +508,7 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
     document, discovered = convert_dag4blend_collection(source)
     assert document.name == "legacy_vehicle"
     assert list(discovered) == [
-        ("mesh", "wheel"), ("actor", "driver"),
+        ("mesh", "wheel"), ("gameobj", "driver"),
         ("composite", "nested_variant")]
     assert document.nodes[0].kind == "group"
     assert [child.kind for child in document.nodes[0].children] == [
@@ -530,9 +530,11 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
         key=lambda obj: obj.mh4blend.option_index,
     )
     assert [obj.instance_collection for obj in lifted] == [
-        bpy.data.collections["wheel"], bpy.data.collections["driver.actor"],
+        bpy.data.collections["wheel"], None,
         bpy.data.collections["nested_variant.composite"]]
-    assert lifted[1].instance_collection is not actor
+    assert lifted[1].mh4blend.kind == "gameobj"
+    assert lifted[1]["mh_composite_resource"] == "driver"
+    assert bpy.data.collections.get("driver.actor") is None
     nested_target = bpy.data.collections["nested_variant.composite"]
     converted_nested_random = next(
         obj for obj in nested_target.objects if obj.mh4blend.kind == "random")
@@ -601,7 +603,7 @@ def test_dag4blend_p2_preview_never_silently_replaces_profile_authority(tmp_path
     node = _empty("scatter_preview", source)
     node["offset_x:p2"] = [10.0, 2.0]
     node["mh_composite_profile"] = "mirror_is_not_authority"
-    with pytest.raises(ValueError, match="lossless dag4blend conversion") as caught:
+    with pytest.raises(ValueError, match="dag4blend scene adapter") as caught:
         convert_dag4blend_collection(source)
     assert "collection:legacy_profile/object:scatter_preview" in str(caught.value)
     assert "offset_x:p2" in str(caught.value)

@@ -7,11 +7,180 @@ STOP до owner-решения.
 
 `OPEN-V5-1`…`OPEN-V5-14` РЕШЕНЫ owner — нормативный текст в 10 §§6.3, 6.4,
 13. Вопросы `OPEN-V5-15`…`OPEN-V5-18` перенесены из owner freeze
-`12_v5_s6_1_s6_2_slices.md` §9 до реализации затронутых частей S6.2.
+`12_v5_s6_1_s6_2_slices.md` §9 до реализации затронутых частей S6.3
+(новая нумерация — `13_v5_s6_1_dag4blend_bridge.md`). OPEN-V5-17/18 закрыты
+owner'ом в документе 13 §8; OPEN-V5-15/16 остаются открытыми.
 Их временные правила не блокируют S6.1 и не разрешают начинать следующий
 production-срез до приёмки/merge предыдущего.
 Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
 `OPEN-V4-24` document-world прямо superseded parent-local контрактом v5.
+
+## OPEN-V5-19 — неисполняемый gameObj и исполняемый MH actor
+
+**Контекст.** Документ 13 §1.4 требует для всех `gameObj` сохранять имя/TRS,
+не создавая UE actor/code даже при совпадении имени с ActorClassRegistry.
+Существующее представление `gameobj → kind: actor` (10 §6.4) не содержит
+происхождения. Source admission (`MHCompositeCompiler::ResolveActorClass`)
+и applied graph отклоняют отсутствующий registry token; зарегистрированный
+token материализуется через `UChildActorComponent::SetChildActorClass`.
+На базе `5f566c7` независимый Automation probe получил два RED:
+unknown ordinary/random actor не проходит admission; registry collision
+создаёт настоящий AStaticMeshActor. Отдельный низкоуровневый placeholder
+GREEN сохраняет имя/TRS, но обычный импорт до него не доходит.
+`name` — display-only, а у options поля `name` нет; скрытым discriminator
+он служить не может. Подробности и исходники пробы — квитанция V5-S6.1.
+
+**Вопрос.** Какое wire-представление/carrier owner утверждает для
+неисполняемого `gameObj` на source → asset → plan → runtime → обратный export,
+включая random options, без изменения семантики существующих MH actor leaves?
+
+**Временное fail-closed правило.** STOP gameObj end-to-end части нового
+моста; его новая публикация не пропускает actor-bearing closure до решения.
+Не ослаблять общий actor admission, не отключать все actor leaves, не
+назначать поведение по имени/пустому registry и не вводить скрытый carrier.
+
+**Статус. РЕШЕНО OWNER — документ 13 R2 §6.4: новый kind `marker`.**
+Обычный узел и random option сохраняют имя/TRS в производном плане без
+исполняемых leaves и registry lookup; блокировка выше — история checkpoint.
+**Поправка owner 2026-08-29:** kind переименован `marker` → `gameobj` без
+изменения семантики (док 13, «Поправки owner 2026-08-29» п.1); UE-политика
+остаётся placeholder-only.
+
+## OPEN-V5-20 — dag4blend теряет корневые placement controls
+
+**Контекст.** Документ 13 §2.1 требует измерить наследование на реальной
+`normandy_vernacular_debris_wood.composit.blk` и при необходимости разрешить
+его по иерархии Empty. Проба настоящего `bpy.ops.dt.cmp_import` в dag4blend
+2.12.0 показала: исходный root `placeOnCollision=no`, а также синтетические
+root `placeOnCollision=yes` и `place_type=3` дают одинаковые два parent=None
+Empty без корневых controls. Root Collection содержит только name/type;
+root Empty не существует. Локальные свойства parent Empty сохраняются,
+child без локального свойства его не получает. Значит одноуровневое
+наследование внутри Empty-дерева восстановимо, document-root значение — нет.
+Измерения выполнялись на private copy установленного dag4blend без правок
+его parser/model; они сохранены в квитанции V5-S6.1.
+
+**Вопрос.** Как доставлять потерянные корневые controls: разрешить явный
+carrier в dag4blend с именем/типом, заданным owner, либо отдельно разрешить
+чтение исходного root-блока с точной привязкой к legacy Collection? Текущий
+путь `.composit.blk` в 13 §7 вне scope, а угадывать нулевое значение нельзя.
+
+**Временное fail-closed правило.** STOP acceptance наследования и
+lossless placement carrier для этого маршрута. Не объявлять отсутствие
+данных равным `place_type=0`, не патчить установленный/reference dag4blend
+и не вводить скрытое чтение исходника. Рабочие explicit/local controls
+не доказывают сохранность document-root controls.
+
+**Статус. РЕШЕНО OWNER — документ 13 R2 §§3, 8: частичная совместимость.**
+Сценовый адаптер не восстанавливает корневые настройки и не объявляет
+отсутствие свойства доказательством нуля в BLK. Отчёт называет
+невосстановимые данные; базовый экспорт этим не блокируется.
+**Подтверждено owner 2026-08-29:** overlay/carrier в dag4blend не вводится;
+частичная совместимость окончательна (док 13, «Поправки» п.3).
+
+## OPEN-V5-21 — полный canonical node order с profile и новыми metadata
+
+**Контекст.** Документ 13 §2.1 отсылает к формату документа 12 §1, где
+порядок узла задан как `kind → resource → name → transform → placement →
+appearance_seed_boundary → options → children`. Существующее нормативное
+поле `profile` в этой последовательности пропущено. Оба действующих codec
+пишут его после transform, перед options. Узел может одновременно иметь
+profile и два новых поля, поэтому их относительный порядок влияет на
+canonical bytes, raw hash, AppliedHash и closure hash.
+
+**Вопрос.** Каков полный порядок полей такого узла? Например, сохраняется
+ли `... transform → profile → placement → appearance_seed_boundary →
+options → children`? Нужен точный порядок, не выбор реализации.
+
+**Временное fail-closed правило.** STOP новых canonical codec-векторов
+и записи двух metadata-полей до ратификации порядка. Existing profile,
+формула ResolvedSignature и замороженные random goldens не меняются.
+«Не затрагивать подпись» трактуется как неизменность формулы и подписей
+неизменённых документов (13 acceptance 11), не как исключение metadata
+из source/closure hash или canonical extract.
+
+**Статус. РЕШЕНО OWNER — подтверждено при передаче 13 R2 / 12 R3.**
+Полный порядок: `kind → resource → name → transform → profile → placement →
+appearance_seed_boundary → options → children`, закреплён в 10 §6.1.
+Пропущенный profile в приложенной редакции 12 не удаляет действующее поле.
+
+## OPEN-V5-22 — доказательство равенства повторно экспортируемого FBX
+
+**Контекст.** 13 R2 §§5, 9.8 требует переиспользовать существующий payload
+по инвентаризации и сравнению содержимого Source Root, без scene stamps.
+Реальный `prepare_fbx_collection → stage_prepared_fbx` на неизменённом
+writer `5f566c7`, Blender 4.5.12, дал разные raw bytes при двух экспортах
+неизменённой сцены: изменился `CreationTimeStamp/Millisecond`.
+В двух свежих процессах различаются также пять мест с numeric FBX IDs
+(Document/Geometry/Model/Connections). Это не гипотеза о serializer.
+Существующий `parse_mesh_fbx` возвращает одинаковый план не только для этих
+файлов, но и после изменения вершины x=1 → x=2; `_authority_fingerprint`
+тоже не изменился. Оба являются структурным admission, не полной выжимкой
+геометрии. Их равенство не даёт права пропустить публикацию изменённого меша.
+Измерения: `docs/reference_notes/evidence/dag4blend_bridge_20260828/`
+(`fbx_reuse_process_*.json`, `fbx_reuse_cross_process.json`).
+
+**Вопрос.** Какой контракт равенства owner утверждает для direct-export:
+детерминированные transport bytes (фиксированная политика служебного времени
+и IDs в принадлежащем MH writer), либо точное сравнение полного содержимого
+FBX с явно заданными исключениями служебных полей и переименованием IDs?
+Второй вариант требует полной выжимки, а не текущего structural scan.
+В обоих случаях raw hash исходного файла остаётся raw hash; новые stamps,
+manifest или «тот же размер/имя значит тот же mesh» не предлагаются.
+
+**Статус. РЕШЕНО OWNER 2026-08-29.** Перезапись разрешена: повторный
+direct export загруженного меша всегда публикует поверх существующего
+payload через штатный staged replace path (со snapshot/failure boundaries);
+доказательство равенства содержимого не требуется и не блокирует.
+Незагруженные source-зависимости по-прежнему переиспользуются;
+байт-идентичный canonical JSON по-прежнему не переписывается.
+Acceptance 8 дока 13 в части «не переписаны» сужен owner'ом до
+незагруженных payload'ов и canonical JSON. Прежнее правило ниже — история.
+
+**Временное fail-closed правило (история).** STOP только повторной публикации direct
+dag4blend mesh, когда одновременно есть загруженный authoring input и
+существующий source FBX: отказ до staging/replace. Не объявлять равенство по
+структурному скану, не переписывать молча каждый FBX и не нормализовать его
+байты самовольно. Первая публикация нового mesh, source-only unloaded reuse
+и canonical JSON reuse остаются открыты. Native MH export не переопределён.
+
+**Статус (история). ОТКРЫТ — блокировал repeat-export/partial-retry
+acceptance с mesh; снят owner-решением выше.**
+
+## OPEN-V5-23 — Blender-carrier двух новых узловых metadata
+
+**Контекст.** 13 R2 §7 задаёт wire-поля `placement` и
+`appearance_seed_boundary`, а §9.3 требует равенство native-MH и dag4blend
+DTO/байтов. 10 §6.4 задаёт typed-authority и точные имена существующих
+Blender-свойств (`kind/weight/option_index/profile`) и их зеркал; двух новых
+носителей в PropertyGroup и правила зеркал ни в 10, ни в 13 R2/12 R3 нет.
+После обычного импорта `.composite` в native MH-сцену хранить эти поля
+негде. Просто принять их в кодеке и не сохранить при materialize/extract
+означало бы тихую потерю при следующем экспорте. Неприкреплённый hidden
+JSON/datablock означал бы новую authority, как в прежнем OPEN-V5-9.
+
+**Вопрос.** Подтверждает ли owner typed `mh4blend.placement_mode`
+(отсутствие/none + шесть wire-режимов) и
+`mh4blend.appearance_seed_boundary` (bool, false по умолчанию)?
+Нужны ли неавторитетные ID-зеркала, и если нужны — каковы точные имена?
+Это только носители metadata, не Seed в Blender и не исполнение placement.
+Canonical order уже решён OPEN-V5-21 и не переоткрывается.
+
+**Временное fail-closed правило.** STOP новых metadata-carrier/codecs и
+их round-trip acceptance; наблюдаемые соответствующие свойства даговской
+сцены блокируют export до staging с именами свойств и NodePath.
+Не опускать их молча, не придумывать hidden carrier/зеркала. Базовый direct
+export без этих полей, marker, empty, режимы и compatibility report открыты.
+
+**Статус. РЕШЕНО OWNER 2026-08-29.** Wire-формат ратифицирован лаконичным:
+скалярный опциональный `"place_type": <int>` вместо объекта `placement`
+(док 13, «Поправки» п.2) и `"appearance_seed_boundary": <bool>` без
+изменений. Выбор имён native carriers owner делегировал исполнителю в
+рамках этого формата; выбрано: typed PropertyGroup
+`mh4blend.place_type` (IntProperty, `-1` = не задано, писать в JSON только
+при `>= 0`) и `mh4blend.appearance_seed_boundary` (BoolProperty,
+default `false`, опускается при false). Неавторитетные ID-зеркала не
+вводятся. Прежнее fail-closed правило снимается реализацией carriers.
 
 ## OPEN-V5-15 — inline `p2` в даговском узле
 
@@ -26,7 +195,7 @@ production-срез до приёмки/merge предыдущего.
 `_lossless_stop` сохраняется; ни новое имя ресурса, ни inline-грамматика
 исполнителем не изобретаются.
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть S6.2.**
+**Статус. ОТКРЫТ — owner freeze 12 §9 и 13 §8; затронутая часть S6.3.**
 
 ## OPEN-V5-16 — значение `MH_APPEARANCE_CHANNELS`
 
@@ -40,7 +209,7 @@ production-срез до приёмки/merge предыдущего.
 appearance-goldens. Это дословная временная policy 12 §9, не новый выбор
 исполнителя и не разрешение менять существующие layout/random goldens.
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть S6.2.**
+**Статус. ОТКРЫТ — owner freeze 12 §9 и 13 §8; затронутая часть S6.3.**
 
 ## OPEN-V5-17 — `project_max_trace_distance`
 
@@ -54,7 +223,9 @@ placement, но не исполняет мировое прижатие.
 самостоятельно. Настройка не входит ни в один cross-host хэш; мировой
 placement-provider в S6.2 не реализуется.
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть pre-S7 контракта.**
+**Статус. РЕШЕНО OWNER — закрыт как неприменимый, документ 13 §§2.1, 8.**
+Прижатия не будет; дистанция и настройка не вводятся. Прежнее временное
+правило выше сохранено только как история и больше не блокирует работу.
 
 ## OPEN-V5-18 — роль служебных `gameObj`-маркеров
 
@@ -71,9 +242,10 @@ placement-provider в S6.2 не реализуется.
 `Marker` или `ActorClass` по имени. Роль `Marker` после явного маппинга
 сохраняет узел с transform/placement, но не порождает leaf (12 §8).
 
-**Статус. ОТКРЫТ — owner freeze 12 §9; затронутая часть S6.2.**
-Инвентаризация корпуса собирает факты и кандидатов для owner, не закрывает
-вопрос автоматически и не меняет registry.
+**Статус. РЕШЕНО OWNER — документ 13 §§1.4, 8, единое правило placeholder.**
+Все `gameObj` сохраняют имя и трансформ, но не порождают UE actor/code;
+реестр ролей не вводится. Это owner-решение, не вывод из инвентаризации.
+Прежнее временное правило выше сохранено только как история.
 
 ## OPEN-V5-14 — thumbnail в S5 после отключения renderer и authority его Seed
 

@@ -1,10 +1,11 @@
-"""Lossless Dagor-to-MH composite conversion inside Blender.
+"""Dagor BLK conversion and a read-only adapter of dag4blend scene data.
 
 Two sources are admitted by the V5-S3 contract: authoritative
 ``*.composit.blk`` files and an already imported dag4blend collection.  Both
-are converted to the same Source Protocol v5 DTOs before the shared
-transactional materializer is called.  Dagor helper collections are inspected
-only to lift options; they never become MH authority.
+produce the same Source Protocol v5 DTOs. The scene route has partial
+compatibility: it cannot reconstruct data dag4blend already discarded.
+Direct export never materializes, adopts or relinks Blender datablocks.
+The optional explicit scene conversion still uses the shared materializer.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from ..core.validate import MHValidationError
 from .import_fbx import LOAD_MODE_FULL_LOD
 from .resource_markers import DEFINITION_REUSE
 from .import_composite import materialize_composite_documents
+from .readonly_properties import existing_property_group as _existing_settings
 
 __all__ = [
     "convert_dag4blend_collection",
@@ -55,6 +57,7 @@ __all__ = [
     "import_dagor_composite_file",
     "load_dagor_composite_bundle",
     "load_dagor_composite_documents",
+    "publish_dag4blend_composite_collection",
 ]
 
 
@@ -64,6 +67,7 @@ _DAGOR_TYPE_TO_KIND = {
     "prefab": "mesh",
     "gameobj": "actor",
 }
+_DAG4BLEND_TYPE_TO_KIND = {**_DAGOR_TYPE_TO_KIND, "gameobj": "gameobj"}
 _MISSING = object()
 
 
@@ -514,8 +518,21 @@ def _mapping_value(mapping, key):
     return _MISSING
 
 
+def _dagor_settings(owner):
+    # dagorprops is a dynamic key/value bag, not the MH typed carrier. Read
+    # that same saved bag even when a .blend is opened without dag4blend RNA;
+    # absence of its Python descriptor must not erase weights or p2 controls.
+    if isinstance(owner, bpy.types.ID):
+        value = owner.get("dagorprops")
+        if value is not None and not hasattr(value, "keys"):
+            _raise("MH_E_INVALID_RESOURCE_SOURCE", [owner.name, "dagorprops"],
+                   "saved dagorprops must be a key/value mapping")
+        return value
+    return getattr(owner, "dagorprops", None)
+
+
 def _dagor_property(owner, key):
-    value = _mapping_value(getattr(owner, "dagorprops", None), key)
+    value = _mapping_value(_dagor_settings(owner), key)
     if value is not _MISSING:
         return value
     return _mapping_value(owner, key)
@@ -525,6 +542,18 @@ _DAG4BLEND_PLACEMENT_KEYS = frozenset({
     "offset_x:p2", "offset_y:p2", "offset_z:p2",
     "rot_x:p2", "rot_y:p2", "rot_z:p2",
     "scale:p2", "yscale:p2", "include", "include:t",
+})
+
+# dag4blend keeps these four declarations; owner doc13 §7 maps them onto the
+# two ratified node carriers. Absence stays absence: it is never evidence that
+# the authoritative BLK said zero.
+_PLACE_TYPE_KEY = "place_type:i"
+_PLACE_ON_COLLISION_KEY = "placeoncollision:b"
+_IGNORE_PARENT_APPEARANCE_KEY = "ignoreparentinstseed:b"
+_USE_PARENT_APPEARANCE_KEY = "useparentinstseed:b"
+_DAG4BLEND_METADATA_KEYS = frozenset({
+    _PLACE_TYPE_KEY, _PLACE_ON_COLLISION_KEY,
+    _IGNORE_PARENT_APPEARANCE_KEY, _USE_PARENT_APPEARANCE_KEY,
 })
 
 
@@ -537,16 +566,96 @@ def _mapping_keys(mapping):
         return ()
 
 
+def _dag4blend_metadata_claims(obj):
+    """Collect the declarations dag4blend preserved, dagorprops winning."""
+
+    claims = {}
+    for mapping in (obj, _dagor_settings(obj)):
+        for key in _mapping_keys(mapping):
+            folded = key.casefold()
+            if folded not in _DAG4BLEND_METADATA_KEYS:
+                continue
+            value = _mapping_value(mapping, key)
+            if value is not _MISSING:
+                claims[folded] = (key, value)
+    return claims
+
+
+def _dagor_flag(key, value, subjects):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    _raise(
+        "MH_E_COMPOSITE_GRAMMAR", [*subjects, key],
+        f"dag4blend {key} must be a boolean declaration")
+
+
+def _dag4blend_source_metadata(obj, provenance, node_path, *, option=False):
+    """Map preserved dag4blend declarations onto the two node carriers."""
+
+    claims = _dag4blend_metadata_claims(obj)
+    if option and claims:
+        # Node metadata has no random-option wire position; dropping it here
+        # would be exactly the silent loss this carrier exists to prevent.
+        _raise(
+            "MH_E_COMPOSITE_GRAMMAR",
+            [provenance, *sorted(key for key, _value in claims.values())],
+            "dag4blend random options cannot carry node place_type or "
+            f"appearance_seed_boundary metadata at NodePath {node_path}")
+
+    place_type = None
+    declared = claims.get(_PLACE_TYPE_KEY)
+    if declared is not None:
+        key, value = declared
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            _raise(
+                "MH_E_COMPOSITE_GRAMMAR", [provenance, key],
+                f"dag4blend {key} must be a non-negative integer at NodePath "
+                f"{node_path}; unknown non-negative values pass as provenance")
+        place_type = int(value)
+    collision = claims.get(_PLACE_ON_COLLISION_KEY)
+    if collision is not None:
+        key, value = collision
+        # An explicit place_type always outranks the legacy boolean shorthand.
+        if _dagor_flag(key, value, [provenance]) and place_type is None:
+            place_type = 1
+
+    boundaries = {}
+    ignored = claims.get(_IGNORE_PARENT_APPEARANCE_KEY)
+    if ignored is not None:
+        key, value = ignored
+        boundaries[_dagor_flag(key, value, [provenance])] = key
+    inherited = claims.get(_USE_PARENT_APPEARANCE_KEY)
+    if inherited is not None:
+        key, value = inherited
+        if not _dagor_flag(key, value, [provenance]):
+            # Owner ratified this declaration only as an explicit false. A
+            # negated form has no ratified meaning; guessing one would invent
+            # semantics, so it stays fail-closed.
+            _raise(
+                "MH_E_COMPOSITE_GRAMMAR", [provenance, key],
+                f"dag4blend {key} is admitted only as an explicit false "
+                f"appearance_seed_boundary at NodePath {node_path}")
+        boundaries[False] = key
+    if len(boundaries) > 1:
+        _raise(
+            "MH_E_COMPOSITE_GRAMMAR", [provenance, *sorted(boundaries.values())],
+            "dag4blend appearance_seed_boundary declarations contradict each "
+            f"other at NodePath {node_path}")
+    return place_type, next(iter(boundaries), False)
+
+
 def _dag4blend_profile(obj, provenance, *, option=False):
     """Admit only the normative typed carrier; never approximate p2 as tm."""
 
     carrier_keys = sorted({
         key
-        for mapping in (getattr(obj, "dagorprops", None), obj)
+        for mapping in (_dagor_settings(obj), obj)
         for key in _mapping_keys(mapping)
         if key.casefold() in _DAG4BLEND_PLACEMENT_KEYS
     })
-    settings = getattr(obj, "mh4blend", None)
+    settings = _existing_settings(obj, "mh4blend")
     profile = "" if settings is None else settings.profile
     if profile:
         try:
@@ -565,13 +674,20 @@ def _dag4blend_profile(obj, provenance, *, option=False):
         _raise(
             "MH_E_COMPOSITE_GRAMMAR",
             [provenance, *carrier_keys],
-            "lossless dag4blend conversion refuses p2/include placement data "
+            "dag4blend scene adapter refuses p2/include placement data "
             "without the exact typed mh4blend.profile authority; matrix_local "
-            "is only a preview/base and cannot replace deviation semantics")
+            "is only a preview/base and cannot replace deviation semantics; "
+            f"parameters: {', '.join(carrier_keys)}")
     return profile or None
 
 
 def _resource_identity(collection, owner, provenance):
+    mh_markers = [key for key in ("mh_resource_kind", "mh_resource_name")
+                  if key in collection]
+    if mh_markers:
+        _raise(
+            "MH_E_INVALID_RESOURCE_SOURCE", [provenance, collection.name, *mh_markers],
+            "dag4blend resource cannot carry partial or mixed MH identity")
     name = _mapping_value(collection, "name")
     type_name = _mapping_value(collection, "type")
     if type_name is _MISSING and owner is not None:
@@ -584,7 +700,7 @@ def _resource_identity(collection, owner, provenance):
         _raise(
             "MH_E_COMPOSITE_GRAMMAR", [provenance, collection.name],
             "dag4blend resource requires explicit collection 'type' or type:t")
-    kind = _DAGOR_TYPE_TO_KIND.get(type_name.casefold())
+    kind = _DAG4BLEND_TYPE_TO_KIND.get(type_name.casefold())
     if kind is None:
         _raise(
             "MH_E_UNSUPPORTED_NODE_KIND", [provenance, type_name],
@@ -605,7 +721,7 @@ def _is_random_helper(obj) -> bool:
 
 
 def _option_weight(option, provenance) -> float:
-    value = _mapping_value(getattr(option, "dagorprops", None), "weight:r")
+    value = _mapping_value(_dagor_settings(option), "weight:r")
     if value is _MISSING:
         value = _mapping_value(option, "weight:r")
     if value is _MISSING:
@@ -639,7 +755,8 @@ def _dag4blend_local(obj, subjects):
     return _canonical_local_transform(matrix, subjects)
 
 
-def convert_dag4blend_collection(collection):
+def convert_dag4blend_collection(
+        collection, *, allow_prefab_as_mesh_lossy=False, warnings=None):
     """Return ``(Composite, resource_overrides)`` from imported dag4blend data."""
 
     if collection is None or bpy.data.collections.get(collection.name) is not collection:
@@ -674,7 +791,51 @@ def convert_dag4blend_collection(collection):
 
     overrides = {}
 
-    def convert_object(obj, parent_world, ancestor_subjects=()):
+    def warn(node_path, subject, message):
+        warning = {
+            "code": "MH_W_DAGOR_CONSTRUCT_DROPPED",
+            "node_path": node_path,
+            "subjects": [subject],
+            "message": message,
+        }
+        if warnings is not None:
+            warnings.append(warning)
+        else:
+            # Standalone DTO callers must not silently lose reached constructs
+            # merely because they did not request the structured export report.
+            import warnings as python_warnings
+            python_warnings.warn(
+                f"{warning['code']}: {subject}: {message}", stacklevel=2)
+
+    def inspect_properties(obj, subject, node_path, *, option=False):
+        reached_keys = {
+            key for mapping in (_dagor_settings(obj), obj)
+            for key in _mapping_keys(mapping)}
+        metadata = _dag4blend_source_metadata(
+            obj, subject, node_path, option=option)
+        keys = sorted(key for key in reached_keys if key.casefold() in {
+            "label", "label:t", "require", "colors"})
+        for key in keys:
+            warn(node_path, subject, f"Dropped Dagor {key}; it is never executed")
+        return metadata
+
+    def resource_identity(source, obj, subject, node_path):
+        kind, name = _resource_identity(source, obj, subject)
+        source_type = _mapping_value(source, "type")
+        if source_type is _MISSING:
+            source_type = _dagor_property(obj, "type:t")
+        if isinstance(source_type, str) and source_type.casefold() == "prefab":
+            if not allow_prefab_as_mesh_lossy:
+                _raise(
+                    "MH_E_INVALID_RESOURCE_SOURCE", [subject, name],
+                    "Dagor prefab requires explicit Allow Prefab as Mesh (Lossy); "
+                    "collision/gameplay semantics cannot be preserved")
+            warn(node_path, subject,
+                 f"Prefab {name} exported as mesh by explicit policy; "
+                 "collision/gameplay semantics are not preserved")
+        return kind, name
+
+    def convert_object(obj, parent_world, node_path, ancestor_subjects=()):
         resource_label = ""
         instance = obj.instance_collection
         if instance is not None:
@@ -683,8 +844,10 @@ def convert_dag4blend_collection(collection):
                 resource_label = f"/resource:{candidate}"
         subject = (
             f"collection:{collection.name}/object:{obj.name}"
-            f"{resource_label}")
+            f"{resource_label}/NodePath:{node_path}")
         subjects = [*ancestor_subjects, subject]
+        place_type, appearance_seed_boundary = inspect_properties(
+            obj, subject, node_path)
         profile = _dag4blend_profile(obj, subject)
         transform, local = _dag4blend_local(obj, subjects)
         world = parent_world @ local
@@ -705,7 +868,12 @@ def convert_dag4blend_collection(collection):
                     "dag4blend random helper child collections are unsupported")
             total = 0.0
             for option_index, option_obj in enumerate(helper.objects):
-                option_subject = f"{subject}/ent[{option_index}]:{option_obj.name}"
+                option_subject = (
+                    f"{subject}/ent[{option_index}]:{option_obj.name}"
+                    f"/NodePath:{node_path}/options[{option_index}]")
+                option_path = f"{node_path}/options[{option_index}]"
+                inspect_properties(
+                    option_obj, option_subject, option_path, option=True)
                 _dag4blend_profile(option_obj, option_subject, option=True)
                 if option_obj.type != "EMPTY":
                     _raise(
@@ -713,11 +881,12 @@ def convert_dag4blend_collection(collection):
                         "dag4blend random options must be Empty objects")
                 option_collection = option_obj.instance_collection
                 if option_collection is None:
-                    _raise(
-                        "MH_E_COMPOSITE_GRAMMAR", [option_subject],
-                        "dag4blend random option requires explicit resource collection")
-                option_kind, option_name = _resource_identity(
-                    option_collection, option_obj, option_subject)
+                    # An unbound ent is the explicit Dagor "nothing" option,
+                    # not an unresolved resource guessed from its display name.
+                    option_kind, option_name = "empty", None
+                else:
+                    option_kind, option_name = resource_identity(
+                        option_collection, option_obj, option_subject, option_path)
                 weight = _option_weight(option_obj, option_subject)
                 try:
                     total = math.fsum((total, weight))
@@ -726,24 +895,34 @@ def convert_dag4blend_collection(collection):
                         "MH_E_COMPOSITE_GRAMMAR", [subject],
                         "dag4blend random option total must be finite and positive")
                 options.append(RandomOption(option_kind, weight, option_name))
-                _register_override(
-                    overrides, (option_kind, option_name),
-                    option_collection, option_subject)
-            if not options or not math.isfinite(total) or total <= 0.0:
+                if option_collection is not None:
+                    _register_override(
+                        overrides, (option_kind, option_name),
+                        option_collection, option_subject)
+            if not options or not math.isfinite(total):
+                _raise(
+                    "MH_E_COMPOSITE_GRAMMAR", [subject],
+                    "dag4blend random node requires a finite positive option total")
+            if all(option.kind == "empty" for option in options):
+                # Dagor clears an all-empty entList. Keep the structural frame
+                # and children, but there is no entity and no selection draw.
+                kind, options = "group", []
+            elif total <= 0.0:
                 _raise(
                     "MH_E_COMPOSITE_GRAMMAR", [subject],
                     "dag4blend random node requires a finite positive option total")
         elif obj.instance_collection is None:
             kind = "group"
         else:
-            kind, resource = _resource_identity(
-                obj.instance_collection, obj, subject)
+            kind, resource = resource_identity(
+                obj.instance_collection, obj, subject, node_path)
             _register_override(
                 overrides, (kind, resource), obj.instance_collection, subject)
 
         converted_children = [
-            convert_object(child, world, tuple(subjects))
-            for child in children[obj.as_pointer()]
+            convert_object(
+                child, world, f"{node_path}/children[{index}]", tuple(subjects))
+            for index, child in enumerate(children[obj.as_pointer()])
         ]
         return Node(
             kind,
@@ -752,21 +931,25 @@ def convert_dag4blend_collection(collection):
             profile=profile,
             options=options,
             children=converted_children,
+            place_type=place_type,
+            appearance_seed_boundary=appearance_seed_boundary,
         )
 
     document = Composite(root_name, [
-        convert_object(obj, Matrix.Identity(4)) for obj in roots
+        convert_object(obj, Matrix.Identity(4), f"{root_name}:nodes[{index}]")
+        for index, obj in enumerate(roots)
     ])
     return document, overrides
 
 
-def convert_dag4blend_collection_closure(collection):
+def _dag4blend_collection_bundle(
+        collection, *, allow_prefab_as_mesh_lossy=False, warnings=None):
     """Recursively convert all explicit composite definitions and options.
 
     Composite resource collections become documents, never overrides.  Only
-    Mesh definition collections cross into the shared materializer as explicit
-    preloaded resources. Actor collections remain transport hints only; their
-    lossless tokens receive canonical MH placeholder collections.
+    Mesh definition collections cross into the writer as explicit read-only
+    inputs. Named gameobj collections carry tokens only: they have no resource
+    payload, actor class binding or materialization requirement.
     """
 
     documents = {}
@@ -774,7 +957,9 @@ def convert_dag4blend_collection_closure(collection):
     resource_overrides = {}
 
     def load(source_collection):
-        document, discovered = convert_dag4blend_collection(source_collection)
+        document, discovered = convert_dag4blend_collection(
+            source_collection, allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
+            warnings=warnings)
         previous = composite_sources.get(document.name)
         if previous is not None:
             if previous is not source_collection:
@@ -798,32 +983,129 @@ def convert_dag4blend_collection_closure(collection):
                     resource_overrides, key, resource_collection,
                     f"composite:{document.name}/{kind}:{name}")
             else:
-                # Actor collections in a dag4blend working scene are transport
-                # hints, not MH definition authority.  The explicit token is
-                # retained in the DTO and the materializer creates the
-                # canonical empty ACTOR_PLACEHOLDERS definition.
-                if kind != "actor":
+                # GameObj identity belongs to the node/option, not a separately
+                # published resource. A registry collision must never turn it
+                # into an executable actor.
+                if kind not in {"actor", "gameobj"}:
                     _raise(
                         "MH_E_UNSUPPORTED_NODE_KIND", [kind, name],
                         "unsupported dag4blend closure resource kind")
 
     load(collection)
-    return documents, resource_overrides
+    return documents, resource_overrides, composite_sources
+
+
+def convert_dag4blend_collection_closure(collection):
+    """Return DTOs and mesh inputs without changing the legacy scene."""
+    documents, overrides, _sources = _dag4blend_collection_bundle(collection)
+    return documents, overrides
+
+
+def _dag4blend_external_relinks(composite_sources, working_scene):
+    """Freeze only working-scene placements outside every source definition.
+
+    Membership, not the current view layer or selection, defines ownership.
+    A multiply linked object is protected if ANY service scene/definition owns
+    it; changing the shared Object would otherwise mutate the migration source.
+    """
+    from .resource_markers import COLLECTION_KIND_KEY, COLLECTION_RESOURCE_KEY
+    from .service_scenes import SERVICE_SCENE_NAMES
+
+    service_names = set(SERVICE_SCENE_NAMES) | {
+        "COMPOSITS", "GEOMETRY", "GAMEOBJ", "TECH_STUFF"}
+    if working_scene is None or working_scene.name in service_names:
+        return ()
+    protected = set()
+    protected_collections = set()
+    source_names = {
+        collection.as_pointer(): name
+        for name, collection in composite_sources.items()}
+
+    def protect(definition):
+        identity = definition.as_pointer()
+        if identity not in protected_collections:
+            protected_collections.add(identity)
+            protected.update(obj.as_pointer() for obj in definition.all_objects)
+
+    for scene in bpy.data.scenes:
+        if scene.name in service_names:
+            protected.update(obj.as_pointer() for obj in scene.objects)
+    for definition in bpy.data.collections:
+        if (definition.name.startswith("random.")
+                or definition.get("type") is not None
+                or COLLECTION_KIND_KEY in definition
+                or COLLECTION_RESOURCE_KEY in definition
+                or definition.as_pointer() in source_names):
+            protect(definition)
+    for obj in bpy.data.objects:
+        instance = obj.instance_collection
+        owner_type = _dagor_property(obj, "type:t")
+        typed = getattr(obj, "mh4blend", None)
+        if instance is not None and (
+                _is_random_helper(obj)
+                or (isinstance(owner_type, str)
+                    and owner_type.casefold() in _DAGOR_TYPE_TO_KIND)
+                or (typed is not None and typed.kind in {
+                    "mesh", "actor", "composite"})):
+            protect(instance)
+    planned = []
+    for obj in working_scene.objects:
+        source = obj.instance_collection
+        if (obj.as_pointer() in protected or source is None
+                or source.as_pointer() not in source_names):
+            continue
+        if obj.library is not None:
+            _raise(
+                "MH_E_INVALID_RESOURCE_SOURCE", [obj.name, source.name],
+                "external linked placement cannot be relinked in place")
+        planned.append((obj, source, source_names[source.as_pointer()]))
+    return tuple(planned)
+
+
+def _schedule_dag4blend_relinks(
+        context, planned, *, composite_sources, working_scene):
+    transaction = context["transaction"]
+    resources = context["resources"]
+
+    def finalize():
+        # Validate the entire set before the first pointer changes.
+        eligible = {
+            obj.as_pointer(): (source, name)
+            for obj, source, name in _dag4blend_external_relinks(
+                composite_sources, working_scene)}
+        for obj, source, name in planned:
+            if (bpy.data.objects.get(obj.name) is not obj
+                    or obj.instance_collection is not source
+                    or eligible.get(obj.as_pointer()) != (source, name)):
+                _raise(
+                    "MH_E_INVALID_RESOURCE_SOURCE", [obj.name, name],
+                    "external placement or its ownership changed during conversion")
+        for obj, source, name in planned:
+            transaction.add_rollback(
+                lambda obj=obj, source=source: setattr(
+                    obj, "instance_collection", source))
+            obj.instance_collection = resources[("composite", name)]
+
+    transaction.add_finalize(finalize)
 
 
 def import_dag4blend_composite_collection(
         collection, *, source_root=None, load_mode=LOAD_MODE_FULL_LOD,
-        definition_policy=DEFINITION_REUSE) -> dict:
+        definition_policy=DEFINITION_REUSE, relink_external=False) -> dict:
     """Convert an existing dag4blend definition through the shared materializer."""
 
-    documents, overrides = convert_dag4blend_collection_closure(collection)
+    documents, overrides, composite_sources = _dag4blend_collection_bundle(
+        collection)
+    working_scene = bpy.context.scene
+    relinks = (_dag4blend_external_relinks(composite_sources, working_scene)
+               if relink_external else ())
     root_kind, root_name = _resource_identity(
         collection, None, f"collection:{collection.name}")
     if root_kind != "composite":
         _raise(
             "MH_E_RESOURCE_KIND_MISMATCH", [collection.name, root_kind],
             "dag4blend source collection must have explicit type 'composit'")
-    return materialize_composite_documents(
+    report = materialize_composite_documents(
         documents,
         root_name=root_name,
         source_root=source_root,
@@ -831,4 +1113,72 @@ def import_dag4blend_composite_collection(
         resource_overrides=overrides,
         load_mode=load_mode,
         definition_policy=definition_policy,
+        before_commit=lambda context: _schedule_dag4blend_relinks(
+            context, relinks, composite_sources=composite_sources,
+            working_scene=working_scene),
     )
+    report["relinked_placements"] = [obj.name for obj, _source, _name in relinks]
+    return report
+
+
+def _dag4blend_compatibility_report():
+    return {
+        "route": "dag4blend_scene_partial_compatibility",
+        "preserved": ["hierarchy", "parent-local transforms", "random options and weights",
+                      "nested composites", "mesh LODs", "materials", "gameObj tokens",
+                      "node place_type", "ignoreParentInstSeed"],
+        "unrecoverable": ["document-root properties", "aboveHt", "useCollisionNormal",
+                          "quantizeTm", "label", "require", "colors", "xScale",
+                          "snake_case aliases"],
+        "blocked": ["prefab without explicit lossy opt-in", "inline p2 without typed profile"],
+    }
+
+
+def publish_dag4blend_composite_collection(
+        collection, output_dir, *, source_root,
+        mode="include_all", lock_root=None, allow_prefab_as_mesh_lossy=False,
+        _boundary_hook=None) -> dict:
+    """Publish source files from the scene DTOs without changing any datablock."""
+    from .dag4blend_publication import prepare_dag4blend_publication
+    from .export_closure import (
+        publish_composite_closure_export,
+        stage_composite_closure_export,
+    )
+
+    warnings = []
+    documents, overrides, _sources = _dag4blend_collection_bundle(
+        collection, allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
+        warnings=warnings)
+    _kind, root_name = _resource_identity(
+        collection, None, f"collection:{collection.name}")
+    plan = prepare_dag4blend_publication(
+        documents, overrides, root_name=root_name, source_root=source_root,
+        output_dir=output_dir, mode=mode)
+    compatibility = _dag4blend_compatibility_report()
+    try:
+        with tempfile.TemporaryDirectory(prefix="mh-dag4blend-stage-") as staging:
+            staged = stage_composite_closure_export(plan, staging_dir=staging)
+            report = publish_composite_closure_export(
+                plan, staged, lock_root=lock_root, _boundary_hook=_boundary_hook)
+    except (OSError, RuntimeError, ValueError) as exc:
+        # A published prefix may already contain intentionally dropped data.
+        # Preserve its warnings alongside the exact partial-publication sets.
+        exc.warnings = warnings
+        exc.compatibility = compatibility
+        raise
+    root_row = plan.row_for(plan.closure.root)
+    root_staged = next(row for row in staged if row.planned.key == plan.closure.root)
+    report.update({
+        "mode": mode,
+        "root": str(plan.closure.root),
+        "closure": [str(key) for key in plan.full_closure_keys],
+        "staged": [str(row.key) for row in plan.payloads],
+        "filepath": str(root_row.target),
+        "resource_name": root_name,
+        "nodes": len(documents[root_name].nodes),
+        "bytes": len(root_staged.payload),
+        "written": str(plan.closure.root) in report["published"],
+        "warnings": warnings,
+        "compatibility": compatibility,
+    })
+    return report

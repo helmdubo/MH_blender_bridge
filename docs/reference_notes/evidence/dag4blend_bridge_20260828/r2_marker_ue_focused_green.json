@@ -1,0 +1,329 @@
+{
+	"devices": [
+		{
+			"deviceName": "DESKTOP-MM2SBHU",
+			"instance": "0169EC0D487518F3DB7F6B9E00FBF2CE",
+			"instanceName": "DESKTOP-MM2SBHU-15548",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 11 (25H2) [10.0.26200.9168] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce RTX 3070",
+			"cPUModel": "AMD Ryzen 9 5900X 12-Core Processor            ",
+			"rAMInGB": 32,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.08.28-18.12.37",
+	"succeeded": 20,
+	"succeededWithWarnings": 0,
+	"failed": 0,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 0.51223158836364746,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "AdmissionIgnoresActorRegistry",
+			"fullTestPath": "Mimir.V5.Composite.Marker.AdmissionIgnoresActorRegistry",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.032511498779058456,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ClosedGrammar",
+			"fullTestPath": "Mimir.V5.Composite.Marker.ClosedGrammar",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015192002058029175,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CodecRoundTrip",
+			"fullTestPath": "Mimir.V5.Composite.Marker.CodecRoundTrip",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015525702387094498,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "IndexHasNoMarkerEdges",
+			"fullTestPath": "Mimir.V5.Composite.Marker.IndexHasNoMarkerEdges",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.19919200241565704,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PreviewNoSpawnAndActorUnchanged",
+			"fullTestPath": "Mimir.V5.Composite.Marker.PreviewNoSpawnAndActorUnchanged",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.028489597141742706,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RuntimeTransportAndProfile",
+			"fullTestPath": "Mimir.V5.Composite.Marker.RuntimeTransportAndProfile",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.016837198287248611,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ConstantProfileStillDraws",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ConstantProfileStillDraws",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.016652200371026993,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ConstantSelectionStillDraws",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ConstantSelectionStillDraws",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.014759499579668045,
+			"dateTime": "2026.08.28-18.12.36",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "DisplayNamesDoNotEnterSignature",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.DisplayNamesDoNotEnterSignature",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.01496640220284462,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "NestedRootNodeProvenance",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.NestedRootNodeProvenance",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015838701277971268,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "NoDrawSignatureRefresh",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.NoDrawSignatureRefresh",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015588000416755676,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ParentLocalMatrices",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ParentLocalMatrices",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015320897102355957,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "SeedEffectClassification",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.SeedEffectClassification",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015392299741506577,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ShearRemainsVisibleToAdmission",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ShearRemainsVisibleToAdmission",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015358299016952515,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "StreamTraceAndSignatureParity",
+			"fullTestPath": "Mimir.V5.Random.StreamTraceAndSignatureParity",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.008244100958108902,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CorruptionFailsClosed",
+			"fullTestPath": "Mimir.V5.Runtime.Input.CorruptionFailsClosed",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.010146599262952805,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "MapOrderIsNotAuthority",
+			"fullTestPath": "Mimir.V5.Runtime.Input.MapOrderIsNotAuthority",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015456799417734146,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RoundTripPreservesResolver",
+			"fullTestPath": "Mimir.V5.Runtime.Input.RoundTripPreservesResolver",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015504200011491776,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "UnselectedClosureAdmission",
+			"fullTestPath": "Mimir.V5.Runtime.Input.UnselectedClosureAdmission",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015860803425312042,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "UObjectCarrierIsSeedFree",
+			"fullTestPath": "Mimir.V5.Runtime.Input.UObjectCarrierIsSeedFree",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"0169EC0D487518F3DB7F6B9E00FBF2CE"
+			],
+			"duration": 0.015394799411296844,
+			"dateTime": "2026.08.28-18.12.37",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		}
+	]
+}

@@ -1,0 +1,238 @@
+{
+	"devices": [
+		{
+			"deviceName": "DESKTOP-MM2SBHU",
+			"instance": "9E61C7164825AC1062D35F95E419FCF7",
+			"instanceName": "DESKTOP-MM2SBHU-39068",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 11 (25H2) [10.0.26200.9168] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce RTX 3070",
+			"cPUModel": "AMD Ryzen 9 5900X 12-Core Processor            ",
+			"rAMInGB": 32,
+			"renderMode": "D3D12_SM5",
+			"rHI": "D3D12 (SM5)",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.08.28-18.21.24",
+	"succeeded": 8,
+	"succeededWithWarnings": 1,
+	"failed": 0,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 1.1338988542556763,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "BuildPreflightRejectsBeforeMutation",
+			"fullTestPath": "Mimir.Audit.MainBaseline.BuildPreflightRejectsBeforeMutation",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.59894508123397827,
+			"dateTime": "2026.08.28-18.21.22",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RenderedNativeHitProxy",
+			"fullTestPath": "Mimir.Audit.MainBaseline.RenderedNativeHitProxy",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.12819129228591919,
+			"dateTime": "2026.08.28-18.21.23",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "RHI native-pick pass=0 G=0 size=734x339 hit=HActor",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.21.23"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "RHI native-pick pass=1 G=1 size=734x339 hit=HActor",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.21.23"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "RHI native-pick pass=2 G=0 size=734x339 hit=HActor",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.21.23"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "RHI native-pick pass=3 G=1 size=734x339 hit=HActor",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.21.23"
+				}
+			],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TopLevelGrouping",
+			"fullTestPath": "Mimir.Audit.MainBaseline.TopLevelGrouping",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.049200300127267838,
+			"dateTime": "2026.08.28-18.21.23",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "top-level grouping leaf-parent=MH_Node_0 actor-root=MHCompositeRoot editor-only=0",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.21.23"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_9.Untitled:PersistentLevel.MHCompositeActor_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.21.23"
+				}
+			],
+			"warnings": 1,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AdmissionIgnoresActorRegistry",
+			"fullTestPath": "Mimir.V5.Composite.Marker.AdmissionIgnoresActorRegistry",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.046367201954126358,
+			"dateTime": "2026.08.28-18.21.23",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ClosedGrammar",
+			"fullTestPath": "Mimir.V5.Composite.Marker.ClosedGrammar",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.006533600389957428,
+			"dateTime": "2026.08.28-18.21.23",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CodecRoundTrip",
+			"fullTestPath": "Mimir.V5.Composite.Marker.CodecRoundTrip",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.0072878003120422363,
+			"dateTime": "2026.08.28-18.21.23",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "IndexHasNoMarkerEdges",
+			"fullTestPath": "Mimir.V5.Composite.Marker.IndexHasNoMarkerEdges",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.22895070910453796,
+			"dateTime": "2026.08.28-18.21.23",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PreviewNoSpawnAndActorUnchanged",
+			"fullTestPath": "Mimir.V5.Composite.Marker.PreviewNoSpawnAndActorUnchanged",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.043617300689220428,
+			"dateTime": "2026.08.28-18.21.24",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RuntimeTransportAndProfile",
+			"fullTestPath": "Mimir.V5.Composite.Marker.RuntimeTransportAndProfile",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"9E61C7164825AC1062D35F95E419FCF7"
+			],
+			"duration": 0.024805601686239243,
+			"dateTime": "2026.08.28-18.21.24",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		}
+	]
+}

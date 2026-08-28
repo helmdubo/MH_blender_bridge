@@ -99,9 +99,14 @@ EMHRandomSemanticKind AppliedPlanKind(const EMHCompositeNodeKind Kind)
     case EMHCompositeNodeKind::Mesh: return EMHRandomSemanticKind::Mesh;
     case EMHCompositeNodeKind::Actor: return EMHRandomSemanticKind::Actor;
     case EMHCompositeNodeKind::Composite: return EMHRandomSemanticKind::Composite;
+    case EMHCompositeNodeKind::Group: return EMHRandomSemanticKind::Group;
     case EMHCompositeNodeKind::Random: return EMHRandomSemanticKind::Random;
-    default: return EMHRandomSemanticKind::Group;
+    case EMHCompositeNodeKind::GameObj: return EMHRandomSemanticKind::GameObj;
     }
+    // The canonical extractor rejects unknown kinds before this conversion.
+    // Never silently turn an unrecognized source kind into a group.
+    checkNoEntry();
+    return static_cast<EMHRandomSemanticKind>(MAX_uint8);
 }
 
 EMHRandomSemanticKind AppliedPlanOptionKind(const EMHCompositeOptionKind Kind)
@@ -111,8 +116,11 @@ EMHRandomSemanticKind AppliedPlanOptionKind(const EMHCompositeOptionKind Kind)
     case EMHCompositeOptionKind::Mesh: return EMHRandomSemanticKind::Mesh;
     case EMHCompositeOptionKind::Actor: return EMHRandomSemanticKind::Actor;
     case EMHCompositeOptionKind::Composite: return EMHRandomSemanticKind::Composite;
-    default: return EMHRandomSemanticKind::Empty;
+    case EMHCompositeOptionKind::Empty: return EMHRandomSemanticKind::Empty;
+    case EMHCompositeOptionKind::GameObj: return EMHRandomSemanticKind::GameObj;
     }
+    checkNoEntry();
+    return static_cast<EMHRandomSemanticKind>(MAX_uint8);
 }
 
 FMHRandomNode AppliedPlanNode(const FMHCompositeNode& Node)

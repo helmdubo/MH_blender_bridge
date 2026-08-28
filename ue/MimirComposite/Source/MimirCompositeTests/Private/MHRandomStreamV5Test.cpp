@@ -245,7 +245,9 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
 	bPassed &= TestTrue(
 		TEXT("partial publish code is registered"),
 		MHRegisteredErrorCodes().Contains(TEXT("MH_E_PARTIAL_PUBLISH")));
-    bPassed &= TestEqual(TEXT("exact registered MH_W count"), MHRegisteredWarningCodes().Num(), 14);
+    bPassed &= TestEqual(TEXT("exact registered MH_W count"), MHRegisteredWarningCodes().Num(), 15);
+    bPassed &= TestTrue(TEXT("explicit Dagor construct drop warning is registered"),
+        MHRegisteredWarningCodes().Contains(TEXT("MH_W_DAGOR_CONSTRUCT_DROPPED")));
     bPassed &= TestTrue(TEXT("placement grammar code registered"),
         MHRegisteredErrorCodes().Contains(TEXT("MH_E_PLACEMENT_PROFILE_GRAMMAR")));
     bPassed &= TestTrue(TEXT("unrepresentable transform code registered"),

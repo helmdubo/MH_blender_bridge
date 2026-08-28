@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="1.034" timestamp="2026-08-28T20:15:24.674138+04:00" hostname="DESKTOP-MM2SBHU"><testcase classname="test_dag4blend_bridge_bpy" name="test_mixed_empty_option_keeps_weight_and_order" time="0.181"><failure message="mh4blend.core.validate.MHValidationError: MH_E_COMPOSITE_GRAMMAR: subject 'collection:bridge_root/object:choice/ent[0]:absent': dag4blend random option requires explicit resource collection">def test_mixed_empty_option_keeps_weight_and_order():
+        source = legacy("bridge_root")
+        child = legacy("bridge_child")
+        helper = bpy.data.collections.new("random.bridge")
+        empty("choice", source, helper)
+        empty("absent", helper)["weight:r"] = 2.0
+        empty("present", helper, child)["weight:r"] = 1.0
+&gt;       document, resources = convert_dag4blend_collection(source)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_bridge_bpy.py:58: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:757: in convert_dag4blend_collection
+    document = Composite(root_name, [
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:758: in &lt;listcomp&gt;
+    convert_object(obj, Matrix.Identity(4)) for obj in roots
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:716: in convert_object
+    _raise(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+code = 'MH_E_COMPOSITE_GRAMMAR'
+subjects = ['collection:bridge_root/object:choice/ent[0]:absent']
+message = 'dag4blend random option requires explicit resource collection'
+
+    def _raise(code, subjects, message):
+&gt;       raise MHValidationError(code, subjects, message)
+E       mh4blend.core.validate.MHValidationError: MH_E_COMPOSITE_GRAMMAR: subject 'collection:bridge_root/object:choice/ent[0]:absent': dag4blend random option requires explicit resource collection
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:95: MHValidationError</failure></testcase><testcase classname="test_dag4blend_bridge_bpy" name="test_all_empty_options_do_not_create_an_entity_or_discard_children" time="0.048"><failure message="mh4blend.core.validate.MHValidationError: MH_E_COMPOSITE_GRAMMAR: subject 'collection:bridge_empty/object:choice/ent[0]:absent': dag4blend random option requires explicit resource collection">def test_all_empty_options_do_not_create_an_entity_or_discard_children():
+        source = legacy("bridge_empty")
+        helper = bpy.data.collections.new("random.empty")
+        parent = empty("choice", source, helper)
+        parent.location.x = 2.0
+        empty("absent", helper)["weight:r"] = 2.0
+        empty("structural_child", source, parent=parent).location.x = 0.25
+&gt;       document, resources = convert_dag4blend_collection(source)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_bridge_bpy.py:72: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:757: in convert_dag4blend_collection
+    document = Composite(root_name, [
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:758: in &lt;listcomp&gt;
+    convert_object(obj, Matrix.Identity(4)) for obj in roots
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:716: in convert_object
+    _raise(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+code = 'MH_E_COMPOSITE_GRAMMAR'
+subjects = ['collection:bridge_empty/object:choice/ent[0]:absent']
+message = 'dag4blend random option requires explicit resource collection'
+
+    def _raise(code, subjects, message):
+&gt;       raise MHValidationError(code, subjects, message)
+E       mh4blend.core.validate.MHValidationError: MH_E_COMPOSITE_GRAMMAR: subject 'collection:bridge_empty/object:choice/ent[0]:absent': dag4blend random option requires explicit resource collection
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:95: MHValidationError</failure></testcase><testcase classname="test_dag4blend_bridge_bpy" name="test_external_placements_are_relinked_without_mutating_legacy" time="0.058"><failure message="AssertionError: assert bpy.data.collections['bridge_root'] is bpy.data.collections['bridge_root.composite']&#10; +  where bpy.data.collections['bridge_root'] = bpy.data.objects['external'].instance_collection">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-887/test_external_placements_are_r0')
+
+    def test_external_placements_are_relinked_without_mutating_legacy(tmp_path):
+        working_scene = bpy.context.scene
+        source = legacy("bridge_root")
+        child = legacy("bridge_child")
+        legacy_inner = empty("legacy_inner", source, child)
+        outside = empty("external", working_scene.collection, source)
+        report = import_dag4blend_composite_collection(source, source_root=tmp_path)
+&gt;       assert outside.instance_collection is report["collection"]
+E       AssertionError: assert bpy.data.collections['bridge_root'] is bpy.data.collections['bridge_root.composite']
+E        +  where bpy.data.collections['bridge_root'] = bpy.data.objects['external'].instance_collection
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_bridge_bpy.py:87: AssertionError</failure></testcase><testcase classname="test_dag4blend_bridge_bpy" name="test_full_route_adopts_mesh_through_writer_before_composite" time="0.048"><failure message="mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects [&quot;('mesh', 'bridge_mesh')&quot;, 'bridge_mesh']: unmanaged dag4blend definitions are conversion inputs, not reusable MH definitions; full-LOD/LOD0 requires a managed definition or canonical .mesh.fbx source">tmp_path = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-887/test_full_route_adopts_mesh_th0')
+
+    def test_full_route_adopts_mesh_through_writer_before_composite(tmp_path):
+        source = legacy("bridge_root")
+        mesh = legacy("bridge_mesh", "rendinst")
+        bpy.context.scene.collection.children.link(mesh)
+        data = bpy.data.meshes.new("triangle_data")
+        data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+        obj = bpy.data.objects.new("triangle", data)
+        mesh.objects.link(obj)
+        empty("mesh_placement", source, mesh)
+&gt;       report = import_dag4blend_composite_collection(source, source_root=tmp_path)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\tests\test_dag4blend_bridge_bpy.py:102: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_dagor_composite.py:826: in import_dag4blend_composite_collection
+    return materialize_composite_documents(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+documents = {'bridge_root': Composite(name='bridge_root', nodes=[Node(kind='mesh', transform=CompositeTransform(translation_cm=(0....0, 0.0, 0.0, 1.0), scale=(1.0, 1.0, 1.0)), name=None, resource='bridge_mesh', profile=None, options=[], children=[])])}
+root_name = 'bridge_root'
+source_root = WindowsPath('C:/Users/helmd/AppData/Local/Temp/pytest-of-helmd/pytest-887/test_full_route_adopts_mesh_th0')
+filepath = None
+resource_overrides = {('mesh', 'bridge_mesh'): bpy.data.collections['bridge_mesh']}
+load_mode = 'full-LOD', definition_policy = 'reuse', before_commit = None
+preloaded_profiles = frozenset()
+
+    def materialize_composite_documents(
+            documents, *, root_name, source_root, filepath=None,
+            resource_overrides=None, load_mode=LOAD_MODE_FULL_LOD,
+            definition_policy=DEFINITION_REUSE, before_commit=None,
+            preloaded_profiles=frozenset()) -&gt; dict:
+        """Materialize validated DTOs behind one exact rollback boundary.
+    
+        ``resource_overrides`` is the explicit seam used by the dag4blend scene
+        converter.  Existing collections are never stamped or otherwise mutated;
+        they are linked into service scenes only after the transaction commits.
+        """
+        if before_commit is not None and not callable(before_commit):
+            raise ValueError("before_commit must be callable or None")
+        documents = _validate_document_mapping(root_name, documents)
+        root = None if source_root is None else _resolved_root(source_root)
+        requested_overrides = dict(resource_overrides or {})
+        overrides = {}
+        structure_only_inputs = set()
+        referenced_override_keys = {
+            ("mesh", dependency)
+            for document in documents.values()
+            for dependency in iter_resource_references(document, kind="mesh")
+        }
+        override_collections = {}
+        for key, collection in requested_overrides.items():
+            if (not isinstance(key, tuple) or len(key) != 2
+                    or key[0] != "mesh"
+                    or not isinstance(key[1], str)):
+                raise MHValidationError(
+                    "MH_E_COMPOSITE_GRAMMAR", [repr(key)],
+                    "resource override key must be ('mesh', canonical_name); "
+                    "actor tokens use canonical placeholders and composite "
+                    "definitions must be supplied as converted DTOs")
+            validate_resource_name(key[1])
+            if key not in referenced_override_keys:
+                raise MHValidationError(
+                    "MH_E_COMPOSITE_GRAMMAR", [repr(key)],
+                    "resource override is not referenced by the supplied closure")
+            if collection is None or bpy.data.collections.get(collection.name) is not collection:
+                raise MHValidationError(
+                    "MH_E_INVALID_RESOURCE_SOURCE", [repr(key)],
+                    "resource override must name a live Blender collection")
+            has_mh_identity = (
+                COLLECTION_KIND_KEY in collection
+                and COLLECTION_RESOURCE_KEY in collection)
+            has_dagor_identity = "type" in collection and "name" in collection
+            if not has_mh_identity and not has_dagor_identity:
+                raise MHValidationError(
+                    "MH_E_INVALID_RESOURCE_SOURCE", [repr(key), collection.name],
+                    "resource override requires explicit MH markers or exact "
+                    "dag4blend type/name identity")
+            actual_key = _collection_instance_identity(collection)
+            if actual_key != key:
+                raise MHValidationError(
+                    "MH_E_RESOURCE_KIND_MISMATCH",
+                    [repr(key), repr(actual_key), collection.name],
+                    "resource override key disagrees with explicit collection identity")
+            identity = collection.as_pointer()
+            previous_key = override_collections.get(identity)
+            if previous_key is not None and previous_key != key:
+                raise MHValidationError(
+                    "MH_E_AMBIGUOUS_RESOURCE_NAME",
+                    [repr(previous_key), repr(key), collection.name],
+                    "one resource collection cannot represent multiple logical keys")
+            override_collections[identity] = key
+    
+            if not has_mh_identity:
+                if load_mode != LOAD_MODE_STRUCTURE_ONLY:
+&gt;                   raise MHValidationError(
+                        "MH_E_INVALID_RESOURCE_SOURCE", [repr(key), collection.name],
+                        "unmanaged dag4blend definitions are conversion inputs, "
+                        "not reusable MH definitions; full-LOD/LOD0 requires a "
+                        "managed definition or canonical .mesh.fbx source")
+E                   mh4blend.core.validate.MHValidationError: MH_E_INVALID_RESOURCE_SOURCE: subjects ["('mesh', 'bridge_mesh')", 'bridge_mesh']: unmanaged dag4blend definitions are conversion inputs, not reusable MH definitions; full-LOD/LOD0 requires a managed definition or canonical .mesh.fbx source
+
+E:\MimirComposite_V5S6_1_Baseline_20260828\addon\mh4blend\scene\import_composite.py:490: MHValidationError</failure></testcase></testsuite></testsuites>

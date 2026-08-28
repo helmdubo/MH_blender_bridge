@@ -469,6 +469,7 @@ bool ParseOption(const TSharedPtr<FJsonValue>& Value, FMHCompositeOption& Out, F
     else if (Kind == TEXT("actor")) Out.Kind = EMHCompositeOptionKind::Actor;
     else if (Kind == TEXT("composite")) Out.Kind = EMHCompositeOptionKind::Composite;
     else if (Kind == TEXT("empty")) Out.Kind = EMHCompositeOptionKind::Empty;
+    else if (Kind == TEXT("gameobj")) Out.Kind = EMHCompositeOptionKind::GameObj;
     else
     {
         OutError = FString::Printf(TEXT("MH_E_UNSUPPORTED_NODE_KIND: unsupported random option kind '%s'"), *Kind);
@@ -511,7 +512,8 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     const TSharedPtr<FJsonObject> Object = Value->AsObject();
     static const TSet<FString> Allowed = {
         TEXT("kind"), TEXT("resource"), TEXT("name"), TEXT("transform"),
-        TEXT("profile"), TEXT("options"), TEXT("children")};
+        TEXT("profile"), TEXT("place_type"), TEXT("appearance_seed_boundary"),
+        TEXT("options"), TEXT("children")};
     for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Object->Values)
     {
         if (!Allowed.Contains(Pair.Key))
@@ -529,6 +531,7 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     else if (Kind == TEXT("composite")) Out.Kind = EMHCompositeNodeKind::Composite;
     else if (Kind == TEXT("group")) Out.Kind = EMHCompositeNodeKind::Group;
     else if (Kind == TEXT("random")) Out.Kind = EMHCompositeNodeKind::Random;
+    else if (Kind == TEXT("gameobj")) Out.Kind = EMHCompositeNodeKind::GameObj;
     else
     {
         OutError = FString::Printf(TEXT("MH_E_UNSUPPORTED_NODE_KIND: unsupported composite node kind '%s'"), *Kind);
@@ -546,7 +549,7 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     else if (!Object->TryGetStringField(TEXT("resource"), Out.Resource) ||
         !MHIsCanonicalCompositeToken(Out.Resource))
     {
-        return CompositeGrammarError(OutError, TEXT("mesh/actor/composite resource must be canonical [a-z0-9_]+"));
+        return CompositeGrammarError(OutError, TEXT("mesh/actor/composite/gameobj resource must be canonical [a-z0-9_]+"));
     }
 
     if (const TSharedPtr<FJsonValue>* Name = Object->Values.Find(TEXT("name")))
@@ -567,6 +570,31 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
         {
             return CompositeGrammarError(OutError, TEXT("profile must be canonical [a-z0-9_]+"));
         }
+    }
+    // Provenance carriers. Absence is not zero; an explicit 0 is preserved.
+    // Non-negative values outside the known 0..6 stay legal by owner decision:
+    // nothing in UE executes placement, so no admission may narrow the range.
+    if (const TSharedPtr<FJsonValue>* PlaceType = Object->Values.Find(TEXT("place_type")))
+    {
+        if (!PlaceType->IsValid() || (*PlaceType)->Type != EJson::Number)
+        {
+            return CompositeGrammarError(OutError, TEXT("place_type must be a non-negative integer"));
+        }
+        const double Number = (*PlaceType)->AsNumber();
+        if (!FMath::IsFinite(Number) || Number != FMath::TruncToDouble(Number) ||
+            Number < 0.0 || Number > static_cast<double>(MAX_int32))
+        {
+            return CompositeGrammarError(OutError, TEXT("place_type must be a non-negative integer"));
+        }
+        Out.PlaceType = static_cast<int32>(Number);
+    }
+    if (const TSharedPtr<FJsonValue>* Boundary = Object->Values.Find(TEXT("appearance_seed_boundary")))
+    {
+        if (!Boundary->IsValid() || (*Boundary)->Type != EJson::Boolean)
+        {
+            return CompositeGrammarError(OutError, TEXT("appearance_seed_boundary must be a boolean"));
+        }
+        Out.bAppearanceSeedBoundary = (*Boundary)->AsBool();
     }
     const TSharedPtr<FJsonValue>* Options = Object->Values.Find(TEXT("options"));
     if (Out.Kind == EMHCompositeNodeKind::Random)
@@ -676,6 +704,7 @@ const TCHAR* CompositeNodeKindLabel(const EMHCompositeNodeKind Kind)
     case EMHCompositeNodeKind::Composite: return TEXT("composite");
     case EMHCompositeNodeKind::Group: return TEXT("group");
     case EMHCompositeNodeKind::Random: return TEXT("random");
+    case EMHCompositeNodeKind::GameObj: return TEXT("gameobj");
     }
     return nullptr;
 }
@@ -688,6 +717,7 @@ const TCHAR* CompositeOptionKindLabel(const EMHCompositeOptionKind Kind)
     case EMHCompositeOptionKind::Actor: return TEXT("actor");
     case EMHCompositeOptionKind::Composite: return TEXT("composite");
     case EMHCompositeOptionKind::Empty: return TEXT("empty");
+    case EMHCompositeOptionKind::GameObj: return TEXT("gameobj");
     }
     return nullptr;
 }
@@ -882,6 +912,21 @@ bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FS
         Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"profile\": ");
         AppendQuoted(Node.Profile, Out);
     }
+    // Canonical order: kind, resource, name, transform, profile, place_type,
+    // appearance_seed_boundary, options, children (OPEN-V5-21 as amended).
+    if (Node.PlaceType < INDEX_NONE)
+    {
+        return CompositeGrammarError(OutError, TEXT("writer place_type must be absent (-1) or a non-negative integer"));
+    }
+    if (Node.PlaceType >= 0)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"place_type\": ");
+        Out += FString::FromInt(Node.PlaceType);
+    }
+    if (Node.bAppearanceSeedBoundary)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"appearance_seed_boundary\": true");
+    }
     if (Node.Kind == EMHCompositeNodeKind::Random)
     {
         if (Node.Options.IsEmpty())
@@ -932,6 +977,8 @@ void FlattenNodes(const TArray<FMHCompositeNode>& Nodes, const int32 Parent, TAr
         Stored.Name = Node.Name;
         Stored.Transform = FTransform(Node.Transform.RotationQuat, Node.Transform.TranslationCm, Node.Transform.Scale);
         Stored.Profile = Node.Profile;
+        Stored.PlaceType = Node.PlaceType;
+        Stored.bAppearanceSeedBoundary = Node.bAppearanceSeedBoundary;
         Stored.Options = Node.Options;
         FlattenNodes(Node.Children, ThisIndex, Out);
     }
@@ -1274,6 +1321,8 @@ bool MHExtractCompositeV5(
         Node->Resource = Stored.Resource;
         Node->Name = Stored.Name;
         Node->Profile = Stored.Profile;
+        Node->PlaceType = Stored.PlaceType;
+        Node->bAppearanceSeedBoundary = Stored.bAppearanceSeedBoundary;
         Node->Options = Stored.Options;
         Node->Transform.TranslationCm = Stored.Transform.GetTranslation();
         Node->Transform.RotationQuat = Stored.Transform.GetRotation();

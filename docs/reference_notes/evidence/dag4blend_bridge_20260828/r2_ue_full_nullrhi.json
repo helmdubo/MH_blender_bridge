@@ -1,0 +1,2864 @@
+{
+	"devices": [
+		{
+			"deviceName": "DESKTOP-MM2SBHU",
+			"instance": "56CFE42149445AC4FA9A38B47B0EF3A6",
+			"instanceName": "DESKTOP-MM2SBHU-20348",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 11 (25H2) [10.0.26200.9168] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce RTX 3070",
+			"cPUModel": "AMD Ryzen 9 5900X 12-Core Processor            ",
+			"rAMInGB": 32,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.08.28-18.20.17",
+	"succeeded": 85,
+	"succeededWithWarnings": 23,
+	"failed": 0,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 45.923439025878906,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "BuildPreflightRejectsBeforeMutation",
+			"fullTestPath": "Mimir.Audit.MainBaseline.BuildPreflightRejectsBeforeMutation",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.42743179202079773,
+			"dateTime": "2026.08.28-18.19.29",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RenderedNativeHitProxy",
+			"fullTestPath": "Mimir.Audit.MainBaseline.RenderedNativeHitProxy",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0055881999433040619,
+			"dateTime": "2026.08.28-18.19.29",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "RHI lane NOT RUN: requires -MHPreviewRenderSmoke in the isolated host without -nullrhi",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.29"
+				}
+			],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TopLevelGrouping",
+			"fullTestPath": "Mimir.Audit.MainBaseline.TopLevelGrouping",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.029900699853897095,
+			"dateTime": "2026.08.28-18.19.29",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "top-level grouping leaf-parent=MH_Node_0 actor-root=MHCompositeRoot editor-only=0",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.29"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_9.Untitled:PersistentLevel.MHCompositeActor_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.29"
+				}
+			],
+			"warnings": 1,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AxisProbeBackends",
+			"fullTestPath": "Mimir.C0.R1.AxisProbeBackends",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.041398197412490845,
+			"dateTime": "2026.08.28-18.19.29",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "FBXImport: MH_AxisProbe_Legacy_0 has degenerate tangent bases which will result in incorrect shading.  MikkTSpace relies on tangent bases and may result in mesh corruption, consider disabling this option. ",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.30"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "FBXImport: MH_AxisProbe_Legacy_0 has some nearly zero bi-normals which can create some issues. (Tolerance of 1E-4) ",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.30"
+				}
+			],
+			"warnings": 2,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ReaderOutputPathSafety",
+			"fullTestPath": "Mimir.C1.ReaderOutputPathSafety",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.039553597569465637,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AnalyzeReportAtomicSafety",
+			"fullTestPath": "Mimir.V4.Commandlets.AnalyzeReportAtomicSafety",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.020086098462343216,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AnalyzeReportExactBytes",
+			"fullTestPath": "Mimir.V4.Commandlets.AnalyzeReportExactBytes",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0080640017986297607,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ExitLevelCore",
+			"fullTestPath": "Mimir.V4.Commandlets.ExitLevelCore",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0079207979142665863,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "VerifyManagedMeshStrictPolicy",
+			"fullTestPath": "Mimir.V4.Commandlets.VerifyManagedMeshStrictPolicy",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0080418027937412262,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AdoptController",
+			"fullTestPath": "Mimir.V4.Material.AdoptController",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0082713030278682709,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AppliedParentReceipts",
+			"fullTestPath": "Mimir.V4.Material.AppliedParentReceipts",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.34286421537399292,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AppliedStateAndRace",
+			"fullTestPath": "Mimir.V4.Material.AppliedStateAndRace",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.17090700566768646,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ApplyExtractAndLocalChange",
+			"fullTestPath": "Mimir.V4.Material.ApplyExtractAndLocalChange",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0079682990908622742,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CanonicalGoldenVectors",
+			"fullTestPath": "Mimir.V4.Material.CanonicalGoldenVectors",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0082417987287044525,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ClosedGrammar",
+			"fullTestPath": "Mimir.V4.Material.ClosedGrammar",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0082345977425575256,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ExplicitSourceWinsReimport",
+			"fullTestPath": "Mimir.V4.Material.ExplicitSourceWinsReimport",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.5459480881690979,
+			"dateTime": "2026.08.28-18.19.30",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Textures/s6_texture_a_5ba40ee845560fb683a13480de363846 (0xCD42072CAD477B7E) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.30"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Textures/s6_texture_a_5ba40ee845560fb683a13480de363846.s6_texture_a_5ba40ee845560fb683a13480de363846'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.30"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Materials/s6_force_mi_5ba40ee845560fb683a13480de363846 (0x4D242E47C5D5BA6E) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.30"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Materials/s6_force_mi_5ba40ee845560fb683a13480de363846.s6_force_mi_5ba40ee845560fb683a13480de363846'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.30"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Textures/s6_texture_b_5ba40ee845560fb683a13480de363846 (0xD9FE0D11877E40E6) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Textures/s6_texture_b_5ba40ee845560fb683a13480de363846.s6_texture_b_5ba40ee845560fb683a13480de363846'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHMaterialImport: MH_W_ORPHAN_REBOUND_CONTENT_DIVERGED: material:s6_force_mi_5ba40ee845560fb683a13480de363846",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Textures/s6_texture_a_5ba40ee845560fb683a13480de363846.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Materials/s6_force_mi_5ba40ee845560fb683a13480de363846.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Textures/s6_texture_b_5ba40ee845560fb683a13480de363846.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				}
+			],
+			"warnings": 10,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "LibraryFullApply",
+			"fullTestPath": "Mimir.V4.Material.LibraryFullApply",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0081255994737148285,
+			"dateTime": "2026.08.28-18.19.31",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ManagedRoundTrip",
+			"fullTestPath": "Mimir.V4.Material.ManagedRoundTrip",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.27657860517501831,
+			"dateTime": "2026.08.28-18.19.31",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TextureImportPersistence",
+			"fullTestPath": "Mimir.V4.Material.TextureImportPersistence",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.47011920809745789,
+			"dateTime": "2026.08.28-18.19.31",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Textures/s2_persist_tex_n (0x33E3871CB078DB5B) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Textures/s2_persist_tex_n.s2_persist_tex_n'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Materials/s2_texture_valid (0xAB7C5D404697D31D) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Materials/s2_texture_valid.s2_texture_valid'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.31"
+				}
+			],
+			"warnings": 4,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TextureNormalLogicalNamePolicy",
+			"fullTestPath": "Mimir.V4.Material.TextureNormalLogicalNamePolicy",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0082600004971027374,
+			"dateTime": "2026.08.28-18.19.32",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TextureResolutionGates",
+			"fullTestPath": "Mimir.V4.Material.TextureResolutionGates",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.017718501389026642,
+			"dateTime": "2026.08.28-18.19.32",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Textures/s2_snapshot_texture (0x97C7558A9D4462FA) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Textures/s2_snapshot_texture.s2_snapshot_texture'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				}
+			],
+			"warnings": 2,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TextureSourceDataTags",
+			"fullTestPath": "Mimir.V4.Material.TextureSourceDataTags",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0085755996406078339,
+			"dateTime": "2026.08.28-18.19.32",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TextureStaleFailure",
+			"fullTestPath": "Mimir.V4.Material.TextureStaleFailure",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.23573070764541626,
+			"dateTime": "2026.08.28-18.19.32",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Textures/s2_stale_texture (0x812A4CD067B44936) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Textures/s2_stale_texture.s2_stale_texture'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Materials/s2_stale_valid (0xF3CF8D126E00B748) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Materials/s2_stale_valid.s2_stale_valid'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetTools: Failed to import 'E:/MimirComposite_GameObj_Audit_20260828/Saved/Mimir/MaterialTextureStaleFailure/s2_stale_texture.png'. Failed to create asset '/Game/MH/Generated/Textures/s2_stale_texture'.\nPlease see Output Log for details.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetTools: Failed to import 'E:/MimirComposite_GameObj_Audit_20260828/Saved/Mimir/MaterialTextureStaleFailure/s2_stale_texture.png'. Failed to create asset '/Game/MH/Generated/Textures/s2_stale_texture'.\nPlease see Output Log for details.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.19.32"
+				}
+			],
+			"warnings": 6,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "DivergentOrphanRebindWarningLifecycle",
+			"fullTestPath": "Mimir.V4.ProjectIndex.DivergentOrphanRebindWarningLifecycle",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.23787620663642883,
+			"dateTime": "2026.08.28-18.19.32",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "IncrementalPublishMoveRename",
+			"fullTestPath": "Mimir.V4.ProjectIndex.IncrementalPublishMoveRename",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.21933579444885254,
+			"dateTime": "2026.08.28-18.19.32",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "InvalidDictionaryRowRebuildsCache",
+			"fullTestPath": "Mimir.V4.ProjectIndex.InvalidDictionaryRowRebuildsCache",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.5626528263092041,
+			"dateTime": "2026.08.28-18.19.32",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "OrdinaryStaleHasNoOrphanRebindWarning",
+			"fullTestPath": "Mimir.V4.ProjectIndex.OrdinaryStaleHasNoOrphanRebindWarning",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.17238859832286835,
+			"dateTime": "2026.08.28-18.19.33",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "OrphanRebindPendingStateIsSessionOnly",
+			"fullTestPath": "Mimir.V4.ProjectIndex.OrphanRebindPendingStateIsSessionOnly",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.35641780495643616,
+			"dateTime": "2026.08.28-18.19.33",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PartialTagDiscovery",
+			"fullTestPath": "Mimir.V4.ProjectIndex.PartialTagDiscovery",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.044436801224946976,
+			"dateTime": "2026.08.28-18.19.34",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ProbableRenameExcludesClaimedEndpoint",
+			"fullTestPath": "Mimir.V4.ProjectIndex.ProbableRenameExcludesClaimedEndpoint",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.16229000687599182,
+			"dateTime": "2026.08.28-18.19.34",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ProbableRenameRequiresAppearedEndpoint",
+			"fullTestPath": "Mimir.V4.ProjectIndex.ProbableRenameRequiresAppearedEndpoint",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.15557220578193665,
+			"dateTime": "2026.08.28-18.19.34",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RebuildAndNormalizedDump",
+			"fullTestPath": "Mimir.V4.ProjectIndex.RebuildAndNormalizedDump",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.49906089901924133,
+			"dateTime": "2026.08.28-18.19.34",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "StaticMeshSlotDependency",
+			"fullTestPath": "Mimir.V4.ProjectIndex.StaticMeshSlotDependency",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.19797240197658539,
+			"dateTime": "2026.08.28-18.19.35",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "StatusPrecedenceAndClosure",
+			"fullTestPath": "Mimir.V4.ProjectIndex.StatusPrecedenceAndClosure",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.1890254020690918,
+			"dateTime": "2026.08.28-18.19.35",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "TenThousandIndexedResolve",
+			"fullTestPath": "Mimir.V4.ProjectIndex.TenThousandIndexedResolve",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 30.408723831176758,
+			"dateTime": "2026.08.28-18.19.35",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "Blocked",
+			"fullTestPath": "Mimir.V4.ResourceKey.Blocked",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0081869997084140778,
+			"dateTime": "2026.08.28-18.20.05",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "Classifier",
+			"fullTestPath": "Mimir.V4.ResourceKey.Classifier",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.014851599931716919,
+			"dateTime": "2026.08.28-18.20.05",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RawHash",
+			"fullTestPath": "Mimir.V4.ResourceKey.RawHash",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015061400830745697,
+			"dateTime": "2026.08.28-18.20.05",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "Resolver",
+			"fullTestPath": "Mimir.V4.ResourceKey.Resolver",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0080351009964942932,
+			"dateTime": "2026.08.28-18.20.05",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "DebounceAndPIEQueue",
+			"fullTestPath": "Mimir.V4.SourceLifecycle.DebounceAndPIEQueue",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015237797051668167,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "SelfPublishEchoNoChange",
+			"fullTestPath": "Mimir.V4.SourceLifecycle.SelfPublishEchoNoChange",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.31592369079589844,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/s6_echo_03fc6e56 (0xAC3412134E0C36F5) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.06"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/s6_echo_03fc6e56.s6_echo_03fc6e56'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.06"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Composites/s6_echo_03fc6e56.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.06"
+				}
+			],
+			"warnings": 3,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "StartupRetryAndImportOrder",
+			"fullTestPath": "Mimir.V4.SourceLifecycle.StartupRetryAndImportOrder",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.075013995170593262,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "FullInPlaceRebuild",
+			"fullTestPath": "Mimir.V4.StaticMesh.Builder.FullInPlaceRebuild",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.011604201048612595,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "GraphFailures",
+			"fullTestPath": "Mimir.V4.StaticMesh.Classifier.GraphFailures",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015742599964141846,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "LodAndSlotFailures",
+			"fullTestPath": "Mimir.V4.StaticMesh.Classifier.LodAndSlotFailures",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015489198267459869,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "MarkerFailures",
+			"fullTestPath": "Mimir.V4.StaticMesh.Classifier.MarkerFailures",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015851899981498718,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ValidScene",
+			"fullTestPath": "Mimir.V4.StaticMesh.Classifier.ValidScene",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015192300081253052,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "EndToEndReimport",
+			"fullTestPath": "Mimir.V4.StaticMesh.Importer.EndToEndReimport",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.39190348982810974,
+			"dateTime": "2026.08.28-18.20.06",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Meshes/s5_e2e_65b6b6414b887c7cc648929c0d30c299 (0xC8DB5C3EF20C3BF7) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.06"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Meshes/s5_e2e_65b6b6414b887c7cc648929c0d30c299.s5_e2e_65b6b6414b887c7cc648929c0d30c299'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.06"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Meshes/s5_e2e_65b6b6414b887c7cc648929c0d30c299.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				}
+			],
+			"warnings": 3,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "LocalModificationHook",
+			"fullTestPath": "Mimir.V4.StaticMesh.LocalModificationHook",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0158952996134758,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ReceiptTags",
+			"fullTestPath": "Mimir.V4.StaticMesh.ReceiptTags",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015638001263141632,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "DuplicateRootClaimBlocksPlanAndBreak",
+			"fullTestPath": "Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.056871697306632996,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_duplicate_root_1f43f44844ae04c28e2466b6f48e1db4.s5_duplicate_root_1f43f44844ae04c28e2466b6f48e1db4: MH_E_AMBIGUOUS_GENERATED_ASSET: composite:s5_duplicate_root_1f43f44844ae04c28e2466b6f48e1db4",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_duplicate_root_1f43f44844ae04c28e2466b6f48e1db4.s5_duplicate_root_1f43f44844ae04c28e2466b6f48e1db4: MH_E_AMBIGUOUS_GENERATED_ASSET: composite:s5_duplicate_root_1f43f44844ae04c28e2466b6f48e1db4",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				}
+			],
+			"warnings": 2,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "EditPlacementBasisAndProspectivePlan",
+			"fullTestPath": "Mimir.V5.Composite.AppliedAdmission.EditPlacementBasisAndProspectivePlan",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.079250603914260864,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "InvalidRootReceiptBlocksPlanAndBreak",
+			"fullTestPath": "Mimir.V5.Composite.AppliedAdmission.InvalidRootReceiptBlocksPlanAndBreak",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.038503702729940414,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c: MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for composite:s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c at /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c (source_path='', path_valid=0, canonical_object=1, source_hash_valid=1, applied_hash_valid=1, MH_tags=5) MH.Managed='True' MH.Kind='composite' MH.LogicalName='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c' MH.SourcePath='<missing>' MH.SourceHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055' MH.AppliedHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c: MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for composite:s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c at /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c (source_path='', path_valid=0, canonical_object=1, source_hash_valid=1, applied_hash_valid=1, MH_tags=5) MH.Managed='True' MH.Kind='composite' MH.LogicalName='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c' MH.SourcePath='<missing>' MH.SourceHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055' MH.AppliedHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c: MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for composite:s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c at /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c (source_path='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite', path_valid=1, canonical_object=1, source_hash_valid=1, applied_hash_valid=0, MH_tags=5) MH.Managed='True' MH.Kind='composite' MH.LogicalName='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c' MH.SourcePath='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite' MH.SourceHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055' MH.AppliedHash='<missing>'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c: MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for composite:s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c at /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c (source_path='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite', path_valid=1, canonical_object=1, source_hash_valid=1, applied_hash_valid=0, MH_tags=5) MH.Managed='True' MH.Kind='composite' MH.LogicalName='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c' MH.SourcePath='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite' MH.SourceHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055' MH.AppliedHash='<missing>'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c: MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for composite:s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c at /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c (source_path='../s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite', path_valid=0, canonical_object=1, source_hash_valid=1, applied_hash_valid=1, MH_tags=6) MH.Managed='True' MH.Kind='composite' MH.LogicalName='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c' MH.SourcePath='../s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite' MH.SourceHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055' MH.AppliedHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c: MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for composite:s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c at /Game/MH/Generated/Composites/s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c (source_path='../s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite', path_valid=0, canonical_object=1, source_hash_valid=1, applied_hash_valid=1, MH_tags=6) MH.Managed='True' MH.Kind='composite' MH.LogicalName='s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c' MH.SourcePath='../s5_invalid_receipt_fe89a5c541bf0e5a1df734a646b1214c.composite' MH.SourceHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055' MH.AppliedHash='blake3-160:93aeefdd4eeb8145f7b41a9914ecbcd7733bc055'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				}
+			],
+			"warnings": 6,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "UnselectedAbstractActorBlocksClosure",
+			"fullTestPath": "Mimir.V5.Composite.AppliedAdmission.UnselectedAbstractActorBlocksClosure",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0495138019323349,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131.s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:s5_abstract_actor_9ace375b4af764d3bf1b528a7bfcb131 is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131.s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:s5_abstract_actor_9ace375b4af764d3bf1b528a7bfcb131 is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131.s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:s5_abstract_actor_9ace375b4af764d3bf1b528a7bfcb131 is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131.s5_abstract_root_9ace375b4af764d3bf1b528a7bfcb131: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:s5_abstract_actor_9ace375b4af764d3bf1b528a7bfcb131 is not a spawnable ActorClassRegistry entry",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.07"
+				}
+			],
+			"warnings": 4,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AdmissionIgnoresActorRegistry",
+			"fullTestPath": "Mimir.V5.Composite.Marker.AdmissionIgnoresActorRegistry",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.039021197706460953,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ClosedGrammar",
+			"fullTestPath": "Mimir.V5.Composite.Marker.ClosedGrammar",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015572898089885712,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CodecRoundTrip",
+			"fullTestPath": "Mimir.V5.Composite.Marker.CodecRoundTrip",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.016490798443555832,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "IndexHasNoMarkerEdges",
+			"fullTestPath": "Mimir.V5.Composite.Marker.IndexHasNoMarkerEdges",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.2183443009853363,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PreviewNoSpawnAndActorUnchanged",
+			"fullTestPath": "Mimir.V5.Composite.Marker.PreviewNoSpawnAndActorUnchanged",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.03672410175204277,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RuntimeTransportAndProfile",
+			"fullTestPath": "Mimir.V5.Composite.Marker.RuntimeTransportAndProfile",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.019746098667383194,
+			"dateTime": "2026.08.28-18.20.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ConstantVisualsRefreshTrace",
+			"fullTestPath": "Mimir.V5.Composite.Seed.ConstantVisualsRefreshTrace",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.074864596128463745,
+			"dateTime": "2026.08.28-18.20.08",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "DeterminismNestedProfilesAndMove",
+			"fullTestPath": "Mimir.V5.Composite.Seed.DeterminismNestedProfilesAndMove",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.46801960468292236,
+			"dateTime": "2026.08.28-18.20.08",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "FrozenSeed42AppliedAssetParity",
+			"fullTestPath": "Mimir.V5.Composite.Seed.FrozenSeed42AppliedAssetParity",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.62001180648803711,
+			"dateTime": "2026.08.28-18.20.08",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "Lifecycle",
+			"fullTestPath": "Mimir.V5.Composite.Seed.Lifecycle",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.010324601083993912,
+			"dateTime": "2026.08.28-18.20.09",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_21.Untitled:PersistentLevel.MHCompositeActor_1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_21.Untitled:PersistentLevel.MHCompositeActor_2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_21.Untitled:PersistentLevel.MHCompositeActor_3",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				}
+			],
+			"warnings": 3,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "MinimalNoneTransformTopologyUpdates",
+			"fullTestPath": "Mimir.V5.Composite.Seed.MinimalNoneTransformTopologyUpdates",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.32054579257965088,
+			"dateTime": "2026.08.28-18.20.09",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "MissingAppliedDependencyAndHealing",
+			"fullTestPath": "Mimir.V5.Composite.Seed.MissingAppliedDependencyAndHealing",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.15185630321502686,
+			"dateTime": "2026.08.28-18.20.09",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_seed_missing_root.s5_seed_missing_root: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: static_mesh:s5_unselected_mesh_c95fcc784cc53ac3fdd6fe9454107b9b has no matching managed mesh receipt",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_seed_missing_root.s5_seed_missing_root: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: static_mesh:s5_unselected_mesh_c95fcc784cc53ac3fdd6fe9454107b9b has no matching managed mesh receipt",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				}
+			],
+			"warnings": 2,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ShearBeforeComponentMutation",
+			"fullTestPath": "Mimir.V5.Composite.Seed.ShearBeforeComponentMutation",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.081876397132873535,
+			"dateTime": "2026.08.28-18.20.09",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_seed_shear_root.s5_seed_shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: s5_seed_shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_seed_shear_root.s5_seed_shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: s5_seed_shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_seed_shear_root.s5_seed_shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: s5_seed_shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_seed_shear_root.s5_seed_shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: s5_seed_shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s5_seed_shear_root.s5_seed_shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: s5_seed_shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s5_seed_shear_root.s5_seed_shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: s5_seed_shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.09"
+				}
+			],
+			"warnings": 6,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ApplyExtractAndLocalEdit",
+			"fullTestPath": "Mimir.V5.Composite.ApplyExtractAndLocalEdit",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.014890197664499283,
+			"dateTime": "2026.08.28-18.20.09",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CanonicalGoldenVectors",
+			"fullTestPath": "Mimir.V5.Composite.CanonicalGoldenVectors",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.014792598783969879,
+			"dateTime": "2026.08.28-18.20.09",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ClosureCycleAndUnresolved",
+			"fullTestPath": "Mimir.V5.Composite.ClosureCycleAndUnresolved",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.013000000268220901,
+			"dateTime": "2026.08.28-18.20.09",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CompilerComposesParentLocalTransforms",
+			"fullTestPath": "Mimir.V5.Composite.CompilerComposesParentLocalTransforms",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.044212300330400467,
+			"dateTime": "2026.08.28-18.20.10",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/shear_root.shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.10"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/shear_root.shear_root: MH_E_UNREPRESENTABLE_TRANSFORM: shear_root:nodes[0]/children[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.10"
+				}
+			],
+			"warnings": 2,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CompilerTopLevelAttachment",
+			"fullTestPath": "Mimir.V5.Composite.CompilerTopLevelAttachment",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.042527500540018082,
+			"dateTime": "2026.08.28-18.20.10",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "DerivedActorVisibility",
+			"fullTestPath": "Mimir.V5.Composite.DerivedActorVisibility",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.014251697808504105,
+			"dateTime": "2026.08.28-18.20.10",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_25.Untitled:PersistentLevel.DESTROYED_StaticMeshActor_CHILDACTOR_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.10"
+				}
+			],
+			"warnings": 1,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "FbxPlacementParity",
+			"fullTestPath": "Mimir.V5.Composite.FbxPlacementParity",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.059141498059034348,
+			"dateTime": "2026.08.28-18.20.10",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ImportPublishReceipts",
+			"fullTestPath": "Mimir.V5.Composite.ImportPublishReceipts",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.39127460122108459,
+			"dateTime": "2026.08.28-18.20.10",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/ue_s3_roundtrip (0x10BFADE30413B32E) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.10"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/ue_s3_roundtrip.ue_s3_roundtrip'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.10"
+				}
+			],
+			"warnings": 2,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "LevelOperations",
+			"fullTestPath": "Mimir.V5.Composite.LevelOperations",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.80127280950546265,
+			"dateTime": "2026.08.28-18.20.10",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.MHCompositeActor_1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.10"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.MHCompositeActor_2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.StaticMeshActor_1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/break_shear_da7d1a5442c4342c3ebecf84de01f204.break_shear_da7d1a5442c4342c3ebecf84de01f204: MH_E_UNREPRESENTABLE_TRANSFORM: break_shear_da7d1a5442c4342c3ebecf84de01f204:nodes[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/break_shear_da7d1a5442c4342c3ebecf84de01f204.break_shear_da7d1a5442c4342c3ebecf84de01f204: MH_E_UNREPRESENTABLE_TRANSFORM: break_shear_da7d1a5442c4342c3ebecf84de01f204:nodes[0] cannot round-trip through FTransform within 8 float32 ULP",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.MHCompositeActor_3",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogActorLevelEditorSelection: SelectActor: The requested operation could not be completed because the actor has invalid flags. (local_child) Flags: (0x00204000)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.MHCompositeActor_4",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.StaticMeshActor_2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogActorLevelEditorSelection: SelectActor: The requested operation could not be completed because the actor has invalid flags. (selected_nested_leaf) Flags: (0x00204000)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.DESTROYED_StaticMeshActor_CHILDACTOR_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_26.Untitled:PersistentLevel.MHCompositeActor_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				}
+			],
+			"warnings": 12,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ManualFileImport",
+			"fullTestPath": "Mimir.V5.Composite.ManualFileImport",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 1.0072660446166992,
+			"dateTime": "2026.08.28-18.20.11",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc (0xC517D46D4248DE28) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc.s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.11"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc_adopted (0x7C7EDF5DD1D495E) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc_adopted.s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc_adopted'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Composites/s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Composites/s6_file_drop_d2e28bd847bca8da645133aa0cf5cccc_adopted.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				}
+			],
+			"warnings": 6,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PlacementActor",
+			"fullTestPath": "Mimir.V5.Composite.PlacementActor",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.056120298802852631,
+			"dateTime": "2026.08.28-18.20.12",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PlacementDependencyView",
+			"fullTestPath": "Mimir.V5.Composite.PlacementDependencyView",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.16667929291725159,
+			"dateTime": "2026.08.28-18.20.12",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Meshes/s6_view_mesh_ad10586a4c9ccde4ff5fa7b931b8138d (0xAE6B0238E240EDC2) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Meshes/s6_view_mesh_ad10586a4c9ccde4ff5fa7b931b8138d.s6_view_mesh_ad10586a4c9ccde4ff5fa7b931b8138d'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s6_view_root_ad10586a4c9ccde4ff5fa7b931b8138d.s6_view_root_ad10586a4c9ccde4ff5fa7b931b8138d: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: static_mesh:s6_view_mesh_ad10586a4c9ccde4ff5fa7b931b8138d has no matching managed mesh receipt",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s6_view_root_ad10586a4c9ccde4ff5fa7b931b8138d.s6_view_root_ad10586a4c9ccde4ff5fa7b931b8138d: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: static_mesh:s6_view_mesh_ad10586a4c9ccde4ff5fa7b931b8138d has no matching managed mesh receipt",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d (0xE9BB45B07A4F33BE) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d.s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogMHCompositeActor: /Game/MH/Generated/Composites/s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d.s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d has no generated asset",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "Mimir: /Game/MH/Generated/Composites/s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d.s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d: MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:s6_dead_root_ad10586a4c9ccde4ff5fa7b931b8138d has no generated asset",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				}
+			],
+			"warnings": 8,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PlacementProfileAppliedSourceHash",
+			"fullTestPath": "Mimir.V5.Composite.PlacementProfileAppliedSourceHash",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.12710599601268768,
+			"dateTime": "2026.08.28-18.20.12",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/profile_receipt_0810d9b5 (0xF9E49E7C8B00AE84) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/profile_receipt_0810d9b5.profile_receipt_0810d9b5'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.12"
+				}
+			],
+			"warnings": 2,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "SourceRaceNoGhost",
+			"fullTestPath": "Mimir.V5.Composite.SourceRaceNoGhost",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.026481300592422485,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ThumbnailRenderingDisabled",
+			"fullTestPath": "Mimir.V5.Composite.ThumbnailRenderingDisabled",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015241499990224838,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PlacementProfileDependency",
+			"fullTestPath": "Mimir.V5.ProjectIndex.PlacementProfileDependency",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.25871771574020386,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ConstantProfileStillDraws",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ConstantProfileStillDraws",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015264898538589478,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ConstantSelectionStillDraws",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ConstantSelectionStillDraws",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015656597912311554,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "DisplayNamesDoNotEnterSignature",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.DisplayNamesDoNotEnterSignature",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.016257897019386292,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "NestedRootNodeProvenance",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.NestedRootNodeProvenance",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015254098922014236,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "NoDrawSignatureRefresh",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.NoDrawSignatureRefresh",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.01620279997587204,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ParentLocalMatrices",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ParentLocalMatrices",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.014963198453187943,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "SeedEffectClassification",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.SeedEffectClassification",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015739899128675461,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ShearRemainsVisibleToAdmission",
+			"fullTestPath": "Mimir.V5.Random.PlanMetadata.ShearRemainsVisibleToAdmission",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.01573670282959938,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "StreamTraceAndSignatureParity",
+			"fullTestPath": "Mimir.V5.Random.StreamTraceAndSignatureParity",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.0081914030015468597,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "AttachmentsCannotDisappearSilently",
+			"fullTestPath": "Mimir.V5.Runtime.Bridge.AttachmentsCannotDisappearSilently",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015443500131368637,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ExternalReferencesCannotDisappearSilently",
+			"fullTestPath": "Mimir.V5.Runtime.Bridge.ExternalReferencesCannotDisappearSilently",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015711501240730286,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "MissingInputIsReadOnly",
+			"fullTestPath": "Mimir.V5.Runtime.Bridge.MissingInputIsReadOnly",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015305798500776291,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "CorruptionFailsClosed",
+			"fullTestPath": "Mimir.V5.Runtime.Input.CorruptionFailsClosed",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.01587430015206337,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "MapOrderIsNotAuthority",
+			"fullTestPath": "Mimir.V5.Runtime.Input.MapOrderIsNotAuthority",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.01492689922451973,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "RoundTripPreservesResolver",
+			"fullTestPath": "Mimir.V5.Runtime.Input.RoundTripPreservesResolver",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015470299869775772,
+			"dateTime": "2026.08.28-18.20.13",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "UnselectedClosureAdmission",
+			"fullTestPath": "Mimir.V5.Runtime.Input.UnselectedClosureAdmission",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015083398669958115,
+			"dateTime": "2026.08.28-18.20.14",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "UObjectCarrierIsSeedFree",
+			"fullTestPath": "Mimir.V5.Runtime.Input.UObjectCarrierIsSeedFree",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015263602137565613,
+			"dateTime": "2026.08.28-18.20.14",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "EditorPreview",
+			"fullTestPath": "Mimir.V5.Runtime.Parity.EditorPreview",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.70588010549545288,
+			"dateTime": "2026.08.28-18.20.14",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "S6 distinct lane report: E:/MimirComposite_GameObj_Audit_20260828/Saved/Mimir/S6/editor_preview.json",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.14"
+				}
+			],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PIE",
+			"fullTestPath": "Mimir.V5.Runtime.Parity.PIE",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 1.6435365676879883,
+			"dateTime": "2026.08.28-18.20.14",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "S6 distinct lane report: E:/MimirComposite_GameObj_Audit_20260828/Saved/Mimir/S6/pie.json",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.16"
+				}
+			],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "SerializedAutomation",
+			"fullTestPath": "Mimir.V5.Runtime.Parity.SerializedAutomation",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.10714459419250488,
+			"dateTime": "2026.08.28-18.20.16",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "S6 distinct lane report: E:/MimirComposite_GameObj_Audit_20260828/Saved/Mimir/S6/automation.json",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.16"
+				}
+			],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ActorLeavesAndMove",
+			"fullTestPath": "Mimir.V5.Runtime.ActorLeavesAndMove",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015050400048494339,
+			"dateTime": "2026.08.28-18.20.16",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "GameplayLeavesAndBasisRecovery",
+			"fullTestPath": "Mimir.V5.Runtime.GameplayLeavesAndBasisRecovery",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015714399516582489,
+			"dateTime": "2026.08.28-18.20.16",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogSpawn: UWorld::DestroyActor: World has no context! World: Untitled, Actor: /Temp/Untitled_37.Untitled:PersistentLevel.DESTROYED_StaticMeshActor_CHILDACTOR_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.16"
+				}
+			],
+			"warnings": 1,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "ShearBeforeMutation",
+			"fullTestPath": "Mimir.V5.Runtime.ShearBeforeMutation",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015200000256299973,
+			"dateTime": "2026.08.28-18.20.16",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "UnselectedDependencyBlocksBeforeMutation",
+			"fullTestPath": "Mimir.V5.Runtime.UnselectedDependencyBlocksBeforeMutation",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.015059899538755417,
+			"dateTime": "2026.08.28-18.20.16",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		},
+		{
+			"testDisplayName": "PlacementProfileFreshness",
+			"fullTestPath": "Mimir.V5.SourceLifecycle.PlacementProfileFreshness",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"56CFE42149445AC4FA9A38B47B0EF3A6"
+			],
+			"duration": 0.938102126121521,
+			"dateTime": "2026.08.28-18.20.16",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/v5_profile_freshness_0a5f4c9a_plain (0xC2D501C79CC382DB) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.16"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/v5_profile_freshness_0a5f4c9a_plain.v5_profile_freshness_0a5f4c9a_plain'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.16"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogStreaming: LoadPackage: SkipPackage: /Game/MH/Generated/Composites/v5_profile_freshness_0a5f4c9a_profiled (0xB131992FC4257918) - The package to load does not exist on disk or in the loader",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.16"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogUObjectGlobals: Failed to find object 'Object /Game/MH/Generated/Composites/v5_profile_freshness_0a5f4c9a_profiled.v5_profile_freshness_0a5f4c9a_profiled'",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.16"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Composites/v5_profile_freshness_0a5f4c9a_plain.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.17"
+				},
+				{
+					"event":
+					{
+						"type": "Warning",
+						"message": "LogAssetRegistry: E:/MimirComposite_GameObj_Audit_20260828/Content/MH/Generated/Composites/v5_profile_freshness_0a5f4c9a_profiled.uasset: package was marked as deleted in editor, but has been modified on disk. It will once again be returned from AssetRegistry queries.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.08.28-18.20.17"
+				}
+			],
+			"warnings": 6,
+			"errors": 0,
+			"artifacts": []
+		}
+	]
+}

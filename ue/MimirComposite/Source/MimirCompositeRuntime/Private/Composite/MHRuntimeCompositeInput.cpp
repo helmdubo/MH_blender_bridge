@@ -215,6 +215,37 @@ bool RuntimeInputTrs(FRuntimeInputArchive& Archive, FMHRandomTrs& Trs)
         Archive.Float(Trs.Scale.X) && Archive.Float(Trs.Scale.Y) && Archive.Float(Trs.Scale.Z);
 }
 
+bool RuntimeInputOrdinaryKind(const EMHRandomSemanticKind Kind)
+{
+    switch (Kind)
+    {
+    case EMHRandomSemanticKind::Mesh:
+    case EMHRandomSemanticKind::Actor:
+    case EMHRandomSemanticKind::Composite:
+    case EMHRandomSemanticKind::Group:
+    case EMHRandomSemanticKind::Random:
+    case EMHRandomSemanticKind::GameObj:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool RuntimeInputOptionKind(const EMHRandomSemanticKind Kind)
+{
+    switch (Kind)
+    {
+    case EMHRandomSemanticKind::Mesh:
+    case EMHRandomSemanticKind::Actor:
+    case EMHRandomSemanticKind::Composite:
+    case EMHRandomSemanticKind::Empty:
+    case EMHRandomSemanticKind::GameObj:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nodes, const int32 Depth)
 {
     if (Depth > RuntimeInputMaxDepth) return Archive.Fail(TEXT("node hierarchy exceeds bounded transport depth"));
@@ -222,7 +253,7 @@ bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nod
     {
         uint8 Kind = static_cast<uint8>(Node.Kind);
         if (!Archive.Byte(Kind)) return false;
-        if (Kind >= static_cast<uint8>(EMHRandomSemanticKind::Empty)) return Archive.Fail(TEXT("invalid ordinary node kind"));
+        if (!RuntimeInputOrdinaryKind(static_cast<EMHRandomSemanticKind>(Kind))) return Archive.Fail(TEXT("invalid ordinary node kind"));
         Node.Kind = static_cast<EMHRandomSemanticKind>(Kind);
         if (!Archive.String(Node.Resource) || !Archive.String(Node.DisplayName) || !Archive.String(Node.Profile) ||
             !RuntimeInputTrs(Archive, Node.Transform)) return false;
@@ -230,9 +261,7 @@ bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nod
         {
             uint8 OptionKind = static_cast<uint8>(Option.Kind);
             if (!Archive.Byte(OptionKind)) return false;
-            if (OptionKind > static_cast<uint8>(EMHRandomSemanticKind::Empty) ||
-                OptionKind == static_cast<uint8>(EMHRandomSemanticKind::Group) ||
-                OptionKind == static_cast<uint8>(EMHRandomSemanticKind::Random)) return Archive.Fail(TEXT("invalid option kind"));
+            if (!RuntimeInputOptionKind(static_cast<EMHRandomSemanticKind>(OptionKind))) return Archive.Fail(TEXT("invalid option kind"));
             Option.Kind = static_cast<EMHRandomSemanticKind>(OptionKind);
             return Archive.String(Option.Resource) && Archive.Float(Option.Weight);
         })) return false;
@@ -283,7 +312,8 @@ bool RuntimeInputNodeAdmission(const FMHRandomNode& Node, const int32 Depth, FSt
 {
     if (Depth > RuntimeInputMaxDepth) return RuntimeInputFail(OutError, TEXT("node hierarchy exceeds bounded transport depth"));
     const bool bResourceNode = Node.Kind == EMHRandomSemanticKind::Mesh ||
-        Node.Kind == EMHRandomSemanticKind::Actor || Node.Kind == EMHRandomSemanticKind::Composite;
+        Node.Kind == EMHRandomSemanticKind::Actor || Node.Kind == EMHRandomSemanticKind::Composite ||
+        Node.Kind == EMHRandomSemanticKind::GameObj;
     if ((!bResourceNode && Node.Kind != EMHRandomSemanticKind::Group && Node.Kind != EMHRandomSemanticKind::Random) ||
         (bResourceNode ? !RuntimeInputToken(Node.Resource) : !Node.Resource.IsEmpty()) ||
         (!Node.Profile.IsEmpty() && !RuntimeInputToken(Node.Profile)))
@@ -293,7 +323,8 @@ bool RuntimeInputNodeAdmission(const FMHRandomNode& Node, const int32 Depth, FSt
     for (const FMHRandomOption& Option : Node.Options)
     {
         const bool bResourceOption = Option.Kind == EMHRandomSemanticKind::Mesh ||
-            Option.Kind == EMHRandomSemanticKind::Actor || Option.Kind == EMHRandomSemanticKind::Composite;
+            Option.Kind == EMHRandomSemanticKind::Actor || Option.Kind == EMHRandomSemanticKind::Composite ||
+            Option.Kind == EMHRandomSemanticKind::GameObj;
         if ((!bResourceOption && Option.Kind != EMHRandomSemanticKind::Empty) ||
             (bResourceOption ? !RuntimeInputToken(Option.Resource) : !Option.Resource.IsEmpty()))
             return RuntimeInputFail(OutError, TEXT("invalid option kind/resource grammar"));

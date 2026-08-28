@@ -10,3 +10,6 @@ golden/v5/** text eol=lf
 
 # Frozen diagnostic evidence, not protocol assets; preserve receipt SHA256.
 docs/reference_notes/evidence/dagor_inventory_20260828/** text eol=lf
+docs/reference_notes/evidence/dag4blend_bridge_20260828/** text eol=lf
+# Pytest tracebacks retain blank indentation and source-line spacing verbatim.
+docs/reference_notes/evidence/dag4blend_bridge_20260828/*.xml whitespace=-blank-at-eol

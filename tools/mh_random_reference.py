@@ -38,8 +38,8 @@ _RESOURCE_KINDS = frozenset({
     "static_mesh",
     "texture",
 })
-_NODE_KINDS = frozenset({"mesh", "actor", "composite", "group", "random"})
-_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty"})
+_NODE_KINDS = frozenset({"mesh", "actor", "composite", "group", "random", "gameobj"})
+_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "gameobj"})
 
 
 class RandomReferenceError(ValueError):
@@ -351,7 +351,7 @@ class Node:
     def __post_init__(self) -> None:
         if self.kind not in _NODE_KINDS:
             raise RandomReferenceError(f"unsupported node kind {self.kind!r}")
-        if self.kind in {"mesh", "actor", "composite"}:
+        if self.kind in {"mesh", "actor", "composite", "gameobj"}:
             if not self.resource:
                 raise RandomReferenceError(f"{self.kind} node requires a resource")
         elif self.resource is not None:
@@ -430,6 +430,20 @@ class ResolvedLeaf:
 
 
 @dataclass(frozen=True)
+class ResolvedNode:
+    """Derived traversal view; never part of the frozen signature preimage.
+
+    A selected gameobj option has its canonical options[i] path and the
+    owning random node's world transform, but no executable leaf/resource.
+    """
+
+    path: str
+    kind: str
+    resource: str | None
+    world_trs: TRS
+
+
+@dataclass(frozen=True)
 class ResolvedPlan:
     seed: int
     closure: SourceClosure
@@ -439,6 +453,7 @@ class ResolvedPlan:
     selected_dependencies: tuple[str, ...]
     signature_preimage: bytes
     resolved_signature: str
+    nodes: tuple[ResolvedNode, ...] = ()
 
 
 def _node_source_dependencies(node: Node) -> tuple[ResourceKey, ...]:
@@ -688,6 +703,7 @@ def resolve_composite(
     decisions: list[SelectionDecision] = []
     draws: list[DrawTraceEntry] = []
     leaves: list[ResolvedLeaf] = []
+    nodes: list[ResolvedNode] = []
     selected_dependencies: list[str] = []
     selected_seen: set[str] = set()
 
@@ -721,7 +737,9 @@ def resolve_composite(
         if option.kind == "empty":
             return
         resource = option.resource or ""
-        if option.kind == "composite":
+        if option.kind == "gameobj":
+            nodes.append(ResolvedNode(option_path, "gameobj", resource, world))
+        elif option.kind == "composite":
             add_selected_resource(ResourceKey("composite", resource))
             walk_composite(resource, world, f"{option_path}>{resource}")
         else:
@@ -756,6 +774,7 @@ def resolve_composite(
                 _sample_profile(stream, node_path, profile, draws),
             )
         world = compose_trs(parent, local)
+        nodes.append(ResolvedNode(node_path, node.kind, node.resource, world))
 
         if node.kind == "mesh":
             add_leaf("mesh", node.resource or "", world, node_path)
@@ -794,6 +813,7 @@ def resolve_composite(
         selected_dependencies=tuple(selected_dependencies),
         signature_preimage=preimage,
         resolved_signature=_blake3_160(preimage),
+        nodes=tuple(nodes),
     )
 
 
@@ -810,6 +830,7 @@ __all__ = [
     "RandomStream",
     "Range",
     "ResolvedLeaf",
+    "ResolvedNode",
     "ResolvedPlan",
     "ResourceKey",
     "SelectionDecision",
