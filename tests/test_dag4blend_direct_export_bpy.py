@@ -52,6 +52,22 @@ def empty(name, collection, instance=None, parent=None):
     return obj
 
 
+def _carrier_scene(form):
+    """One logical node with place_type 3 and a seed boundary, in both forms."""
+    if form == "native":
+        collection = bpy.data.collections.new("carrier_root")
+        obj = empty("native_frame", collection)
+        obj.mh4blend.place_type = 3
+        obj.mh4blend.appearance_seed_boundary = True
+        return collection
+    collection = legacy("legacy_carrier_holder")
+    collection["name"] = "carrier_root"
+    obj = empty("legacy_frame", collection)
+    obj["place_type:i"] = 3
+    obj["ignoreParentInstSeed:b"] = True
+    return collection
+
+
 def frozen(value):
     if hasattr(value, "items"):
         return tuple(sorted((key, frozen(item)) for key, item in value.items()))
@@ -141,9 +157,9 @@ def test_saved_dagorprops_without_rna_keeps_weight_priority():
     root = legacy("direct_root")
     helper = bpy.data.collections.new("random.direct")
     empty("choice", root, helper)
-    marker = legacy("loot_spawn_a")
-    marker["type"] = "gameobj"
-    option = empty("loot", helper, marker)
+    gameobj = legacy("loot_spawn_a")
+    gameobj["type"] = "gameobj"
+    option = empty("loot", helper, gameobj)
     option["dagorprops"] = {"weight:r": 7.0}
     option["weight:r"] = 2.0
     before = snapshot()
@@ -192,19 +208,127 @@ def test_adapter_does_not_allocate_missing_registered_property_groups():
         bpy.utils.unregister_class(DirectProbeDagorProperties)
 
 
-@pytest.mark.parametrize("key,value", [("place_type:i", 3),
-                                      ("ignoreParentInstSeed:b", True)])
-def test_unratified_native_metadata_carrier_stops_before_staging(tmp_path, key, value):
+@pytest.mark.parametrize("carrier", ["id", "dagorprops"])
+@pytest.mark.parametrize("properties,place_type,boundary", [
+    ({}, None, False),
+    ({"place_type:i": 3}, 3, False),
+    ({"place_type:i": 0}, 0, False),
+    ({"placeOnCollision:b": True}, 1, False),
+    ({"placeOnCollision:b": True, "place_type:i": 4}, 4, False),
+    ({"placeOnCollision:b": True, "place_type:i": 0}, 0, False),
+    ({"placeOnCollision:b": False}, None, False),
+    ({"ignoreParentInstSeed:b": True}, None, True),
+    ({"ignoreParentInstSeed:b": False}, None, False),
+    ({"useParentInstSeed:b": True}, None, False),
+    ({"place_type:i": 3, "ignoreParentInstSeed:b": True}, 3, True),
+    ({"place_type:i": 9}, 9, False),
+])
+def test_dagor_placement_and_seed_properties_map_into_the_dto(
+        carrier, properties, place_type, boundary):
     root = legacy("direct_root")
-    empty("frame", root)[key] = value
+    obj = empty("frame", root)
+    if carrier == "dagorprops":
+        obj["dagorprops"] = dict(properties)
+    else:
+        for key, value in properties.items():
+            obj[key] = value
     before = snapshot()
-    with pytest.raises(ValueError, match="OPEN-V5-23") as caught:
+    document, _resources = convert_dag4blend_collection(root)
+    assert snapshot() == before
+    assert document.nodes[0].place_type == place_type
+    assert document.nodes[0].appearance_seed_boundary is boundary
+    payload = composite_json_bytes(document)
+    assert (b"place_type" in payload) is (place_type is not None)
+    assert (b"appearance_seed_boundary" in payload) is boundary
+
+
+@pytest.mark.parametrize("properties", [
+    {"place_type:i": -1},
+    {"place_type:i": 1.5},
+    {"place_type:i": "3"},
+    {"ignoreParentInstSeed:b": "yes"},
+    {"useParentInstSeed:b": False},
+    {"ignoreParentInstSeed:b": True, "useParentInstSeed:b": True},
+])
+def test_unrepresentable_dagor_placement_metadata_stays_fail_closed(
+        tmp_path, properties):
+    root = legacy("direct_root")
+    obj = empty("frame", root)
+    for key, value in properties.items():
+        obj[key] = value
+    before = snapshot()
+    with pytest.raises(ValueError, match="MH_E_COMPOSITE_GRAMMAR") as caught:
         export_composite_closure_collection(
             root, tmp_path, source_root=tmp_path, mode="include_all")
     assert "direct_root:nodes[0]" in str(caught.value)
-    assert key in str(caught.value)
+    assert any(key in str(caught.value) for key in properties)
     assert snapshot() == before
     assert not list(tmp_path.iterdir())
+
+
+def test_saved_dagorprops_outrank_id_mirrors_for_placement_metadata():
+    assert not hasattr(bpy.types.Object, "dagorprops")
+    root = legacy("direct_root")
+    obj = empty("frame", root)
+    obj["dagorprops"] = {"place_type:i": 5, "ignoreParentInstSeed:b": True}
+    obj["place_type:i"] = 2
+    before = snapshot()
+    document, _resources = convert_dag4blend_collection(root)
+    assert snapshot() == before
+    assert document.nodes[0].place_type == 5
+    assert document.nodes[0].appearance_seed_boundary is True
+
+
+def test_random_option_cannot_silently_drop_placement_metadata(tmp_path):
+    root = legacy("direct_root")
+    helper = bpy.data.collections.new("random.direct")
+    empty("choice", root, helper)
+    mesh = legacy("wheel")
+    mesh["type"] = "rendInst"
+    empty("ent", helper, mesh)["place_type:i"] = 3
+    before = snapshot()
+    with pytest.raises(ValueError, match="MH_E_COMPOSITE_GRAMMAR") as caught:
+        export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode="include_all")
+    assert "place_type:i" in str(caught.value)
+    assert snapshot() == before
+
+
+def test_compatibility_report_names_the_ratified_carriers_as_preserved(tmp_path):
+    root = legacy("direct_root")
+    empty("frame", root)["place_type:i"] = 3
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+    preserved = " ".join(report["compatibility"]["preserved"])
+    assert "place_type" in preserved
+    assert "ignoreParentInstSeed" in preserved
+    assert not any("OPEN-V5-23" in item
+                   for item in report["compatibility"]["blocked"])
+
+
+def test_native_mh_carriers_round_trip_through_import_and_export(tmp_path):
+    document, _resources = convert_dag4blend_collection(_carrier_scene("legacy"))
+    report = materialize_composite_documents(
+        {document.name: document}, root_name=document.name, source_root=tmp_path)
+    restored = report["collection"].objects[0]
+    assert restored.mh4blend.place_type == 3
+    assert restored.mh4blend.appearance_seed_boundary is True
+    assert _extract_composite(report["collection"]) == document
+
+
+def test_native_mh_and_dag4blend_carrier_forms_are_byte_identical(tmp_path):
+    native = _carrier_scene("native")
+    legacy_form = _carrier_scene("legacy")
+    before = snapshot()
+    native_document = _extract_composite(native)
+    legacy_document, _resources = convert_dag4blend_collection(legacy_form)
+    assert snapshot() == before
+    assert native_document == legacy_document
+    assert (composite_json_bytes(native_document)
+            == composite_json_bytes(legacy_document))
+    assert b'"place_type": 3' in composite_json_bytes(native_document)
+    assert b'"appearance_seed_boundary": true' in composite_json_bytes(
+        native_document)
 
 
 @pytest.mark.parametrize("construct", ["label:t", "require", "colors"])
@@ -255,11 +379,11 @@ def test_explicit_prefab_policy_retains_mesh_identity_and_reports_loss():
     assert snapshot() == before
 
 
-def test_marker_ordinary_and_option_match_native_mh_dto_without_resources(tmp_path):
+def test_gameobj_ordinary_and_option_match_native_mh_dto_without_resources(tmp_path):
     root = legacy("direct_root")
-    marker = legacy("dummy_pivot")
-    marker["type"] = "gameobj"
-    empty("point", root, marker).location.x = 1
+    gameobj = legacy("dummy_pivot")
+    gameobj["type"] = "gameobj"
+    empty("point", root, gameobj).location.x = 1
     helper = bpy.data.collections.new("random.direct")
     empty("choice", root, helper)
     option = legacy("loot_spawn_a")
@@ -269,14 +393,14 @@ def test_marker_ordinary_and_option_match_native_mh_dto_without_resources(tmp_pa
     before = snapshot()
     doc, _resources = convert_dag4blend_collection(root)
     assert snapshot() == before
-    assert doc.nodes[0].kind == "marker"
-    assert doc.nodes[1].options[0].kind == "marker"
+    assert doc.nodes[0].kind == "gameobj"
+    assert doc.nodes[1].options[0].kind == "gameobj"
     report = materialize_composite_documents(
         {doc.name: doc}, root_name=doc.name, source_root=tmp_path)
     assert _extract_composite(report["collection"]) == doc
     assert composite_json_bytes(_extract_composite(report["collection"])) == composite_json_bytes(doc)
     for obj in report["collection"].objects:
-        if obj.mh4blend.kind == "marker":
+        if obj.mh4blend.kind == "gameobj":
             assert obj.instance_collection is None
             assert obj.get("mh_unresolved_placement") is None
 

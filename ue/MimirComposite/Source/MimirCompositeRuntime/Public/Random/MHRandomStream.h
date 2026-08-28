@@ -63,7 +63,7 @@ enum class EMHRandomSemanticKind : uint8
     Random,
     Empty,
     // Append only: existing internal runtime transport ordinals are frozen.
-    Marker,
+    GameObj,
 };
 
 struct MIMIRCOMPOSITERUNTIME_API FMHRandomTrs
@@ -141,7 +141,7 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeNode
 {
     FString NodePath;
     FString DisplayName;
-    /** Derived semantic identity, including selected marker options; not a resource binding. */
+    /** Derived semantic identity, including selected gameobj options; not a resource binding. */
     EMHRandomSemanticKind SemanticKind = EMHRandomSemanticKind::Group;
     FString Resource;
     FMHRandomTrs AuthoredLocalTrs;

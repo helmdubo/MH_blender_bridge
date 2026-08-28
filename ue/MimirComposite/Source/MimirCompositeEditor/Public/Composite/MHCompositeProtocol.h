@@ -21,6 +21,17 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeNode
     FString Name;
     FMHCompositeTransform Transform;
     FString Profile;
+    /**
+     * Source provenance only (13 §7.1): the authored Dagor `place_type`.
+     * INDEX_NONE means the wire field was absent; an explicit 0 is preserved
+     * as 0. UE never executes placement, so nothing may branch on this value.
+     */
+    int32 PlaceType = INDEX_NONE;
+    /**
+     * Carrier for `ignoreParentInstSeed` (13 §7.2). No consumer before
+     * V5-S6.3; it must not reach the resolver, streams, or signatures.
+     */
+    bool bAppearanceSeedBoundary = false;
     TArray<FMHCompositeOption> Options;
     TArray<FMHCompositeNode> Children;
 };

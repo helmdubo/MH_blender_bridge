@@ -67,7 +67,7 @@ _DAGOR_TYPE_TO_KIND = {
     "prefab": "mesh",
     "gameobj": "actor",
 }
-_DAG4BLEND_TYPE_TO_KIND = {**_DAGOR_TYPE_TO_KIND, "gameobj": "marker"}
+_DAG4BLEND_TYPE_TO_KIND = {**_DAGOR_TYPE_TO_KIND, "gameobj": "gameobj"}
 _MISSING = object()
 
 
@@ -544,6 +544,18 @@ _DAG4BLEND_PLACEMENT_KEYS = frozenset({
     "scale:p2", "yscale:p2", "include", "include:t",
 })
 
+# dag4blend keeps these four declarations; owner doc13 §7 maps them onto the
+# two ratified node carriers. Absence stays absence: it is never evidence that
+# the authoritative BLK said zero.
+_PLACE_TYPE_KEY = "place_type:i"
+_PLACE_ON_COLLISION_KEY = "placeoncollision:b"
+_IGNORE_PARENT_APPEARANCE_KEY = "ignoreparentinstseed:b"
+_USE_PARENT_APPEARANCE_KEY = "useparentinstseed:b"
+_DAG4BLEND_METADATA_KEYS = frozenset({
+    _PLACE_TYPE_KEY, _PLACE_ON_COLLISION_KEY,
+    _IGNORE_PARENT_APPEARANCE_KEY, _USE_PARENT_APPEARANCE_KEY,
+})
+
 
 def _mapping_keys(mapping):
     if mapping is None:
@@ -552,6 +564,86 @@ def _mapping_keys(mapping):
         return tuple(key for key in mapping.keys() if isinstance(key, str))
     except (AttributeError, TypeError):
         return ()
+
+
+def _dag4blend_metadata_claims(obj):
+    """Collect the declarations dag4blend preserved, dagorprops winning."""
+
+    claims = {}
+    for mapping in (obj, _dagor_settings(obj)):
+        for key in _mapping_keys(mapping):
+            folded = key.casefold()
+            if folded not in _DAG4BLEND_METADATA_KEYS:
+                continue
+            value = _mapping_value(mapping, key)
+            if value is not _MISSING:
+                claims[folded] = (key, value)
+    return claims
+
+
+def _dagor_flag(key, value, subjects):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    _raise(
+        "MH_E_COMPOSITE_GRAMMAR", [*subjects, key],
+        f"dag4blend {key} must be a boolean declaration")
+
+
+def _dag4blend_source_metadata(obj, provenance, node_path, *, option=False):
+    """Map preserved dag4blend declarations onto the two node carriers."""
+
+    claims = _dag4blend_metadata_claims(obj)
+    if option and claims:
+        # Node metadata has no random-option wire position; dropping it here
+        # would be exactly the silent loss this carrier exists to prevent.
+        _raise(
+            "MH_E_COMPOSITE_GRAMMAR",
+            [provenance, *sorted(key for key, _value in claims.values())],
+            "dag4blend random options cannot carry node place_type or "
+            f"appearance_seed_boundary metadata at NodePath {node_path}")
+
+    place_type = None
+    declared = claims.get(_PLACE_TYPE_KEY)
+    if declared is not None:
+        key, value = declared
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            _raise(
+                "MH_E_COMPOSITE_GRAMMAR", [provenance, key],
+                f"dag4blend {key} must be a non-negative integer at NodePath "
+                f"{node_path}; unknown non-negative values pass as provenance")
+        place_type = int(value)
+    collision = claims.get(_PLACE_ON_COLLISION_KEY)
+    if collision is not None:
+        key, value = collision
+        # An explicit place_type always outranks the legacy boolean shorthand.
+        if _dagor_flag(key, value, [provenance]) and place_type is None:
+            place_type = 1
+
+    boundaries = {}
+    ignored = claims.get(_IGNORE_PARENT_APPEARANCE_KEY)
+    if ignored is not None:
+        key, value = ignored
+        boundaries[_dagor_flag(key, value, [provenance])] = key
+    inherited = claims.get(_USE_PARENT_APPEARANCE_KEY)
+    if inherited is not None:
+        key, value = inherited
+        if not _dagor_flag(key, value, [provenance]):
+            # Owner ratified this declaration only as an explicit false. A
+            # negated form has no ratified meaning; guessing one would invent
+            # semantics, so it stays fail-closed.
+            _raise(
+                "MH_E_COMPOSITE_GRAMMAR", [provenance, key],
+                f"dag4blend {key} is admitted only as an explicit false "
+                f"appearance_seed_boundary at NodePath {node_path}")
+        boundaries[False] = key
+    if len(boundaries) > 1:
+        _raise(
+            "MH_E_COMPOSITE_GRAMMAR", [provenance, *sorted(boundaries.values())],
+            "dag4blend appearance_seed_boundary declarations contradict each "
+            f"other at NodePath {node_path}")
+    return place_type, next(iter(boundaries), False)
 
 
 def _dag4blend_profile(obj, provenance, *, option=False):
@@ -715,23 +807,17 @@ def convert_dag4blend_collection(
             python_warnings.warn(
                 f"{warning['code']}: {subject}: {message}", stacklevel=2)
 
-    def inspect_properties(obj, subject, node_path):
+    def inspect_properties(obj, subject, node_path, *, option=False):
         reached_keys = {
             key for mapping in (_dagor_settings(obj), obj)
             for key in _mapping_keys(mapping)}
-        pending = sorted(key for key in reached_keys if key.casefold() in {
-            "place_type:i", "placeoncollision:b", "ignoreparentinstseed:b",
-            "useparentinstseed:b"})
-        if pending:
-            _raise(
-                "MH_E_INVALID_RESOURCE_SOURCE", [subject, *pending],
-                "OPEN-V5-23: native Blender metadata carriers are not ratified; "
-                f"refusing to discard parameters at NodePath {node_path}: "
-                f"{', '.join(pending)}")
+        metadata = _dag4blend_source_metadata(
+            obj, subject, node_path, option=option)
         keys = sorted(key for key in reached_keys if key.casefold() in {
             "label", "label:t", "require", "colors"})
         for key in keys:
             warn(node_path, subject, f"Dropped Dagor {key}; it is never executed")
+        return metadata
 
     def resource_identity(source, obj, subject, node_path):
         kind, name = _resource_identity(source, obj, subject)
@@ -760,7 +846,8 @@ def convert_dag4blend_collection(
             f"collection:{collection.name}/object:{obj.name}"
             f"{resource_label}/NodePath:{node_path}")
         subjects = [*ancestor_subjects, subject]
-        inspect_properties(obj, subject, node_path)
+        place_type, appearance_seed_boundary = inspect_properties(
+            obj, subject, node_path)
         profile = _dag4blend_profile(obj, subject)
         transform, local = _dag4blend_local(obj, subjects)
         world = parent_world @ local
@@ -785,7 +872,8 @@ def convert_dag4blend_collection(
                     f"{subject}/ent[{option_index}]:{option_obj.name}"
                     f"/NodePath:{node_path}/options[{option_index}]")
                 option_path = f"{node_path}/options[{option_index}]"
-                inspect_properties(option_obj, option_subject, option_path)
+                inspect_properties(
+                    option_obj, option_subject, option_path, option=True)
                 _dag4blend_profile(option_obj, option_subject, option=True)
                 if option_obj.type != "EMPTY":
                     _raise(
@@ -843,6 +931,8 @@ def convert_dag4blend_collection(
             profile=profile,
             options=options,
             children=converted_children,
+            place_type=place_type,
+            appearance_seed_boundary=appearance_seed_boundary,
         )
 
     document = Composite(root_name, [
@@ -858,7 +948,7 @@ def _dag4blend_collection_bundle(
 
     Composite resource collections become documents, never overrides.  Only
     Mesh definition collections cross into the writer as explicit read-only
-    inputs. Named marker collections carry tokens only: they have no resource
+    inputs. Named gameobj collections carry tokens only: they have no resource
     payload, actor class binding or materialization requirement.
     """
 
@@ -893,10 +983,10 @@ def _dag4blend_collection_bundle(
                     resource_overrides, key, resource_collection,
                     f"composite:{document.name}/{kind}:{name}")
             else:
-                # Marker identity belongs to the node/option, not a separately
+                # GameObj identity belongs to the node/option, not a separately
                 # published resource. A registry collision must never turn it
                 # into an executable actor.
-                if kind not in {"actor", "marker"}:
+                if kind not in {"actor", "gameobj"}:
                     _raise(
                         "MH_E_UNSUPPORTED_NODE_KIND", [kind, name],
                         "unsupported dag4blend closure resource kind")
@@ -1035,12 +1125,12 @@ def _dag4blend_compatibility_report():
     return {
         "route": "dag4blend_scene_partial_compatibility",
         "preserved": ["hierarchy", "parent-local transforms", "random options and weights",
-                      "nested composites", "mesh LODs", "materials", "gameObj markers"],
+                      "nested composites", "mesh LODs", "materials", "gameObj tokens",
+                      "node place_type", "ignoreParentInstSeed"],
         "unrecoverable": ["document-root properties", "aboveHt", "useCollisionNormal",
                           "quantizeTm", "label", "require", "colors", "xScale",
                           "snake_case aliases"],
-        "blocked": ["prefab without explicit lossy opt-in", "inline p2 without typed profile",
-                    "OPEN-V5-22: repeated loaded FBX", "OPEN-V5-23: new metadata carriers"],
+        "blocked": ["prefab without explicit lossy opt-in", "inline p2 without typed profile"],
     }
 
 

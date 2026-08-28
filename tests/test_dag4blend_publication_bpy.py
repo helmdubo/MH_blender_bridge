@@ -214,18 +214,13 @@ def test_each_publish_boundary_preserves_scene_and_reports_exact_prefix(
         assert caught.value.published == identities[:count]
         assert caught.value.unpublished == identities[count:]
 
-    if count < 2:
-        retry = _prepare(source, documents, inputs)
-    else:
-        # Honest temporary STOP: repeat-loaded-FBX comparison is unresolved.
-        files = _files(source)
-        with pytest.raises(ValueError, match="proven comparison"):
-            _prepare(source, documents, inputs)
-        assert _files(source) == files
-        # Explicit narrower command reuses published geometry without guessing.
-        retry = _prepare(source, documents, inputs, mode=CLOSURE_MODE_COMPOSITES)
+    retry = _prepare(source, documents, inputs)
     report = _publish(retry, tmp_path, "retry")
-    assert report["published"] == list(identities[count:])
+    # Owner decision 2026-08-29 (closes OPEN-V5-22): a loaded mesh always
+    # republishes over its existing payload through the staged replace path
+    # instead of blocking the batch on a content-equality proof.
+    republished = [identities[1]] if count >= 2 else []
+    assert report["published"] == republished + list(identities[count:])
     assert _snapshot() == before
     _closed_prefix(source)
 
@@ -387,13 +382,36 @@ def test_source_only_mesh_and_material_are_reused_without_rewriting(tmp_path):
     assert _snapshot() == scene
 
 
+def test_repeat_include_all_overwrites_loaded_mesh_and_reuses_json(tmp_path):
+    # Owner decision 2026-08-29 (closes OPEN-V5-22): repeating include_all on
+    # an unchanged scene with the mesh still loaded rewrites the FBX payload
+    # through the staged replace path; canonical JSON stays reused and the
+    # scene stays untouched.
+    source, documents, inputs, _mesh, _material, _legacy = _fixture(tmp_path)
+    _publish(_prepare(source, documents, inputs), tmp_path)
+    before = _files(source)
+    scene = _snapshot()
+    retry = _prepare(source, documents, inputs)
+    mesh_key = ResourceKey("static_mesh", "bridge_mesh")
+    assert [row.key for row in retry.to_publish] == [mesh_key]
+    row = retry.row_for(mesh_key)
+    assert row.action == "publish" and row.source_snapshot is not None
+    report = _publish(retry, tmp_path, "retry")
+    assert report["published"] == ["static_mesh:bridge_mesh"]
+    after = _files(source)
+    assert set(after) == set(before)
+    parsed = parse_mesh_fbx(source / "bridge_mesh.mesh.fbx")
+    assert parsed.resource_name == "bridge_mesh"
+    assert _snapshot() == scene
+
+
 @pytest.mark.parametrize("option", [False, True])
-def test_marker_token_never_requires_own_source_payload(tmp_path, option):
+def test_gameobj_token_never_requires_own_source_payload(tmp_path, option):
     source = tmp_path / "source"
     source.mkdir()
     node = (Node("random", options=[
-        RandomOption("empty", 1.0), RandomOption("marker", 0.0, "dummy_pivot")])
-        if option else Node("marker", resource="dummy_pivot"))
+        RandomOption("empty", 1.0), RandomOption("gameobj", 0.0, "dummy_pivot")])
+        if option else Node("gameobj", resource="dummy_pivot"))
     documents = {"bridge_root": Composite("bridge_root", [node])}
     plan = _prepare(source, documents, {})
     assert plan.full_closure_keys == (ResourceKey("composite", "bridge_root"),)

@@ -15,7 +15,7 @@ WEIGHT_MIRROR_KEY = "mh_random_weight"
 OPTION_INDEX_MIRROR_KEY = "mh_random_option_index"
 PROFILE_MIRROR_KEY = "mh_composite_profile"
 
-_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "marker"})
+_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "gameobj"})
 
 
 def _set_or_remove_mirror(owner, key, value, *, present=True):
@@ -90,7 +90,7 @@ class MHCompositeObjectProperties(bpy.types.PropertyGroup):
             ("empty", "Empty", "Option which resolves to no resource"),
             ("group", "Group", "Transform-bearing structural node"),
             ("random", "Random", "Weighted random selection node"),
-            ("marker", "Marker", "Named non-executable point; no resource asset"),
+            ("gameobj", "GameObj", "Named non-executable Dagor gameObj; no resource asset"),
         ),
         default="unset",
         update=_update_kind,
@@ -114,6 +114,23 @@ class MHCompositeObjectProperties(bpy.types.PropertyGroup):
             "empty means no profile"),
         default="",
         update=_update_profile,
+    )
+    # Source provenance carriers ratified by OPEN-V5-23. They are written to
+    # the wire and hashed, never executed, and have no ID mirror: a mirror
+    # would be a second, non-authoritative claim on the same statement.
+    place_type: bpy.props.IntProperty(
+        name="Place Type",
+        description=(
+            "Dagor source place_type carried as provenance; -1 means the "
+            "source never stated one, which is not the same as zero"),
+        default=-1,
+    )
+    appearance_seed_boundary: bpy.props.BoolProperty(
+        name="Appearance Seed Boundary",
+        description=(
+            "Dagor source ignoreParentInstSeed carried for V5-S6.3; this "
+            "slice only stores it and never derives anything from it"),
+        default=False,
     )
 
 
@@ -185,7 +202,7 @@ def _indexed_options(random_node, *, require_nonempty=True,
         if kind == "empty" and resource is not None:
             raise _grammar(
                 f"empty random option {option.name!r} forbids a resource")
-        if (kind not in {"empty", "marker"} and resource is None
+        if (kind not in {"empty", "gameobj"} and resource is None
                 and not bool(option.get("mh_unresolved_placement", False))):
             raise _grammar(
                 f"random option {option.name!r} requires a resource")

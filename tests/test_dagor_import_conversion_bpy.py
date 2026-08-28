@@ -508,7 +508,7 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
     document, discovered = convert_dag4blend_collection(source)
     assert document.name == "legacy_vehicle"
     assert list(discovered) == [
-        ("mesh", "wheel"), ("marker", "driver"),
+        ("mesh", "wheel"), ("gameobj", "driver"),
         ("composite", "nested_variant")]
     assert document.nodes[0].kind == "group"
     assert [child.kind for child in document.nodes[0].children] == [
@@ -532,7 +532,7 @@ def test_dag4blend_helper_and_marker_paths_lift_options_without_helper_authority
     assert [obj.instance_collection for obj in lifted] == [
         bpy.data.collections["wheel"], None,
         bpy.data.collections["nested_variant.composite"]]
-    assert lifted[1].mh4blend.kind == "marker"
+    assert lifted[1].mh4blend.kind == "gameobj"
     assert lifted[1]["mh_composite_resource"] == "driver"
     assert bpy.data.collections.get("driver.actor") is None
     nested_target = bpy.data.collections["nested_variant.composite"]

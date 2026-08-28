@@ -42,6 +42,9 @@ GREEN сохраняет имя/TRS, но обычный импорт до не�
 **Статус. РЕШЕНО OWNER — документ 13 R2 §6.4: новый kind `marker`.**
 Обычный узел и random option сохраняют имя/TRS в производном плане без
 исполняемых leaves и registry lookup; блокировка выше — история checkpoint.
+**Поправка owner 2026-08-29:** kind переименован `marker` → `gameobj` без
+изменения семантики (док 13, «Поправки owner 2026-08-29» п.1); UE-политика
+остаётся placeholder-only.
 
 ## OPEN-V5-20 — dag4blend теряет корневые placement controls
 
@@ -72,6 +75,8 @@ lossless placement carrier для этого маршрута. Не объявл
 Сценовый адаптер не восстанавливает корневые настройки и не объявляет
 отсутствие свойства доказательством нуля в BLK. Отчёт называет
 невосстановимые данные; базовый экспорт этим не блокируется.
+**Подтверждено owner 2026-08-29:** overlay/carrier в dag4blend не вводится;
+частичная совместимость окончательна (док 13, «Поправки» п.3).
 
 ## OPEN-V5-21 — полный canonical node order с profile и новыми metadata
 
@@ -123,14 +128,24 @@ FBX с явно заданными исключениями служебных �
 В обоих случаях raw hash исходного файла остаётся raw hash; новые stamps,
 manifest или «тот же размер/имя значит тот же mesh» не предлагаются.
 
-**Временное fail-closed правило.** STOP только повторной публикации direct
+**Статус. РЕШЕНО OWNER 2026-08-29.** Перезапись разрешена: повторный
+direct export загруженного меша всегда публикует поверх существующего
+payload через штатный staged replace path (со snapshot/failure boundaries);
+доказательство равенства содержимого не требуется и не блокирует.
+Незагруженные source-зависимости по-прежнему переиспользуются;
+байт-идентичный canonical JSON по-прежнему не переписывается.
+Acceptance 8 дока 13 в части «не переписаны» сужен owner'ом до
+незагруженных payload'ов и canonical JSON. Прежнее правило ниже — история.
+
+**Временное fail-closed правило (история).** STOP только повторной публикации direct
 dag4blend mesh, когда одновременно есть загруженный authoring input и
 существующий source FBX: отказ до staging/replace. Не объявлять равенство по
 структурному скану, не переписывать молча каждый FBX и не нормализовать его
 байты самовольно. Первая публикация нового mesh, source-only unloaded reuse
 и canonical JSON reuse остаются открыты. Native MH export не переопределён.
 
-**Статус. ОТКРЫТ — блокирует repeat-export/partial-retry acceptance с mesh.**
+**Статус (история). ОТКРЫТ — блокировал repeat-export/partial-retry
+acceptance с mesh; снят owner-решением выше.**
 
 ## OPEN-V5-23 — Blender-carrier двух новых узловых metadata
 
@@ -157,7 +172,15 @@ Canonical order уже решён OPEN-V5-21 и не переоткрывает�
 Не опускать их молча, не придумывать hidden carrier/зеркала. Базовый direct
 export без этих полей, marker, empty, режимы и compatibility report открыты.
 
-**Статус. ОТКРЫТ — требуются точные native Blender-carrier имена/типы.**
+**Статус. РЕШЕНО OWNER 2026-08-29.** Wire-формат ратифицирован лаконичным:
+скалярный опциональный `"place_type": <int>` вместо объекта `placement`
+(док 13, «Поправки» п.2) и `"appearance_seed_boundary": <bool>` без
+изменений. Выбор имён native carriers owner делегировал исполнителю в
+рамках этого формата; выбрано: typed PropertyGroup
+`mh4blend.place_type` (IntProperty, `-1` = не задано, писать в JSON только
+при `>= 0`) и `mh4blend.appearance_seed_boundary` (BoolProperty,
+default `false`, опускается при false). Неавторитетные ID-зеркала не
+вводятся. Прежнее fail-closed правило снимается реализацией carriers.
 
 ## OPEN-V5-15 — inline `p2` в даговском узле
 

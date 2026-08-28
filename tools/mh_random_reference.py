@@ -38,8 +38,8 @@ _RESOURCE_KINDS = frozenset({
     "static_mesh",
     "texture",
 })
-_NODE_KINDS = frozenset({"mesh", "actor", "composite", "group", "random", "marker"})
-_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "marker"})
+_NODE_KINDS = frozenset({"mesh", "actor", "composite", "group", "random", "gameobj"})
+_OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "gameobj"})
 
 
 class RandomReferenceError(ValueError):
@@ -351,7 +351,7 @@ class Node:
     def __post_init__(self) -> None:
         if self.kind not in _NODE_KINDS:
             raise RandomReferenceError(f"unsupported node kind {self.kind!r}")
-        if self.kind in {"mesh", "actor", "composite", "marker"}:
+        if self.kind in {"mesh", "actor", "composite", "gameobj"}:
             if not self.resource:
                 raise RandomReferenceError(f"{self.kind} node requires a resource")
         elif self.resource is not None:
@@ -433,7 +433,7 @@ class ResolvedLeaf:
 class ResolvedNode:
     """Derived traversal view; never part of the frozen signature preimage.
 
-    A selected marker option has its canonical options[i] path and the
+    A selected gameobj option has its canonical options[i] path and the
     owning random node's world transform, but no executable leaf/resource.
     """
 
@@ -737,8 +737,8 @@ def resolve_composite(
         if option.kind == "empty":
             return
         resource = option.resource or ""
-        if option.kind == "marker":
-            nodes.append(ResolvedNode(option_path, "marker", resource, world))
+        if option.kind == "gameobj":
+            nodes.append(ResolvedNode(option_path, "gameobj", resource, world))
         elif option.kind == "composite":
             add_selected_resource(ResourceKey("composite", resource))
             walk_composite(resource, world, f"{option_path}>{resource}")

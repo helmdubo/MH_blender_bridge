@@ -87,7 +87,7 @@ def prepare_dag4blend_publication(
     """Prepare requested writes and validate the complete source closure.
 
     Root-only reads excluded composites from Source Root, as the MH adapter
-    does. Excluded meshes/materials are also source authorities. Marker tokens,
+    does. Excluded meshes/materials are also source authorities. GameObj tokens,
     like actor tokens, have no filesystem payload. The caller stages/publishes
     through S4, without a Blender finalizer.
     """
@@ -165,11 +165,9 @@ def prepare_dag4blend_publication(
                 _fail("MH_E_RESOURCE_KIND_MISMATCH", [key, collection.name],
                       "FBX writer identity differs from the converted token; "
                       "automatic renaming is forbidden")
-            if candidate is not None:
-                _fail("MH_E_INVALID_RESOURCE_SOURCE",
-                      [key, candidate.path, collection.name, *owners],
-                      "OPEN-V5-22: loaded FBX content reuse is awaiting a proven comparison; "
-                      "direct export cannot rewrite an unproven unchanged mesh")
+            # Owner decision 2026-08-29 (closes OPEN-V5-22): a loaded mesh
+            # always republishes over the existing payload through the staged
+            # replace path; content-equality proof is not required.
             target, existing = _target_for(inventory, output, key, ".mesh.fbx")
             prepared = replace(prepared, target=target)
             names = tuple(material.name for material in prepared.materials)

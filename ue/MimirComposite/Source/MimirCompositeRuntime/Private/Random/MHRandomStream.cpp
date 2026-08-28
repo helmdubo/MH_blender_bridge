@@ -122,7 +122,7 @@ const TCHAR* SemanticKindLabel(const EMHRandomSemanticKind Kind)
     case EMHRandomSemanticKind::Group: return TEXT("group");
     case EMHRandomSemanticKind::Random: return TEXT("random");
     case EMHRandomSemanticKind::Empty: return TEXT("empty");
-    case EMHRandomSemanticKind::Marker: return TEXT("marker");
+    case EMHRandomSemanticKind::GameObj: return TEXT("gameobj");
     }
     return TEXT("unknown");
 }
@@ -871,18 +871,18 @@ bool MHResolveCompositePlan(
             {
                 AddLeaf(Option.Kind, Option.Resource, World, WorldMatrix, OptionPath, Node.DisplayName, RootNodeIndex);
             }
-            else if (Option.Kind == EMHRandomSemanticKind::Marker)
+            else if (Option.Kind == EMHRandomSemanticKind::GameObj)
             {
-                // Preserve the selected marker token in the plan without making
+                // Preserve the selected gameobj token in the plan without making
                 // a leaf, registry lookup, dependency key, or additional draw.
                 // Options have no authored transform: their local TRS is identity.
-                FMHResolvedCompositeNode& Marker = OutPlan.Nodes.AddDefaulted_GetRef();
-                Marker.NodePath = OptionPath;
-                Marker.DisplayName = Node.DisplayName;
-                Marker.SemanticKind = EMHRandomSemanticKind::Marker;
-                Marker.Resource = Option.Resource;
-                Marker.WorldMatrix = WorldMatrix;
-                Marker.RootNodeIndex = RootNodeIndex;
+                FMHResolvedCompositeNode& GameObj = OutPlan.Nodes.AddDefaulted_GetRef();
+                GameObj.NodePath = OptionPath;
+                GameObj.DisplayName = Node.DisplayName;
+                GameObj.SemanticKind = EMHRandomSemanticKind::GameObj;
+                GameObj.Resource = Option.Resource;
+                GameObj.WorldMatrix = WorldMatrix;
+                GameObj.RootNodeIndex = RootNodeIndex;
             }
         }
         for (int32 ChildIndex = 0; ChildIndex < Node.Children.Num(); ++ChildIndex)

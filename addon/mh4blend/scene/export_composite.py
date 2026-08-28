@@ -271,9 +271,9 @@ def _node_kind_and_resource(
     explicit_kind = _typed_kind(obj)
     kind = _placement_kind(obj, instance, instance_kind, option=option)
     allowed = (
-        {"mesh", "actor", "composite", "empty", "marker"}
+        {"mesh", "actor", "composite", "empty", "gameobj"}
         if option else
-        {"mesh", "actor", "composite", "group", "random", "marker"}
+        {"mesh", "actor", "composite", "group", "random", "gameobj"}
     )
     if kind not in allowed:
         instance_name = getattr(instance, "name", None)
@@ -323,7 +323,7 @@ def _random_option(option, child_objects) -> RandomOption:
             "MH_E_COMPOSITE_GRAMMAR", [option.name],
             "random option Empty cannot have children")
     kind, resource = _node_kind_and_resource(option, option=True)
-    if (kind not in {"empty", "marker"} and option.instance_collection is None
+    if (kind not in {"empty", "gameobj"} and option.instance_collection is None
             and not bool(option.get(UNRESOLVED_PLACEMENT_KEY, False))):
         raise MHValidationError(
             "MH_E_COMPOSITE_GRAMMAR", [option.name],
@@ -454,6 +454,11 @@ def _extract_composite(collection) -> Composite:
                 child for child in authored_children
                 if child.as_pointer() not in option_ids
             ]
+        settings = obj.mh4blend
+        place_type = int(settings.place_type)
+        if place_type < 0:
+            # Negative is the typed "never stated" encoding, not a value.
+            place_type = None
         return Node(
             kind=kind,
             resource=resource,
@@ -462,6 +467,8 @@ def _extract_composite(collection) -> Composite:
             profile=profile,
             options=options,
             children=[build(child) for child in authored_children],
+            place_type=place_type,
+            appearance_seed_boundary=bool(settings.appearance_seed_boundary),
         )
 
     return Composite(name=name, nodes=[build(obj) for obj in roots])

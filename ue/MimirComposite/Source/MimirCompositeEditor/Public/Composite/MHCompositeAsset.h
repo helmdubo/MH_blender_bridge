@@ -21,7 +21,8 @@ enum class EMHCompositeNodeKind : uint8
     Composite,
     Group,
     Random,
-    Marker
+    // Append only: existing serialized ordinals are frozen.
+    GameObj
 };
 
 UENUM()
@@ -31,7 +32,8 @@ enum class EMHCompositeOptionKind : uint8
     Actor,
     Composite,
     Empty,
-    Marker
+    // Append only: existing serialized ordinals are frozen.
+    GameObj
 };
 
 USTRUCT()
@@ -128,6 +130,14 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeAssetNode
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FString Profile;
+
+    /** Source provenance only: authored Dagor place_type; INDEX_NONE means absent. */
+    UPROPERTY(VisibleAnywhere, Category = "Mimir")
+    int32 PlaceType = INDEX_NONE;
+
+    /** Source provenance only: authored ignoreParentInstSeed; no consumer before V5-S6.3. */
+    UPROPERTY(VisibleAnywhere, Category = "Mimir")
+    bool bAppearanceSeedBoundary = false;
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     TArray<FMHCompositeOption> Options;

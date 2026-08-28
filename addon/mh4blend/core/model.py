@@ -37,6 +37,11 @@ class Node:
     profile: str | None = None
     options: list = field(default_factory=list)
     children: list = field(default_factory=list)
+    # Source provenance metadata. ``None`` means the source never stated a
+    # place_type; it is not a synonym for the explicit value zero. Neither
+    # field reaches the resolver, ResolvedSignature or random draws.
+    place_type: int | None = None
+    appearance_seed_boundary: bool = False
 
 
 @dataclass
