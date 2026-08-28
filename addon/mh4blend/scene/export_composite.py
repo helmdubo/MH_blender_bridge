@@ -168,16 +168,59 @@ def _collection_instance_identity(instance) -> tuple[str, str]:
         "established automatically")
 
 
+_DAG4BLEND_REMEDY = (
+    "This object carries dag4blend markers ({markers}); a dag4blend scene is "
+    "not MH authority. Run 'Convert dag4blend Scene Composite' "
+    "(mh.convert_dag4blend_composite) on the definition Collection first, or "
+    "convert the authoritative *.composit.blk directly with 'Import Dagor "
+    "Composite' (mh.import_dagor_composite). Export never converts a scene "
+    "implicitly")
+
+
+def _dag4blend_markers(obj) -> list[str]:
+    """Name the dag4blend traces that explain a missing typed authority."""
+
+    markers = []
+    dagorprops = getattr(obj, "dagorprops", None)
+    if dagorprops is not None:
+        try:
+            if len(dagorprops.keys()) > 0:
+                markers.append("dagorprops")
+        except (AttributeError, TypeError):
+            markers.append("dagorprops")
+    for key in ("type:t", "weight:r"):
+        try:
+            if key in obj.keys():
+                markers.append(f"ID {key!r}")
+        except (AttributeError, TypeError):
+            pass
+    instance = getattr(obj, "instance_collection", None)
+    if instance is not None:
+        try:
+            if "type" in instance.keys() or "name" in instance.keys():
+                markers.append(f"dag4blend collection {instance.name!r}")
+            elif instance.name.split(".")[0] == "random":
+                markers.append(f"random helper {instance.name!r}")
+        except (AttributeError, TypeError):
+            pass
+    return markers
+
+
 def _typed_kind(obj) -> str:
     settings = getattr(obj, "mh4blend", None)
     kind = None if settings is None else settings.kind
     if kind == "unset":
         kind = None
     if kind is None:
-        raise MHValidationError(
-            "MH_E_COMPOSITE_GRAMMAR", [obj.name],
+        message = (
             f"placement object {obj.name!r} has no typed mh4blend.kind; "
             f"the ID property {NODE_KIND_KEY!r} is only a diagnostic mirror")
+        markers = _dag4blend_markers(obj)
+        if markers:
+            message += ". " + _DAG4BLEND_REMEDY.format(
+                markers=", ".join(markers))
+        raise MHValidationError(
+            "MH_E_COMPOSITE_GRAMMAR", [obj.name], message)
     return kind
 
 

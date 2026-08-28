@@ -470,3 +470,52 @@ def test_composite_cycle_fails_before_scene_mutation(tmp_path):
         import_composite_file(
             tmp_path / "cycle_a.composite", source_root=tmp_path)
     assert _counts() == before
+
+
+def test_dag4blend_scene_export_names_the_conversion_remedy(tmp_path):
+    """A dag4blend scene must be signposted, never implicitly converted."""
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    definition = bpy.data.collections.new("gaz53_b_random_cmp")
+    definition[COLLECTION_KIND_KEY] = "composite"
+    definition[COLLECTION_RESOURCE_KEY] = "gaz53_b_random_cmp"
+
+    # Exactly what dag4blend's cmp_import.py leaves behind: an unnamed node
+    # Empty instancing a random.NNN helper, plus its stamped mirrors.
+    helper = bpy.data.collections.new("random.000")
+    node = bpy.data.objects.new("node", None)
+    definition.objects.link(node)
+    node.instance_type = "COLLECTION"
+    node.instance_collection = helper
+    node["type:t"] = "random"
+
+    option_resource = bpy.data.collections.new("gaz53_bread_b_cmp")
+    option_resource["name"] = "gaz53_bread_b_cmp"
+    option_resource["type"] = "composit"
+    option = bpy.data.objects.new("gaz53_bread_b_cmp.001", None)
+    helper.objects.link(option)
+    option.instance_type = "COLLECTION"
+    option.instance_collection = option_resource
+    option["weight:r"] = 1.0
+    option["type:t"] = "composit"
+
+    for subject in (node, option):
+        assert subject.mh4blend.kind == "unset"
+
+    with pytest.raises(MHValidationError) as caught:
+        export_composite_collection(definition, tmp_path, source_root=tmp_path)
+    message = caught.value.message
+    assert "mh.convert_dag4blend_composite" in message
+    assert "mh.import_dagor_composite" in message
+    assert "Export never converts a scene implicitly" in message
+    assert "random helper 'random.000'" in message
+
+    # An ordinary unstamped Empty carries no dag4blend trace and keeps the
+    # original diagnostic without misleading conversion advice.
+    bpy.data.objects.remove(node)
+    plain = bpy.data.objects.new("plain_empty", None)
+    definition.objects.link(plain)
+    with pytest.raises(MHValidationError) as plain_caught:
+        export_composite_collection(definition, tmp_path, source_root=tmp_path)
+    assert "mh.convert_dag4blend_composite" not in plain_caught.value.message
+    assert NODE_KIND_KEY in plain_caught.value.message
