@@ -4,6 +4,21 @@
 Scope: UE plugin и его тесты. Blender, source payloads, `reference/`, `golden/`
 и Engine source не изменяются. Merge выполняет owner.
 
+## Publication / post-review status (2026-08-28)
+
+Коммиты `21624a7` и `6aeac4b` опубликованы в
+`origin/codex/fix-ue-composite-preview`; проверенный production tip — `6aeac4b`.
+Последующая публикация отчёта меняет только документацию, не этот code snapshot.
+Оба остаются вне `main` (`7b46df5`). **MERGE BLOCKED** до owner-решения об
+объёме: shared definition cache нельзя считать автоматически принятым вместе
+с исправлениями превью. Исторические зелёные gates ниже не закрывают это решение
+и не являются red/green проверкой исходного main.
+
+Первоначальная квитанция была написана до commit/push; прежняя формулировка
+о локальной ветке больше не описывает её состояние. Детальная повторная
+проверка, baseline-эксперимент и полный `git log --stat` —
+`ue_composite_preview_review_response.md` в этом каталоге.
+
 ## Причины и исправления
 
 1. `AMHCompositeActor::IsEditorOnly()` подавлял primitive scene proxies в
@@ -34,6 +49,13 @@ Scope: UE plugin и его тесты. Blender, source payloads, `reference/`, `
    Одна операция использует один lazy snapshot generated claims, а не запрос
    всего registry для каждого leaf. Cold admission по-прежнему проверяет весь
    source closure, включая невыбранные варианты; cook admission не ослаблен.
+
+   Этот пункт описывает исходный `21624a7`. Его отказ обновлять actor после
+   инвалидации исправлен в `6aeac4b` (отдельная квитанция
+   `ue_composite_break_freshness_fix.md`): refresh выполняется автоматически
+   вне Break. Ограничение scheduling при feedback проверяется отдельно в
+   post-review response; обязательный ручной Rebuild больше не является
+   заявленным поведением исправления.
 5. Interactive placement не вызывает FinishCompilation: pending mesh оставляет
    старые компоненты нетронутыми, либо показывает диагностический placeholder.
    Asset post-compile callback ставит retry на следующий editor tick. Проверка
@@ -204,8 +226,9 @@ SHA256: `405f98eca761fed13478268f2b69d2829b3325ae5dcaf1cf33be0ca55aa7527b`.
 Для FBX axis correction нужен однократный reimport managed meshes (ImporterVersion 3).
 
 Установленный plugin и owner UAssets исполнитель **не перезаписывал**, проект
-автоматически не открывал. Ветка с исправлениями локальная; commit/push/merge
-в этом запросе не выполнялись. Для code review использовать эту ветку и receipt,
+автоматически не открывал. Commit/push выполнены позже по явному запросу owner:
+`21624a7` и `6aeac4b` находятся на удалённой ветке. Merge не выполнялся.
+Для code review использовать эту ветку и receipt,
 а для полевой проверки — только Verified ZIP, не промежуточные build directories.
 
 Повторный fetch: `origin/main = 7b46df5`. `git diff --check` проходит;

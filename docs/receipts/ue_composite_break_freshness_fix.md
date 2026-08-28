@@ -1,8 +1,11 @@
 # UE preview patch correction — Build / deferred invalidation / Break
 
-Status: READY FOR OWNER REVIEW — local gates PASS. Branch:
-`codex/fix-ue-composite-preview`. Commit and push explicitly requested by owner
-after validation. No merge or installation into the owner project performed.
+Status: LOCAL GATES PASS; MERGE BLOCKED pending owner scope decision and the
+post-review scheduling finding. Branch: `codex/fix-ue-composite-preview`.
+Commit `6aeac4b` was pushed on explicit owner request; remote HEAD verified.
+No merge or installation into the owner project performed. See
+`ue_composite_preview_review_response.md` for the subsequent baseline tests and
+review findings; the historical gates below do not supersede that review.
 
 ## Ownership and scope
 
@@ -11,7 +14,8 @@ after validation. No merge or installation into the owner project performed.
   `origin/main` is `7b46df5`. Treating S6 as an unmerged candidate is outdated.
 - The preview cache and its dependency-epoch getter were introduced in the
   **unmerged preview patch `21624a7`**, not in the S5 base. This correction
-  belongs to that patch; it is not V5-S6.1 or a new numbered slice.
+  belongs to that patch. It was kept on the same branch; the final numbered
+  slice and whether the shared cache belongs in it remain owner decisions.
 - Break remains a read-only, fail-closed consumer. An exploratory uncommitted
   Break readmission implementation was discarded after owner clarification.
 - No protocol, Seed, resolver, golden, Blender production, Engine, or owner
@@ -55,7 +59,11 @@ not involved. No Blender process is used for this UE-only correction.
 
 ## Results
 
-### Ownership experiment (before production changes)
+### Ownership experiment (no production edits during the comparison)
+
+This means no additional production edits during that experiment. It does NOT
+mean the branch was production-clean: `21624a7` already contained the preview,
+importer and shared-cache changes. The earlier unqualified wording was imprecise.
 
 The comparison source SHA256 was
 `968AF36FFF207DC85F81D6EBC8F4D211029767146BB61920264AD96AA83B81A8`.
