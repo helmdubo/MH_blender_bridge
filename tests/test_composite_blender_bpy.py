@@ -472,6 +472,94 @@ def test_composite_cycle_fails_before_scene_mutation(tmp_path):
     assert _counts() == before
 
 
+def _mesh_definition(name):
+    """A mesh definition exactly as a previous export/import would leave it."""
+
+    collection = bpy.data.collections.new(name)
+    collection[COLLECTION_KIND_KEY] = "mesh"
+    collection[COLLECTION_RESOURCE_KEY] = name
+    mesh = bpy.data.meshes.new(f"{name}_geometry")
+    mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+    collection.objects.link(bpy.data.objects.new(name, mesh))
+    return collection
+
+
+def test_hand_authored_placements_derive_kind_without_typed_stamping(tmp_path):
+    """Regression: 04b4ceb made typed kind mandatory and broke manual scenes.
+
+    Typed authority is still preferred, but leaving it unset must fall back to
+    what the object demonstrably is, exactly as it did before v5 authoring.
+    """
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    _write(tmp_path / "sovmod_wall.composite", Composite("sovmod_wall", []))
+    wall = bpy.data.collections.new("sovmod_wall")
+    wall[COLLECTION_KIND_KEY] = "composite"
+    wall[COLLECTION_RESOURCE_KEY] = "sovmod_wall"
+
+    definition = bpy.data.collections.new("sovmod_garage")
+    definition[COLLECTION_KIND_KEY] = "composite"
+    definition[COLLECTION_RESOURCE_KEY] = "sovmod_garage"
+
+    placement = bpy.data.objects.new("sovmod_wall_instance", None)
+    definition.objects.link(placement)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = wall
+
+    group = bpy.data.objects.new("layout_group", None)
+    definition.objects.link(group)
+
+    assert placement.mh4blend.kind == "unset"
+    assert group.mh4blend.kind == "unset"
+
+    report = export_composite_collection(
+        definition, tmp_path, source_root=tmp_path)
+    document = parse_composite(Path(report["filepath"]).read_bytes())
+    assert [node.kind for node in document.nodes] == ["composite", "group"]
+    assert document.nodes[0].resource == "sovmod_wall"
+
+
+def test_unstamped_lods_placement_reaches_the_dependency_gate_not_the_kind_gate(
+        tmp_path):
+    """The owner's '<name>.lods' case: kind is derived, only the source lacks."""
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    definition = bpy.data.collections.new("sovmod_garage")
+    definition[COLLECTION_KIND_KEY] = "composite"
+    definition[COLLECTION_RESOURCE_KEY] = "sovmod_garage"
+
+    shell = _mesh_definition("sovmod_garage_shell_a_type_a")
+    placement = bpy.data.objects.new("sovmod_garage_shell_a_type_a.lods", None)
+    definition.objects.link(placement)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = shell
+
+    assert placement.mh4blend.kind == "unset"
+    with pytest.raises(MHValidationError) as caught:
+        export_composite_collection(definition, tmp_path, source_root=tmp_path)
+    assert caught.value.code == "MH_E_RESOURCE_NOT_FOUND"
+    assert "static_mesh:sovmod_garage_shell_a_type_a" in caught.value.subjects
+    assert "mh4blend.kind" not in caught.value.message
+
+
+def test_typed_kind_still_overrides_the_derived_scene_graph_kind(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    definition = bpy.data.collections.new("typed_wins")
+    definition[COLLECTION_KIND_KEY] = "composite"
+    definition[COLLECTION_RESOURCE_KEY] = "typed_wins"
+
+    mesh = _mesh_definition("typed_wins_part")
+    placement = bpy.data.objects.new("typed_wins_part", None)
+    definition.objects.link(placement)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = mesh
+    placement.mh4blend.kind = "actor"
+
+    with pytest.raises(MHValidationError) as caught:
+        export_composite_collection(definition, tmp_path, source_root=tmp_path)
+    assert caught.value.code == "MH_E_RESOURCE_KIND_MISMATCH"
+
+
 def test_dag4blend_scene_export_names_the_conversion_remedy(tmp_path):
     """A dag4blend scene must be signposted, never implicitly converted."""
 
@@ -499,9 +587,7 @@ def test_dag4blend_scene_export_names_the_conversion_remedy(tmp_path):
     option["weight:r"] = 1.0
     option["type:t"] = "composit"
 
-    for subject in (node, option):
-        assert subject.mh4blend.kind == "unset"
-
+    assert node.mh4blend.kind == "unset"
     with pytest.raises(MHValidationError) as caught:
         export_composite_collection(definition, tmp_path, source_root=tmp_path)
     message = caught.value.message
@@ -509,13 +595,3 @@ def test_dag4blend_scene_export_names_the_conversion_remedy(tmp_path):
     assert "mh.import_dagor_composite" in message
     assert "Export never converts a scene implicitly" in message
     assert "random helper 'random.000'" in message
-
-    # An ordinary unstamped Empty carries no dag4blend trace and keeps the
-    # original diagnostic without misleading conversion advice.
-    bpy.data.objects.remove(node)
-    plain = bpy.data.objects.new("plain_empty", None)
-    definition.objects.link(plain)
-    with pytest.raises(MHValidationError) as plain_caught:
-        export_composite_collection(definition, tmp_path, source_root=tmp_path)
-    assert "mh.convert_dag4blend_composite" not in plain_caught.value.message
-    assert NODE_KIND_KEY in plain_caught.value.message

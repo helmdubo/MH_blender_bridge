@@ -206,35 +206,70 @@ def _dag4blend_markers(obj) -> list[str]:
     return markers
 
 
-def _typed_kind(obj) -> str:
+def _typed_kind(obj):
+    """Return the typed authority, or None when the author left it unset."""
+
     settings = getattr(obj, "mh4blend", None)
     kind = None if settings is None else settings.kind
-    if kind == "unset":
-        kind = None
-    if kind is None:
-        message = (
-            f"placement object {obj.name!r} has no typed mh4blend.kind; "
-            f"the ID property {NODE_KIND_KEY!r} is only a diagnostic mirror")
-        markers = _dag4blend_markers(obj)
-        if markers:
-            message += ". " + _DAG4BLEND_REMEDY.format(
-                markers=", ".join(markers))
-        raise MHValidationError(
-            "MH_E_COMPOSITE_GRAMMAR", [obj.name], message)
-    return kind
+    return None if kind in {None, "unset"} else kind
+
+
+def _placement_kind(obj, instance, instance_kind, *, option: bool) -> str:
+    """Typed authority first, then the scene graph; never the ID mirror.
+
+    Typed `mh4blend.kind` stays the single authority whenever it is set.  When
+    it is unset the kind is DERIVED from what the object actually is - the
+    resource collection it instances, or a plain Empty standing for a group.
+    That derivation reads the scene graph, which already decides the resource
+    identity, and never the non-authoritative `mh_composite_kind` mirror, so
+    hand-authored scenes export without stamping every placement by hand.
+    Random is deliberately underivable: it exists only as typed intent.
+    """
+
+    kind = _typed_kind(obj)
+    if kind is not None:
+        return kind
+    if instance_kind is not None:
+        return instance_kind
+    if instance is None and obj.type == "EMPTY":
+        return "empty" if option else "group"
+
+    message = (
+        f"placement object {obj.name!r} (type={obj.type!r}) has no typed "
+        f"mh4blend.kind and no derivable identity: it instances no resource "
+        f"collection and is not a plain Empty. The ID property "
+        f"{NODE_KIND_KEY!r} is only a diagnostic mirror")
+    markers = _dag4blend_markers(obj)
+    if markers:
+        message += ". " + _DAG4BLEND_REMEDY.format(markers=", ".join(markers))
+    raise MHValidationError("MH_E_COMPOSITE_GRAMMAR", [obj.name], message)
 
 
 def _node_kind_and_resource(
         obj, *, option=False) -> tuple[str, str | None]:
-    explicit_kind = _typed_kind(obj)
     explicit_resource = obj.get(NODE_RESOURCE_KEY)
     instance = getattr(obj, "instance_collection", None)
     instance_kind = None
     instance_resource = None
     if instance is not None:
-        instance_kind, instance_resource = _collection_instance_identity(instance)
+        try:
+            instance_kind, instance_resource = _collection_instance_identity(
+                instance)
+        except MHValidationError as exc:
+            # The instanced collection is unrecognisable.  If the object still
+            # carries dag4blend traces, that is why - say so here too, because
+            # derivation reaches this failure before the typed-kind message.
+            markers = _dag4blend_markers(obj)
+            if not markers or _typed_kind(obj) is not None:
+                raise
+            raise MHValidationError(
+                exc.code, [obj.name, *exc.subjects],
+                f"{exc.message}. "
+                + _DAG4BLEND_REMEDY.format(markers=", ".join(markers))
+            ) from exc
 
-    kind = explicit_kind
+    explicit_kind = _typed_kind(obj)
+    kind = _placement_kind(obj, instance, instance_kind, option=option)
     allowed = (
         {"mesh", "actor", "composite", "empty"}
         if option else

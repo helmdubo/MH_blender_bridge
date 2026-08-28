@@ -625,6 +625,18 @@ typed PropertyGroup `mh4blend` на объекте: `kind`, `weight`, `option_in
 тот же приём, что receipts↔Asset Registry tags (§7): одна истина, одна её
 проекция.
 
+**Незаполненный typed `kind` выводится из графа сцены, а не из зеркала.**
+Правило «зеркало не authority» касается ИМЕННО зеркала и не требует ручного
+клеймения каждого размещения. Если `mh4blend.kind` не задан, writer выводит
+его из того, чем объект фактически является: instance ресурсной Collection
+даёт kind этой Collection, а обычный Empty без instance — `group` (у опции —
+`empty`). Это чтение графа сцены — того же источника, который и так решает
+resource identity, — а `mh_composite_kind` не читается никогда. Заданный typed
+`kind` всегда побеждает вывод; расхождение с Collection остаётся
+`MH_E_RESOURCE_KIND_MISMATCH`. `random` НЕ выводится: он существует только как
+явное typed-намерение. Без этого правила сцены, собранные руками до v5,
+переставали экспортироваться — регрессия `04b4ceb`.
+
 Панель Options предоставляет Add / Remove / Up / Down / weight и меняет typed
 option data.
 
