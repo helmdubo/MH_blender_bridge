@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeAppearanceTransport.h"
 #include "Composite/MHCompositePlacementCompiler.h"
+#include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
@@ -32,6 +33,8 @@ void BroadcastMHCompositeComponentsEdited()
 void DestroyMHRetiredComponents(const TArray<TObjectPtr<UActorComponent>>& Previous,
     const TArray<TObjectPtr<UActorComponent>>& Current)
 {
+    UE::MimirComposite::FMHPlacementStageScope Stage(
+        UE::MimirComposite::EMHPlacementStage::DestroyRetiredComponents);
     if (Previous.IsEmpty()) return;
     // One membership set instead of a linear Contains per retired candidate.
     // Retirement order and the set of destroyed components are unchanged.
@@ -324,9 +327,15 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             CandidatePlan->Seed = Seed;
             MHResolveCompositeAppearance(*CandidatePlan, AppearanceSeed);
         }
-        else if (!MHResolveCompositePlan(*CandidateGraph, Seed, AppearanceSeed, *CandidatePlan, Error))
+        else
         {
-            if (!Error.StartsWith(TEXT("MH_E_"))) Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
+            bool bResolved = false;
+            {
+                FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
+                bResolved = MHResolveCompositePlan(*CandidateGraph, Seed, AppearanceSeed, *CandidatePlan, Error);
+            }
+            if (!bResolved && !Error.StartsWith(TEXT("MH_E_")))
+                Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
         }
         if (Error.IsEmpty()) MHValidateResolvedPlacementTransforms(*CandidatePlan, GetActorTransform(), Error);
     }

@@ -4,6 +4,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositePlacementMetrics.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "GameFramework/Actor.h"
@@ -231,6 +232,7 @@ struct FAppliedPlanBuilder
             // tag provider, hiding all six valid receipt tags. Join only this
             // closure member before live admission; never skip tag validation.
             UStaticMesh* PendingMeshes[] = {Mesh};
+            FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
             FStaticMeshCompilingManager::Get().FinishCompilation(PendingMeshes);
         }
         const UMHStaticMeshImportData* Receipt = Mesh != nullptr ? Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData()) : nullptr;
@@ -375,6 +377,7 @@ UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
 bool MHBuildAppliedCompositeGraph(const UMHCompositeAsset& Root, const UMHCompositeSettings& Settings,
     FMHRandomSourceGraph& OutGraph, TSet<FMHResourceKey>& OutDependencies, FString& OutError)
 {
+    FMHPlacementStageScope Stage(EMHPlacementStage::BuildAppliedGraph);
     OutGraph = FMHRandomSourceGraph();
     OutGraph.RootComposite = Root.LogicalName;
     OutDependencies.Reset();

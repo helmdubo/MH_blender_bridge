@@ -1,6 +1,7 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 
 #include "Composite/MHCompositeAppearanceTransport.h"
+#include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/BoxComponent.h"
@@ -51,7 +52,10 @@ USceneComponent* PlanViewNew(AActor& Target, UClass* Class, const FString& Label
     // scale-axis permutations. Apply the admitted full world matrix instead.
     Component->SetAbsolute(Parent == nullptr, Parent == nullptr, Parent == nullptr);
     if (Configure) Configure(*Component);
-    Component->RegisterComponent();
+    {
+        FMHPlacementStageScope Stage(EMHPlacementStage::RegisterComponents);
+        Component->RegisterComponent();
+    }
     Result.Components.Add(Component);
     return Component;
 }
@@ -191,32 +195,36 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
     const FMHResolvedCompositePlan& Plan, const FMHRandomComposite& RootDefinition,
     const UMHCompositeSettings& Settings, TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents)
 {
+    FMHPlacementStageScope CompileStage(EMHPlacementStage::CompilePlacement);
     FMHCompositePlacementCompileResult Result;
     if (!PlanViewPreflight(Plan, RootDefinition, Target.GetActorTransform(), Result.Error)) return Result;
     struct FEndpoint { UStaticMesh* Mesh = nullptr; UClass* ActorClass = nullptr; };
     TArray<FEndpoint> Endpoints;
-    // All endpoint lookup and matrix checks precede component mutations.
-    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
     {
-        FEndpoint& Endpoint = Endpoints.AddDefaulted_GetRef();
-        if (Leaf.Kind == EMHRandomSemanticKind::Mesh)
+        FMHPlacementStageScope LoadStage(EMHPlacementStage::LoadEndpoints);
+        // All endpoint lookup and matrix checks precede component mutations.
+        for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
         {
-            FMHResourceKey Key;
-            Key.Kind = EMHResourceKind::StaticMesh;
-            Key.LogicalName = Leaf.Resource;
-            Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, Result.Error));
-            if (!Result.Error.IsEmpty()) return Result;
-        }
-        else if (Leaf.Kind == EMHRandomSemanticKind::Actor)
-        {
-            const FSoftClassPath* Path = Settings.ActorClassRegistry.Find(Leaf.Resource);
-            Endpoint.ActorClass = Path != nullptr ? Path->TryLoadClass<AActor>() : nullptr;
-            if (!MHIsSpawnableCompositeActorClass(Endpoint.ActorClass)) Endpoint.ActorClass = nullptr;
-        }
-        else
-        {
-            Result.Error = TEXT("MH_E_COMPOSITE_GRAMMAR: resolved leaf is neither mesh nor actor");
-            return Result;
+            FEndpoint& Endpoint = Endpoints.AddDefaulted_GetRef();
+            if (Leaf.Kind == EMHRandomSemanticKind::Mesh)
+            {
+                FMHResourceKey Key;
+                Key.Kind = EMHResourceKind::StaticMesh;
+                Key.LogicalName = Leaf.Resource;
+                Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, Result.Error));
+                if (!Result.Error.IsEmpty()) return Result;
+            }
+            else if (Leaf.Kind == EMHRandomSemanticKind::Actor)
+            {
+                const FSoftClassPath* Path = Settings.ActorClassRegistry.Find(Leaf.Resource);
+                Endpoint.ActorClass = Path != nullptr ? Path->TryLoadClass<AActor>() : nullptr;
+                if (!MHIsSpawnableCompositeActorClass(Endpoint.ActorClass)) Endpoint.ActorClass = nullptr;
+            }
+            else
+            {
+                Result.Error = TEXT("MH_E_COMPOSITE_GRAMMAR: resolved leaf is neither mesh nor actor");
+                return Result;
+            }
         }
     }
     const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
