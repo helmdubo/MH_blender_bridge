@@ -10,6 +10,8 @@ class USceneComponent;
 
 namespace UE::MimirComposite
 {
+struct FMHCompositeDefinitionEntry;
+
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
 {
     TArray<TObjectPtr<UActorComponent>> Components;
@@ -24,7 +26,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(
     AActor& Target, const FMHResolvedCompositePlan& Plan,
     const FMHRandomComposite& RootDefinition, const UMHCompositeSettings& Settings,
-    TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents);
+    TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
+    FMHCompositeDefinitionEntry* Definition = nullptr);
 
 /** No resolution or signature: explicit diagnostics when no applied plan is available. */
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHBuildCompositeDiagnosticView(

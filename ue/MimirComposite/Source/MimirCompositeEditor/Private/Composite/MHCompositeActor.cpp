@@ -152,6 +152,7 @@ void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
     SetPlacementEditMode(false);
     if (CompositeAsset.Get() != Asset)
     {
+        AppliedDefinition.Reset();
         AppliedGraph.Reset();
         ResolvedPlan.Reset();
         bPlanAvailable = false;
@@ -246,6 +247,7 @@ void AMHCompositeActor::ClearDerivedComponents()
     LastPlacementError.Reset();
     ResolvedSignature.Reset();
     ResolvedPlan.Reset();
+    AppliedDefinition.Reset();
     AppliedGraph.Reset();
     bPlanAvailable = false;
     bBasisRejected = false;
@@ -296,6 +298,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     RootKey.LogicalName = Name;
     PlacementDependencies.Add(RootKey);
 
+    TSharedPtr<FMHCompositeDefinitionEntry> CandidateDefinition = AppliedDefinition;
     TSharedPtr<const FMHRandomSourceGraph> CandidateGraph = AppliedGraph;
     FString Error;
     if (!bSeedOnly || !bPlanAvailable || !CandidateGraph.IsValid())
@@ -307,10 +310,11 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         else if (UMHCompositeDefinitionSubsystem* Definitions =
                      GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>() : nullptr)
         {
-            if (TSharedPtr<const FMHRandomSourceGraph> Shared =
+            if (TSharedPtr<FMHCompositeDefinitionEntry> Shared =
                     Definitions->GetOrBuildDefinition(*Asset, *Settings, Dependencies, Error))
             {
-                CandidateGraph = MoveTemp(Shared);
+                CandidateDefinition = MoveTemp(Shared);
+                CandidateGraph = CandidateDefinition->Graph;
                 PlacementDependencies = MoveTemp(Dependencies);
             }
             else
@@ -323,6 +327,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         }
         else if (MHBuildAppliedCompositeGraph(*Asset, *Settings, *Graph, Dependencies, Error))
         {
+            CandidateDefinition.Reset();
             CandidateGraph = Graph;
             PlacementDependencies = MoveTemp(Dependencies);
         }
@@ -376,7 +381,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         {
             const FMHRandomComposite* PreviousRoot = AppliedGraph->Composites.Find(Name);
             if (PreviousRoot != nullptr)
-                View = MHCompileCompositePlacementV5(*this, *ResolvedPlan, *PreviousRoot, *Settings, Previous);
+                View = MHCompileCompositePlacementV5(
+                    *this, *ResolvedPlan, *PreviousRoot, *Settings, Previous, AppliedDefinition.Get());
         }
         FMHCompositePlacementCompileResult Marker = MHBuildCompositeDiagnosticView(*this, TEXT("composite:") + Name, Error);
         View.Components.Append(Marker.Components);
@@ -399,7 +405,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     const auto CompileFullView = [&]() -> bool
     {
         const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
-        FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(*this, *CandidatePlan, *Root, *Settings, Previous);
+        FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
+            *this, *CandidatePlan, *Root, *Settings, Previous, CandidateDefinition.Get());
         if (!View.Succeeded())
         {
             LastPlacementError = View.Error;
@@ -428,6 +435,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     {
         if (!CompileFullView()) return;
     }
+    AppliedDefinition = CandidateDefinition;
     AppliedGraph = CandidateGraph;
     ResolvedPlan = CandidatePlan;
     ResolvedSignature = CandidatePlan->ResolvedSignature;
