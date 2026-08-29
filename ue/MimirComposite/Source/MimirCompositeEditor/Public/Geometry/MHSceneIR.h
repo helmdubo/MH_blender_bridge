@@ -33,6 +33,27 @@ enum class EMHSceneCollisionMode : uint8
     QueryAndPhysics
 };
 
+/**
+ * Collision role declared by the V5-S6.1.2 FBX Model user property
+ * `mh_collision`. None means the node carries no property and is classified by
+ * the pre-existing v4 name markers alone.
+ */
+enum class EMHSceneCollisionCarrier : uint8
+{
+    None,
+    Phys,
+    Trace
+};
+
+/** Collision primitive requested by the `mh_collision_shape` user property. */
+enum class EMHSceneCollisionShape : uint8
+{
+    Mesh,
+    Box,
+    Convex,
+    Capsule
+};
+
 /** One triangulated polygon with corner data and its node-local slot index. */
 struct FMHSceneTriangle
 {
@@ -66,6 +87,16 @@ struct FMHSceneIRNode
 
     /** Reverse source triangle corners after the complete FBX->UE matrix. */
     bool bReverseWinding = false;
+
+    /**
+     * Collision carrier read verbatim from the FBX Model user properties. These
+     * are transport facts, not classifier output: MHClassifySceneIR reads them
+     * and never rewrites them.
+     */
+    EMHSceneCollisionCarrier CollisionCarrier = EMHSceneCollisionCarrier::None;
+    EMHSceneCollisionShape CollisionShape = EMHSceneCollisionShape::Mesh;
+    /** Dagor phmat registry token; empty when the node declares none. */
+    FString PhysicalMaterialToken;
 
     EMHSceneNodeKind Kind = EMHSceneNodeKind::Unclassified;
     int32 LODLevel = INDEX_NONE;

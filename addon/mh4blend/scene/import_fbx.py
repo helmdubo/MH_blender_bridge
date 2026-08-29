@@ -18,7 +18,15 @@ import bpy
 
 from ..core.canonical import validate_resource_name
 from ..core.materials import resolve_texture_reference
-from ..core.mesh_nodes import MeshImportPlan, MeshNode, build_mesh_import_plan
+from ..core.mesh_nodes import (
+    FBX_COLLISION_KIND_KEY,
+    FBX_COLLISION_SHAPE_KEY,
+    FBX_PHMAT_KEY,
+    MeshImportPlan,
+    MeshNode,
+    build_mesh_import_plan,
+    lod_ordered_material_union,
+)
 from ..core.validate import MHValidationError
 from .export_material import apply_material_resource, read_material_file
 from .resource_markers import (
@@ -184,11 +192,8 @@ def mesh_plan_for_load_mode(plan: MeshImportPlan, load_mode: str) -> MeshImportP
                 material_slots=(), geometry_name=None)
         nodes.append(node)
     nodes = tuple(nodes)
-    materials = tuple(dict.fromkeys(
-        material
-        for node in nodes
-        for material in node.material_slots
-    ))
+    # Same render-only union rule as the full plan (docs/15 §3.4).
+    materials = lod_ordered_material_union(nodes)
     return replace(plan, nodes=nodes, lod_levels=(0,), material_names=materials)
 
 
@@ -544,6 +549,32 @@ def _fbx_type(value) -> str:
     return bytes(value).decode("utf-8")
 
 
+def _model_transport_properties(model, name: str) -> dict[str, object]:
+    """Return the reserved ``mh_*`` user properties of one FBX Model node.
+
+    A user property is written by Blender as ``P`` with
+    ``(name, type, subtype, flags, value)``; only the reserved MH namespace is
+    read, and every other authored property stays opaque transport noise.
+    """
+    properties = _element(model, b"Properties70")
+    if properties is None:
+        return {}
+    result: dict[str, object] = {}
+    for item in properties.elems:
+        if item.id != b"P" or len(item.props) < 5:
+            continue
+        key = _fbx_type(item.props[0])
+        if not key.startswith("mh_"):
+            continue
+        if key in result:
+            _unsupported(
+                [name], f"FBX Model repeats the '{key}' transport property")
+        value = item.props[4]
+        result[key] = (
+            _fbx_type(value) if isinstance(value, (bytes, bytearray)) else value)
+    return result
+
+
 def _unsupported(subjects: Iterable[str], message: str):
     raise MHValidationError("MH_E_UNSUPPORTED_NODE_KIND", subjects, message)
 
@@ -671,12 +702,16 @@ def parse_mesh_fbx(filepath) -> MeshImportPlan:
             if len(geometry.props) < 2:
                 _unsupported([name], "FBX Geometry is missing its name")
             geometry_name = _fbx_name(geometry.props[1])
+        transport = _model_transport_properties(model, name)
         parsed_nodes.append(MeshNode(
             name=name,
             node_type="MESH" if model_type == "Mesh" else "NULL",
             parent=model_names.get(parent_ids.get(identity)),
             material_slots=tuple(slot_names),
             geometry_name=geometry_name,
+            collision_kind=transport.get(FBX_COLLISION_KIND_KEY),
+            collision_shape=transport.get(FBX_COLLISION_SHAPE_KEY),
+            phmat=transport.get(FBX_PHMAT_KEY),
         ))
 
     unowned = sorted(
@@ -996,11 +1031,22 @@ def _bind_parsed_nodes(
                 f"FBX importer did not preserve Geometry name for '{node.name}': "
                 f"expected '{node.geometry_name}', got '{actual}'")
         if material_node_names is None or node.name in material_node_names:
+            # The material union is render-only (docs/15 §3.4), so a slot owned
+            # only by a non-render node has no resolved `.material` resource and
+            # is simply not rebound.  A render node with an unresolved slot is a
+            # writer/reader disagreement and still fails closed.
+            bound = [
+                slot_name for slot_name in node.material_slots
+                if slot_name in materials
+            ]
+            if node.kind == "render" and bound != list(node.material_slots):
+                raise RuntimeError(
+                    "unresolved material slot on render node "
+                    f"'{node.name}': {sorted(set(node.material_slots) - set(bound))}")
             obj.data.materials.clear()
-            for slot_name in node.material_slots:
+            for slot_name in bound:
                 obj.data.materials.append(materials[slot_name])
-            if [slot.material.name for slot in obj.material_slots] != list(
-                    node.material_slots):
+            if [slot.material.name for slot in obj.material_slots] != bound:
                 raise RuntimeError(
                     f"material slot binding diverged for parsed node '{node.name}'")
         if allow_temporary_names:

@@ -666,13 +666,19 @@ def test_dag4blend_shear_reports_working_scene_object_provenance(boundary):
     bpy.context.scene.collection.children.link(source)
     parent = _empty("parent", source)
     if boundary == "local":
-        parent.matrix_world = Matrix((
+        # matrix_parent_inverse is the only PERSISTENT carrier of parent-local
+        # shear: loc/rot/scale channels cannot express it, and shear pushed
+        # through matrix_world is a transient depsgraph cache that the next
+        # evaluation - or save/reopen - silently discards.
+        child = _empty("child", source, parent=parent)
+        child.matrix_parent_inverse = Matrix((
             (1.0, 0.5, 0.0, 0.0),
             (0.0, 1.0, 0.0, 0.0),
             (0.0, 0.0, 1.0, 0.0),
             (0.0, 0.0, 0.0, 1.0),
         ))
-        expected_object = "object:parent"
+        expected_object = "object:child"
+        bpy.context.view_layer.update()
     else:
         parent.scale = (2.0, 1.0, 1.0)
         child = _empty("child", source, parent=parent)

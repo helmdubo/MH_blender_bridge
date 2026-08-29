@@ -22,6 +22,7 @@ from .export_fbx import _dagor_lod_structure
 from .resource_markers import (
     COLLECTION_KIND_KEY,
     COLLECTION_RESOURCE_KEY,
+    managed_resource_collections,
 )
 from ..ui.composite_authoring import (
     OPTION_INDEX_MIRROR_KEY,
@@ -99,8 +100,47 @@ def _collection_resource_name(collection) -> str:
     return name
 
 
-def _collection_instance_identity(instance) -> tuple[str, str]:
-    """Infer one resource placement without asking the artist to restate it."""
+_DAGOR_IDENTITY_KEYS = ("type", "name")
+_MH_RESOURCE_KINDS = ("composite", "mesh", "actor")
+
+
+def _managed_twin_detail(instance, dagor_name) -> str:
+    """Name an already converted MH definition without deriving a Dagor kind.
+
+    The logical token is compared against every MH resource kind, so the hint
+    never has to decide what the Dagor type would have meant.
+    """
+
+    if not isinstance(dagor_name, str) or not dagor_name:
+        return ""
+    existing = []
+    for kind in _MH_RESOURCE_KINDS:
+        try:
+            existing.extend(
+                (kind, row) for row in managed_resource_collections(
+                    kind, dagor_name))
+        except (TypeError, ValueError):
+            return ""
+    if not existing:
+        return ""
+    names = ", ".join(repr(row.name) for _kind, row in existing)
+    kinds = ", ".join(sorted({f"{kind}:{dagor_name}" for kind, _row in existing}))
+    return (
+        f". A managed definition for {kinds} already exists in this file as "
+        f"{names} - repoint this placement's instance_collection at it "
+        f"instead of {instance.name!r}")
+
+
+def _collection_instance_identity(instance, *, dagor_identity=True) -> tuple[str, str]:
+    """Infer one resource placement without asking the artist to restate it.
+
+    ``dagor_identity`` is admitted only for the dag4blend migration callers
+    (``Convert dag4blend Scene Composite`` and the direct dag4blend mesh-input
+    check), which knowingly read the legacy representation. The generic MH
+    reader passes ``dagor_identity=False``: doc 15 2.5 removed its Dagor
+    translation table, because ``gameobj`` silently became the EXECUTABLE
+    ``actor`` kind whenever a native MH form instanced a legacy collection.
+    """
     leaked_option_keys = tuple(
         key for key in (WEIGHT_MIRROR_KEY, OPTION_INDEX_MIRROR_KEY)
         if key in instance)
@@ -130,6 +170,23 @@ def _collection_instance_identity(instance) -> tuple[str, str]:
     dagor_type = instance.get("type")
     dagor_name = instance.get("name")
     if dagor_type is not None or dagor_name is not None:
+        if not dagor_identity:
+            markers = [key for key in _DAGOR_IDENTITY_KEYS if key in instance]
+            raise MHValidationError(
+                "MH_E_INVALID_RESOURCE_SOURCE", [instance.name, *markers],
+                f"mixed scene representation: collection {instance.name!r} "
+                f"is a dag4blend definition (type={dagor_type!r}, "
+                f"name={dagor_name!r}), not an MH one, and it is instanced "
+                f"inside a native MH composite form. The MH reader never "
+                f"interprets Dagor identity - translating it here silently "
+                f"turned a gameObj marker into an EXECUTABLE actor - so this "
+                f"placement has no MH resource kind. Export the dag4blend "
+                f"root collection through the dag4blend route instead, or "
+                f"convert this definition with 'Convert dag4blend Scene "
+                f"Composite' (mh.convert_dag4blend_composite), or convert the "
+                f"authoritative *.composit.blk with 'Import Dagor Composite' "
+                f"(mh.import_dagor_composite)"
+                + _managed_twin_detail(instance, dagor_name))
         if not isinstance(dagor_type, str) or not isinstance(dagor_name, str):
             raise MHValidationError(
                 "MH_E_COMPOSITE_GRAMMAR", [instance.name],
@@ -254,7 +311,7 @@ def _node_kind_and_resource(
     if instance is not None:
         try:
             instance_kind, instance_resource = _collection_instance_identity(
-                instance)
+                instance, dagor_identity=False)
         except MHValidationError as exc:
             # The instanced collection is unrecognisable.  If the object still
             # carries dag4blend traces, that is why - say so here too, because

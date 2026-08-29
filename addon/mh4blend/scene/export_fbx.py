@@ -17,9 +17,21 @@ import bpy
 from mathutils import Matrix
 
 from ..core.canonical import validate_resource_name
-from ..core.mesh_nodes import validate_node_markers
+from ..core.mesh_nodes import (
+    COLLISION_TRANSPORT_KINDS,
+    FBX_COLLISION_KIND_KEY,
+    FBX_COLLISION_SHAPE_KEY,
+    FBX_PHMAT_KEY,
+    normalize_collision_transport,
+    strip_blender_duplicate_suffix,
+    validate_node_markers,
+)
 from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.validate import MHValidationError
+from .export_material import (
+    is_technical_material,
+    resolve_material_binding,
+)
 from .resource_markers import (
     COLLECTION_KIND_KEY,
     COLLECTION_RESOURCE_KEY,
@@ -42,7 +54,11 @@ __all__ = [
 # settings; the legacy aggregate exporter can import them while it is retired.
 FBX_EXPORT_KWARGS = dict(
     use_selection=True,
-    use_custom_props=False,
+    # V5-S6.1.2 (docs/15 §3.4): the collision carrier travels as FBX Model user
+    # properties, which Blender only writes with this flag.  The writer strips
+    # the reserved `mh_` object-property namespace from every transported node
+    # first, so authored properties can neither leak nor forge a claim.
+    use_custom_props=True,
     use_mesh_modifiers=True,
     object_types={"MESH", "EMPTY"},
     bake_anim=False,
@@ -62,6 +78,187 @@ _LODS_ROOT_RE = re.compile(
 _LOD_CHILD_RE_TEMPLATE = r"^{base}\.lod(?P<level>\d{{2}})(?:\.\d{{3}})?$"
 _LOD_LEAF_RE = re.compile(
     r"^(?P<base>.+)\.lod(?P<level>\d{2})(?:\.\d{3})?$")
+# dag4blend spells the Dagor collision marker with any of `_`, `.` or ` ` as
+# the separator (`body_cls_phys`, `gaz53_a_bumper.lod01 cls.002`).
+_DAGOR_COLLISION_TOKEN_RE = re.compile(r"(?:^|[ ._])cls(?:[ ._]|$)")
+_DAGOR_COLLISION_ROLE_RES = {
+    role: re.compile(rf"(?:^|[ ._]){role}(?:[ ._]|$)")
+    for role in COLLISION_TRANSPORT_KINDS
+}
+# Dagor script{} keys, spelled exactly as dag4blend preserves them (docs/15
+# §3.1/§3.4).  Lookup is case-insensitive and `dagorprops` outranks a plain ID
+# property, mirroring the ratified `place_type` claim mechanism.
+_DAGOR_SHAPE_KEY = "collision:t"
+_DAGOR_PHMAT_KEY = "phmat:t"
+_DAGOR_PHYS_COLLIDABLE_KEY = "isphyscollidable:b"
+_DAGOR_TRACEABLE_KEY = "istraceable:b"
+_DAGOR_COLLISION_KEYS = frozenset({
+    _DAGOR_SHAPE_KEY, _DAGOR_PHMAT_KEY,
+    _DAGOR_PHYS_COLLIDABLE_KEY, _DAGOR_TRACEABLE_KEY,
+})
+_TRUE_TEXTS = frozenset({"yes", "true", "on", "1"})
+_FALSE_TEXTS = frozenset({"no", "false", "off", "0"})
+
+
+@dataclass(frozen=True)
+class DagorCollisionTransport:
+    """One recognized Dagor collision mesh and its resolved FBX carrier."""
+
+    obj: object
+    kind: str
+    shape: str
+    phmat: str | None
+    notes: tuple
+
+
+def _grammar_error(subjects, message):
+    return MHValidationError("MH_E_COMPOSITE_GRAMMAR", subjects, message)
+
+
+def _mapping_keys(mapping):
+    if mapping is None:
+        return ()
+    try:
+        return tuple(key for key in mapping.keys() if isinstance(key, str))
+    except (AttributeError, TypeError):
+        return ()
+
+
+def _dagor_settings(obj):
+    """Return the saved dag4blend property bag, or None.
+
+    ``dagorprops`` is a dynamic key/value bag rather than an MH typed carrier,
+    and it survives in a saved ``.blend`` even when dag4blend RNA is absent.
+    """
+    value = obj.get("dagorprops")
+    if value is not None and not hasattr(value, "keys"):
+        raise MHValidationError(
+            "MH_E_INVALID_RESOURCE_SOURCE", [obj.name, "dagorprops"],
+            "saved dagorprops must be a key/value mapping")
+    return value
+
+
+def _dagor_collision_claims(obj):
+    """Collect the collision declarations, ``dagorprops`` winning."""
+    claims = {}
+    for mapping in (obj, _dagor_settings(obj)):
+        for key in _mapping_keys(mapping):
+            folded = key.casefold()
+            if folded not in _DAGOR_COLLISION_KEYS:
+                continue
+            try:
+                claims[folded] = (key, mapping[key])
+            except (KeyError, TypeError):
+                continue
+    return claims
+
+
+def _dagor_text(obj, claim):
+    """Return one Dagor `:t` declaration as a bare token.
+
+    dag4blend preserves BLK text values with their source quoting intact
+    (`collision:t` reads literally as ``"mesh"``), so one surrounding pair of
+    double quotes is part of the wire format rather than of the token.
+    """
+    key, value = claim
+    if not isinstance(value, str):
+        raise _grammar_error(
+            [obj.name, key],
+            f"'{obj.name}' declares {key} as {type(value).__name__}; a Dagor "
+            "text declaration must be a string")
+    token = value.strip()
+    if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
+        token = token[1:-1].strip()
+    if not token:
+        raise _grammar_error(
+            [obj.name, key], f"'{obj.name}' declares an empty {key}")
+    return token
+
+
+def _dagor_flag(obj, claim):
+    key, value = claim
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        folded = value.strip().strip('"').casefold()
+        if folded in _TRUE_TEXTS:
+            return True
+        if folded in _FALSE_TEXTS:
+            return False
+    raise _grammar_error(
+        [obj.name, key],
+        f"'{obj.name}' declares {key}={value!r}; a Dagor boolean declaration "
+        "must be yes/no")
+
+
+def _dagor_collision_name_role(obj):
+    """Return the collision role spelled in the node name, if exactly one is."""
+    name = strip_blender_duplicate_suffix(obj.name)
+    roles = [role for role, pattern in _DAGOR_COLLISION_ROLE_RES.items()
+             if pattern.search(name) is not None]
+    return roles[0] if len(roles) == 1 else None
+
+
+def _classify_dagor_collision(obj):
+    """Resolve one recognized `cls` mesh into transport, or None to drop it.
+
+    Owner semantics (docs/15 §3.2) ratify exactly two roles: ``phys`` becomes
+    UE Simple Collision, ``trace`` becomes UE Complex Collision.  The doc
+    spells them as name tokens, but real dag4blend content proves the name is
+    only a convention: 52 of the 54 GAZ-53 collision meshes carry no role token
+    and declare the role through the equally ratified `isPhysCollidable:b` /
+    `isTraceable:b` script keys instead (docs/15 §3.1).  The name token stays
+    authoritative where both exist; the declaration classifies where the name
+    is silent.  **Executor rule** — reported with the slice.
+
+    A `cls` mesh that resolves to neither role keeps the S6.1.1
+    drop-with-warning: no third collision meaning is invented here.
+    """
+    claims = _dagor_collision_claims(obj)
+    phys_claim = claims.get(_DAGOR_PHYS_COLLIDABLE_KEY)
+    trace_claim = claims.get(_DAGOR_TRACEABLE_KEY)
+    is_phys = None if phys_claim is None else _dagor_flag(obj, phys_claim)
+    is_trace = None if trace_claim is None else _dagor_flag(obj, trace_claim)
+    declared = None
+    if bool(is_phys) != bool(is_trace):
+        declared = "phys" if is_phys else "trace"
+
+    notes = []
+    named = _dagor_collision_name_role(obj)
+    kind = named or declared
+    if kind is None:
+        if is_phys or is_trace:
+            notes.append(
+                f"'{obj.name}' declares isPhysCollidable:b={is_phys} and "
+                f"isTraceable:b={is_trace}; that combination has no ratified "
+                "UE collision meaning")
+        return None, tuple(notes)
+    if named is not None:
+        contradicting = (
+            (named == "phys" and is_phys is False)
+            or (named == "trace" and is_trace is False)
+            or (declared is not None and declared != named))
+        if contradicting:
+            notes.append(
+                f"'{obj.name}' name declares '{named}' collision while "
+                f"isPhysCollidable:b={is_phys} / isTraceable:b={is_trace} "
+                "declare otherwise; the name token is authoritative")
+
+    shape_claim = claims.get(_DAGOR_SHAPE_KEY)
+    phmat_claim = claims.get(_DAGOR_PHMAT_KEY)
+    kind, shape, phmat = normalize_collision_transport(
+        obj.name,
+        kind,
+        None if shape_claim is None else _dagor_text(obj, shape_claim),
+        None if phmat_claim is None else _dagor_text(obj, phmat_claim),
+    )
+    return (
+        DagorCollisionTransport(
+            obj=obj, kind=kind, shape=shape, phmat=phmat, notes=tuple(notes)),
+        tuple(notes),
+    )
 
 
 @dataclass(frozen=True)
@@ -87,6 +284,8 @@ class PreparedFBXExport:
     prepared_materials: tuple
     warnings: tuple
     authority_fingerprint: tuple
+    # V5-S6.1.2: the ``DagorCollisionTransport`` rows staged into the FBX.
+    collision_transport: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -112,41 +311,67 @@ def _collection_objects(collection):
 
 
 def _is_static_mesh_aux(obj):
+    """Recognize the UE-native aux nodes this dialect still transports."""
     return (
-        obj.type == "MESH" and (
-            obj.name.startswith("UCX_")
-            or obj.name.endswith(("_cls_phys", "_cls_trace", "_cls_both"))
-        )
+        obj.type == "MESH" and obj.name.startswith("UCX_")
     ) or (
         obj.type == "EMPTY" and obj.name.startswith("SOCKET_")
     )
 
 
+def _is_dagor_collision_object(obj):
+    """Recognize a Dagor collision mesh by its name marker or its paint.
+
+    Real dag4blend content proves the name is not a reliable marker on its
+    own: collision meshes arrive as ``gaz53_a_body.lod01 cls phys.001`` but
+    also as plain ``Cube.774``.  What every one of them shares is the
+    technical ``cls`` paint (Dagor shader ``gi_black``), so both facts
+    classify (docs/15 §1.3/§2.2).
+    """
+    if obj.type != "MESH":
+        return False
+    if _DAGOR_COLLISION_TOKEN_RE.search(
+            strip_blender_duplicate_suffix(obj.name)) is not None:
+        return True
+    materials = [slot.material for slot in obj.material_slots]
+    return bool(materials) and all(
+        is_technical_material(material) for material in materials)
+
+
 def _collection_resource_objects(collection):
-    """Split recursive membership into (geometry, aux, groups).
+    """Split recursive membership into (geometry, aux, groups, collision).
 
     ``groups`` are organizational EMPTY objects (everything that is not a
     ``SOCKET_*`` aux). AMENDMENT_node_hierarchy: they are part of the FBX
     transport as plain null nodes so the authored hierarchy survives instead
     of Blender silently re-rooting children with baked world transforms.
+    ``collision`` is recognized Dagor collision, which never joins the render
+    payload; V5-S6.1.2 transports the ``phys``/``trace`` part of it as a
+    separate collision carrier and still drops the rest.
     """
     members = _collection_objects(collection)
     aux = [obj for obj in members if _is_static_mesh_aux(obj)]
     aux_ids = {obj.as_pointer() for obj in aux}
+    collision = [
+        obj for obj in members
+        if obj.as_pointer() not in aux_ids and _is_dagor_collision_object(obj)
+    ]
+    excluded_ids = aux_ids | {obj.as_pointer() for obj in collision}
     geometry = [
         obj for obj in members
-        if obj.type == "MESH" and obj.as_pointer() not in aux_ids
+        if obj.type == "MESH" and obj.as_pointer() not in excluded_ids
     ]
     groups = [
         obj for obj in members
-        if obj.type == "EMPTY" and obj.as_pointer() not in aux_ids
+        if obj.type == "EMPTY" and obj.as_pointer() not in excluded_ids
     ]
-    return geometry, aux, groups
+    return geometry, aux, groups, collision
 
 
 def _collection_mesh_objects(collection):
     """Return recursive semantic geometry, excluding FBX aux nodes."""
-    geometry, _aux, _groups = _collection_resource_objects(collection)
+    geometry, _aux, _groups, _collision = _collection_resource_objects(
+        collection)
     return geometry
 
 
@@ -245,11 +470,18 @@ def _dagor_lod_structure(collection):
     level_objects = []
     level0_aux = []
     ignored_aux = []
+    excluded_collision = []
+    excluded_collision_ids = set()
     level_aux_ids = set()
     object_level = {}
     for level, child in sorted(levels.items()):
-        objects, aux, _child_groups = _collection_resource_objects(child)
+        objects, aux, _child_groups, collision = _collection_resource_objects(
+            child)
         level_aux_ids.update(obj.as_pointer() for obj in aux)
+        for obj in collision:
+            if obj.as_pointer() not in excluded_collision_ids:
+                excluded_collision_ids.add(obj.as_pointer())
+                excluded_collision.append(obj)
         if level == 0:
             level0_aux.extend(aux)
         elif aux:
@@ -292,16 +524,22 @@ def _dagor_lod_structure(collection):
 
     # Groups live at container scope: the recursive root gather also covers
     # empties authored directly in `.lods` or between level collections.
-    _root_geometry, root_aux, groups = _collection_resource_objects(collection)
+    _root_geometry, root_aux, groups, root_collision = (
+        _collection_resource_objects(collection))
     for aux_obj in root_aux:
         if aux_obj.as_pointer() not in level_aux_ids:
             ignored_aux.append(("root", aux_obj.name))
+    for obj in root_collision:
+        if obj.as_pointer() not in excluded_collision_ids:
+            excluded_collision_ids.add(obj.as_pointer())
+            excluded_collision.append(obj)
 
     return {
         "resource_name": resource_name,
         "levels": level_objects,
         "level0_aux": level0_aux,
         "ignored_aux": ignored_aux,
+        "excluded_collision": excluded_collision,
         "groups": groups,
     }
 
@@ -386,6 +624,10 @@ def _temporary_ue_centimeter_export_state(objects):
             if export_mesh is None:
                 export_mesh = original_mesh.copy()
                 mesh_copies[original_mesh] = export_mesh
+                # The copy is disposable, so authored Geometry ID properties
+                # are removed outright instead of being published.
+                for key in _authored_property_keys(export_mesh):
+                    del export_mesh[key]
                 _transform_mesh_data(export_mesh, scale_matrix)
             obj.data = export_mesh
         for obj, matrix_parent_inverse, matrix_basis in object_states:
@@ -514,40 +756,58 @@ def _assert_output_under_root(output_dir, source_root):
             "FBX output folder must be inside Project Source Root")
 
 
+def _transport_material_binding(obj, index, slot):
+    """Return the binding one transported slot publishes, or fail closed."""
+    material = slot.material
+    if material is None:
+        raise MHValidationError(
+            "MH_E_EMPTY_MATERIAL_SLOT", [obj.name],
+            f"'{obj.name}' material slot {index} is empty")
+    slot_name = str(slot.name or material.name)
+    logical_slot = strip_blender_duplicate_suffix(slot_name)
+    logical_material = strip_blender_duplicate_suffix(material.name)
+    try:
+        validate_resource_name(logical_slot)
+        validate_resource_name(logical_material)
+    except (TypeError, ValueError) as exc:
+        raise MHValidationError(
+            "MH_E_NONCANONICAL_RESOURCE_NAME",
+            [slot_name, material.name], str(exc)) from exc
+    if logical_slot != logical_material:
+        raise MHValidationError(
+            "MH_E_MATERIAL_SLOT_CONFLICT", [slot_name, material.name],
+            "FBX material slot name must equal material logical name")
+    if is_technical_material(material):
+        # A mesh painted entirely with `cls` is recognized collision and never
+        # reaches this function. A mesh that mixes technical and render paint
+        # is not a construct owner semantics cover, so it fails closed instead
+        # of silently publishing or silently dropping a slot.
+        raise MHValidationError(
+            "MH_E_MATERIAL_SLOT_CONFLICT", [obj.name, material.name],
+            f"'{obj.name}' mixes the technical material "
+            f"'{material.name}' with render materials; technical paint "
+            "belongs to collision-only meshes")
+    return resolve_material_binding(material)
+
+
 def _material_slot_names(objects):
     """Validate and return the logical material names transported by FBX."""
     names = set()
     for obj in sorted(objects, key=lambda item: item.name):
         for index, slot in enumerate(obj.material_slots):
-            material = slot.material
-            if material is None:
-                raise MHValidationError(
-                    "MH_E_EMPTY_MATERIAL_SLOT", [obj.name],
-                    f"'{obj.name}' material slot {index} is empty")
-            slot_name = str(slot.name or material.name)
-            try:
-                validate_resource_name(slot_name)
-                validate_resource_name(material.name)
-            except (TypeError, ValueError) as exc:
-                raise MHValidationError(
-                    "MH_E_NONCANONICAL_RESOURCE_NAME",
-                    [slot_name, material.name], str(exc)) from exc
-            if slot_name != material.name:
-                raise MHValidationError(
-                    "MH_E_MATERIAL_SLOT_CONFLICT", [slot_name, material.name],
-                    "FBX material slot name must equal material logical name")
-            names.add(slot_name)
+            names.add(_transport_material_binding(obj, index, slot).name)
     return names
 
 
-def _validate_export_node_markers(export_objects, payload_levels):
+def _validate_export_node_markers(
+        export_objects, payload_levels, collision_transport=()):
     """Mirror the v4 FBX classifier before Blender writes any bytes."""
-    transported_ids = {obj.as_pointer() for obj in export_objects}
     authored_levels = {
         obj.as_pointer(): level
         for level, _collection, objects in payload_levels
         for obj in objects
     }
+    carriers = {row.obj.as_pointer(): row for row in collision_transport}
     for obj in export_objects:
         # OPEN-V4-11 forbids any child below a SOCKET_, including a child
         # outside the selected resource.  Parent closure remains a separate
@@ -556,11 +816,15 @@ def _validate_export_node_markers(export_objects, payload_levels):
         authored_lod = (
             authored_levels.get(obj.as_pointer())
             if obj.type == "MESH" else None)
+        carrier = carriers.get(obj.as_pointer())
         validate_node_markers(
             obj.name,
             obj.type,
             has_children=has_children,
             authored_lod=authored_lod,
+            collision_kind=None if carrier is None else carrier.kind,
+            collision_shape=None if carrier is None else carrier.shape,
+            phmat=None if carrier is None else carrier.phmat,
         )
 
 
@@ -633,6 +897,141 @@ def _temporary_lod_node_names(levels):
                 obj.name = original
 
 
+def _id_property_snapshot(value):
+    """Return a plain-Python copy of one Blender ID property value."""
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    if hasattr(value, "to_list"):
+        return value.to_list()
+    return value
+
+
+def _authored_property_keys(data_block):
+    """Return the ID properties Blender's FBX writer would serialize.
+
+    ``use_custom_props`` publishes every ID property except the ones backed by
+    a runtime-registered RNA declaration, so this mirrors the writer's own
+    filter exactly (``export_fbx_bin.fbx_data_element_custom_properties``).
+    A value with no FBX type maps to ``str(value)``, which for a property
+    group embeds a memory address, so leaving authored properties in place
+    would publish both authoring noise and non-reproducible bytes.
+    """
+    runtime = {
+        prop.identifier for prop in data_block.bl_rna.properties
+        if prop.is_runtime
+    }
+    return [key for key in data_block.keys() if key not in runtime]
+
+
+@contextlib.contextmanager
+def _temporary_collision_transport(export_objects, collision_transport):
+    """Own the FBX transport state of the reserved `mh_` namespace.
+
+    Three things happen for exactly the duration of one FBX write and are all
+    reverted in ``finally``:
+
+    * every transported object loses its authored ID properties, so authored
+      data can neither leak into a published resource nor forge a collision
+      claim in the reserved ``mh_`` namespace that the reader would believe;
+    * each transported collision node gains the frozen carrier
+      (docs/15 §3.4) ``mh_collision`` / ``mh_collision_shape`` / ``mh_phmat``;
+    * each transported collision node loses its technical ``cls`` paint, which
+      owner decision 2026-08-30 (docs/15 §1.3) keeps out of the FBX entirely.
+
+    The authoring scene keeps every property, material and slot it had.
+    """
+    saved_properties = []
+    written_properties = []
+    saved_materials = []
+    try:
+        for obj in export_objects:
+            for key in _authored_property_keys(obj):
+                saved_properties.append(
+                    (obj, key, _id_property_snapshot(obj[key])))
+                del obj[key]
+        for row in collision_transport:
+            obj = row.obj
+            mesh = obj.data
+            if mesh is not None and mesh.materials:
+                saved_materials.append((
+                    obj, mesh, tuple(mesh.materials),
+                    tuple((slot.link, slot.material)
+                          for slot in obj.material_slots)))
+                mesh.materials.clear()
+            carrier = {
+                FBX_COLLISION_KIND_KEY: row.kind,
+                FBX_COLLISION_SHAPE_KEY: row.shape,
+            }
+            if row.phmat is not None:
+                carrier[FBX_PHMAT_KEY] = row.phmat
+            for key, value in carrier.items():
+                obj[key] = value
+                written_properties.append((obj, key))
+        yield
+    finally:
+        for obj, key in reversed(written_properties):
+            if key in obj.keys():
+                del obj[key]
+        for obj, mesh, materials, slots in reversed(saved_materials):
+            mesh.materials.clear()
+            for material in materials:
+                mesh.materials.append(material)
+            for slot, (link, material) in zip(obj.material_slots, slots):
+                slot.link = link
+                slot.material = material
+        for obj, key, value in reversed(saved_properties):
+            obj[key] = value
+
+
+@contextlib.contextmanager
+def _temporary_transport_material_names(export_objects):
+    """Expose logical material names to the FBX writer and always restore them.
+
+    Blender stamps the datablock name into the FBX, so a ``.NNN`` duplicate
+    would otherwise transport a noncanonical slot name.  Slots bound to a
+    merged duplicate are pointed at their representative first, then the
+    representative is renamed if it still carries a suffix of its own
+    (docs/15 §2.3).  Every change is reverted in ``finally``; the artist's
+    scene keeps both datablocks and both authored names.
+    """
+    slot_changes = []
+    renames = []
+    representatives = []
+    seen = set()
+    try:
+        for obj in export_objects:
+            if obj.type != "MESH":
+                continue
+            for slot in obj.material_slots:
+                material = slot.material
+                if material is None:
+                    continue
+                binding = resolve_material_binding(material)
+                if binding.name not in seen:
+                    seen.add(binding.name)
+                    representatives.append(binding)
+                if binding.material != material:
+                    slot_changes.append((slot, material))
+                    slot.material = binding.material
+        for binding in representatives:
+            if binding.material.name == binding.name:
+                continue
+            renames.append((binding.material, binding.material.name))
+            binding.material.name = binding.name
+            if binding.material.name != binding.name:
+                raise MHValidationError(
+                    "MH_E_AMBIGUOUS_RESOURCE_NAME",
+                    [binding.name, binding.material.name],
+                    "Blender could not assign the transport material name "
+                    f"'{binding.name}'")
+        yield
+    finally:
+        for material, original in reversed(renames):
+            material.name = original
+        for slot, original in reversed(slot_changes):
+            slot.material = original
+
+
 def _clean_fbx_filename(resource_name):
     validate_resource_name(resource_name)
     return f"{resource_name}.mesh.fbx"
@@ -654,7 +1053,8 @@ def _matrix_fingerprint(matrix):
 
 def _mesh_authority_fingerprint(
         collection, scene, resource_name, export_objects, payload_levels,
-        lod_levels, uses_lod_hierarchy, materials, warnings):
+        lod_levels, uses_lod_hierarchy, materials, warnings,
+        collision_transport=()):
     object_rows = []
     for obj in export_objects:
         slots = tuple(
@@ -691,8 +1091,15 @@ def _mesh_authority_fingerprint(
         ),
         tuple(lod_levels),
         bool(uses_lod_hierarchy),
-        tuple((material.as_pointer(), material.name) for material in materials),
+        tuple(
+            (binding.material.as_pointer(), binding.material.name, binding.name)
+            for binding in materials
+        ),
         tuple(warnings),
+        tuple(
+            (row.obj.as_pointer(), row.obj.name, row.kind, row.shape, row.phmat)
+            for row in collision_transport
+        ),
     )
 
 
@@ -743,17 +1150,36 @@ def prepare_fbx_collection(
     if lod_structure is not None:
         aux_objects = lod_structure["level0_aux"]
         group_objects = lod_structure["groups"]
+        collision_candidates = lod_structure["excluded_collision"]
     else:
-        _geometry, aux_objects, group_objects = (
+        _geometry, aux_objects, group_objects, collision_candidates = (
             _collection_resource_objects(collection))
-    export_objects = objects + aux_objects + group_objects
+    # Collision is gathered from every authored LOD (real Dagor content keeps
+    # it in `.lod01`) and is never bound to a LOD level in transport.
+    collision_transport = []
+    excluded_collision = []
+    collision_notes = []
+    for candidate in collision_candidates:
+        transport, notes = _classify_dagor_collision(candidate)
+        collision_notes.extend(notes)
+        if transport is None:
+            excluded_collision.append(candidate)
+        else:
+            collision_transport.append(transport)
+    transported_collision = [row.obj for row in collision_transport]
+    export_objects = (
+        objects + aux_objects + group_objects + transported_collision)
     payload_levels = tuple(
         lod_structure["levels"] if lod_structure is not None
         else [(0, collection, objects)])
     payload_levels = tuple(
         (level, level_collection, tuple(level_objects))
         for level, level_collection, level_objects in payload_levels)
-    _validate_export_node_markers(export_objects, payload_levels)
+    # Excluded collision still passes the marker gate: dropping a node from
+    # the payload must not turn a conflicting authored marker into silence.
+    _validate_export_node_markers(
+        export_objects + excluded_collision, payload_levels,
+        collision_transport)
     _validate_unique_mesh_payloads(export_objects)
     if not objects:
         raise ValueError(
@@ -783,34 +1209,29 @@ def prepare_fbx_collection(
                 f"part of resource collection '{collection.name}'; move the "
                 "parent into the collection or clear the parenting")
 
-    # Every transported MESH is material-bearing FBX payload.  Collision
-    # geometry is not render geometry, but Blender still serializes its slots;
-    # validate and publish those dependencies too so the writer cannot create
-    # a file that our own reader rejects.
-    transport_meshes = [obj for obj in export_objects if obj.type == "MESH"]
-    used_materials = []
-    seen_materials = set()
-    for obj in transport_meshes:
-        for slot in obj.material_slots:
-            material = slot.material
-            if material is None or material.as_pointer() in seen_materials:
-                continue
-            seen_materials.add(material.as_pointer())
-            used_materials.append(material)
-
-    materials = used_materials
+    # UCX_ collision geometry is not render geometry, but Blender still
+    # serializes its slots; validate those too so the writer cannot create a
+    # file that our own reader rejects.  Dagor collision transports without any
+    # material at all, so its technical paint is validated by neither pass.
+    collision_ids = {obj.as_pointer() for obj in transported_collision}
+    transport_meshes = [
+        obj for obj in export_objects
+        if obj.type == "MESH" and obj.as_pointer() not in collision_ids]
     _material_slot_names(transport_meshes)
-    if lod_structure is not None:
-        _level0, _collection0, level0_objects = payload_levels[0]
-        base_slots = _material_slot_names(level0_objects)
-        for level, _child, level_objects in payload_levels[1:]:
-            missing_slots = sorted(_material_slot_names(level_objects) - base_slots)
-            if missing_slots:
-                raise MHValidationError(
-                    "MH_E_LOD_SLOT_NOT_IN_BASE",
-                    missing_slots,
-                    f"LOD{level} uses slots absent from LOD0: "
-                    f"{', '.join(missing_slots)}")
+    # The material list is the render-only ordered union of every LOD
+    # (docs/15 §1.1 and §3.4 last bullet): `objects` is already LOD-major, so
+    # first appearance in this walk is the frozen contract order, and a slot
+    # owned only by non-render nodes never enters the closure.
+    materials = []
+    seen_materials = set()
+    for obj in objects:
+        for index, slot in enumerate(obj.material_slots):
+            binding = _transport_material_binding(obj, index, slot)
+            if binding.name in seen_materials:
+                continue
+            seen_materials.add(binding.name)
+            materials.append(binding)
+
     scene = _find_export_scene(collection)
     warnings = []
     if lod_structure is not None and lod_structure["ignored_aux"]:
@@ -822,6 +1243,44 @@ def prepare_fbx_collection(
             "MH_W_LOD_AUX_NODE_IGNORED",
             (resource_name,),
             f"out-of-LOD0 auxiliary nodes were ignored: {ignored}",
+        ))
+    if excluded_collision:
+        dropped_nodes = sorted(obj.name for obj in excluded_collision)
+        dropped_materials = sorted({
+            slot.material.name
+            for obj in excluded_collision
+            for slot in obj.material_slots
+            if slot.material is not None
+        })
+        message = (
+            "Dagor collision nodes declaring neither 'phys' nor 'trace' have "
+            "no ratified UE collision meaning and are not transported "
+            f"(docs/15 §3.2): {', '.join(dropped_nodes)}")
+        if dropped_materials:
+            message += (
+                "; technical materials dropped: "
+                + ", ".join(dropped_materials))
+        warnings.append((
+            "MH_W_DAGOR_CONSTRUCT_DROPPED",
+            (resource_name, *dropped_nodes),
+            message,
+        ))
+    if collision_notes:
+        warnings.append((
+            "MH_W_DAGOR_CONSTRUCT_DROPPED",
+            (resource_name,),
+            "Dagor collision declarations were not used as authored: "
+            + "; ".join(sorted(collision_notes)),
+        ))
+    phmatless = sorted(
+        row.obj.name for row in collision_transport if row.phmat is None)
+    if phmatless:
+        warnings.append((
+            "MH_W_MATERIAL_PAYLOAD_FALLBACK",
+            (resource_name, *phmatless),
+            "Dagor collision nodes carry no 'phmat:t' declaration and are "
+            "transported without a UE physical material (scenes imported "
+            f"before the dag4blend overlay patch): {', '.join(phmatless)}",
         ))
 
     prepared_materials = []
@@ -841,7 +1300,7 @@ def prepare_fbx_collection(
     fingerprint = _mesh_authority_fingerprint(
         collection, scene, resource_name, tuple(export_objects),
         payload_levels, lod_levels, lod_structure is not None,
-        tuple(materials), tuple(warnings))
+        tuple(materials), tuple(warnings), tuple(collision_transport))
     return PreparedFBXExport(
         collection=collection,
         scene=scene,
@@ -858,6 +1317,7 @@ def prepare_fbx_collection(
         prepared_materials=tuple(prepared_materials),
         warnings=tuple(warnings),
         authority_fingerprint=fingerprint,
+        collision_transport=tuple(collision_transport),
     )
 
 
@@ -925,11 +1385,19 @@ def stage_prepared_fbx(prepared, staged_filepath):
     try:
         levels = prepared.payload_levels if prepared.uses_lod_hierarchy else ()
         with _temporary_lod_node_names(levels):
-            with _temporary_selection_context(
-                    prepared.scene, prepared.export_objects):
-                with _temporary_ue_centimeter_export_state(
+            # Collision paint is cleared before transport material names are
+            # resolved, so the technical `cls` datablock is never a transport
+            # binding.  Both are applied before the disposable mesh copies are
+            # taken, so a DATA-linked slot change reaches the copy.
+            with _temporary_collision_transport(
+                    prepared.export_objects, prepared.collision_transport):
+                with _temporary_transport_material_names(
                         prepared.export_objects):
-                    _export_selected_fbx(str(staged))
+                    with _temporary_selection_context(
+                            prepared.scene, prepared.export_objects):
+                        with _temporary_ue_centimeter_export_state(
+                                prepared.export_objects):
+                            _export_selected_fbx(str(staged))
         if not staged.is_file():
             raise RuntimeError("FBX exporter did not create its staged file")
         payload = staged.read_bytes()
@@ -976,8 +1444,8 @@ def export_fbx_collection(
 
     A regular collection writes one FBX. A recognized dag4blend ``.lods``
     hierarchy writes one FBX containing every authored level. Render mesh node
-    names temporarily carry their ``_lodNN`` suffix; no MH properties are
-    written to the FBX.
+    names temporarily carry their ``_lodNN`` suffix; the only MH properties
+    written to the FBX are the collision carrier of docs/15 §3.4.
     """
     prepared = prepare_fbx_collection(
         collection,
@@ -1032,7 +1500,7 @@ def export_fbx_collection(
         "payload_updates": payload_updates,
         "resource_name": prepared.resource_name,
         "lod_levels": list(prepared.lod_levels),
-        "materials": list(prepared.materials),
+        "materials": [binding.name for binding in prepared.materials],
         "material_updates": material_updates,
         "validation": _validation_report(prepared),
     }

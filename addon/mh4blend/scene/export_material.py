@@ -9,6 +9,7 @@ from pathlib import Path
 import bpy
 
 from ..core.canonical import validate_resource_name
+from ..core.canonical_json import narrow_float32
 from ..core.materials import (
     MATERIAL_TEXTURE_EXTENSIONS,
     MaterialValueError,
@@ -16,18 +17,33 @@ from ..core.materials import (
     parse_material,
     resolve_texture_reference,
 )
+from ..core.mesh_nodes import strip_blender_duplicate_suffix
 from ..core.model import MaterialResource
 from ..core.payload_publish_v2 import atomic_publish_bytes
+from ..core.validate import MHValidationError
 from .readonly_properties import existing_property_group
 
 __all__ = [
+    "MaterialBinding",
     "PreparedMaterialExport",
+    "TECHNICAL_MATERIAL_NAMES",
+    "TECHNICAL_MATERIAL_SHADER_CLASSES",
     "apply_material_resource",
+    "is_technical_material",
     "material_class_for_export",
+    "material_content_fingerprint",
     "prepare_blender_material_export",
     "read_material_file",
+    "resolve_material_binding",
     "write_prepared_material",
 ]
+
+
+# Owner decision 2026-08-30 (docs/15 §1.3): `cls` is a Blender-only technical
+# material (solid green, Dagor shader `gi_black`, never rendered). It reaches
+# neither an FBX material slot nor the `.material` closure.
+TECHNICAL_MATERIAL_NAMES = frozenset({"cls"})
+TECHNICAL_MATERIAL_SHADER_CLASSES = frozenset({"gi_black"})
 
 
 @dataclass(frozen=True)
@@ -35,6 +51,163 @@ class PreparedMaterialExport:
     resource: MaterialResource
     target: Path
     payload: bytes
+
+
+@dataclass(frozen=True)
+class MaterialBinding:
+    """One transported material: its logical name and its authoring datablock.
+
+    ``name`` is the canonical logical name (``docs/15 §2.3``): the Blender
+    ``.NNN`` duplicate suffix is a datablock-namespace artifact and never
+    reaches the transport.  ``material`` is the single representative datablock
+    that publishes the payload for that name.
+    """
+
+    name: str
+    material: object
+
+    @property
+    def library(self):
+        return self.material.library
+
+
+# Publication planners compare bindings by identity to detect two different
+# Blender materials claiming one token, so one representative datablock must
+# always yield one binding object across every mesh in a closure.
+_BINDINGS: dict[str, MaterialBinding] = {}
+
+
+def _material_datablock(material):
+    """Accept either a Blender material or an already resolved binding."""
+    return material.material if isinstance(material, MaterialBinding) else material
+
+
+def _logical_material_name(material) -> str:
+    if isinstance(material, MaterialBinding):
+        return material.name
+    return strip_blender_duplicate_suffix(str(material.name))
+
+
+def is_technical_material(material) -> bool:
+    """Return whether this material is Dagor technical geometry paint."""
+    if material is None:
+        return False
+    datablock = _material_datablock(material)
+    if _logical_material_name(datablock) in TECHNICAL_MATERIAL_NAMES:
+        return True
+    dagormat = _authored_dagormat(datablock)
+    if dagormat is None:
+        return False
+    return str(getattr(dagormat, "shader_class", "") or "") in (
+        TECHNICAL_MATERIAL_SHADER_CLASSES)
+
+
+def _fingerprint_value(value):
+    if isinstance(value, list):
+        return tuple(narrow_float32(component) for component in value)
+    return narrow_float32(value)
+
+
+def material_content_fingerprint(material) -> tuple:
+    """Return the identity-free v4 content of one material.
+
+    Numbers are narrowed to the float32 the canonical payload stores, so two
+    authored spellings of the same value (``7.1`` and ``7.0999999``) compare
+    equal, while any real divergence stays visible.
+    """
+    resource = _extract_resource(_material_datablock(material))
+    return (
+        resource.library,
+        resource.material_class,
+        resource.twosided,
+        tuple(sorted(resource.textures.items())),
+        tuple(sorted(
+            (name, _fingerprint_value(value))
+            for name, value in resource.params.items())),
+    )
+
+
+_FINGERPRINT_FIELDS = ("library", "class", "twosided", "textures", "params")
+
+
+def _fingerprint_difference(left: tuple, right: tuple) -> str:
+    """Name what actually diverges so the artist can fix the right field."""
+    differences = []
+    for field, first, second in zip(_FINGERPRINT_FIELDS, left, right):
+        if first == second:
+            continue
+        if field in ("textures", "params"):
+            keys = sorted(
+                set(dict(first)) | set(dict(second))
+                if isinstance(first, tuple) else ())
+            changed = [
+                f"{field}.{key} {dict(first).get(key)!r} vs "
+                f"{dict(second).get(key)!r}"
+                for key in keys
+                if dict(first).get(key) != dict(second).get(key)]
+            differences.extend(changed)
+        else:
+            differences.append(f"{field} {first!r} vs {second!r}")
+    return "; ".join(differences) or "content differs"
+
+
+def _duplicate_group(logical_name: str) -> list:
+    """Every scene material claiming one logical name, in a stable order.
+
+    The group is deliberately file-wide rather than limited to the meshes being
+    exported. ``<name>.material`` is one file in the Source Root, so a second
+    datablock claiming that name is a conflict no matter which mesh transports
+    it, and a file-wide group is what makes one representative — and therefore
+    one binding identity — well defined for every mesh in a closure.
+    """
+    return sorted(
+        (material for material in bpy.data.materials
+         if strip_blender_duplicate_suffix(material.name) == logical_name),
+        key=lambda material: material.name)
+
+
+def resolve_material_binding(material) -> MaterialBinding:
+    """Merge Blender ``.NNN`` duplicates onto one representative datablock.
+
+    ``X.001`` is a Blender duplicate of ``X``, not a second resource. When the
+    duplicate's v4 content matches ``X`` the pair publishes one ``X.material``
+    and the FBX slot is written as ``X``; a real divergence is the existing
+    ambiguity refusal naming both datablocks. A duplicate whose base name is
+    unused simply drops the suffix.
+    """
+    if isinstance(material, MaterialBinding):
+        return material
+    logical_name = _logical_material_name(material)
+    group = _duplicate_group(logical_name)
+    if not group:  # pragma: no cover - a live datablock is always its own group
+        group = [material]
+    exact = [row for row in group if row.name == logical_name]
+    representative = exact[0] if exact else group[0]
+    if len(group) > 1:
+        reference = material_content_fingerprint(representative)
+        for other in group:
+            if other == representative:
+                continue
+            candidate = material_content_fingerprint(other)
+            if candidate != reference:
+                raise MHValidationError(
+                    "MH_E_AMBIGUOUS_RESOURCE_NAME",
+                    [representative.name, other.name],
+                    f"'{other.name}' is not a Blender duplicate of "
+                    f"'{representative.name}' but a second material claiming "
+                    f"the logical name '{logical_name}' "
+                    f"({_fingerprint_difference(candidate, reference)}); give "
+                    "one of them its own name")
+    cached = _BINDINGS.get(logical_name)
+    if cached is not None:
+        try:
+            if cached.material == representative:
+                return cached
+        except ReferenceError:
+            pass
+    binding = MaterialBinding(name=logical_name, material=representative)
+    _BINDINGS[logical_name] = binding
+    return binding
 
 
 def _resolved_root(source_root) -> Path:
@@ -215,9 +388,11 @@ def material_class_for_export(material) -> str:
 
 
 def _extract_resource(material) -> MaterialResource:
+    material = _material_datablock(material)
     # Preserve the canonical name diagnostic verbatim; identity is external to
     # the material grammar and must not be reclassified as a codec failure.
-    validate_resource_name(material.name)
+    logical_name = _logical_material_name(material)
+    validate_resource_name(logical_name)
     if not hasattr(type(material) if isinstance(material, bpy.types.ID) else material,
                    "mh4blend"):
         raise MaterialValueError(
@@ -230,7 +405,7 @@ def _extract_resource(material) -> MaterialResource:
             raise MaterialValueError(
                 "MH_E_MATERIAL_GRAMMAR", material.name,
                 "library material cannot contain local overrides")
-        return MaterialResource(name=material.name, library=settings.library)
+        return MaterialResource(name=logical_name, library=settings.library)
     if mode != "CLASS":
         raise MaterialValueError(
             "MH_E_MATERIAL_GRAMMAR", "mode", "must be CLASS or LIBRARY")
@@ -275,7 +450,7 @@ def _extract_resource(material) -> MaterialResource:
         twosided = _dagor_twosided(dagormat)
 
     return MaterialResource(
-        name=material.name,
+        name=logical_name,
         material_class=material_class_for_export(material),
         twosided=twosided,
         textures=textures,
@@ -288,6 +463,7 @@ def prepare_blender_material_export(
     """Extract and fully validate one Blender material without writing files."""
     if material is None:
         raise ValueError("material is required")
+    material = _material_datablock(material)
     root = _resolved_root(source_root)
     output = Path(bpy.path.abspath(os.fspath(output_dir))).resolve(strict=False)
     if not _inside(root, output):

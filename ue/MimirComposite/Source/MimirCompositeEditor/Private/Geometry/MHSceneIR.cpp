@@ -147,6 +147,34 @@ bool ClassifyNode(FMHSceneIRNode& Node, const bool bHasChildren, FString& OutErr
     Node.CollisionMode = EMHSceneCollisionMode::None;
     Node.SocketName.Reset();
 
+    // V5-S6.1.2: an explicit mh_collision carrier is authoritative and precedes
+    // every name marker. Real Dagor collision nodes carry arbitrary authored
+    // names ("gaz53_a_body.lod01 cls phys.001"), so name markers alone would
+    // classify them as render nodes and pull their slots into the material
+    // union. Carrier nodes are collision and never enter the render inventory.
+    if (Node.CollisionCarrier != EMHSceneCollisionCarrier::None)
+    {
+        if (Node.Attribute != EMHSceneNodeAttribute::Mesh)
+        {
+            return Fail(
+                OutError,
+                TEXT("MH_E_INVALID_NODE_MARKERS"),
+                FString::Printf(TEXT("mh_collision is valid only on a mesh node: '%s'"), *Node.Name));
+        }
+        if (bHasSocket)
+        {
+            return Fail(
+                OutError,
+                TEXT("MH_E_INVALID_NODE_MARKERS"),
+                FString::Printf(TEXT("SOCKET_ is valid only on a null node: '%s'"), *Node.Name));
+        }
+        Node.Kind = EMHSceneNodeKind::Collision;
+        Node.CollisionMode = Node.CollisionCarrier == EMHSceneCollisionCarrier::Phys
+            ? EMHSceneCollisionMode::PhysicsOnly
+            : EMHSceneCollisionMode::QueryOnly;
+        return true;
+    }
+
     if (Node.Attribute == EMHSceneNodeAttribute::Mesh)
     {
         if (bHasSocket)
@@ -248,8 +276,11 @@ bool MHClassifySceneIR(FMHSceneIR& InOutScene, FString& OutError)
     TSet<FString> SocketNames;
     TSet<FString> MaterialNames;
     TSet<int32> LODLevels;
-    TSet<FString> BaseSlots;
-    TSet<FString> HigherSlots;
+    // Owner contract 2026-08-30: the mesh material list is the deterministic
+    // union of every LOD's slots, ordered LOD-major (all LOD0 slots in first-use
+    // order, then the slots LOD1 introduces, then LOD2, ...). Slots are recorded
+    // per level here and flattened once the dense LOD inventory is known.
+    TMap<int32, TArray<FString>> SlotsByLODLevel;
     bool bHasRender = false;
     bool bHasExplicitRender = false;
     bool bHasPlainRender = false;
@@ -290,12 +321,12 @@ bool MHClassifySceneIR(FMHSceneIR& InOutScene, FString& OutError)
                         TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"),
                         FString::Printf(TEXT("material slot '%s' must match [a-z0-9_]+"), *Slot));
                 }
-                if (!MaterialNames.Contains(Slot))
-                {
-                    MaterialNames.Add(Slot);
-                    Classified.MaterialNames.Add(Slot);
-                }
-                (Node.LODLevel == 0 ? BaseSlots : HigherSlots).Add(Slot);
+                MaterialNames.Add(Slot);
+                // Record the slot at every level that uses it; the flattening
+                // pass below keeps only its lowest level, so a slot shared by
+                // LOD0 and LOD2 stays in the LOD0 block regardless of the order
+                // the FBX happens to list its nodes in.
+                SlotsByLODLevel.FindOrAdd(Node.LODLevel).AddUnique(Slot);
             }
         }
     }
@@ -328,14 +359,29 @@ bool MHClassifySceneIR(FMHSceneIR& InOutScene, FString& OutError)
                     FString::Printf(TEXT("FBX LOD level lod%02d is missing"), Level));
             }
         }
-        for (const FString& Slot : HigherSlots)
+    }
+
+    // Flatten the per-level slot lists in ascending LOD order, taking each slot
+    // at the lowest level that uses it. LODLevels is the sorted, dense inventory
+    // of the render levels, so every recorded level is visited exactly once and
+    // the resulting order depends only on the FBX content, never on the hash
+    // iteration order of SlotsByLODLevel.
+    Classified.MaterialNames.Reserve(MaterialNames.Num());
+    TSet<FString> EmittedSlots;
+    EmittedSlots.Reserve(MaterialNames.Num());
+    for (const int32 Level : Classified.LODLevels)
+    {
+        const TArray<FString>* LevelSlots = SlotsByLODLevel.Find(Level);
+        if (LevelSlots == nullptr)
         {
-            if (!BaseSlots.Contains(Slot))
+            continue;
+        }
+        for (const FString& Slot : *LevelSlots)
+        {
+            if (!EmittedSlots.Contains(Slot))
             {
-                return Fail(
-                    OutError,
-                    TEXT("MH_E_LOD_SLOT_NOT_IN_BASE"),
-                    FString::Printf(TEXT("higher LOD material slot '%s' is absent from LOD0"), *Slot));
+                EmittedSlots.Add(Slot);
+                Classified.MaterialNames.Add(Slot);
             }
         }
     }

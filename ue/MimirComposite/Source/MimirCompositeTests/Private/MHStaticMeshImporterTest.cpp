@@ -7,16 +7,22 @@
 #include "MHGoldenRoot.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "Interface_CollisionDataProviderCore.h"
 #include "MeshDescription.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "Modules/ModuleManager.h"
 #include "ObjectTools.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "PhysicsEngine/BoxElem.h"
 #include "PhysicsEngine/ConvexElem.h"
+#include "PhysicsEngine/SphylElem.h"
+#include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
@@ -68,6 +74,43 @@ public:
     }
 };
 
+/** Resolver for the LOD material union fixture, which needs several slots. */
+class FStaticMeshUnionTestResolver final : public IMHSourceResolver
+{
+public:
+    TMap<FString, TPair<FString, FString>> Materials;
+
+    virtual FMHSourceSnapshot GetSnapshot() const override
+    {
+        FMHSourceSnapshot Snapshot;
+        for (const TPair<FString, TPair<FString, FString>>& Entry : Materials)
+        {
+            FMHResourceKey Key;
+            Key.Kind = EMHResourceKind::Material;
+            Key.LogicalName = Entry.Key;
+            Snapshot.ResourceKeys.Add(Key);
+        }
+        return Snapshot;
+    }
+
+    virtual FMHResolveOutcome Resolve(const FMHResourceKey& Key) override
+    {
+        FMHResolveOutcome Outcome;
+        if (Key.Kind != EMHResourceKind::Material)
+        {
+            return Outcome;
+        }
+        if (const TPair<FString, FString>* Entry = Materials.Find(Key.LogicalName))
+        {
+            Outcome.Status = EMHResolveStatus::Resolved;
+            Outcome.PayloadPath = Entry->Key;
+            Outcome.RawHash = Entry->Value;
+            Outcome.CandidatePaths.Add(Entry->Key);
+        }
+        return Outcome;
+    }
+};
+
 struct FStaticMeshImporterFixture
 {
     FString SourceRoot;
@@ -94,11 +137,13 @@ struct FGeneratedPackageCleanup
 {
     FString MeshObjectPath;
     FString MaterialObjectPath;
+    FString TraceObjectPath;
 
     ~FGeneratedPackageCleanup()
     {
         CleanupObject(MeshObjectPath);
         CleanupObject(MaterialObjectPath);
+        CleanupObject(TraceObjectPath);
     }
 
 private:
@@ -209,6 +254,48 @@ FbxMesh* CreateHullMesh(
     return Mesh;
 }
 
+/** Axis-aligned box hull; collision fixtures carry no authored normal layer. */
+FbxMesh* CreateBoxMesh(
+    FbxScene& Scene,
+    const char* Name,
+    const FbxVector4& Min,
+    const FbxVector4& Max)
+{
+    FbxMesh* Mesh = FbxMesh::Create(&Scene, Name);
+    Mesh->InitControlPoints(8);
+    for (int32 Index = 0; Index < 8; ++Index)
+    {
+        Mesh->GetControlPoints()[Index] = FbxVector4(
+            (Index & 1) != 0 ? Max[0] : Min[0],
+            (Index & 2) != 0 ? Max[1] : Min[1],
+            (Index & 4) != 0 ? Max[2] : Min[2]);
+    }
+    static const int32 Faces[12][3] = {
+        {0, 2, 1}, {1, 2, 3},
+        {4, 5, 6}, {5, 7, 6},
+        {0, 1, 4}, {1, 5, 4},
+        {2, 6, 3}, {3, 6, 7},
+        {0, 4, 2}, {2, 4, 6},
+        {1, 3, 5}, {3, 7, 5}};
+    for (const auto& Face : Faces)
+    {
+        Mesh->BeginPolygon();
+        Mesh->AddPolygon(Face[0]);
+        Mesh->AddPolygon(Face[1]);
+        Mesh->AddPolygon(Face[2]);
+        Mesh->EndPolygon();
+    }
+    return Mesh;
+}
+
+/** Blender `use_custom_props` writes object ID properties in exactly this shape. */
+void SetNodeStringProperty(FbxNode& Node, const char* Name, const FString& Value)
+{
+    FbxProperty Property = FbxProperty::Create(&Node, FbxStringDT, Name);
+    Property.ModifyFlag(FbxPropertyFlags::eUserDefined, true);
+    Property.Set(FbxString(TCHAR_TO_UTF8(*Value)));
+}
+
 FbxNode* AddMeshNode(FbxScene& Scene, const char* Name, FbxMesh& Mesh)
 {
     FbxNode* Node = FbxNode::Create(&Scene, Name);
@@ -302,6 +389,185 @@ bool ExportPlainStaticMeshFbx(
         Socket->LclTranslation.Set(FbxDouble3(-5.0, 6.0, 70.0));
         Scene->GetRootNode()->AddChild(Socket);
     }
+
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+    FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
+    const int32 WriterId = Manager->GetIOPluginRegistry()->GetNativeWriterFormat();
+    if (!Exporter->Initialize(TCHAR_TO_UTF8(*Path), WriterId, IOSettings) ||
+        !Exporter->Export(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Exporter->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    Manager->Destroy();
+    return true;
+}
+
+/**
+ * Two-LOD FBX where LOD1 uses a material LOD0 never references. This is the
+ * shape real Dagor content uses for simplified far-LOD shaders.
+ */
+bool ExportLodUnionStaticMeshFbx(
+    const FString& TemplatePath,
+    const FString& Path,
+    const FString& BaseMaterialName,
+    const FString& FarMaterialName,
+    FString& OutError)
+{
+    OutError.Reset();
+    FbxManager* Manager = FbxManager::Create();
+    if (Manager == nullptr)
+    {
+        OutError = TEXT("FbxManager::Create failed");
+        return false;
+    }
+    FbxIOSettings* IOSettings = FbxIOSettings::Create(Manager, IOSROOT);
+    Manager->SetIOSettings(IOSettings);
+    FbxScene* Scene = FbxScene::Create(Manager, "Scene");
+    FbxImporter* Importer = FbxImporter::Create(Manager, "TemplateImporter");
+    if (!Importer->Initialize(TCHAR_TO_UTF8(*TemplatePath), -1, IOSettings) ||
+        !Importer->Import(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Importer->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    FbxNode* Root = Scene->GetRootNode();
+    while (Root != nullptr && Root->GetChildCount() > 0)
+    {
+        FbxNode* Child = Root->GetChild(0);
+        Root->RemoveChild(Child);
+        Child->Destroy(true);
+    }
+
+    FbxSurfacePhong* BaseMaterial = FbxSurfacePhong::Create(Scene, TCHAR_TO_UTF8(*BaseMaterialName));
+    FbxSurfacePhong* FarMaterial = FbxSurfacePhong::Create(Scene, TCHAR_TO_UTF8(*FarMaterialName));
+
+    FbxMesh* LOD0Mesh = CreateTriangleMesh(*Scene, "union_lod00_geometry", 100.0);
+    FbxNode* LOD0 = AddMeshNode(*Scene, "union_lod00", *LOD0Mesh);
+    BindMaterial(*LOD0Mesh, *LOD0, *BaseMaterial);
+
+    FbxMesh* LOD1Mesh = CreateTriangleMesh(*Scene, "union_lod01_geometry", 50.0);
+    FbxNode* LOD1 = AddMeshNode(*Scene, "union_lod01", *LOD1Mesh);
+    BindMaterial(*LOD1Mesh, *LOD1, *FarMaterial);
+
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+    FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
+    const int32 WriterId = Manager->GetIOPluginRegistry()->GetNativeWriterFormat();
+    if (!Exporter->Initialize(TCHAR_TO_UTF8(*Path), WriterId, IOSettings) ||
+        !Exporter->Export(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Exporter->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    Manager->Destroy();
+    return true;
+}
+
+/** Tokens the S6.1.2 collision-carrier fixture stamps on its Model nodes. */
+struct FCollisionCarrierTokens
+{
+    FString DominantPhmat;
+    FString SecondaryPhmat;
+    FString TracePhmat;
+};
+
+/**
+ * One render LOD plus five collision carriers: two `phys` nodes sharing the
+ * dominant phmat (mesh + box), one `phys` capsule with a second phmat, and two
+ * `trace` nodes in two different phmat groups.
+ */
+bool ExportCollisionCarrierFbx(
+    const FString& TemplatePath,
+    const FString& Path,
+    const FString& MaterialName,
+    const FCollisionCarrierTokens& Tokens,
+    FString& OutError)
+{
+    OutError.Reset();
+    FbxManager* Manager = FbxManager::Create();
+    if (Manager == nullptr)
+    {
+        OutError = TEXT("FbxManager::Create failed");
+        return false;
+    }
+    FbxIOSettings* IOSettings = FbxIOSettings::Create(Manager, IOSROOT);
+    Manager->SetIOSettings(IOSettings);
+    FbxScene* Scene = FbxScene::Create(Manager, "Scene");
+    FbxImporter* Importer = FbxImporter::Create(Manager, "TemplateImporter");
+    if (!Importer->Initialize(TCHAR_TO_UTF8(*TemplatePath), -1, IOSettings) ||
+        !Importer->Import(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Importer->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    FbxNode* Root = Scene->GetRootNode();
+    while (Root != nullptr && Root->GetChildCount() > 0)
+    {
+        FbxNode* Child = Root->GetChild(0);
+        Root->RemoveChild(Child);
+        Child->Destroy(true);
+    }
+
+    FbxSurfacePhong* Material = FbxSurfacePhong::Create(Scene, TCHAR_TO_UTF8(*MaterialName));
+    FbxMesh* RenderMesh = CreateTriangleMesh(*Scene, "carrier_render_geometry", 100.0);
+    FbxNode* Render = AddMeshNode(*Scene, "carrier_lod00", *RenderMesh);
+    BindMaterial(*RenderMesh, *Render, *Material);
+
+    // Names deliberately carry no v4 `_cls_*` marker: the user properties alone
+    // must classify these nodes, exactly as real Dagor node names do.
+    FbxNode* PhysHull = AddMeshNode(
+        *Scene,
+        "hull_shape",
+        *CreateHullMesh(*Scene, "carrier_hull_geometry", 30.0, FbxVector4(0.0, 0.0, 0.0)));
+    SetNodeStringProperty(*PhysHull, "mh_collision", TEXT("phys"));
+    SetNodeStringProperty(*PhysHull, "mh_collision_shape", TEXT("mesh"));
+    SetNodeStringProperty(*PhysHull, "mh_phmat", Tokens.DominantPhmat);
+
+    FbxNode* PhysBox = AddMeshNode(
+        *Scene,
+        "box_shape",
+        *CreateBoxMesh(
+            *Scene,
+            "carrier_box_geometry",
+            FbxVector4(0.0, 0.0, 0.0),
+            FbxVector4(20.0, 30.0, 40.0)));
+    PhysBox->LclTranslation.Set(FbxDouble3(100.0, 0.0, 0.0));
+    SetNodeStringProperty(*PhysBox, "mh_collision", TEXT("phys"));
+    SetNodeStringProperty(*PhysBox, "mh_collision_shape", TEXT("box"));
+    SetNodeStringProperty(*PhysBox, "mh_phmat", Tokens.DominantPhmat);
+
+    FbxNode* PhysCapsule = AddMeshNode(
+        *Scene,
+        "capsule_shape",
+        *CreateBoxMesh(
+            *Scene,
+            "carrier_capsule_geometry",
+            FbxVector4(0.0, 0.0, 0.0),
+            FbxVector4(10.0, 10.0, 60.0)));
+    PhysCapsule->LclTranslation.Set(FbxDouble3(0.0, 200.0, 0.0));
+    SetNodeStringProperty(*PhysCapsule, "mh_collision", TEXT("phys"));
+    SetNodeStringProperty(*PhysCapsule, "mh_collision_shape", TEXT("capsule"));
+    SetNodeStringProperty(*PhysCapsule, "mh_phmat", Tokens.SecondaryPhmat);
+
+    FbxNode* TraceA = AddMeshNode(
+        *Scene,
+        "trace_shape_a",
+        *CreateHullMesh(*Scene, "carrier_trace_a_geometry", 25.0, FbxVector4(0.0, 0.0, 300.0)));
+    SetNodeStringProperty(*TraceA, "mh_collision", TEXT("trace"));
+    SetNodeStringProperty(*TraceA, "mh_collision_shape", TEXT("mesh"));
+    SetNodeStringProperty(*TraceA, "mh_phmat", Tokens.DominantPhmat);
+
+    FbxNode* TraceB = AddMeshNode(
+        *Scene,
+        "trace_shape_b",
+        *CreateHullMesh(*Scene, "carrier_trace_b_geometry", 25.0, FbxVector4(0.0, 100.0, 300.0)));
+    SetNodeStringProperty(*TraceB, "mh_collision", TEXT("trace"));
+    SetNodeStringProperty(*TraceB, "mh_collision_shape", TEXT("mesh"));
+    SetNodeStringProperty(*TraceB, "mh_phmat", Tokens.TracePhmat);
 
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
@@ -423,7 +689,14 @@ bool VerifyInitialMesh(
         }
         bPassed &= Test.TestTrue(TEXT("UCX collision is query-and-physics"), bHasBoth);
         bPassed &= Test.TestTrue(TEXT("cls_trace collision is query-only"), bHasQueryOnly);
+        bPassed &= Test.TestEqual(TEXT("no carrier means no box element"), BodySetup->AggGeom.BoxElems.Num(), 0);
+        bPassed &= Test.TestEqual(TEXT("no carrier means no capsule element"), BodySetup->AggGeom.SphylElems.Num(), 0);
+        bPassed &= Test.TestNull(TEXT("no carrier means no per-mesh physical material"), BodySetup->PhysMaterial.Get());
     }
+    // Name-marked collision keeps its v4 meaning: no companion complex mesh.
+    bPassed &= Test.TestNull(
+        TEXT("name-marked collision leaves ComplexCollisionMesh unset"),
+        StaticMesh.ComplexCollisionMesh.Get());
     return bPassed;
 }
 
@@ -634,6 +907,378 @@ bool FMHStaticMeshImporterEndToEndTest::RunTest(const FString& Parameters)
     {
         bPassed &= TestEqual(TEXT("receipt advances to replacement hash"), Receipt->SourceHash, Entry.RawHash);
         bPassed &= TestFalse(TEXT("successful apply resets local-edit flag"), Receipt->bLocallyModified);
+    }
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHStaticMeshImporterLodMaterialUnionTest,
+    "Mimir.V4.StaticMesh.Importer.LodMaterialUnion",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHStaticMeshImporterLodMaterialUnionTest::RunTest(const FString& Parameters)
+{
+    const FString Token = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    const FString LogicalName = TEXT("s611_union_") + Token;
+    const FString BaseMaterialName = TEXT("s611_base_") + Token;
+    const FString FarMaterialName = TEXT("s611_far_") + Token;
+    const FString MeshPackage = TEXT("/Game/MH/Generated/Meshes/") + LogicalName;
+
+    FGeneratedPackageCleanup MeshCleanup;
+    MeshCleanup.MeshObjectPath = MeshPackage + TEXT(".") + LogicalName;
+    MeshCleanup.MaterialObjectPath =
+        TEXT("/Game/MH/Generated/Materials/") + BaseMaterialName + TEXT(".") + BaseMaterialName;
+    FGeneratedPackageCleanup FarCleanup;
+    FarCleanup.MaterialObjectPath =
+        TEXT("/Game/MH/Generated/Materials/") + FarMaterialName + TEXT(".") + FarMaterialName;
+
+    FStaticMeshImporterFixture Fixture;
+    FString GoldenRoot;
+    if (!ResolveGoldenRoot(*this, GoldenRoot)) return false;
+    const FString TemplateFbx = FPaths::Combine(GoldenRoot, TEXT("fixtures/axis/axis_probe.fbx"));
+
+    bool bPassed = true;
+    FStaticMeshUnionTestResolver Resolver;
+    TMap<FString, UMaterialInstanceConstant*> Managed;
+    for (const FString& MaterialName : {BaseMaterialName, FarMaterialName})
+    {
+        const FString MaterialPackage = TEXT("/Game/MH/Generated/Materials/") + MaterialName;
+        UPackage* MaterialOuter = CreatePackage(*MaterialPackage);
+        UMaterialInstanceConstant* Material = NewObject<UMaterialInstanceConstant>(
+            MaterialOuter,
+            FName(*MaterialName),
+            RF_Public | RF_Standalone | RF_Transactional);
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
+            .Get()
+            .AssetCreated(Material);
+        const FString MaterialPath = FPaths::Combine(
+            Fixture.SourceRoot,
+            TEXT("materials"),
+            MaterialName + TEXT(".material"));
+        bPassed &= TestTrue(
+            TEXT("write resolved material source"),
+            WriteStaticMeshImporterUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n")));
+        FString MaterialHash;
+        bPassed &= TestTrue(TEXT("hash resolved material source"), ReadSourceHash(MaterialPath, MaterialHash));
+        UMHMaterialSourceData* Receipt = NewObject<UMHMaterialSourceData>(Material);
+        Receipt->LogicalName = MaterialName;
+        Receipt->SourceRelativePath = TEXT("materials/") + MaterialName + TEXT(".material");
+        Receipt->SourceHash = MaterialHash;
+        Receipt->AppliedHash = MaterialHash;
+        Receipt->AppliedParent = TEXT("class:simple");
+        Material->AddAssetUserData(Receipt);
+        Resolver.Materials.Add(MaterialName, TPair<FString, FString>(MaterialPath, MaterialHash));
+        Managed.Add(MaterialName, Material);
+    }
+
+    const FString MeshPath = FPaths::Combine(
+        Fixture.SourceRoot,
+        TEXT("meshes"),
+        LogicalName + TEXT(".mesh.fbx"));
+    FString Error;
+    bPassed &= TestTrue(
+        TEXT("export LOD union FBX"),
+        ExportLodUnionStaticMeshFbx(TemplateFbx, MeshPath, BaseMaterialName, FarMaterialName, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key.Kind = EMHResourceKind::StaticMesh;
+    Entry.Key.LogicalName = LogicalName;
+    Entry.PayloadPath = MeshPath;
+    Entry.SourcePath = TEXT("meshes/") + LogicalName + TEXT(".mesh.fbx");
+    Entry.Change = EMHSourceChange::Create;
+    bPassed &= TestTrue(TEXT("hash LOD union FBX"), ReadSourceHash(MeshPath, Entry.RawHash));
+
+    FMHStaticMeshOperationResult Import = MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
+    if (!Import.Succeeded())
+    {
+        AddError(FString::Printf(TEXT("LOD union import failed: %s"), *Import.Error));
+        return false;
+    }
+    UStaticMesh* Mesh = Import.StaticMesh;
+    bPassed &= TestEqual(TEXT("union import has two LODs"), Mesh->GetNumSourceModels(), 2);
+    bPassed &= TestEqual(TEXT("union material slot count"), Mesh->GetStaticMaterials().Num(), 2);
+    if (Mesh->GetStaticMaterials().Num() == 2)
+    {
+        bPassed &= TestEqual(
+            TEXT("LOD0 slot is first"),
+            Mesh->GetStaticMaterials()[0].MaterialSlotName,
+            FName(*BaseMaterialName));
+        bPassed &= TestEqual(
+            TEXT("LOD1-only slot is appended"),
+            Mesh->GetStaticMaterials()[1].MaterialSlotName,
+            FName(*FarMaterialName));
+        bPassed &= TestTrue(
+            TEXT("LOD1-only slot binds its managed MI"),
+            Mesh->GetStaticMaterials()[1].MaterialInterface.Get() == Managed.FindRef(FarMaterialName));
+    }
+    bPassed &= TestEqual(
+        TEXT("LOD0 section 0 addresses the LOD0 slot"),
+        Mesh->GetSectionInfoMap().Get(0, 0).MaterialIndex,
+        0);
+    bPassed &= TestEqual(
+        TEXT("LOD1 section 0 addresses the LOD1-only slot"),
+        Mesh->GetSectionInfoMap().Get(1, 0).MaterialIndex,
+        1);
+
+    // Reimport of unchanged bytes must not reorder the union.
+    const FMHStaticMeshOperationResult NoChange = MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
+    bPassed &= TestTrue(TEXT("unchanged reimport succeeds"), NoChange.Succeeded());
+    bPassed &= TestEqual(TEXT("unchanged reimport keeps the asset"), NoChange.StaticMesh, Mesh);
+    bPassed &= TestFalse(TEXT("unchanged reimport performs no rebuild"), NoChange.bRebuilt);
+
+    // A forced full rebuild of the same bytes reproduces the same order.
+    const FMHStaticMeshOperationResult Forced = MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot, true);
+    bPassed &= TestTrue(TEXT("forced reimport succeeds"), Forced.Succeeded());
+    bPassed &= TestTrue(TEXT("forced reimport rebuilds"), Forced.bRebuilt);
+    if (Forced.StaticMesh != nullptr && Forced.StaticMesh->GetStaticMaterials().Num() == 2)
+    {
+        bPassed &= TestEqual(
+            TEXT("forced reimport keeps LOD0 slot first"),
+            Forced.StaticMesh->GetStaticMaterials()[0].MaterialSlotName,
+            FName(*BaseMaterialName));
+        bPassed &= TestEqual(
+            TEXT("forced reimport keeps LOD1-only slot second"),
+            Forced.StaticMesh->GetStaticMaterials()[1].MaterialSlotName,
+            FName(*FarMaterialName));
+        bPassed &= TestEqual(
+            TEXT("forced reimport keeps LOD1 section mapping"),
+            Forced.StaticMesh->GetSectionInfoMap().Get(1, 0).MaterialIndex,
+            1);
+    }
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHStaticMeshImporterCollisionCarrierTest,
+    "Mimir.V4.StaticMesh.Importer.CollisionCarriers",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHStaticMeshImporterCollisionCarrierTest::RunTest(const FString& Parameters)
+{
+    const FString Token = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    const FString LogicalName = TEXT("s612_carrier_") + Token;
+    const FString MaterialName = TEXT("s612_mat_") + Token;
+    const FString MeshPackage = TEXT("/Game/MH/Generated/Meshes/") + LogicalName;
+    const FString TracePackage = MHTraceCollisionMeshPackageName(LogicalName);
+    const FString TraceObjectName = LogicalName + TEXT("_trace");
+
+    FCollisionCarrierTokens Tokens;
+    Tokens.DominantPhmat = TEXT("wood_") + Token;
+    Tokens.SecondaryPhmat = TEXT("steel_") + Token;
+    Tokens.TracePhmat = TEXT("glass_") + Token;
+
+    FGeneratedPackageCleanup Cleanup;
+    Cleanup.MeshObjectPath = MeshPackage + TEXT(".") + LogicalName;
+    Cleanup.MaterialObjectPath =
+        TEXT("/Game/MH/Generated/Materials/") + MaterialName + TEXT(".") + MaterialName;
+    Cleanup.TraceObjectPath = TracePackage + TEXT(".") + TraceObjectName;
+
+    FStaticMeshImporterFixture Fixture;
+    FString GoldenRoot;
+    if (!ResolveGoldenRoot(*this, GoldenRoot)) return false;
+    const FString TemplateFbx = FPaths::Combine(GoldenRoot, TEXT("fixtures/axis/axis_probe.fbx"));
+
+    // Only the dominant token has an asset; the other two must degrade to a
+    // warning, never to an import failure.
+    const FString PhysicalMaterialRoot = TEXT("/Game/MH/TestPhysicalMaterials/") + Token;
+    UPackage* PhysMaterialPackage =
+        CreatePackage(*(PhysicalMaterialRoot + TEXT("/") + Tokens.DominantPhmat));
+    UPhysicalMaterial* DominantPhysMaterial = NewObject<UPhysicalMaterial>(
+        PhysMaterialPackage,
+        FName(*Tokens.DominantPhmat),
+        RF_Public | RF_Standalone | RF_Transactional);
+    UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+    const FString PreviousPhysicalMaterialRoot = Settings->PhysicalMaterialRoot;
+    Settings->PhysicalMaterialRoot = PhysicalMaterialRoot;
+    ON_SCOPE_EXIT
+    {
+        Settings->PhysicalMaterialRoot = PreviousPhysicalMaterialRoot;
+    };
+
+    const FString MaterialPackage = TEXT("/Game/MH/Generated/Materials/") + MaterialName;
+    UPackage* MaterialOuter = CreatePackage(*MaterialPackage);
+    UMaterialInstanceConstant* Material = NewObject<UMaterialInstanceConstant>(
+        MaterialOuter,
+        FName(*MaterialName),
+        RF_Public | RF_Standalone | RF_Transactional);
+    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
+        .Get()
+        .AssetCreated(Material);
+    const FString MaterialPath = FPaths::Combine(
+        Fixture.SourceRoot,
+        TEXT("materials"),
+        MaterialName + TEXT(".material"));
+    bool bPassed = TestTrue(
+        TEXT("write resolved material source"),
+        WriteStaticMeshImporterUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n")));
+    FString MaterialHash;
+    bPassed &= TestTrue(TEXT("hash resolved material source"), ReadSourceHash(MaterialPath, MaterialHash));
+    UMHMaterialSourceData* MaterialReceipt = NewObject<UMHMaterialSourceData>(Material);
+    MaterialReceipt->LogicalName = MaterialName;
+    MaterialReceipt->SourceRelativePath = TEXT("materials/") + MaterialName + TEXT(".material");
+    MaterialReceipt->SourceHash = MaterialHash;
+    MaterialReceipt->AppliedHash = MaterialHash;
+    MaterialReceipt->AppliedParent = TEXT("class:simple");
+    Material->AddAssetUserData(MaterialReceipt);
+
+    const FString MeshPath = FPaths::Combine(
+        Fixture.SourceRoot,
+        TEXT("meshes"),
+        LogicalName + TEXT(".mesh.fbx"));
+    FString Error;
+    bPassed &= TestTrue(
+        TEXT("export collision carrier FBX"),
+        ExportCollisionCarrierFbx(TemplateFbx, MeshPath, MaterialName, Tokens, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key.Kind = EMHResourceKind::StaticMesh;
+    Entry.Key.LogicalName = LogicalName;
+    Entry.PayloadPath = MeshPath;
+    Entry.SourcePath = TEXT("meshes/") + LogicalName + TEXT(".mesh.fbx");
+    Entry.Change = EMHSourceChange::Create;
+    bPassed &= TestTrue(TEXT("hash collision carrier FBX"), ReadSourceHash(MeshPath, Entry.RawHash));
+
+    FStaticMeshImporterTestResolver Resolver;
+    Resolver.MaterialName = MaterialName;
+    Resolver.MaterialPath = MaterialPath;
+    Resolver.MaterialHash = MaterialHash;
+    const FMHStaticMeshOperationResult Import =
+        MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
+    if (!Import.Succeeded())
+    {
+        AddError(FString::Printf(TEXT("collision carrier import failed: %s"), *Import.Error));
+        return false;
+    }
+    UStaticMesh* Mesh = Import.StaticMesh;
+
+    // Carrier nodes never enter the render inventory or the material union.
+    bPassed &= TestEqual(TEXT("carrier FBX has a single render LOD"), Mesh->GetNumSourceModels(), 1);
+    bPassed &= TestEqual(TEXT("union stays render-only"), Mesh->GetStaticMaterials().Num(), 1);
+    if (Mesh->GetStaticMaterials().Num() == 1)
+    {
+        bPassed &= TestEqual(
+            TEXT("union slot is the render material"),
+            Mesh->GetStaticMaterials()[0].MaterialSlotName,
+            FName(*MaterialName));
+    }
+    if (const FMeshDescription* LOD0 = Mesh->GetMeshDescription(0))
+    {
+        bPassed &= TestEqual(TEXT("only the render triangle is drawn"), LOD0->Polygons().Num(), 1);
+    }
+
+    const UBodySetup* BodySetup = Mesh->GetBodySetup();
+    bPassed &= TestNotNull(TEXT("carrier BodySetup"), BodySetup);
+    if (BodySetup != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("one convex element"), BodySetup->AggGeom.ConvexElems.Num(), 1);
+        bPassed &= TestEqual(TEXT("one box element"), BodySetup->AggGeom.BoxElems.Num(), 1);
+        bPassed &= TestEqual(TEXT("one capsule element"), BodySetup->AggGeom.SphylElems.Num(), 1);
+        if (BodySetup->AggGeom.BoxElems.Num() == 1)
+        {
+            const FKBoxElem& Box = BodySetup->AggGeom.BoxElems[0];
+            bPassed &= TestTrue(
+                TEXT("box element centre follows the node transform"),
+                Box.Center.Equals(FVector(110.0, -15.0, 20.0), 0.01));
+            bPassed &= TestTrue(
+                TEXT("box element carries full edge lengths"),
+                FMath::IsNearlyEqual(Box.X, 20.0f, 0.01f) &&
+                    FMath::IsNearlyEqual(Box.Y, 30.0f, 0.01f) &&
+                    FMath::IsNearlyEqual(Box.Z, 40.0f, 0.01f));
+            bPassed &= TestEqual(
+                TEXT("phys carrier is physics-only"),
+                Box.GetCollisionEnabled(),
+                ECollisionEnabled::PhysicsOnly);
+        }
+        if (BodySetup->AggGeom.SphylElems.Num() == 1)
+        {
+            const FKSphylElem& Sphyl = BodySetup->AggGeom.SphylElems[0];
+            bPassed &= TestTrue(
+                TEXT("capsule element centre follows the node transform"),
+                Sphyl.Center.Equals(FVector(5.0, -205.0, 30.0), 0.01));
+            bPassed &= TestTrue(
+                TEXT("capsule radius is half the widest cross section"),
+                FMath::IsNearlyEqual(Sphyl.Radius, 5.0f, 0.01f));
+            bPassed &= TestTrue(
+                TEXT("capsule length excludes both hemispheres"),
+                FMath::IsNearlyEqual(Sphyl.Length, 50.0f, 0.01f));
+        }
+        // UE 5.7 has no per-shape physical material, so the dominant token wins.
+        bPassed &= TestEqual(
+            TEXT("dominant phmat becomes the body physical material"),
+            BodySetup->PhysMaterial.Get(),
+            DominantPhysMaterial);
+    }
+
+    UStaticMesh* TraceMesh = Mesh->ComplexCollisionMesh.Get();
+    bPassed &= TestNotNull(TEXT("trace carriers produce a complex collision mesh"), TraceMesh);
+    if (TraceMesh != nullptr)
+    {
+        bPassed &= TestEqual(
+            TEXT("companion lives at the deterministic collision path"),
+            TraceMesh->GetPathName(),
+            Cleanup.TraceObjectPath);
+        bPassed &= TestEqual(
+            TEXT("companion groups its sections by phmat"),
+            TraceMesh->GetStaticMaterials().Num(),
+            2);
+        if (TraceMesh->GetStaticMaterials().Num() == 2)
+        {
+            bPassed &= TestEqual(
+                TEXT("first companion section is the dominant phmat"),
+                TraceMesh->GetStaticMaterials()[0].MaterialSlotName,
+                FName(*Tokens.DominantPhmat));
+            bPassed &= TestEqual(
+                TEXT("second companion section is the trace-only phmat"),
+                TraceMesh->GetStaticMaterials()[1].MaterialSlotName,
+                FName(*Tokens.TracePhmat));
+        }
+    }
+
+    // The behavioural contract: the mesh's complex collision is the trace
+    // geometry (two tetrahedra), not the single render triangle.
+    FTriMeshCollisionData TriMeshData;
+    const bool bHasTriMesh = Mesh->GetPhysicsTriMeshData(&TriMeshData, true);
+    bPassed &= TestTrue(TEXT("complex collision data is available"), bHasTriMesh);
+    bPassed &= TestEqual(
+        TEXT("complex collision uses the trace geometry"),
+        TriMeshData.Indices.Num(),
+        8);
+
+    bPassed &= TestTrue(
+        TEXT("unresolved phmat tokens warn without blocking"),
+        HasWarning(Import, TEXT("MH_W_DAGOR_CONSTRUCT_DROPPED")));
+
+    // Importer version 4 is what forces the one-time rebuild of version 3 meshes.
+    UMHStaticMeshImportData* Receipt = Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData());
+    bPassed &= TestNotNull(TEXT("carrier receipt exists"), Receipt);
+    if (Receipt != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("receipt records importer version 4"), Receipt->ImporterVersion, 4);
+        Receipt->ImporterVersion = 3;
+        const FMHStaticMeshOperationResult Upgrade =
+            MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
+        bPassed &= TestTrue(TEXT("version 3 receipt upgrade succeeds"), Upgrade.Succeeded());
+        bPassed &= TestTrue(TEXT("version 3 receipt forces a rebuild"), Upgrade.bRebuilt);
+        bPassed &= TestEqual(TEXT("version upgrade keeps the asset"), Upgrade.StaticMesh, Mesh);
+    }
+
+    // An unchanged reimport must stay on the silent NO_CHANGE fast path.
+    const FMHStaticMeshOperationResult NoChange =
+        MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
+    bPassed &= TestTrue(TEXT("unchanged carrier reimport succeeds"), NoChange.Succeeded());
+    bPassed &= TestFalse(TEXT("unchanged carrier reimport performs no rebuild"), NoChange.bRebuilt);
+    bPassed &= TestTrue(TEXT("NO_CHANGE emits no warnings"), NoChange.Warnings.IsEmpty());
+
+    if (DominantPhysMaterial != nullptr)
+    {
+        DominantPhysMaterial->ClearFlags(RF_Public | RF_Standalone);
+        DominantPhysMaterial->MarkAsGarbage();
+    }
+    if (PhysMaterialPackage != nullptr)
+    {
+        PhysMaterialPackage->SetDirtyFlag(false);
     }
     return bPassed;
 }

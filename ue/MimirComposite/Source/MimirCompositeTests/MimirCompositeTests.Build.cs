@@ -19,6 +19,7 @@ public class MimirCompositeTests : ModuleRules
                 "MeshDescription",
                 "MimirCompositeEditor",
                 "MimirCompositeRuntime",
+                "PhysicsCore",
                 "Projects",
                 "RenderCore",
                 "RHI",

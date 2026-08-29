@@ -11,6 +11,8 @@ from mh4blend.scene.export_closure import export_composite_closure_collection
 from mh4blend.scene.export_composite import export_composite_collection
 from mh4blend.core.batch_publish import BatchPartialPublishError
 from mh4blend.core.composites import composite_json_bytes
+from mh4blend.core.model import Composite, Node
+from mh4blend.core.validate import MHValidationError
 from mh4blend.scene.import_dagor_composite import convert_dag4blend_collection
 from mh4blend.scene.import_composite import materialize_composite_documents
 from mh4blend.scene.export_composite import _extract_composite
@@ -465,3 +467,221 @@ def test_direct_partial_boundary_and_retry_do_not_mutate_scene(
         root, tmp_path, source_root=tmp_path, mode="composite_closure")
     assert report["ok"]
     assert snapshot() == before
+
+
+# --- V5-S6.1.1 doc 15 2.5: the generic MH reader never interprets Dagor ---
+
+
+def _native_root_instancing_dagor(dagor_type):
+    """A native MH form whose placement instances a legacy dag4blend resource."""
+    native = bpy.data.collections.new("native_root.composite")
+    bpy.context.scene.collection.children.link(native)
+    resource = bpy.data.collections.new("legacy_resource")
+    resource["type"] = dagor_type
+    resource["name"] = "legacy_resource"
+    empty("placement", native, resource)
+    return native, resource
+
+
+@pytest.mark.parametrize("dagor_type", ["gameobj", "prefab"])
+def test_native_mh_reader_refuses_dagor_identity_instead_of_translating_it(
+        dagor_type):
+    native, resource = _native_root_instancing_dagor(dagor_type)
+    with pytest.raises(MHValidationError) as caught:
+        _extract_composite(native)
+    assert caught.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+    assert "mixed scene representation" in caught.value.message
+    assert resource.name in caught.value.subjects
+    assert "type" in caught.value.subjects and "name" in caught.value.subjects
+
+
+@pytest.mark.parametrize("dagor_type", ["gameobj", "prefab"])
+def test_mixed_root_export_writes_nothing(tmp_path, dagor_type):
+    native, _resource = _native_root_instancing_dagor(dagor_type)
+    with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE") as caught:
+        export_composite_collection(native, tmp_path, source_root=tmp_path)
+    assert "mixed scene representation" in str(caught.value)
+    assert list(tmp_path.iterdir()) == []
+    # The native MH reader lazily allocates its typed carrier IDProperty group
+    # on first read of mh4blend; that pre-existing artifact is not this gate's
+    # subject. Compare the scene across a REPEATED refusal instead.
+    before = snapshot()
+    with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+        export_composite_collection(native, tmp_path, source_root=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+    assert snapshot() == before
+
+
+def test_pure_dag4blend_root_still_reaches_the_dag4blend_adapter(tmp_path):
+    """The dispatcher route must stay open: this is not a mixed scene."""
+    root = legacy("direct_root")
+    gameobj = legacy("dummy_pivot")
+    gameobj["type"] = "gameobj"
+    empty("point", root, gameobj)
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="composite_closure")
+    assert report["published"] == ["composite:direct_root"]
+    document, _overrides = convert_dag4blend_collection(root)
+    assert document.nodes[0].kind == "gameobj"
+
+
+# --- V5-S6.1.1 doc 15 1.5/2.4: structural completeness admission ---
+
+
+def _source_composite_file(directory, name):
+    """A real, non-empty Source Root payload for one nested composite."""
+    payload = composite_json_bytes(Composite(name, [Node("group")]))
+    (directory / f"{name}.composite").write_bytes(payload)
+    return payload
+
+
+def _root_with_empty_nested(child_name="direct_child"):
+    root = legacy("direct_root")
+    child = legacy(child_name)
+    assert not child.objects and not child.children
+    empty("nested", root, child)
+    return root, child
+
+
+@pytest.mark.parametrize("mode", ["composite_closure", "include_all"])
+def test_empty_nested_definition_reuses_the_real_source_payload(tmp_path, mode):
+    root, _child = _root_with_empty_nested()
+    payload = _source_composite_file(tmp_path, "direct_child")
+    before = snapshot()
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode=mode)
+    assert "composite:direct_child" in report["reused"]
+    assert "composite:direct_child" not in report["published"]
+    assert (tmp_path / "direct_child.composite").read_bytes() == payload
+    assert snapshot() == before
+
+
+@pytest.mark.parametrize("mode", ["composite_closure", "include_all"])
+def test_empty_nested_definition_without_source_is_refused(tmp_path, mode):
+    root, _child = _root_with_empty_nested()
+    before = snapshot()
+    with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE") as caught:
+        export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode=mode)
+    assert "direct_child" in str(caught.value)
+    assert "collection is empty" in str(caught.value)
+    assert "Recursive" in str(caught.value)
+    assert list(tmp_path.iterdir()) == []
+    assert snapshot() == before
+
+
+def test_root_only_mode_keeps_its_source_root_admission(tmp_path):
+    """root_only makes no scene-geometry demand; the source must still exist."""
+    root, _child = _root_with_empty_nested()
+    payload = _source_composite_file(tmp_path, "direct_child")
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="root_only")
+    assert report["published"] == ["composite:direct_root"]
+    assert (tmp_path / "direct_child.composite").read_bytes() == payload
+
+
+def test_all_empty_random_variants_are_not_an_empty_collection(tmp_path):
+    """The legal authored case: every variant empty, but the node is present."""
+    root = legacy("direct_root")
+    child = legacy("direct_child")
+    helper = bpy.data.collections.new("random.direct")
+    empty("choice", child, helper)
+    empty("nothing_a", helper)["weight:r"] = 1
+    empty("nothing_b", helper)["weight:r"] = 2
+    empty("nested", root, child)
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="composite_closure")
+    assert "composite:direct_child" in report["published"]
+
+
+@pytest.mark.parametrize("mode", ["root_only", "composite_closure", "include_all"])
+def test_empty_root_collection_is_always_refused(tmp_path, mode):
+    root = legacy("direct_root")
+    assert not root.objects and not root.children
+    _source_composite_file(tmp_path, "direct_root")
+    before = snapshot()
+    with pytest.raises(ValueError, match="MH_E_INVALID_RESOURCE_SOURCE") as caught:
+        export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode=mode)
+    assert "direct_root" in str(caught.value)
+    assert "collection is empty" in str(caught.value)
+    assert snapshot() == before
+
+
+# --- V5-S6.1.1 doc 15 2.6: save/reopen gate ---
+
+
+def test_adapter_transforms_do_not_depend_on_view_layer_evaluation():
+    """Object.matrix_local is a depsgraph mirror; the adapter must not read it.
+
+    An unlinked definition Collection is never evaluated, so its matrix_local
+    reports identity forever. Reading it would silently publish identity
+    transforms and would change the exported bytes the moment the same scene
+    were reopened with that Collection linked.
+    """
+    def build(name, link):
+        root = legacy(name)
+        if link:
+            bpy.context.scene.collection.children.link(root)
+        parent = empty(f"{name}_parent", root)
+        parent.location = (1.0, 2.0, 3.0)
+        child = empty(f"{name}_child", root, parent=parent)
+        child.location = (0.0, 4.0, 0.0)
+        return root, parent
+
+    linked, linked_parent = build("linked_root", True)
+    unlinked, unlinked_parent = build("unlinked_root", False)
+    bpy.context.view_layer.update()
+    assert linked_parent.matrix_local[0][3] == 1.0
+    assert unlinked_parent.matrix_local[0][3] == 0.0
+
+    linked_document, _overrides = convert_dag4blend_collection(linked)
+    unlinked_document, _overrides = convert_dag4blend_collection(unlinked)
+    assert linked_document.nodes[0].transform.translation_cm != (0.0, 0.0, 0.0)
+    assert linked_document.nodes == unlinked_document.nodes
+
+
+def test_dag4blend_export_is_byte_identical_across_save_and_reopen(tmp_path):
+    root = legacy("direct_root")
+    bpy.context.scene.collection.children.link(root)
+    child = legacy("direct_child")
+    bpy.context.scene.collection.children.link(child)
+    empty("frame_a", root).location.x = 1
+    empty("nested", root, child).location.y = 2
+    empty("frame_b", root).location.z = 3
+    empty("child_frame", child)
+    helper = bpy.data.collections.new("random.direct")
+    empty("choice", child, helper).location.x = 4
+    option_a = legacy("variant_a")
+    option_a["type"] = "gameobj"
+    option_b = legacy("variant_b")
+    option_b["type"] = "gameobj"
+    empty("pick_a", helper, option_a)["weight:r"] = 3.0
+    empty("pick_b", helper, option_b)["weight:r"] = 1.0
+    empty("pick_nothing", helper)["weight:r"] = 2.0
+
+    first_dir = tmp_path / "first"
+    first_dir.mkdir()
+    export_composite_closure_collection(
+        root, first_dir, source_root=first_dir, mode="composite_closure")
+    before_documents = {
+        path.name: path.read_bytes() for path in sorted(first_dir.iterdir())}
+    before_dto, _overrides = convert_dag4blend_collection(root)
+
+    blend = tmp_path / "reopen.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(blend))
+    bpy.ops.wm.open_mainfile(filepath=str(blend))
+
+    reopened = bpy.data.collections["direct_root"]
+    assert reopened.get("type") == "composit"
+    second_dir = tmp_path / "second"
+    second_dir.mkdir()
+    export_composite_closure_collection(
+        reopened, second_dir, source_root=second_dir, mode="composite_closure")
+    after_documents = {
+        path.name: path.read_bytes() for path in sorted(second_dir.iterdir())}
+    after_dto, _overrides = convert_dag4blend_collection(reopened)
+
+    assert after_documents == before_documents
+    assert list(after_documents) == list(before_documents)
+    assert after_dto == before_dto

@@ -17,6 +17,7 @@ public class MimirCompositeEditor : ModuleRules
                 "Engine",
                 "MeshDescription",
                 "MimirCompositeRuntime",
+                "PhysicsCore",
                 "StaticMeshDescription"
             });
 

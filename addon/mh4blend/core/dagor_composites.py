@@ -1,5 +1,28 @@
 """Strict, Blender-free reader for Dagor ``*.composit.blk`` sources.
 
+LEGACY / LIMITED -- path (a). Owner decision 2026-08-30 (doc 15 1.4, 2.7):
+this direct BLK reader is NOT the production route and parity with the
+dag4blend route will not be implemented. The production route is the
+dag4blend scene adapter (``scene/import_dagor_composite.py``:
+``convert_dag4blend_collection`` / ``publish_dag4blend_composite_collection``),
+reached from the artist's imported dag4blend scene. This module is kept for
+authoritative-source inspection and for the operators that still name it;
+its behaviour is deliberately frozen.
+
+Known limitations of path (a), which the dag4blend route does not share:
+
+* Dagor ``gameObj`` is mapped to the EXECUTABLE ``actor`` kind here, while the
+  ratified v5 kind is the placeholder-only ``gameobj`` (doc 13, owner
+  amendment 1). The asymmetry is recorded, not repaired.
+* No empty random ``ent{}`` variant: this reader has no notion of the
+  ``kind: "empty"`` option that Dagor's ``loadAddEnt`` admits.
+* None of the node carriers ratified in V5-S6.1 are produced here:
+  ``place_type`` and ``appearance_seed_boundary`` are not emitted, so a
+  document converted through path (a) silently lacks that provenance.
+
+Do not build new features on this module and do not extend its grammar; add
+them to the dag4blend scene adapter instead.
+
 The reader deliberately stops at the lossless conversion boundary.  It keeps
 Dagor's source-order hierarchy, typed resource tokens, and raw 3x4 transform
 columns; it does not decompose matrices.  Admitted node ``include`` directives

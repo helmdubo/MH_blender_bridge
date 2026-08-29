@@ -110,15 +110,137 @@ def test_plan_rejects_parent_escape_cycle_and_socket_children():
     assert socket.value.code == "MH_E_INVALID_NODE_MARKERS"
 
 
-def test_plan_rejects_slot_only_present_in_higher_lod():
+def test_slot_only_present_in_higher_lod_joins_the_union():
+    """Retired behavior: MH_E_LOD_SLOT_NOT_IN_BASE is never raised again.
+
+    Owner decision 2026-08-30 (docs/15 §1.1): real content authors every LOD
+    with its own materials, so the resource material list is the ordered union
+    of all LOD slots instead of a subset of LOD0.
+    """
+    plan = build_mesh_import_plan("mesh", [
+        MeshNode("body_lod00", "MESH", material_slots=("base",),
+                 geometry_name="Body"),
+        MeshNode("body_lod01", "MESH", material_slots=("high",),
+                 geometry_name="BodyLow"),
+    ])
+    assert plan.material_names == ("base", "high")
+
+
+def test_material_union_is_ordered_lod_major_by_first_appearance():
+    plan = build_mesh_import_plan("mesh", [
+        # Deliberately unsorted node order: the union order is defined by the
+        # LOD level first and only then by node/slot appearance.
+        MeshNode("hull_lod02", "MESH", material_slots=("simple",),
+                 geometry_name="HullFar"),
+        MeshNode("hull_lod00", "MESH", material_slots=("paint", "glass"),
+                 geometry_name="Hull"),
+        MeshNode("trim_lod01", "MESH", material_slots=("glass", "paint_low"),
+                 geometry_name="TrimMid"),
+        MeshNode("hull_lod01", "MESH", material_slots=("paint_low", "rubber"),
+                 geometry_name="HullMid"),
+    ])
+    assert plan.lod_levels == (0, 1, 2)
+    assert plan.material_names == (
+        "paint", "glass", "paint_low", "rubber", "simple")
+
+
+def test_material_union_is_render_only():
+    """docs/15 §3.4 last bullet: both sides move to a render-only union.
+
+    A slot owned only by non-render nodes (``UCX_`` collision, Dagor collision
+    transport) is not a static-mesh material, so it never joins the union and
+    never enters the ``.material`` closure.
+    """
+    plan = build_mesh_import_plan("mesh", [
+        MeshNode("UCX_hull", "MESH", material_slots=("hull_shell",),
+                 geometry_name="Collision"),
+        MeshNode("hull_lod00", "MESH", material_slots=("paint",),
+                 geometry_name="Hull"),
+        MeshNode("hull_lod01", "MESH", material_slots=("paint_low",),
+                 geometry_name="HullMid"),
+    ])
+    assert plan.material_names == ("paint", "paint_low")
+
+
+def test_collision_transport_properties_classify_and_reach_the_plan():
+    plan = build_mesh_import_plan("mesh", [
+        MeshNode("hull_lod00", "MESH", material_slots=("paint",),
+                 geometry_name="Hull"),
+        MeshNode("gaz53_a_body.lod01 cls phys.001", "MESH",
+                 geometry_name="PhysCollision", collision_kind="phys",
+                 collision_shape="box", phmat="steel"),
+        MeshNode("gaz53_a_body.lod01 cls steel.001", "MESH",
+                 geometry_name="TraceCollision", collision_kind="trace",
+                 phmat="wood"),
+    ])
+    phys, trace = plan.collision_nodes
+    assert (phys.kind, phys.collision_mode, phys.collision_shape, phys.phmat) \
+        == ("collision", "phys", "box", "steel")
+    # An absent `mh_collision_shape` resolves to the Dagor default `mesh`.
+    assert (trace.collision_mode, trace.collision_shape, trace.phmat) == (
+        "trace", "mesh", "wood")
+    # Transported collision is not bound to a LOD and never joins the union.
+    assert plan.lod_levels == (0,)
+    assert plan.material_names == ("paint",)
+
+
+def test_collision_transport_node_without_phmat_is_legal():
+    plan = build_mesh_import_plan("mesh", [
+        MeshNode("hull", "MESH", geometry_name="Hull"),
+        MeshNode("hull cls phys", "MESH", geometry_name="Collision",
+                 collision_kind="phys"),
+    ])
+    assert plan.collision_nodes[0].phmat is None
+
+
+@pytest.mark.parametrize("token", ["wood", "wood_solid", "softSteelDoor",
+                                   "not_in_registry_2"])
+def test_any_charset_valid_phmat_token_is_accepted(token):
+    """docs/reference_notes/dagor_phmat_registry.md: the registry may grow.
+
+    Only the token charset is a transport rule; an unknown token is legal and
+    is resolved (or warned about) by the UE importer, never refused here.
+    """
+    plan = build_mesh_import_plan("mesh", [
+        MeshNode("hull", "MESH", geometry_name="Hull"),
+        MeshNode("hull cls phys", "MESH", geometry_name="Collision",
+                 collision_kind="phys", phmat=token),
+    ])
+    assert plan.collision_nodes[0].phmat == token
+
+
+@pytest.mark.parametrize(("kind", "shape", "phmat"), [
+    ("simple", None, None),
+    ("phys", "sphere", None),
+    ("phys", "", None),
+    ("phys", None, "steel wool"),
+    ("phys", None, ""),
+    ("phys", None, 7),
+    (None, "box", None),
+    (None, None, "steel"),
+])
+def test_malformed_collision_transport_is_a_grammar_refusal(kind, shape, phmat):
     with pytest.raises(MHValidationError) as exc:
         build_mesh_import_plan("mesh", [
-            MeshNode("body_lod00", "MESH", material_slots=("base",),
-                     geometry_name="Body"),
-            MeshNode("body_lod01", "MESH", material_slots=("high",),
-                     geometry_name="BodyLow"),
+            MeshNode("hull", "MESH", geometry_name="Hull"),
+            MeshNode("hull cls phys", "MESH", geometry_name="Collision",
+                     collision_kind=kind, collision_shape=shape, phmat=phmat),
         ])
-    assert exc.value.code == "MH_E_LOD_SLOT_NOT_IN_BASE"
+    assert exc.value.code == "MH_E_COMPOSITE_GRAMMAR"
+
+
+@pytest.mark.parametrize(("name", "node_type", "kind"), [
+    ("UCX_hull", "MESH", "phys"),
+    ("hull_lod00", "MESH", "phys"),
+    ("hull_cls_trace", "MESH", "phys"),
+    ("pivot", "NULL", "phys"),
+])
+def test_collision_property_conflicting_with_name_markers_fails_closed(
+        name, node_type, kind):
+    with pytest.raises(MHValidationError) as exc:
+        validate_node_markers(name, node_type, collision_kind=kind)
+    assert exc.value.code in {
+        "MH_E_INVALID_NODE_MARKERS", "MH_E_UNSUPPORTED_NODE_KIND"}
 
 
 @pytest.mark.parametrize("node", [

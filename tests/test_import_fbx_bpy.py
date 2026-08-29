@@ -157,6 +157,47 @@ def test_import_rebuilds_parse_hierarchy_and_ordered_slots(tmp_path):
     assert _semantic_plan(roundtrip) == source_plan
 
 
+def test_dagor_collision_transport_is_parsed_and_placed_in_lod0(tmp_path):
+    """docs/15 §3.4: `parse_mesh_fbx` reads the FBX collision carrier."""
+    source = _collection("vehicle.lods")
+    lod0 = bpy.data.collections.new("vehicle.lod00")
+    lod1 = bpy.data.collections.new("vehicle.lod01")
+    source.children.link(lod0)
+    source.children.link(lod1)
+    body0 = _mesh("body", lod0, "BodyGeometry")
+    body0.data.materials.append(_material())
+    _mesh("body_low", lod1, "BodyLowGeometry")
+    collision = _mesh(
+        "vehicle_a_body.lod01 cls phys", lod1, "PhysCollisionGeometry")
+    collision.data.materials.append(bpy.data.materials.new("cls"))
+    collision["dagorprops"] = {
+        "collision:t": '"convex"', "phmat:t": '"wood_solid"'}
+    trace = _mesh("vehicle_a_body.lod01 cls steel", lod1, "TraceGeometry")
+    trace.data.materials.append(bpy.data.materials["cls"])
+    trace["dagorprops"] = {
+        "phmat:t": '"steel"', "isPhysCollidable:b": False,
+        "isTraceable:b": True}
+    path = Path(export_fbx_collection(
+        source, tmp_path, source_root=tmp_path)["filepath"])
+    _material_source(tmp_path)
+
+    plan = parse_mesh_fbx(path)
+    assert plan.material_names == ("paint",)
+    assert [(node.name, node.collision_mode, node.collision_shape, node.phmat)
+            for node in plan.collision_nodes] == [
+        ("vehicle_a_body.lod01 cls phys", "phys", "convex", "wood_solid"),
+        ("vehicle_a_body.lod01 cls steel", "trace", "mesh", "steel"),
+    ]
+
+    _reset_keep_sources()
+    report = import_mesh_fbx(path, source_root=tmp_path)
+    root = report["collection"]
+    lod0_collection = root.children["vehicle.lod00"]
+    assert "vehicle_a_body.lod01 cls phys" in lod0_collection.objects
+    assert "vehicle_a_body.lod01 cls steel" in lod0_collection.objects
+    assert report["materials"] == ["paint"]
+
+
 def test_lods_restructure_without_rewriting_parsed_node_names(tmp_path):
     source_path = _export_lods(tmp_path)
     source_plan = _semantic_plan(source_path)

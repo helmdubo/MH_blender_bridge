@@ -21,6 +21,7 @@ import bpy
 from mathutils import Matrix, Quaternion
 
 from ..core.canonical import validate_resource_name
+from ..core.composites import read_composite_file
 from ..core.dagor_composites import (
     DagorComposite,
     DagorInclude,
@@ -37,6 +38,8 @@ from ..core.placement_publication import (
     stage_placement_publications,
 )
 from ..core.placements import placement_json_bytes
+from ..core.source_closure import ResourceKey
+from ..core.source_inventory import scan_source_inventory
 from ..core.transforms import (
     blender_to_ue_transform,
     matrix_reconstructs_as_float32_trs,
@@ -746,8 +749,21 @@ def _register_override(overrides, key, collection, provenance):
 
 
 def _dag4blend_local(obj, subjects):
+    """Read the AUTHORED parent-local matrix, never the depsgraph mirror.
+
+    ``Object.matrix_local`` is derived from evaluated world matrices, so a
+    definition Collection that is not linked into an evaluated view layer
+    reports identity forever and the adapter would silently publish identity
+    transforms. ``matrix_parent_inverse @ matrix_basis`` is Blender's own
+    definition of object parent-local, is what the .blend stores, and equals
+    ``matrix_local`` exactly once the scene is evaluated. Using it makes this
+    read-only adapter independent of evaluation state, which is what the
+    save/reopen byte-identity gate (doc 15 2.6) requires.
+    """
     try:
-        matrix = obj.matrix_local.copy()
+        matrix = obj.matrix_basis.copy()
+        if obj.parent is not None:
+            matrix = obj.matrix_parent_inverse @ matrix
     except (AttributeError, TypeError, ValueError) as exc:
         _raise(
             "MH_E_UNREPRESENTABLE_TRANSFORM", subjects,
@@ -942,19 +958,91 @@ def convert_dag4blend_collection(
     return document, overrides
 
 
+_STRUCTURAL_COMPLETENESS_MODES = frozenset({"composite_closure", "include_all"})
+
+
+def _structurally_empty(collection) -> bool:
+    """dag4blend's own not-imported shape: zero objects and zero children.
+
+    This is a STRUCTURAL predicate, never a replay of import flags. It matches
+    ``dag4blend cmp_import.get_node_collection``, which allocates a stub
+    Collection carrying full Dagor identity and leaves it empty whenever the
+    artist imported without Recursive. An authored composite whose random
+    variants are all empty is NOT empty: it still owns its node Empties.
+    """
+
+    return not collection.objects and not collection.children
+
+
+def _nonempty_source_composite(inventory, name) -> bool:
+    """Does Source Root already hold a real, non-empty payload for ``name``?"""
+
+    if inventory is None:
+        return False
+    candidate = inventory.resolve(
+        ResourceKey("composite", name), allow_missing=True)
+    if candidate is None:
+        return False
+    return bool(read_composite_file(candidate.path).nodes)
+
+
 def _dag4blend_collection_bundle(
-        collection, *, allow_prefab_as_mesh_lossy=False, warnings=None):
+        collection, *, allow_prefab_as_mesh_lossy=False, warnings=None,
+        mode=None, source_root=None):
     """Recursively convert all explicit composite definitions and options.
 
     Composite resource collections become documents, never overrides.  Only
     Mesh definition collections cross into the writer as explicit read-only
     inputs. Named gameobj collections carry tokens only: they have no resource
     payload, actor class binding or materialization requirement.
+
+    ``mode``/``source_root`` enable the doc 15 1.5/2.4 completeness admission.
+    ``root_only`` publishes nothing but the root, so it makes no demand on
+    scene geometry; the closure modes refuse to turn a structurally empty
+    nested definition into a valid empty document that would be published over
+    a real ``.composite``.
     """
 
     documents = {}
     composite_sources = {}
     resource_overrides = {}
+    inventory = None
+    if mode in _STRUCTURAL_COMPLETENESS_MODES and source_root is not None:
+        inventory = scan_source_inventory(source_root)
+
+    if mode is not None and _structurally_empty(collection):
+        # The root is published in EVERY export mode, so an empty root can only
+        # ever overwrite a real source with "no nodes". ``mode is None`` is the
+        # in-Blender migration path (Convert), which writes no source file and
+        # therefore cannot destroy one.
+        _raise(
+            "MH_E_INVALID_RESOURCE_SOURCE", [f"collection:{collection.name}"],
+            f"dag4blend composite root {collection.name!r} collection is "
+            "empty (zero objects and zero child collections); likely imported "
+            "without Recursive. A root composite definition is never "
+            "published as an empty document")
+
+    def admit_nested(owner, name, resource_collection):
+        """Return True when the nested definition must be read from the scene."""
+
+        if (mode not in _STRUCTURAL_COMPLETENESS_MODES
+                or not _structurally_empty(resource_collection)):
+            return True
+        if _nonempty_source_composite(inventory, name):
+            # Reuse the real Source Root payload; never republish emptiness.
+            # Leaving the name out of ``documents`` is what routes the planner
+            # to the source file, and the publication report names it as
+            # reused rather than published.
+            return False
+        _raise(
+            "MH_E_INVALID_RESOURCE_SOURCE",
+            [f"composite:{owner}", resource_collection.name, name],
+            f"nested dag4blend composite {name!r} (collection "
+            f"{resource_collection.name!r}) collection is empty; likely "
+            "imported without Recursive, and Source Root holds no non-empty "
+            f"{name}.composite to reuse instead. Re-import that composite "
+            "with Recursive enabled, or publish it on its own first; an empty "
+            "definition must never overwrite a real source")
 
     def load(source_collection):
         document, discovered = convert_dag4blend_collection(
@@ -977,7 +1065,8 @@ def _dag4blend_collection_bundle(
         for key, resource_collection in discovered.items():
             kind, name = key
             if kind == "composite":
-                load(resource_collection)
+                if admit_nested(document.name, name, resource_collection):
+                    load(resource_collection)
             elif kind == "mesh":
                 _register_override(
                     resource_overrides, key, resource_collection,
@@ -1148,12 +1237,21 @@ def publish_dag4blend_composite_collection(
     warnings = []
     documents, overrides, _sources = _dag4blend_collection_bundle(
         collection, allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
-        warnings=warnings)
+        warnings=warnings, mode=mode, source_root=source_root)
     _kind, root_name = _resource_identity(
         collection, None, f"collection:{collection.name}")
     plan = prepare_dag4blend_publication(
         documents, overrides, root_name=root_name, source_root=source_root,
         output_dir=output_dir, mode=mode)
+    # Writer-side drops (doc 15 §2.2: excluded Dagor collision nodes and
+    # technical materials) are recorded on the prepared FBX rows; the artist
+    # must see them in the same report/exception channel as adapter warnings.
+    for row in plan.payloads:
+        prepared_warnings = getattr(row.prepared, "warnings", None)
+        if prepared_warnings:
+            warnings.extend(
+                warning for warning in prepared_warnings
+                if warning not in warnings)
     compatibility = _dag4blend_compatibility_report()
     try:
         with tempfile.TemporaryDirectory(prefix="mh-dag4blend-stage-") as staging:

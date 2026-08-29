@@ -163,6 +163,33 @@ def test_public_command_exports_dagor_mesh_without_mutating_scene(tmp_path):
     assert _snapshot() == before
 
 
+def test_writer_drop_warnings_reach_the_public_report(tmp_path):
+    # Doc 15 §2.2: the artist must see excluded Dagor collision nodes in the
+    # same report channel as adapter warnings, not only inside the writer.
+    source, _documents, _inputs, mesh, _material, legacy = _fixture(tmp_path)
+    cls_material = bpy.data.materials.new("cls")
+    data = bpy.data.meshes.new("collision_data")
+    data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+    data.materials.append(cls_material)
+    # A bare-cls node (no phys/trace token, no role declaration) stays a
+    # recognized drop; phys/trace collision transports since V5-S6.1.2.
+    mesh.objects.link(bpy.data.objects.new("triangle cls", data))
+    placement = bpy.data.objects.new("mesh_placement", None)
+    legacy.objects.link(placement)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = mesh
+    report = export_composite_closure_collection(
+        legacy, source, source_root=source, mode=CLOSURE_MODE_INCLUDE_ALL)
+    dropped = [row for row in report["warnings"]
+               if row[0] == "MH_W_DAGOR_CONSTRUCT_DROPPED"]
+    assert dropped, report["warnings"]
+    assert any("triangle cls" in str(subject)
+               for row in dropped for subject in row[1])
+    assert not (source / "cls.material").exists()
+    assert report["published"] == [
+        "material:bridge_surface", "static_mesh:bridge_mesh", "composite:bridge_root"]
+
+
 @pytest.mark.parametrize("lods", [False, True])
 def test_first_real_batch_writes_files_without_scene_mutation(tmp_path, lods):
     source, documents, inputs, mesh, _material, _legacy = _fixture(tmp_path, lods=lods)
