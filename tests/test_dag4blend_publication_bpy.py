@@ -171,7 +171,9 @@ def test_writer_drop_warnings_reach_the_public_report(tmp_path):
     data = bpy.data.meshes.new("collision_data")
     data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
     data.materials.append(cls_material)
-    mesh.objects.link(bpy.data.objects.new("triangle cls phys", data))
+    # A bare-cls node (no phys/trace token, no role declaration) stays a
+    # recognized drop; phys/trace collision transports since V5-S6.1.2.
+    mesh.objects.link(bpy.data.objects.new("triangle cls", data))
     placement = bpy.data.objects.new("mesh_placement", None)
     legacy.objects.link(placement)
     placement.instance_type = "COLLECTION"
@@ -181,7 +183,7 @@ def test_writer_drop_warnings_reach_the_public_report(tmp_path):
     dropped = [row for row in report["warnings"]
                if row[0] == "MH_W_DAGOR_CONSTRUCT_DROPPED"]
     assert dropped, report["warnings"]
-    assert any("triangle cls phys" in str(subject)
+    assert any("triangle cls" in str(subject)
                for row in dropped for subject in row[1])
     assert not (source / "cls.material").exists()
     assert report["published"] == [

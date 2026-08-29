@@ -379,10 +379,11 @@ def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):
     models = _fbx_models(report["filepath"])
     assert report["lod_levels"] == [0, 1]
     assert {"Body_lod00", "BodyA_lod01", "BodyB_lod01"} <= set(models)
-    # docs/15 §2.2: recognized Dagor collision leaves the render payload;
-    # UCX_ stays because it is the native UE collision transport, not a
-    # Dagor `cls` construct.
-    assert "Body_cls_phys" not in models
+    # docs/15 §2.2/§3.4: recognized Dagor collision leaves the *render*
+    # payload but is transported as collision; UCX_ stays because it is the
+    # native UE collision transport, not a Dagor `cls` construct.
+    assert "Body_cls_phys" in models
+    assert "Body_cls_phys_lod00" not in models
     assert "UCX_Body" in models
     assert "SOCKET_Muzzle" in models
     assert "UCX_Body_High" not in models
@@ -589,25 +590,250 @@ def _warning_message(report, code):
 
 
 @pytest.mark.parametrize("name", [
-    "hull_cls_phys", "hull_cls_trace", "hull_cls_both",
-    "gaz53_a_body.lod01 cls phys.001", "gaz53_a_bumper.lod01 cls.002",
+    "hull_cls_both", "gaz53_a_bumper.lod01 cls.002", "Cube.774",
 ])
-def test_dagor_collision_nodes_leave_the_render_payload(tmp_path, name):
-    """docs/15 §1.3/§2.2: recognized collision is excluded, never transported.
+def test_unclassifiable_dagor_collision_still_leaves_the_payload(
+        tmp_path, name):
+    """docs/15 §3 item 1: only `phys`/`trace` semantics are ratified.
 
-    Transport of collision geometry is V5-S6.1.2; this slice only has to stop
-    silently shipping it as render payload.
+    A recognized `cls` construct that declares neither remains the S6.1.1
+    drop-with-warning; V5-S6.1.2 does not invent a third collision meaning.
     """
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("collision_free")
     _mesh_object("body", collection)
-    _mesh_object(name, collection)
+    dropped = _mesh_object(name, collection)
+    _assign_material(dropped, _material("cls"))
     report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
     models = _fbx_models(report["filepath"])
     assert "body" in models
     assert name not in models
     assert "MH_W_DAGOR_CONSTRUCT_DROPPED" in _warning_codes(report)
     assert name in _warning_message(report, "MH_W_DAGOR_CONSTRUCT_DROPPED")
+
+
+def _collision_properties(models, name):
+    row = models[name]["properties"]
+    return {
+        key: (value.decode("utf-8") if isinstance(value, bytes) else value)
+        for key, value in row.items() if key.startswith("mh_")
+    }
+
+
+@pytest.mark.parametrize(("name", "kind"), [
+    ("hull_cls_phys", "phys"),
+    ("hull_cls_trace", "trace"),
+    ("gaz53_a_body.lod01 cls phys.001", "phys"),
+    ("laundry_a_wood_cls_trace.001", "trace"),
+])
+def test_name_token_collision_is_transported_with_fbx_carrier(
+        tmp_path, name, kind):
+    """docs/15 §3.4: the FBX Model carries `mh_collision*` user properties."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("collision_transport")
+    body = _mesh_object("body", collection)
+    _assign_material(body, _material("paint"))
+    collision = _mesh_object(name, collection)
+    _assign_material(collision, _material("cls"))
+    collision["dagorprops"] = {
+        "collision:t": '"convex"', "phmat:t": '"wood_solid"'}
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    assert name in models
+    assert _collision_properties(models, name) == {
+        "mh_collision": kind,
+        "mh_collision_shape": "convex",
+        "mh_phmat": "wood_solid",
+    }
+    assert "MH_W_DAGOR_CONSTRUCT_DROPPED" not in _warning_codes(report)
+    # The technical `cls` paint is neither transported nor published.
+    assert report["materials"] == ["paint"]
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == ("paint",)
+    node = next(row for row in plan.nodes if row.name == name)
+    assert (node.kind, node.collision_mode, node.collision_shape,
+            node.phmat) == ("collision", kind, "convex", "wood_solid")
+    assert node.material_slots == ()
+
+
+@pytest.mark.parametrize(("phys", "traceable", "kind"), [
+    (True, False, "phys"),
+    (False, True, "trace"),
+])
+def test_declared_collision_role_classifies_a_node_without_a_name_token(
+        tmp_path, phys, traceable, kind):
+    """Executor rule (reported): the ratified declaration also classifies.
+
+    Real dag4blend content proves the doc's `*_cls_phys*` / `*_cls_trace*`
+    spelling is a convention, not a fact: 52 of the 54 GAZ-53 collision meshes
+    carry no role token in the name but do carry the owner-ratified
+    `isPhysCollidable:b`/`isTraceable:b` declarations (docs/15 §3.1).
+    """
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("declared_collision")
+    _mesh_object("body", collection)
+    name = "gaz53_a_body.lod01 cls steel.001"
+    collision = _mesh_object(name, collection)
+    _assign_material(collision, _material("cls"))
+    collision["dagorprops"] = {
+        "collision:t": '"mesh"',
+        "phmat:t": '"steel"',
+        "isPhysCollidable:b": phys,
+        "isTraceable:b": traceable,
+    }
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    assert _collision_properties(models, name) == {
+        "mh_collision": kind, "mh_collision_shape": "mesh",
+        "mh_phmat": "steel"}
+    assert "MH_W_DAGOR_CONSTRUCT_DROPPED" not in _warning_codes(report)
+
+
+@pytest.mark.parametrize(("phys", "traceable"), [(True, True), (False, False)])
+def test_undecidable_declaration_keeps_the_drop_with_warning(
+        tmp_path, phys, traceable):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("undecidable_collision")
+    _mesh_object("body", collection)
+    collision = _mesh_object("panel.lod01 cls.003", collection)
+    _assign_material(collision, _material("cls"))
+    collision["dagorprops"] = {
+        "isPhysCollidable:b": phys, "isTraceable:b": traceable}
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert "panel.lod01 cls.003" not in _fbx_models(report["filepath"])
+    assert "MH_W_DAGOR_CONSTRUCT_DROPPED" in _warning_codes(report)
+
+
+def test_name_token_outranks_a_contradicting_declaration_with_a_warning(
+        tmp_path):
+    """Executor rule (docs/15 §3 item 2 is silent on which wins)."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("contradicting_collision")
+    _mesh_object("body", collection)
+    collision = _mesh_object("hull_cls_phys", collection)
+    collision["dagorprops"] = {
+        "phmat:t": "steel",
+        "isPhysCollidable:b": False, "isTraceable:b": True}
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    assert _collision_properties(models, "hull_cls_phys")["mh_collision"] \
+        == "phys"
+    assert "isPhysCollidable:b" in _warning_message(
+        report, "MH_W_DAGOR_CONSTRUCT_DROPPED")
+
+
+def test_collision_without_phmat_transports_and_warns(tmp_path):
+    """docs/15 §3.4: scenes imported before the overlay patch have no phmat."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("phmatless_collision")
+    _mesh_object("body", collection)
+    collision = _mesh_object("hull_cls_phys", collection)
+    _assign_material(collision, _material("cls"))
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    properties = _collision_properties(
+        _fbx_models(report["filepath"]), "hull_cls_phys")
+    assert properties == {"mh_collision": "phys", "mh_collision_shape": "mesh"}
+    assert "MH_W_MATERIAL_PAYLOAD_FALLBACK" in _warning_codes(report)
+    assert "hull_cls_phys" in _warning_message(
+        report, "MH_W_MATERIAL_PAYLOAD_FALLBACK")
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.collision_nodes[0].phmat is None
+
+
+@pytest.mark.parametrize("shape", ["sphere", "", 3])
+def test_malformed_collision_declaration_fails_closed(tmp_path, shape):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("malformed_collision")
+    _mesh_object("body", collection)
+    collision = _mesh_object("hull_cls_phys", collection)
+    collision["dagorprops"] = {"collision:t": shape}
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_COMPOSITE_GRAMMAR"
+    assert not (tmp_path / "malformed_collision.mesh.fbx").exists()
+
+
+def test_collision_transport_never_mutates_the_authoring_scene(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("immutable_collision")
+    _mesh_object("body", collection)
+    collision = _mesh_object("hull_cls_phys", collection)
+    technical = _material("cls")
+    _assign_material(collision, technical)
+    collision["dagorprops"] = {"phmat:t": '"steel"'}
+    collision["mh_collision"] = "artist forged value"
+    collision["artist_note"] = "keep me"
+
+    export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+
+    assert [slot.material for slot in collision.material_slots] == [technical]
+    assert list(collision.data.materials) == [technical]
+    assert collision["mh_collision"] == "artist forged value"
+    assert collision["artist_note"] == "keep me"
+    assert dict(collision["dagorprops"].to_dict()) == {"phmat:t": '"steel"'}
+
+
+def test_artist_properties_cannot_forge_the_reserved_mh_namespace(tmp_path):
+    """`mh_*` object properties are MH transport, never authored payload."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("forged_namespace")
+    body = _mesh_object("body", collection)
+    body["mh_collision"] = "phys"
+    body["mh_phmat"] = "steel"
+    body["dagorprops"] = {"phmat:t": "steel"}
+    body.data["authoring_note"] = "geometry side"
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    assert _collision_properties(models, "body") == {}
+    assert b"dagorprops" not in Path(report["filepath"]).read_bytes()
+    assert b"authoring_note" not in Path(report["filepath"]).read_bytes()
+    assert body["dagorprops"].to_dict() == {"phmat:t": "steel"}
+    assert body.data["authoring_note"] == "geometry side"
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.collision_nodes == ()
+    assert plan.nodes[0].kind == "render"
+
+
+def test_collision_is_gathered_from_every_lod_and_is_not_lod_bound(tmp_path):
+    """docs/15 §3 item 4: real collision lives in `.lod01`, not in LOD0."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    root = _collection("truck.lods")
+    lod0 = bpy.data.collections.new("truck.lod00")
+    lod1 = bpy.data.collections.new("truck.lod01")
+    root.children.link(lod0)
+    root.children.link(lod1)
+    _mesh_object("body", lod0)
+    _mesh_object("body_low", lod1)
+    deep = _mesh_object("truck_a_body.lod01 cls phys", lod1)
+    _assign_material(deep, _material("cls"))
+
+    report = export_fbx_collection(root, tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    assert "truck_a_body.lod01 cls phys" in models
+    # No `_lodNN` transport suffix: collision is not a LOD level member.
+    assert not any(name.startswith("truck_a_body.lod01 cls phys_lod")
+                   for name in models)
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.lod_levels == (0, 1)
+    assert plan.collision_nodes[0].name == "truck_a_body.lod01 cls phys"
+
+
+def test_non_render_only_material_slot_leaves_the_union(tmp_path):
+    """docs/15 §3.4 last bullet: UCX slots stop tailing the union."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("ucx_union")
+    body = _mesh_object("body", collection)
+    _assign_material(body, _material("paint"))
+    ucx = _mesh_object("UCX_body", collection)
+    _assign_material(ucx, _material("hull_shell"))
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert report["materials"] == ["paint"]
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == ("paint",)
 
 
 def test_cls_material_mesh_is_excluded_from_payload_and_closure(tmp_path):

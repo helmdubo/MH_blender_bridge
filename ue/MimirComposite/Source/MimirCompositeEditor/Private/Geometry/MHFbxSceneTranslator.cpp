@@ -113,6 +113,86 @@ FString TransportError(const FString& Detail)
     return FString::Printf(TEXT("MH_E_FBX_TRANSPORT_FAILED: %s"), *Detail);
 }
 
+FString MarkerError(const FString& Detail)
+{
+    return FString::Printf(TEXT("MH_E_INVALID_NODE_MARKERS: %s"), *Detail);
+}
+
+/**
+ * Read one Blender `use_custom_props` string carried on the FBX Model node.
+ * Blender writes object ID properties as user-defined FbxString properties, so
+ * only that exact shape is admitted; anything else is reported as absent.
+ */
+bool ReadNodeStringProperty(FbxNode& Node, const char* PropertyName, FString& OutValue)
+{
+    OutValue.Reset();
+    FbxProperty Property = Node.FindProperty(PropertyName, false);
+    if (!Property.IsValid() || Property.GetPropertyDataType().GetType() != eFbxString)
+    {
+        return false;
+    }
+    const FbxString Value = Property.Get<FbxString>();
+    OutValue = UTF8_TO_TCHAR(Value.Buffer());
+    OutValue.TrimStartAndEndInline();
+    return !OutValue.IsEmpty();
+}
+
+/** Apply the S6.1.2 carrier contract (doc 15 section 3.4) to one Model node. */
+bool ReadCollisionCarrier(FbxNode& Node, FMHSceneIRNode& OutNode, FString& OutError)
+{
+    FString Carrier;
+    if (!ReadNodeStringProperty(Node, "mh_collision", Carrier))
+    {
+        return true;
+    }
+    if (Carrier.Equals(TEXT("phys"), ESearchCase::IgnoreCase))
+    {
+        OutNode.CollisionCarrier = EMHSceneCollisionCarrier::Phys;
+    }
+    else if (Carrier.Equals(TEXT("trace"), ESearchCase::IgnoreCase))
+    {
+        OutNode.CollisionCarrier = EMHSceneCollisionCarrier::Trace;
+    }
+    else
+    {
+        OutError = MarkerError(FString::Printf(
+            TEXT("node '%s' has an unknown mh_collision value '%s'"), *OutNode.Name, *Carrier));
+        return false;
+    }
+
+    FString Shape;
+    if (ReadNodeStringProperty(Node, "mh_collision_shape", Shape))
+    {
+        if (Shape.Equals(TEXT("mesh"), ESearchCase::IgnoreCase))
+        {
+            OutNode.CollisionShape = EMHSceneCollisionShape::Mesh;
+        }
+        else if (Shape.Equals(TEXT("box"), ESearchCase::IgnoreCase))
+        {
+            OutNode.CollisionShape = EMHSceneCollisionShape::Box;
+        }
+        else if (Shape.Equals(TEXT("convex"), ESearchCase::IgnoreCase))
+        {
+            OutNode.CollisionShape = EMHSceneCollisionShape::Convex;
+        }
+        else if (Shape.Equals(TEXT("capsule"), ESearchCase::IgnoreCase))
+        {
+            OutNode.CollisionShape = EMHSceneCollisionShape::Capsule;
+        }
+        else
+        {
+            OutError = MarkerError(FString::Printf(
+                TEXT("node '%s' has an unknown mh_collision_shape value '%s'"), *OutNode.Name, *Shape));
+            return false;
+        }
+    }
+
+    // A node exported before the dag4blend overlay patch simply carries no
+    // phmat; that is a warning at import time, never a transport failure.
+    ReadNodeStringProperty(Node, "mh_phmat", OutNode.PhysicalMaterialToken);
+    return true;
+}
+
 FVector3f FbxSceneToUnrealPosition(const FbxVector4& Position)
 {
     return FVector3f(
@@ -357,6 +437,10 @@ bool AppendNodeRecursive(
     FMHSceneIRNode NewNode;
     NewNode.Name = UTF8_TO_TCHAR(Node.GetName());
     NewNode.ParentIndex = ParentIndex;
+    if (!ReadCollisionCarrier(Node, NewNode, OutError))
+    {
+        return false;
+    }
     bool bGlobalTransformIsTRS = false;
     NewNode.GlobalTransform = ToUnrealTransform(Node.EvaluateGlobalTransform(), bGlobalTransformIsTRS);
 

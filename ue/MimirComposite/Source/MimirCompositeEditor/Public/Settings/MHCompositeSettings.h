@@ -69,6 +69,13 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Actors")
     TMap<FString, FSoftClassPath> ActorClassRegistry;
 
+    /**
+     * Package root searched for UPhysicalMaterial assets whose name is exactly a
+     * Dagor phmat registry token. A missing asset is a warning, never a block.
+     */
+    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Collision")
+    FString PhysicalMaterialRoot;
+
     /** Lumen Mesh Cards budget applied by the finalize stage. */
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite", meta = (ClampMin = "1"))
     int32 LumenCardsMax = 32;

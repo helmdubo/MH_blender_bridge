@@ -147,6 +147,34 @@ bool ClassifyNode(FMHSceneIRNode& Node, const bool bHasChildren, FString& OutErr
     Node.CollisionMode = EMHSceneCollisionMode::None;
     Node.SocketName.Reset();
 
+    // V5-S6.1.2: an explicit mh_collision carrier is authoritative and precedes
+    // every name marker. Real Dagor collision nodes carry arbitrary authored
+    // names ("gaz53_a_body.lod01 cls phys.001"), so name markers alone would
+    // classify them as render nodes and pull their slots into the material
+    // union. Carrier nodes are collision and never enter the render inventory.
+    if (Node.CollisionCarrier != EMHSceneCollisionCarrier::None)
+    {
+        if (Node.Attribute != EMHSceneNodeAttribute::Mesh)
+        {
+            return Fail(
+                OutError,
+                TEXT("MH_E_INVALID_NODE_MARKERS"),
+                FString::Printf(TEXT("mh_collision is valid only on a mesh node: '%s'"), *Node.Name));
+        }
+        if (bHasSocket)
+        {
+            return Fail(
+                OutError,
+                TEXT("MH_E_INVALID_NODE_MARKERS"),
+                FString::Printf(TEXT("SOCKET_ is valid only on a null node: '%s'"), *Node.Name));
+        }
+        Node.Kind = EMHSceneNodeKind::Collision;
+        Node.CollisionMode = Node.CollisionCarrier == EMHSceneCollisionCarrier::Phys
+            ? EMHSceneCollisionMode::PhysicsOnly
+            : EMHSceneCollisionMode::QueryOnly;
+        return true;
+    }
+
     if (Node.Attribute == EMHSceneNodeAttribute::Mesh)
     {
         if (bHasSocket)

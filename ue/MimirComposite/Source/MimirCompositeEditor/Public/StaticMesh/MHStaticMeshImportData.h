@@ -14,8 +14,12 @@ namespace UE::MimirComposite
  *     every LOD's slots and each LOD's sections are bound through SectionInfoMap.
  *     Meshes applied by version 2 carry the engine identity section map and must
  *     be rebuilt once to pick up their real per-LOD material bindings.
+ * 4 - V5-S6.1.2 collision carriers: FBX Model nodes carrying mh_collision are
+ *     classified as collision, build shaped simple elements (mesh/convex/box/
+ *     capsule) and, for trace carriers, a companion ComplexCollisionMesh.
+ *     Meshes applied by version 3 must be rebuilt once to pick these up.
  */
-inline constexpr int32 MHStaticMeshImporterVersion = 3;
+inline constexpr int32 MHStaticMeshImporterVersion = 4;
 
 /**
  * Suppresses managed-mesh local-edit tracking for importer-owned mutations.

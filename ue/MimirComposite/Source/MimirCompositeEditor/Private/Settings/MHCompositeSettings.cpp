@@ -6,6 +6,7 @@ UMHCompositeSettings::UMHCompositeSettings()
 {
     MasterRoot = TEXT("/Game/Mimir/MasterMaterials");
     LibraryRoot = TEXT("/Game/Mimir/MaterialLibrary");
+    PhysicalMaterialRoot = TEXT("/Game/PhysicalMaterials");
     StaticMeshPrefix = TEXT("SM_");
     TexturePrefix = TEXT("T_");
     CompositeAssetPrefix = TEXT("CA_");
