@@ -3,7 +3,9 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositeResolvedPlan.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -12,6 +14,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/Package.h"
@@ -148,6 +151,31 @@ struct FMHDefinitionMetricsFixture
         }
         return Root != nullptr;
     }
+
+    bool ReimportRootWithEquivalentSource()
+    {
+        if (Root == nullptr) return false;
+        FMHCompositeDocument Document;
+        FString Error;
+        TArray<uint8> SourceBytes;
+        if (!MHExtractCompositeV5(*Root, Document, Error) ||
+            !MHWriteCanonicalCompositeV5(Document, SourceBytes, Error))
+        {
+            Test.AddError(TEXT("cannot prepare equivalent root reimport: ") + Error);
+            return false;
+        }
+        // Source whitespace changes the raw receipt/closure hash while the
+        // extracted document and its AppliedHash remain byte-identical.
+        SourceBytes.Add(static_cast<uint8>(' '));
+        const FString PreviousSourceHash = Root->SourceHash;
+        Root->SourceHash = MHRawPayloadHash(SourceBytes);
+        if (Root->SourceHash == PreviousSourceHash)
+        {
+            Test.AddError(TEXT("equivalent reimport did not change the source receipt"));
+            return false;
+        }
+        return true;
+    }
 };
 
 bool DefinitionMetricsIsolatedHost(FAutomationTestBase& Test)
@@ -231,6 +259,103 @@ bool DefinitionMetricsCommonAssertions(
         Metrics.Get(EMHPlacementStage::DestroyRetiredComponents).Calls, PlacementCount);
     return bPassed;
 }
+
+bool DefinitionDecisionEqual(
+    const FMHResolvedCompositeDecision& Left, const FMHResolvedCompositeDecision& Right)
+{
+    return Left.NodePath == Right.NodePath && Left.OptionIndex == Right.OptionIndex &&
+        Left.Weights == Right.Weights && Left.Total == Right.Total &&
+        Left.RawU32 == Right.RawU32 && Left.Unit == Right.Unit && Left.Target == Right.Target;
+}
+
+bool DefinitionDrawEqual(
+    const FMHResolvedCompositeDraw& Left, const FMHResolvedCompositeDraw& Right)
+{
+    return Left.NodePath == Right.NodePath && Left.Role == Right.Role &&
+        Left.RawU32 == Right.RawU32 && Left.Unit == Right.Unit && Left.Sample == Right.Sample;
+}
+
+bool DefinitionAppearanceDrawEqual(
+    const FMHResolvedCompositeAppearanceDraw& Left,
+    const FMHResolvedCompositeAppearanceDraw& Right)
+{
+    return Left.NodePath == Right.NodePath && Left.BoundaryPath == Right.BoundaryPath &&
+        Left.Channel == Right.Channel && Left.RawU32 == Right.RawU32 && Left.Unit == Right.Unit;
+}
+
+bool DefinitionPlanParity(
+    FAutomationTestBase& Test, const AMHCompositeActor& Actor, const UMHCompositeAsset& Asset)
+{
+    const FMHResolvedCompositePlan* SharedPlan = Actor.GetResolvedPlan();
+    if (!Test.TestNotNull(TEXT("shared placement exposes a current plan"), SharedPlan)) return false;
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (!Test.TestNotNull(TEXT("definition settings"), Settings)) return false;
+    FMHRandomSourceGraph FreshGraph;
+    TSet<FMHResourceKey> FreshDependencies;
+    FString Error;
+    if (!MHBuildAppliedCompositeGraph(Asset, *Settings, FreshGraph, FreshDependencies, Error))
+    {
+        Test.AddError(TEXT("fresh graph rebuild failed: ") + Error);
+        return false;
+    }
+    FMHResolvedCompositePlan FreshPlan;
+    if (!MHResolveCompositePlan(
+        FreshGraph, Actor.GetSeed(), Actor.GetAppearanceSeed(), FreshPlan, Error))
+    {
+        Test.AddError(TEXT("fresh plan resolve failed: ") + Error);
+        return false;
+    }
+
+    bool bPassed = true;
+    bPassed &= Test.TestEqual(TEXT("resolved signature matches a fresh build"),
+        SharedPlan->ResolvedSignature, FreshPlan.ResolvedSignature);
+    bPassed &= Test.TestEqual(TEXT("appearance signature matches a fresh build"),
+        SharedPlan->Appearance.AppearanceSignature, FreshPlan.Appearance.AppearanceSignature);
+    bPassed &= Test.TestEqual(TEXT("placement signature matches a fresh build"),
+        SharedPlan->PlacementSignature, FreshPlan.PlacementSignature);
+    bPassed &= Test.TestTrue(TEXT("layout signature bytes match a fresh build"),
+        SharedPlan->SignaturePreimage == FreshPlan.SignaturePreimage);
+    bPassed &= Test.TestTrue(TEXT("appearance signature bytes match a fresh build"),
+        SharedPlan->Appearance.SignaturePreimage == FreshPlan.Appearance.SignaturePreimage);
+    bPassed &= Test.TestTrue(TEXT("closure bytes match a fresh build"),
+        SharedPlan->Closure.Resources == FreshPlan.Closure.Resources &&
+        SharedPlan->Closure.OrderedRawHashes == FreshPlan.Closure.OrderedRawHashes &&
+        SharedPlan->Closure.HashPreimage == FreshPlan.Closure.HashPreimage &&
+        SharedPlan->Closure.ClosureHash == FreshPlan.Closure.ClosureHash);
+    bPassed &= Test.TestEqual(TEXT("decision count matches a fresh build"),
+        SharedPlan->Decisions.Num(), FreshPlan.Decisions.Num());
+    for (int32 Index = 0; Index < FMath::Min(SharedPlan->Decisions.Num(), FreshPlan.Decisions.Num()); ++Index)
+        bPassed &= Test.TestTrue(TEXT("choices match a fresh build"),
+            DefinitionDecisionEqual(SharedPlan->Decisions[Index], FreshPlan.Decisions[Index]));
+    bPassed &= Test.TestEqual(TEXT("draw count matches a fresh build"),
+        SharedPlan->Draws.Num(), FreshPlan.Draws.Num());
+    for (int32 Index = 0; Index < FMath::Min(SharedPlan->Draws.Num(), FreshPlan.Draws.Num()); ++Index)
+        bPassed &= Test.TestTrue(TEXT("draws match a fresh build"),
+            DefinitionDrawEqual(SharedPlan->Draws[Index], FreshPlan.Draws[Index]));
+    bPassed &= Test.TestEqual(TEXT("appearance draw count matches a fresh build"),
+        SharedPlan->Appearance.Draws.Num(), FreshPlan.Appearance.Draws.Num());
+    for (int32 Index = 0;
+         Index < FMath::Min(SharedPlan->Appearance.Draws.Num(), FreshPlan.Appearance.Draws.Num()); ++Index)
+        bPassed &= Test.TestTrue(TEXT("appearance draws match a fresh build"),
+            DefinitionAppearanceDrawEqual(
+                SharedPlan->Appearance.Draws[Index], FreshPlan.Appearance.Draws[Index]));
+    bPassed &= Test.TestEqual(TEXT("leaf count matches a fresh build"),
+        SharedPlan->Leaves.Num(), FreshPlan.Leaves.Num());
+    for (int32 Index = 0; Index < FMath::Min(SharedPlan->Leaves.Num(), FreshPlan.Leaves.Num()); ++Index)
+    {
+        const FMHResolvedCompositeLeaf& Left = SharedPlan->Leaves[Index];
+        const FMHResolvedCompositeLeaf& Right = FreshPlan.Leaves[Index];
+        bPassed &= Test.TestTrue(TEXT("leaf identity matches a fresh build"),
+            Left.Kind == Right.Kind && Left.Resource == Right.Resource && Left.Origin == Right.Origin);
+        bPassed &= Test.TestTrue(TEXT("leaf world matrix is byte-identical to a fresh build"),
+            FMemory::Memcmp(&Left.WorldMatrix, &Right.WorldMatrix, sizeof(FMatrix)) == 0);
+        bPassed &= Test.TestTrue(TEXT("leaf appearance channels are byte-identical to a fresh build"),
+            FMemory::Memcmp(
+                Left.AppearanceChannels, Right.AppearanceChannels,
+                sizeof(Left.AppearanceChannels)) == 0);
+    }
+    return bPassed;
+}
 } // namespace
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -272,6 +397,111 @@ bool FMHDefinitionMetricsGaz53Test::RunTest(const FString& Parameters)
         *this, *Fixture.Root, PlacementCount, Metrics, WallMilliseconds);
     AddInfo(DefinitionMetricsLine(TEXT("gaz53_two_placements"), PlacementCount, WallMilliseconds, Metrics));
     bPassed &= DefinitionMetricsCommonAssertions(*this, Metrics, PlacementCount, 8);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHDefinitionPoolSharedHundredTest,
+    "Mimir.V5.Composite.DefinitionPool.SharedGraphAcross100Placements",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHDefinitionPoolSharedHundredTest::RunTest(const FString& Parameters)
+{
+    if (!DefinitionMetricsIsolatedHost(*this)) return true;
+    constexpr int32 PlacementCount = 100;
+    FMHDefinitionMetricsFixture Fixture(*this);
+    if (!Fixture.BuildSynthetic(3)) return false;
+    FMHPlacementStageMetrics Metrics;
+    double WallMilliseconds = 0.0;
+    bool bPassed = DefinitionMetricsPlaceActors(
+        *this, *Fixture.Root, PlacementCount, Metrics, WallMilliseconds);
+    AddInfo(DefinitionMetricsLine(TEXT("acceptance_shared100"), PlacementCount, WallMilliseconds, Metrics));
+    bPassed &= TestEqual(TEXT("100 placements share one closure build"),
+        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    bPassed &= TestEqual(TEXT("100 placements still resolve independently"),
+        Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls,
+        static_cast<uint64>(PlacementCount));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHDefinitionPoolDragEmulationTest,
+    "Mimir.V5.Composite.DefinitionPool.DragPreviewAndDropShareGraph",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHDefinitionPoolDragEmulationTest::RunTest(const FString& Parameters)
+{
+    if (!DefinitionMetricsIsolatedHost(*this)) return true;
+    FMHDefinitionMetricsFixture Fixture(*this);
+    if (!Fixture.BuildSynthetic(3)) return false;
+    FMHPlacementStageMetrics Metrics;
+    double WallMilliseconds = 0.0;
+    bool bPassed = DefinitionMetricsPlaceActors(*this, *Fixture.Root, 2, Metrics, WallMilliseconds);
+    AddInfo(DefinitionMetricsLine(TEXT("acceptance_drag_two_spawns"), 2, WallMilliseconds, Metrics));
+    bPassed &= TestEqual(TEXT("drag preview and final drop share one closure build"),
+        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    bPassed &= TestEqual(TEXT("both drag actors resolve independently"),
+        Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, 2ull);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHDefinitionPoolTargetedInvalidationTest,
+    "Mimir.V5.Composite.DefinitionPool.TargetedReimportInvalidatesOnce",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHDefinitionPoolTargetedInvalidationTest::RunTest(const FString& Parameters)
+{
+    if (!DefinitionMetricsIsolatedHost(*this)) return true;
+    FMHDefinitionMetricsFixture ChangedFixture(*this);
+    FMHDefinitionMetricsFixture UnrelatedFixture(*this);
+    if (!ChangedFixture.BuildSynthetic(3) || !UnrelatedFixture.BuildSynthetic(2)) return false;
+
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("targeted invalidation preview world"), World)) return false;
+    TArray<AMHCompositeActor*> ChangedActors;
+    TArray<AMHCompositeActor*> UnrelatedActors;
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+        Actor->SetAutoSeed(false);
+        Actor->SetCompositeAsset(ChangedFixture.Root);
+        ChangedActors.Add(Actor);
+    }
+    for (int32 Index = 0; Index < 2; ++Index)
+    {
+        AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+        Actor->SetAutoSeed(false);
+        Actor->SetCompositeAsset(UnrelatedFixture.Root);
+        UnrelatedActors.Add(Actor);
+    }
+    TArray<uint32> ChangedRebuilds;
+    TArray<uint32> UnrelatedRebuilds;
+    for (const AMHCompositeActor* Actor : ChangedActors)
+        ChangedRebuilds.Add(Actor->GetPlacementRebuildCount());
+    for (const AMHCompositeActor* Actor : UnrelatedActors)
+        UnrelatedRebuilds.Add(Actor->GetPlacementRebuildCount());
+
+    bool bPassed = ChangedFixture.ReimportRootWithEquivalentSource();
+    MHResetPlacementStageMetrics();
+    MHNotifyCompositeAssetChanged(*ChangedFixture.Root);
+    const FMHPlacementStageMetrics Metrics = MHGetPlacementStageMetrics();
+    AddInfo(DefinitionMetricsLine(TEXT("acceptance_targeted_reimport"), 3, 0.0, Metrics));
+    bPassed &= TestEqual(TEXT("one invalidated definition is rebuilt once"),
+        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    bPassed &= TestEqual(TEXT("every affected placement resolves again"),
+        Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, 3ull);
+    for (int32 Index = 0; Index < ChangedActors.Num(); ++Index)
+    {
+        bPassed &= TestEqual(TEXT("every affected placement rebuilds exactly once"),
+            ChangedActors[Index]->GetPlacementRebuildCount(), ChangedRebuilds[Index] + 1);
+        bPassed &= DefinitionPlanParity(*this, *ChangedActors[Index], *ChangedFixture.Root);
+    }
+    for (int32 Index = 0; Index < UnrelatedActors.Num(); ++Index)
+        bPassed &= TestEqual(TEXT("unrelated placement is not rebuilt"),
+            UnrelatedActors[Index]->GetPlacementRebuildCount(), UnrelatedRebuilds[Index]);
+
+    World->DestroyWorld(true);
     return bPassed;
 }
 } // namespace UE::MimirComposite::Tests
