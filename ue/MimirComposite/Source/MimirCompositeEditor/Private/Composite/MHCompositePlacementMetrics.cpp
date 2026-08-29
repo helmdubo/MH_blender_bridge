@@ -7,6 +7,7 @@ namespace UE::MimirComposite
 namespace
 {
 FMHPlacementStageMetrics GMHPlacementStageMetrics;
+FMHDefinitionCacheMetrics GMHDefinitionCacheMetrics;
 thread_local FMHPlacementStageScope* GMHPlacementStageCurrentScope = nullptr;
 }
 
@@ -38,6 +39,41 @@ void MHResetPlacementStageMetrics()
 FMHPlacementStageMetrics MHGetPlacementStageMetrics()
 {
     return GMHPlacementStageMetrics;
+}
+
+void MHResetDefinitionCacheMetrics()
+{
+    GMHDefinitionCacheMetrics = FMHDefinitionCacheMetrics();
+}
+
+FMHDefinitionCacheMetrics MHGetDefinitionCacheMetrics()
+{
+    return GMHDefinitionCacheMetrics;
+}
+
+void MHRecordDefinitionClosureHitBuild()
+{
+    ++GMHDefinitionCacheMetrics.ClosureHitBuilds;
+}
+
+void MHRecordDefinitionEndpointResolve()
+{
+    ++GMHDefinitionCacheMetrics.EndpointResolves;
+}
+
+void MHRecordDefinitionEndpointHit()
+{
+    ++GMHDefinitionCacheMetrics.EndpointHits;
+}
+
+void MHRecordDefinitionEndpointStore()
+{
+    ++GMHDefinitionCacheMetrics.EndpointStores;
+}
+
+void MHRecordDefinitionDeadEndpointReload()
+{
+    ++GMHDefinitionCacheMetrics.DeadEndpointReloads;
 }
 
 const TCHAR* MHPlacementStageLabel(const EMHPlacementStage Stage)

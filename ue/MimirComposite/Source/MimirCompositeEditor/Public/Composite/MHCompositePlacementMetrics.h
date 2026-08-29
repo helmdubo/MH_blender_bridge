@@ -36,6 +36,16 @@ struct MIMIRCOMPOSITEEDITOR_API FMHPlacementStageMetrics
     }
 };
 
+/** Non-serialized physical work counters for the shared definition cache. */
+struct MIMIRCOMPOSITEEDITOR_API FMHDefinitionCacheMetrics
+{
+    uint64 ClosureHitBuilds = 0;
+    uint64 EndpointResolves = 0;
+    uint64 EndpointHits = 0;
+    uint64 EndpointStores = 0;
+    uint64 DeadEndpointReloads = 0;
+};
+
 /**
  * Inclusive/exclusive game-thread timing scope. Instrumentation is observable
  * only through the test API below and is never serialized or read by placement
@@ -60,4 +70,11 @@ private:
 MIMIRCOMPOSITEEDITOR_API void MHResetPlacementStageMetrics();
 MIMIRCOMPOSITEEDITOR_API FMHPlacementStageMetrics MHGetPlacementStageMetrics();
 MIMIRCOMPOSITEEDITOR_API const TCHAR* MHPlacementStageLabel(EMHPlacementStage Stage);
+MIMIRCOMPOSITEEDITOR_API void MHResetDefinitionCacheMetrics();
+MIMIRCOMPOSITEEDITOR_API FMHDefinitionCacheMetrics MHGetDefinitionCacheMetrics();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionClosureHitBuild();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointResolve();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointHit();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointStore();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionDeadEndpointReload();
 } // namespace UE::MimirComposite

@@ -1,6 +1,7 @@
 #include "Composite/MHCompositeDefinitionSubsystem.h"
 
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Settings/MHCompositeSettings.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
@@ -83,6 +84,7 @@ TSharedPtr<const FMHRandomSourceGraph> UMHCompositeDefinitionSubsystem::GetOrBui
         }
         FMHRandomSourceClosure StoredClosure;
         FString ValidationError;
+        MHRecordDefinitionClosureHitBuild();
         if (!MHBuildRandomSourceClosure(*Entry.Graph, StoredClosure, ValidationError) ||
             StoredClosure.ClosureHash != Key.ClosureHash)
         {

@@ -6,6 +6,7 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -18,6 +19,7 @@
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/Package.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -28,6 +30,8 @@ struct FMHDefinitionMetricsFixture
     FAutomationTestBase& Test;
     TArray<UObject*> Assets;
     UMHCompositeAsset* Root = nullptr;
+    FString MeshName;
+    TWeakObjectPtr<UStaticMesh> Mesh;
 
     explicit FMHDefinitionMetricsFixture(FAutomationTestBase& InTest) : Test(InTest) {}
 
@@ -41,19 +45,36 @@ struct FMHDefinitionMetricsFixture
         }
     }
 
-    UStaticMesh* AddMesh(const FString& Name)
+    UStaticMesh* AddMesh(
+        const FString& Name,
+        const FString& SourceHash = TEXT("blake3-160:0123456789012345678901234567890123456789"))
     {
-        UStaticMesh* Mesh = NewObject<UStaticMesh>(
+        UStaticMesh* NewMesh = NewObject<UStaticMesh>(
             CreatePackage(*(TEXT("/Game/MH/Generated/Meshes/") + Name)),
             FName(*Name), RF_Public | RF_Standalone);
-        Assets.Add(Mesh);
-        UMHStaticMeshImportData* Receipt = NewObject<UMHStaticMeshImportData>(Mesh);
+        Assets.Add(NewMesh);
+        UMHStaticMeshImportData* Receipt = NewObject<UMHStaticMeshImportData>(NewMesh);
         Receipt->LogicalName = Name;
         Receipt->SourceRelativePath = Name + TEXT(".mesh.fbx");
-        Receipt->SourceHash = TEXT("blake3-160:0123456789012345678901234567890123456789");
+        Receipt->SourceHash = SourceHash;
         Receipt->ImporterVersion = MHStaticMeshImporterVersion;
-        Mesh->SetAssetImportData(Receipt);
-        return Mesh;
+        NewMesh->SetAssetImportData(Receipt);
+        MeshName = Name;
+        Mesh = NewMesh;
+        return NewMesh;
+    }
+
+    TWeakObjectPtr<UStaticMesh> ReleaseMeshForGarbageCollection()
+    {
+        TWeakObjectPtr<UStaticMesh> Released = Mesh;
+        if (UStaticMesh* Existing = Mesh.Get())
+        {
+            Assets.RemoveSingleSwap(Existing);
+            Existing->ClearFlags(RF_Public | RF_Standalone);
+            Existing->MarkAsGarbage();
+        }
+        Mesh.Reset();
+        return Released;
     }
 
     UMHCompositeAsset* AddComposite(const FString& Name, TConstArrayView<uint8> SourceBytes)
@@ -103,8 +124,8 @@ struct FMHDefinitionMetricsFixture
     {
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
         const FString RootName = TEXT("s65_metrics_") + Suffix;
-        const FString MeshName = RootName + TEXT("_mesh");
-        AddMesh(MeshName);
+        const FString NewMeshName = RootName + TEXT("_mesh");
+        AddMesh(NewMeshName);
         FMHCompositeDocument Document;
         for (int32 Index = 0; Index < TopLevelNodes; ++Index)
         {
@@ -114,7 +135,7 @@ struct FMHDefinitionMetricsFixture
             Group.Transform.TranslationCm = FVector(200.0 * Index, 0.0, 0.0);
             FMHCompositeNode& Leaf = Group.Children.AddDefaulted_GetRef();
             Leaf.Kind = EMHCompositeNodeKind::Mesh;
-            Leaf.Resource = MeshName;
+            Leaf.Resource = NewMeshName;
         }
         Root = AddComposite(RootName, Document);
         return Root != nullptr;
@@ -203,6 +224,12 @@ FString DefinitionMetricsLine(
             FPlatformTime::ToMilliseconds64(Metric.InclusiveCycles),
             FPlatformTime::ToMilliseconds64(Metric.ExclusiveCycles));
     }
+    const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
+    Result += FString::Printf(
+        TEXT(" DefinitionCache[closure_hit_builds=%llu,endpoint_resolves=%llu,")
+        TEXT("endpoint_hits=%llu,endpoint_stores=%llu,dead_endpoint_reloads=%llu]"),
+        Cache.ClosureHitBuilds, Cache.EndpointResolves, Cache.EndpointHits,
+        Cache.EndpointStores, Cache.DeadEndpointReloads);
     return Result;
 }
 
@@ -226,6 +253,7 @@ bool DefinitionMetricsPlaceActors(
     }
 
     MHResetPlacementStageMetrics();
+    MHResetDefinitionCacheMetrics();
     const double StartSeconds = FPlatformTime::Seconds();
     bool bPassed = true;
     for (AMHCompositeActor* Actor : Actors)
@@ -421,6 +449,15 @@ bool FMHDefinitionPoolSharedHundredTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("100 placements still resolve independently"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls,
         static_cast<uint64>(PlacementCount));
+    const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
+    bPassed &= TestEqual(TEXT("100 warm placements resolve one distinct endpoint"),
+        Cache.EndpointResolves, 1ull);
+    bPassed &= TestEqual(TEXT("cache hits never rebuild the immutable closure"),
+        Cache.ClosureHitBuilds, 0ull);
+    const double LoadMilliseconds = FPlatformTime::ToMilliseconds64(
+        Metrics.Get(EMHPlacementStage::LoadEndpoints).InclusiveCycles);
+    bPassed &= TestTrue(TEXT("warm endpoint load time is at most ten percent of S6.5 baseline"),
+        LoadMilliseconds <= 212.039);
     return bPassed;
 }
 
@@ -442,6 +479,8 @@ bool FMHDefinitionPoolDragEmulationTest::RunTest(const FString& Parameters)
         Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
     bPassed &= TestEqual(TEXT("both drag actors resolve independently"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, 2ull);
+    bPassed &= TestEqual(TEXT("drag preview and final drop resolve the endpoint set once"),
+        MHGetDefinitionCacheMetrics().EndpointResolves, 1ull);
     return bPassed;
 }
 
@@ -502,6 +541,213 @@ bool FMHDefinitionPoolTargetedInvalidationTest::RunTest(const FString& Parameter
             UnrelatedActors[Index]->GetPlacementRebuildCount(), UnrelatedRebuilds[Index]);
 
     World->DestroyWorld(true);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHDefinitionPoolClosureHitTest,
+    "Mimir.V5.Composite.DefinitionPool.CacheHitSkipsClosureBuild",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHDefinitionPoolClosureHitTest::RunTest(const FString& Parameters)
+{
+    if (!DefinitionMetricsIsolatedHost(*this)) return true;
+    constexpr int32 HitCount = 12;
+    FMHDefinitionMetricsFixture Fixture(*this);
+    if (!Fixture.BuildSynthetic(1)) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("closure-hit preview world"), World)) return false;
+    AMHCompositeActor* Prime = World->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("closure-hit prime actor"), Prime))
+    {
+        World->DestroyWorld(true);
+        return false;
+    }
+    Prime->SetAutoSeed(false);
+    Prime->SetCompositeAsset(Fixture.Root);
+    bool bPassed = TestNotNull(TEXT("closure-hit prime plan"), Prime->GetResolvedPlan());
+
+    MHResetPlacementStageMetrics();
+    MHResetDefinitionCacheMetrics();
+    for (int32 Index = 0; Index < HitCount; ++Index)
+    {
+        AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+        if (!TestNotNull(TEXT("closure-hit actor"), Actor))
+        {
+            bPassed = false;
+            break;
+        }
+        Actor->SetAutoSeed(false);
+        Actor->SetCompositeAsset(Fixture.Root);
+        bPassed &= TestNotNull(TEXT("closure-hit plan"), Actor->GetResolvedPlan());
+    }
+    AddInfo(DefinitionMetricsLine(
+        TEXT("acceptance_closure_hits"), HitCount, 0.0, MHGetPlacementStageMetrics()));
+    bPassed &= TestEqual(TEXT("cache hits perform zero immutable closure builds"),
+        MHGetDefinitionCacheMetrics().ClosureHitBuilds, 0ull);
+    World->DestroyWorld(true);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHDefinitionPoolEndpointGarbageCollectionTest,
+    "Mimir.V5.Composite.DefinitionPool.EndpointWeakGcRecovery",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHDefinitionPoolEndpointGarbageCollectionTest::RunTest(const FString& Parameters)
+{
+    if (!DefinitionMetricsIsolatedHost(*this)) return true;
+    FMHDefinitionMetricsFixture Fixture(*this);
+    if (!Fixture.BuildSynthetic(1)) return false;
+    TStrongObjectPtr<UMHCompositeAsset> RootGuard(Fixture.Root);
+
+    UWorld* FirstWorld = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("endpoint-GC first world"), FirstWorld)) return false;
+    AMHCompositeActor* First = FirstWorld->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("endpoint-GC first actor"), First))
+    {
+        FirstWorld->DestroyWorld(true);
+        return false;
+    }
+    First->SetAutoSeed(false);
+    First->SetSeed(17);
+    First->SetAutoAppearanceSeed(false);
+    First->SetAppearanceSeed(29);
+    First->SetCompositeAsset(Fixture.Root);
+    const FMHResolvedCompositePlan* FirstPlan = First->GetResolvedPlan();
+    if (!TestNotNull(TEXT("endpoint-GC first plan"), FirstPlan))
+    {
+        FirstWorld->DestroyWorld(true);
+        return false;
+    }
+    const FString FirstPlacementSignature = FirstPlan->PlacementSignature;
+    FirstWorld->DestroyWorld(true);
+
+    const TWeakObjectPtr<UStaticMesh> ReleasedMesh = Fixture.ReleaseMeshForGarbageCollection();
+    CollectGarbage(RF_NoFlags);
+    bool bPassed = TestFalse(TEXT("endpoint weak pointer dies after forced GC"), ReleasedMesh.IsValid());
+    UStaticMesh* Replacement = Fixture.AddMesh(Fixture.MeshName);
+    bPassed &= TestNotNull(TEXT("endpoint-GC replacement mesh"), Replacement);
+
+    MHResetPlacementStageMetrics();
+    MHResetDefinitionCacheMetrics();
+    UWorld* SecondWorld = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("endpoint-GC second world"), SecondWorld)) return false;
+    AMHCompositeActor* Second = SecondWorld->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("endpoint-GC second actor"), Second))
+    {
+        SecondWorld->DestroyWorld(true);
+        return false;
+    }
+    Second->SetAutoSeed(false);
+    Second->SetSeed(17);
+    Second->SetAutoAppearanceSeed(false);
+    Second->SetAppearanceSeed(29);
+    Second->SetCompositeAsset(Fixture.Root);
+    const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
+    AddInfo(DefinitionMetricsLine(
+        TEXT("acceptance_endpoint_gc"), 1, 0.0, MHGetPlacementStageMetrics()));
+    bPassed &= TestEqual(TEXT("one dead weak endpoint is reloaded"), Cache.DeadEndpointReloads, 1ull);
+    bPassed &= TestEqual(TEXT("dead endpoint reload performs one physical resolve"),
+        Cache.EndpointResolves, 1ull);
+    bPassed &= TestEqual(TEXT("successful dead endpoint reload is cached"), Cache.EndpointStores, 1ull);
+    const FMHResolvedCompositePlan* SecondPlan = Second->GetResolvedPlan();
+    bPassed &= TestNotNull(TEXT("endpoint-GC recovered plan"), SecondPlan);
+    if (SecondPlan != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("endpoint-GC placement signature matches cold result"),
+            SecondPlan->PlacementSignature, FirstPlacementSignature);
+    }
+    const TArray<TObjectPtr<USceneComponent>>& Leaves = Second->GetLeafPlacementComponents();
+    UStaticMeshComponent* MeshComponent = Leaves.Num() == 1
+        ? Cast<UStaticMeshComponent>(Leaves[0]) : nullptr;
+    bPassed &= TestNotNull(TEXT("endpoint-GC recovered mesh component"), MeshComponent);
+    if (MeshComponent != nullptr)
+        bPassed &= TestEqual(TEXT("endpoint-GC component uses re-resolved mesh"),
+            MeshComponent->GetStaticMesh().Get(), Replacement);
+    bPassed &= DefinitionPlanParity(*this, *Second, *Fixture.Root);
+    SecondWorld->DestroyWorld(true);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHDefinitionPoolEndpointReimportTest,
+    "Mimir.V5.Composite.DefinitionPool.EndpointReimportInvalidatesEntry",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHDefinitionPoolEndpointReimportTest::RunTest(const FString& Parameters)
+{
+    if (!DefinitionMetricsIsolatedHost(*this)) return true;
+    FMHDefinitionMetricsFixture Fixture(*this);
+    if (!Fixture.BuildSynthetic(1)) return false;
+    TStrongObjectPtr<UMHCompositeAsset> RootGuard(Fixture.Root);
+
+    UWorld* FirstWorld = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("endpoint-reimport first world"), FirstWorld)) return false;
+    AMHCompositeActor* First = FirstWorld->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("endpoint-reimport first actor"), First))
+    {
+        FirstWorld->DestroyWorld(true);
+        return false;
+    }
+    First->SetAutoSeed(false);
+    First->SetCompositeAsset(Fixture.Root);
+    const FMHResolvedCompositePlan* FirstPlan = First->GetResolvedPlan();
+    if (!TestNotNull(TEXT("endpoint-reimport first plan"), FirstPlan))
+    {
+        FirstWorld->DestroyWorld(true);
+        return false;
+    }
+    const FString FirstClosureHash = FirstPlan->Closure.ClosureHash;
+    FirstWorld->DestroyWorld(true);
+
+    const TWeakObjectPtr<UStaticMesh> ReleasedMesh = Fixture.ReleaseMeshForGarbageCollection();
+    CollectGarbage(RF_NoFlags);
+    bool bPassed = TestFalse(TEXT("reimport replaces the prior endpoint object"), ReleasedMesh.IsValid());
+    UStaticMesh* Replacement = Fixture.AddMesh(
+        Fixture.MeshName,
+        TEXT("blake3-160:1123456789012345678901234567890123456789"));
+    bPassed &= TestNotNull(TEXT("endpoint-reimport replacement mesh"), Replacement);
+    FMHResourceKey MeshKey;
+    MeshKey.Kind = EMHResourceKind::StaticMesh;
+    MeshKey.LogicalName = Fixture.MeshName;
+    MHNotifyGeneratedResourceChanged(MeshKey);
+
+    MHResetPlacementStageMetrics();
+    MHResetDefinitionCacheMetrics();
+    UWorld* SecondWorld = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("endpoint-reimport second world"), SecondWorld)) return false;
+    AMHCompositeActor* Second = SecondWorld->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("endpoint-reimport second actor"), Second))
+    {
+        SecondWorld->DestroyWorld(true);
+        return false;
+    }
+    Second->SetAutoSeed(false);
+    Second->SetCompositeAsset(Fixture.Root);
+    const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
+    AddInfo(DefinitionMetricsLine(
+        TEXT("acceptance_endpoint_reimport"), 1, 0.0, MHGetPlacementStageMetrics()));
+    bPassed &= TestEqual(TEXT("mesh notify rebuilds the invalidated definition"),
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    bPassed &= TestEqual(TEXT("replacement endpoint is physically resolved once"),
+        Cache.EndpointResolves, 1ull);
+    bPassed &= TestEqual(TEXT("replacement endpoint enters the new definition cache"),
+        Cache.EndpointStores, 1ull);
+    const FMHResolvedCompositePlan* SecondPlan = Second->GetResolvedPlan();
+    bPassed &= TestNotNull(TEXT("endpoint-reimport replacement plan"), SecondPlan);
+    if (SecondPlan != nullptr)
+        bPassed &= TestNotEqual(TEXT("mesh receipt change reaches the rebuilt closure"),
+            SecondPlan->Closure.ClosureHash, FirstClosureHash);
+    const TArray<TObjectPtr<USceneComponent>>& Leaves = Second->GetLeafPlacementComponents();
+    UStaticMeshComponent* MeshComponent = Leaves.Num() == 1
+        ? Cast<UStaticMeshComponent>(Leaves[0]) : nullptr;
+    bPassed &= TestNotNull(TEXT("endpoint-reimport mesh component"), MeshComponent);
+    if (MeshComponent != nullptr)
+        bPassed &= TestEqual(TEXT("next placement uses the replacement mesh"),
+            MeshComponent->GetStaticMesh().Get(), Replacement);
+    bPassed &= DefinitionPlanParity(*this, *Second, *Fixture.Root);
+    SecondWorld->DestroyWorld(true);
     return bPassed;
 }
 } // namespace UE::MimirComposite::Tests

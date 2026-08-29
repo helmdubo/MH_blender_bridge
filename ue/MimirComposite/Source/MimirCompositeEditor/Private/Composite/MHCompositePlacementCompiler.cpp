@@ -211,6 +211,7 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
                 FMHResourceKey Key;
                 Key.Kind = EMHResourceKind::StaticMesh;
                 Key.LogicalName = Leaf.Resource;
+                MHRecordDefinitionEndpointResolve();
                 Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, Result.Error));
                 if (!Result.Error.IsEmpty()) return Result;
             }
