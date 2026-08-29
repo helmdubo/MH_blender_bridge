@@ -374,6 +374,27 @@ UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
     return Path.IsEmpty() ? nullptr : LoadObject<UObject>(nullptr, *Path);
 }
 
+bool MHValidateAppliedCompositeRoot(const UMHCompositeAsset& Root, FString& OutError)
+{
+    OutError.Reset();
+    const FMHResourceKey Key = AppliedPlanKey(EMHResourceKind::Composite, Root.LogicalName);
+    if (!AppliedPlanReceipt(
+            Root, Key, Root.SourceRelativePath, Root.SourceHash, Root.AppliedHash, OutError))
+    {
+        return false;
+    }
+    if (MHLoadAppliedResource(Key, OutError) != &Root)
+    {
+        if (OutError.IsEmpty())
+        {
+            OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: ") + Key.ToString() +
+                TEXT(" does not identify this unique generated asset");
+        }
+        return false;
+    }
+    return true;
+}
+
 bool MHBuildAppliedCompositeGraph(const UMHCompositeAsset& Root, const UMHCompositeSettings& Settings,
     FMHRandomSourceGraph& OutGraph, TSet<FMHResourceKey>& OutDependencies, FString& OutError)
 {

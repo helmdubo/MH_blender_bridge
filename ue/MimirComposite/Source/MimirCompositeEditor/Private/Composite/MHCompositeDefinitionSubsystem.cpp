@@ -76,6 +76,11 @@ TSharedPtr<const FMHRandomSourceGraph> UMHCompositeDefinitionSubsystem::GetOrBui
             It.RemoveCurrent();
             continue;
         }
+        if (!MHValidateAppliedCompositeRoot(Root, OutError))
+        {
+            It.RemoveCurrent();
+            break;
+        }
         FMHRandomSourceClosure StoredClosure;
         FString ValidationError;
         if (!MHBuildRandomSourceClosure(*Entry.Graph, StoredClosure, ValidationError) ||
