@@ -84,6 +84,11 @@ bool MHBuildCompositePlanReport(
         OutError = TEXT("parity report requires exactly one materialized component per resolved leaf");
         return false;
     }
+    if (Plan.Appearance.Draws.Num() != Plan.Leaves.Num() * MH_APPEARANCE_CHANNELS)
+    {
+        OutError = TEXT("parity report requires exactly MH_APPEARANCE_CHANNELS appearance draws per resolved leaf");
+        return false;
+    }
     TSharedRef<FJsonObject> Report = MakeShared<FJsonObject>();
     Report->SetNumberField(TEXT("seed"), Plan.Seed);
     Report->SetStringField(TEXT("resolved_signature"), Plan.ResolvedSignature);
@@ -120,6 +125,29 @@ bool MHBuildCompositePlanReport(
         Draws.Add(MakeShared<FJsonValueObject>(Entry));
     }
     Report->SetArrayField(TEXT("draws"), Draws);
+    // Separate array by construction: appearance never enters Plan.Draws, so the
+    // frozen layout vectors above stay byte-identical (§4).
+    Report->SetNumberField(TEXT("appearance_seed"), Plan.Appearance.AppearanceSeed);
+    Report->SetNumberField(TEXT("appearance_channels"), MH_APPEARANCE_CHANNELS);
+    Report->SetStringField(TEXT("appearance_signature"), Plan.Appearance.AppearanceSignature);
+    const FUTF8ToTCHAR AppearancePreimage(
+        reinterpret_cast<const ANSICHAR*>(Plan.Appearance.SignaturePreimage.GetData()),
+        Plan.Appearance.SignaturePreimage.Num());
+    Report->SetStringField(TEXT("appearance_preimage_utf8"),
+        FString(AppearancePreimage.Length(), AppearancePreimage.Get()));
+    Report->SetStringField(TEXT("placement_signature"), Plan.PlacementSignature);
+    TArray<TSharedPtr<FJsonValue>> AppearanceDraws;
+    for (const FMHResolvedCompositeAppearanceDraw& Value : Plan.Appearance.Draws)
+    {
+        TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("path"), Value.NodePath);
+        Entry->SetStringField(TEXT("boundary"), Value.BoundaryPath);
+        Entry->SetNumberField(TEXT("channel"), Value.Channel);
+        Entry->SetNumberField(TEXT("raw_u32"), Value.RawU32);
+        Entry->SetNumberField(TEXT("unit"), Value.Unit);
+        AppearanceDraws.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    Report->SetArrayField(TEXT("appearance_draws"), AppearanceDraws);
     TArray<TSharedPtr<FJsonValue>> Leaves;
     for (int32 Index = 0; Index < Plan.Leaves.Num(); ++Index)
     {
@@ -146,6 +174,11 @@ bool MHBuildCompositePlanReport(
         Entry->SetArrayField(TEXT("world_matrix"), Matrix(Value.WorldMatrix));
         Entry->SetArrayField(TEXT("materialized_matrix"), Matrix(ComponentMatrix));
         Entry->SetStringField(TEXT("component_class"), Component->GetClass()->GetPathName());
+        Entry->SetStringField(TEXT("appearance_boundary"), Value.AppearanceBoundaryPath);
+        Entry->SetNumberField(TEXT("owning_resolved_node"), Value.OwningResolvedNodeIndex);
+        TArray<TSharedPtr<FJsonValue>> Channels;
+        for (const float Channel : Value.AppearanceChannels) Channels.Add(MakeShared<FJsonValueNumber>(Channel));
+        Entry->SetArrayField(TEXT("appearance_channels"), Channels);
         Leaves.Add(MakeShared<FJsonValueObject>(Entry));
     }
     Report->SetArrayField(TEXT("leaves"), Leaves);
@@ -180,6 +213,9 @@ bool MHWriteCompositeParityReport(
     Report->SetBoolField(TEXT("runtime_modules_only"), bRuntimeModulesOnly);
     Report->SetStringField(TEXT("stream"), MHRandomStream1Tag);
     Report->SetStringField(TEXT("resolver"), MHRandomResolverTag);
+    // Additive lane field: the schema string, the stream tag and the layout
+    // resolver tag are unchanged, so the existing oracle keeps reading this.
+    Report->SetStringField(TEXT("appearance"), MHAppearanceTag);
     TArray<TSharedPtr<FJsonValue>> Seeds;
     for (const TSharedPtr<FJsonValue>& Plan : Plans)
     {

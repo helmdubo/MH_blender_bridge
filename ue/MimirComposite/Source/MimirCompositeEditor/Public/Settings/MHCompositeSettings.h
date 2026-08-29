@@ -76,6 +76,15 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Collision")
     FString PhysicalMaterialRoot;
 
+    /**
+     * First Custom Primitive Data float index a placed composite mesh leaf
+     * writes its MH_APPEARANCE_CHANNELS appearance channels into. A material
+     * reads them from a Scalar or Vector parameter with Use Custom Primitive
+     * Data. Editor preview, PIE and packaged all use this one index.
+     */
+    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Appearance", meta = (ClampMin = "0"))
+    int32 AppearanceCustomDataBaseIndex = 0;
+
     /** Lumen Mesh Cards budget applied by the finalize stage. */
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite", meta = (ClampMin = "1"))
     int32 LumenCardsMax = 32;

@@ -59,11 +59,11 @@ bool FMHRuntimeActorLeavesTest::RunTest(const FString& Parameters)
     FString Error;
     if (!TestTrue(TEXT("encode graph"), Fixture.Encode(Error))) return false;
     AMHRuntimeCompositeActor* Actor = Fixture.Spawn();
-    if (!TestTrue(*Error, Actor->Configure(Fixture.Input, 42, Error))) return false;
+    if (!TestTrue(*Error, Actor->Configure(Fixture.Input, 42, 4242, Error))) return false;
     const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
     if (!TestNotNull(TEXT("runtime plan"), Plan)) return false;
     FMHResolvedCompositePlan Expected;
-    if (!TestTrue(TEXT("same resolver"), MHResolveCompositePlan(Fixture.Graph, 42, Expected, Error))) return false;
+    if (!TestTrue(TEXT("same resolver"), MHResolveCompositePlan(Fixture.Graph, 42, 4242, Expected, Error))) return false;
     TestEqual(TEXT("signature identical"), Plan->ResolvedSignature, Expected.ResolvedSignature);
     TestEqual(TEXT("signature bytes identical"), Plan->SignaturePreimage, Expected.SignaturePreimage);
     TestEqual(TEXT("all options admitted"), Plan->Closure.Resources.Num(), 3);
@@ -74,7 +74,7 @@ bool FMHRuntimeActorLeavesTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("move does not resolve again"), Actor->GetResolvedPlan() == Plan);
     TestEqual(TEXT("move does not change seed"), Actor->GetSeed(), 42);
     TestEqual(TEXT("basis applied without resampling"), Component->GetComponentLocation().X, 175.0);
-    TestTrue(TEXT("manual zero accepted"), Actor->Configure(Fixture.Input, 0, Error));
+    TestTrue(TEXT("manual zero accepted"), Actor->Configure(Fixture.Input, 0, 0, Error));
     TestEqual(TEXT("zero preserved"), Actor->GetSeed(), 0);
     return true;
 }
@@ -87,16 +87,16 @@ bool FMHRuntimeActorMissingClosureTest::RunTest(const FString& Parameters)
     FString Error;
     if (!Fixture.Encode(Error)) return false;
     AMHRuntimeCompositeActor* Actor = Fixture.Spawn();
-    if (!TestTrue(TEXT("initial valid placement"), Actor->Configure(Fixture.Input, 1, Error))) return false;
+    if (!TestTrue(TEXT("initial valid placement"), Actor->Configure(Fixture.Input, 1, 11, Error))) return false;
     USceneComponent* Previous = Actor->GetMaterializedComponents()[0];
     FMHRuntimeCompositeInput Missing = Fixture.Input;
     Missing.Bindings.RemoveAt(1);
-    TestFalse(TEXT("zero-weight missing endpoint blocks"), Actor->Configure(Missing, 1, Error));
+    TestFalse(TEXT("zero-weight missing endpoint blocks"), Actor->Configure(Missing, 1, 11, Error));
     TestTrue(TEXT("old visual remains intact"), Actor->GetMaterializedComponents()[0] == Previous && IsValid(Previous));
     TestNull(TEXT("failed update exposes no plan"), Actor->GetResolvedPlan());
     Actor->SetActorLocation(FVector(10, 0, 0));
     TestNull(TEXT("move cannot resurrect rejected input"), Actor->GetResolvedPlan());
-    TestTrue(TEXT("explicit recovery"), Actor->Configure(Fixture.Input, 1, Error));
+    TestTrue(TEXT("explicit recovery"), Actor->Configure(Fixture.Input, 1, 11, Error));
     return true;
 }
 
@@ -108,14 +108,14 @@ bool FMHRuntimeActorShearTest::RunTest(const FString& Parameters)
     FString Error;
     if (!Fixture.Encode(Error)) return false;
     AMHRuntimeCompositeActor* Actor = Fixture.Spawn();
-    if (!TestTrue(TEXT("initial valid placement"), Actor->Configure(Fixture.Input, 2, Error))) return false;
+    if (!TestTrue(TEXT("initial valid placement"), Actor->Configure(Fixture.Input, 2, 22, Error))) return false;
     USceneComponent* Previous = Actor->GetMaterializedComponents()[0];
     const FTransform PreviousTransform = Previous->GetComponentTransform();
     FMHRandomNode& Parent = Fixture.Graph.Composites[Fixture.Graph.RootComposite].Nodes[0];
     Parent.Transform.Scale = FVector3f(2, 1, 1);
     Parent.Children[0].Transform.RotationQuat = FQuat4f(FVector3f::UpVector, static_cast<float>(UE_PI / 4.0));
     if (!TestTrue(TEXT("source TRS still encodes"), Fixture.Encode(Error))) return false;
-    TestFalse(TEXT("full matrix shear blocks"), Actor->Configure(Fixture.Input, 2, Error));
+    TestFalse(TEXT("full matrix shear blocks"), Actor->Configure(Fixture.Input, 2, 22, Error));
     TestTrue(TEXT("registered transform error"), Error.StartsWith(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM:")));
     TestTrue(TEXT("components not replaced"), Actor->GetMaterializedComponents()[0] == Previous);
     TestTrue(TEXT("components not moved"), Previous->GetComponentTransform().Equals(PreviousTransform, 0.0));
@@ -138,7 +138,7 @@ bool FMHRuntimeGameplayLeafTest::RunTest(const FString& Parameters)
     FString Error;
     if (!Fixture.Encode(Error)) return false;
     AMHRuntimeCompositeActor* Actor = Fixture.Spawn();
-    if (!TestTrue(TEXT("gameplay placement admitted"), Actor->Configure(Fixture.Input, 123, Error))) return false;
+    if (!TestTrue(TEXT("gameplay placement admitted"), Actor->Configure(Fixture.Input, 123, 1230, Error))) return false;
     const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
     const UChildActorComponent* Component = Cast<UChildActorComponent>(Actor->GetMaterializedComponents()[0]);
     if (!TestNotNull(TEXT("gameplay child component"), Component)) return false;

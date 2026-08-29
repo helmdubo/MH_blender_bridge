@@ -120,8 +120,8 @@ bool FMHRuntimeInputRoundTripTest::RunTest(const FString& Parameters)
     {
         FMHResolvedCompositePlan Before;
         FMHResolvedCompositePlan After;
-        if (!TestTrue(TEXT("original graph resolves"), MHResolveCompositePlan(Graph, Seed, Before, Error)) ||
-            !TestTrue(TEXT("decoded graph resolves"), MHResolveCompositePlan(Decoded, Seed, After, Error))) return false;
+        if (!TestTrue(TEXT("original graph resolves"), MHResolveCompositePlan(Graph, Seed, Seed, Before, Error)) ||
+            !TestTrue(TEXT("decoded graph resolves"), MHResolveCompositePlan(Decoded, Seed, Seed, After, Error))) return false;
         TestTrue(TEXT("frozen signature preimage survives transport"), Before.SignaturePreimage == After.SignaturePreimage);
         TestEqual(TEXT("signature survives transport"), After.ResolvedSignature, Before.ResolvedSignature);
         TestTrue(TEXT("source closure survives transport"), After.Closure.Resources == Before.Closure.Resources);

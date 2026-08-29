@@ -9,8 +9,11 @@ import sys
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from addon.mh4blend.core.canonical_json import canonical_json_bytes
 from tools.mh_random_reference import (
+    APPEARANCE_TAG,
     Composite,
+    MH_APPEARANCE_CHANNELS,
     Node,
     PlacementProfile,
     RANDOM_STREAM_TAG,
@@ -26,6 +29,7 @@ from tools.mh_random_reference import (
     placement_state,
     raw_payload_hash,
     resolve_composite,
+    resolve_placement,
 )
 
 
@@ -39,6 +43,13 @@ NODE_STREAM_PATHS = (
 )
 GOLDEN_SCHEMA = "mh.random_stream_vectors:1"
 SYNTHETIC_PAYLOAD_DOMAIN = "mh.random_reference_fixture:1"
+
+APPEARANCE_GOLDEN_SCHEMA = "mh.appearance_vectors:1"
+APPEARANCE_SEEDS = SEEDS
+# Boundary scenarios are topology fixtures, so one ratified layout seed is
+# enough for them; the appearance seed is what the scenarios vary.
+SCENARIO_LAYOUT_SEED = 42
+APPEARANCE_PAYLOAD_DOMAIN = "mh.appearance_reference_fixture:1"
 
 
 def synthetic_fixture():
@@ -121,6 +132,132 @@ def synthetic_fixture():
     return "root_cmp", composites, profiles, raw_hashes
 
 
+def _scenario_hashes(scenario: str, keys):
+    return {
+        key: raw_payload_hash(
+            f"{APPEARANCE_PAYLOAD_DOMAIN}\n{scenario}\n{key}\n".encode("ascii"))
+        for key in keys
+    }
+
+
+def _house_shared():
+    """Doc 12 §3 «дом с согласованными окнами»: not a single boundary."""
+    composites = {
+        "house_cmp": Composite("house_cmp", (
+            Node(
+                "group",
+                transform=TRS(translation_cm=(100, 0, 0)),
+                children=(
+                    Node("mesh", resource="window_mesh",
+                         transform=TRS(translation_cm=(0, 0, 50))),
+                    Node("mesh", resource="window_mesh",
+                         transform=TRS(translation_cm=(0, 0, 150))),
+                ),
+            ),
+            Node("mesh", resource="door_mesh"),
+        )),
+    }
+    keys = (
+        ResourceKey("composite", "house_cmp"),
+        ResourceKey("static_mesh", "door_mesh"),
+        ResourceKey("static_mesh", "window_mesh"),
+    )
+    return "house_cmp", composites, {}, _scenario_hashes("house_shared", keys)
+
+
+def _fabric_per_leaf():
+    """Doc 12 §3 «магазин тканей»: a boundary on every fabric leaf."""
+    composites = {
+        "fabric_cmp": Composite("fabric_cmp", (
+            Node("mesh", resource="bolt_a_mesh", appearance_seed_boundary=True),
+            Node("mesh", resource="bolt_b_mesh", appearance_seed_boundary=True),
+            Node("group", transform=TRS(translation_cm=(0, 40, 0)), children=(
+                Node("mesh", resource="bolt_c_mesh",
+                     appearance_seed_boundary=True),
+            )),
+        )),
+    }
+    keys = (
+        ResourceKey("composite", "fabric_cmp"),
+        ResourceKey("static_mesh", "bolt_a_mesh"),
+        ResourceKey("static_mesh", "bolt_b_mesh"),
+        ResourceKey("static_mesh", "bolt_c_mesh"),
+    )
+    return "fabric_cmp", composites, {}, _scenario_hashes("fabric_per_leaf", keys)
+
+
+def _nested_boundary():
+    """Doc 12 §3 «вложенный композит»: the boundary sits on the composite node."""
+    composites = {
+        "shop_cmp": Composite("shop_cmp", (
+            Node("composite", resource="rack_cmp",
+                 transform=TRS(translation_cm=(0, 0, 10)),
+                 appearance_seed_boundary=True),
+            Node("mesh", resource="counter_mesh"),
+        )),
+        "rack_cmp": Composite("rack_cmp", (
+            Node("mesh", resource="shelf_a_mesh"),
+            Node("group", transform=TRS(translation_cm=(0, 0, 60)), children=(
+                Node("mesh", resource="shelf_b_mesh"),
+            )),
+        )),
+    }
+    keys = (
+        ResourceKey("composite", "rack_cmp"),
+        ResourceKey("composite", "shop_cmp"),
+        ResourceKey("static_mesh", "counter_mesh"),
+        ResourceKey("static_mesh", "shelf_a_mesh"),
+        ResourceKey("static_mesh", "shelf_b_mesh"),
+    )
+    return "shop_cmp", composites, {}, _scenario_hashes("nested_boundary", keys)
+
+
+def _mixed_endpoints():
+    """Actor leaves draw; gameobj nodes and empty options produce no leaf."""
+    composites = {
+        "mixed_cmp": Composite("mixed_cmp", (
+            Node("mesh", resource="crate_mesh"),
+            Node("actor", resource="spawner_actor",
+                 transform=TRS(translation_cm=(0, 20, 0))),
+            Node("gameobj", resource="dummy_pivot"),
+            Node("random", options=(RandomOption("empty", weight=1),)),
+            Node(
+                "random",
+                transform=TRS(translation_cm=(0, 0, 200)),
+                appearance_seed_boundary=True,
+                options=(RandomOption("mesh", resource="lamp_mesh", weight=1),),
+            ),
+        )),
+    }
+    keys = (
+        ResourceKey("composite", "mixed_cmp"),
+        ResourceKey("static_mesh", "crate_mesh"),
+        ResourceKey("static_mesh", "lamp_mesh"),
+    )
+    return "mixed_cmp", composites, {}, _scenario_hashes("mixed_endpoints", keys)
+
+
+_BOUNDARY_SCENARIOS = {
+    "house_shared": _house_shared,
+    "fabric_per_leaf": _fabric_per_leaf,
+    "nested_boundary": _nested_boundary,
+    "mixed_endpoints": _mixed_endpoints,
+}
+
+
+def boundary_scenario_names() -> tuple[str, ...]:
+    return tuple(_BOUNDARY_SCENARIOS)
+
+
+def boundary_scenario(name: str):
+    """Return ``(root, composites, profiles, raw_hashes)`` for one scenario."""
+    try:
+        build = _BOUNDARY_SCENARIOS[name]
+    except KeyError:
+        raise KeyError(f"unknown appearance boundary scenario {name!r}") from None
+    return build()
+
+
 def _range_document(value_range: Range) -> list[float]:
     return [value_range.base, value_range.deviation]
 
@@ -159,6 +296,10 @@ def _node_document(node: Node) -> dict:
         document["resource"] = node.resource
     if node.profile is not None:
         document["profile"] = node.profile
+    if node.appearance_seed_boundary:
+        # Omitted at the default, exactly like the ``.composite`` grammar, so
+        # the layout golden stays byte-identical to the pre-slice bytes.
+        document["appearance_seed_boundary"] = True
     if node.options:
         document["options"] = [_option_document(option) for option in node.options]
     if node.children:
@@ -327,8 +468,151 @@ def write_golden(path: Path) -> None:
     path.write_bytes(payload)
 
 
+def _appearance_leaf_document(leaf) -> dict:
+    return {
+        "index": leaf.index,
+        "path": leaf.path,
+        "boundary": leaf.boundary,
+        "raw_u32": list(leaf.raw_u32),
+        "unit": list(leaf.unit),
+    }
+
+
+def _appearance_draw_document(draw) -> dict:
+    return {
+        "leaf_index": draw.leaf_index,
+        "path": draw.path,
+        "boundary": draw.boundary,
+        "channel": draw.channel,
+        "raw_u32": draw.raw_u32,
+        "unit": draw.unit,
+    }
+
+
+def _appearance_vector(
+        seed, appearance_seed, root, composites, profiles, raw_hashes) -> dict:
+    resolution = resolve_placement(
+        root, seed, appearance_seed, composites, profiles, raw_hashes)
+    appearance = resolution.appearance
+    return {
+        "seed": seed,
+        "appearance_seed": appearance_seed,
+        "root_boundary": appearance.root_boundary,
+        "boundaries": list(appearance.boundaries),
+        "layout_leaves": [leaf.origin for leaf in resolution.plan.leaves],
+        "leaves": [_appearance_leaf_document(leaf) for leaf in appearance.leaves],
+        "draws": [_appearance_draw_document(draw) for draw in appearance.draws],
+        "appearance_signature_preimage_utf8":
+            appearance.signature_preimage.decode("utf-8"),
+        "resolved_signature": resolution.plan.resolved_signature,
+        "appearance_signature": appearance.appearance_signature,
+        "placement_signature": resolution.placement_signature,
+    }
+
+
+def appearance_golden_document() -> dict:
+    root, composites, profiles, raw_hashes = synthetic_fixture()
+    scenarios = []
+    for name in boundary_scenario_names():
+        (scenario_root, scenario_composites,
+         scenario_profiles, scenario_hashes) = boundary_scenario(name)
+        scenarios.append({
+            "name": name,
+            "layout_seed": SCENARIO_LAYOUT_SEED,
+            "fixture": _fixture_document(
+                scenario_root, scenario_composites,
+                scenario_profiles, scenario_hashes),
+            "vectors": [
+                _appearance_vector(
+                    SCENARIO_LAYOUT_SEED, appearance_seed, scenario_root,
+                    scenario_composites, scenario_profiles, scenario_hashes)
+                for appearance_seed in APPEARANCE_SEEDS
+            ],
+        })
+    return {
+        "schema": APPEARANCE_GOLDEN_SCHEMA,
+        "stage": APPEARANCE_TAG,
+        "stream": RANDOM_STREAM_TAG,
+        "resolver": RESOLVER_TAG,
+        "channels": MH_APPEARANCE_CHANNELS,
+        "seed_set": list(SEEDS),
+        "appearance_seed_set": list(APPEARANCE_SEEDS),
+        "rules": {
+            "boundary":
+                "Boundary(leaf) = nearest ancestor node, the leaf's own owning "
+                "node included, whose source declared appearance_seed_boundary "
+                "= true; the placement root otherwise. A random option is never "
+                "a boundary: the grammar forbids the field on options.",
+            "root_boundary":
+                "The placement root's NodePath is the bare root composite name, "
+                "the same prefix its nodes[i] paths are built from.",
+            "stream":
+                "AppearanceStream(leaf) = MHMakeNodeRandomStream(AppearanceSeed, "
+                "Boundary(leaf)), i.e. the unchanged mh.random_stream:1 node "
+                "stream. The stream is reopened per leaf, so two leaves under "
+                "one boundary get identical channel values.",
+            "draw_order":
+                "leaf-major, channels 0..MH_APPEARANCE_CHANNELS-1 ascending, one "
+                "NextU32 per channel, no gaps and no skipped leaves. Leaves are "
+                "the layout plan's leaves in plan order: mesh and actor leaves "
+                "both draw; gameobj nodes and empty options are not leaves and "
+                "draw nothing.",
+            "authority":
+                "raw_u32 is the only authority and the only value in the "
+                "AppearanceSignature preimage.",
+            "unit":
+                "unit = IEEE binary32 nearest of raw_u32 * 2^-32, serialized "
+                "float32-shortest. It is derived, never authority. Note the "
+                "honest edge: raw_u32 >= 0xFFFFFF80 rounds to exactly 1.0f, so "
+                "the stored float32 is not strictly below 1; consumers must key "
+                "on raw_u32 and must not clamp or repair the float.",
+            "appearance_signature":
+                "blake3-160 of the canonical JSON preimage {v, stage, "
+                "appearance_seed, channels, boundaries, leaves[{path, boundary, "
+                "channels:[raw_u32]}]}; boundaries are the distinct boundary "
+                "NodePaths sorted ascending by their UTF-8 bytes.",
+            "placement_signature":
+                "blake3-160 of the ASCII bytes of ResolvedSignature "
+                "concatenated with the ASCII bytes of AppearanceSignature, no "
+                "separator.",
+            "layout":
+                "The layout arrays and ResolvedSignature are produced by the "
+                "unchanged mh.random_resolver:2 stage; golden/v5/"
+                "random_stream_1_vectors.json is not regenerated by this slice.",
+        },
+        "synthetic": {
+            "fixture": _fixture_document(root, composites, profiles, raw_hashes),
+            "vectors": [
+                _appearance_vector(
+                    seed, appearance_seed, root, composites, profiles, raw_hashes)
+                for seed in SEEDS
+                for appearance_seed in APPEARANCE_SEEDS
+            ],
+        },
+        "scenarios": scenarios,
+    }
+
+
+def appearance_golden_bytes() -> bytes:
+    # Canonical renderer, so every derived unit is spelled float32-shortest.
+    return canonical_json_bytes(appearance_golden_document())
+
+
+def write_appearance_golden(path: Path) -> None:
+    payload = appearance_golden_bytes()
+    if path.exists() and path.read_bytes() == payload:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+
 if __name__ == "__main__":
     repository_root = Path(__file__).resolve().parent.parent
     destination = repository_root / "golden" / "v5" / "random_stream_1_vectors.json"
     write_golden(destination)
     print(destination)
+    appearance_destination = (
+        repository_root / "golden" / "v5" / "appearance" /
+        "appearance_1_vectors.json")
+    write_appearance_golden(appearance_destination)
+    print(appearance_destination)

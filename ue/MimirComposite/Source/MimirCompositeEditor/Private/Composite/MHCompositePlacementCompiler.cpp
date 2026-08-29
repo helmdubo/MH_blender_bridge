@@ -1,5 +1,6 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 
+#include "Composite/MHCompositeAppearanceTransport.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/BoxComponent.h"
@@ -268,6 +269,9 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         Component->AttachToComponent(Result.TopLevelComponents[Leaf.RootNodeIndex], FAttachmentTransformRules::KeepWorldTransform);
         PlanViewSetWorld(*Component, Leaf.WorldMatrix * Basis);
         if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) Mesh->SetStaticMesh(Endpoint.Mesh);
+        // S6.3.1: the resolved appearance channels reach the material as Custom
+        // Primitive Data. Materialization side only - never part of a preimage.
+        MHApplyLeafAppearanceCustomData(Component, Leaf, Settings.AppearanceCustomDataBaseIndex);
         if (UChildActorComponent* Child = Cast<UChildActorComponent>(Component))
         {
             Child->SetEditorTreeViewVisualizationMode(EChildActorComponentTreeViewVisualizationMode::Hidden);

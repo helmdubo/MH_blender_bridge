@@ -41,7 +41,7 @@ const TCHAR* MetadataOrderedJson =
     TEXT(R"("options":[{"kind":"gameobj","resource":"loot_box","weight":1}],"children":[{"kind":"group"}]}]})");
 
 /** Group parent, ordinary gameobj child, random gameobj option. No resolvable resource. */
-FMHCompositeDocument MetadataDocument(const FString& Token, const bool bCarriers)
+FMHCompositeDocument MetadataDocument(const FString& Token, const bool bCarriers, const bool bBoundaries = true)
 {
     FMHCompositeDocument Document;
     FMHCompositeNode& Parent = Document.Nodes.AddDefaulted_GetRef();
@@ -63,9 +63,9 @@ FMHCompositeDocument MetadataDocument(const FString& Token, const bool bCarriers
     {
         Parent.PlaceType = 0;
         Child.PlaceType = 3;
-        Child.bAppearanceSeedBoundary = true;
+        Child.bAppearanceSeedBoundary = bBoundaries;
         Random.PlaceType = 8;
-        Random.bAppearanceSeedBoundary = true;
+        Random.bAppearanceSeedBoundary = bBoundaries;
     }
     return Document;
 }
@@ -269,6 +269,10 @@ bool FMHCompositeNodeMetadataProvenanceTest::RunTest(const FString& Parameters)
     const FString Token = Fixture.Name(TEXT("metadata_gameobj"));
     const FMHCompositeDocument Plain = MetadataDocument(Token, false);
     const FMHCompositeDocument Carried = MetadataDocument(Token, true);
+    // place_type has no executor and must stay out of every derived artefact;
+    // appearance_seed_boundary acquired one in V5-S6.3 and is therefore allowed
+    // into the runtime transport, and only there.
+    const FMHCompositeDocument PlaceTypeOnly = MetadataDocument(Token, true, false);
     FString Error;
     TArray<uint8> PlainBytes;
     TArray<uint8> CarriedBytes;
@@ -295,7 +299,7 @@ bool FMHCompositeNodeMetadataProvenanceTest::RunTest(const FString& Parameters)
     FMHResolvedCompositePlan PlainPlan;
     if (!TestTrue(TEXT("carrier-free graph encodes and resolves"),
         MHEncodeRuntimeCompositeGraph(PlainGraph, PlainGraphBytes, Error) &&
-        MHResolveCompositePlan(PlainGraph, 100, PlainPlan, Error)))
+        MHResolveCompositePlan(PlainGraph, 100, 700, PlainPlan, Error)))
     {
         AddError(Error);
         return false;
@@ -333,13 +337,42 @@ bool FMHCompositeNodeMetadataProvenanceTest::RunTest(const FString& Parameters)
     if (!TestTrue(TEXT("carrier applied graph builds, encodes and resolves"),
         MHBuildAppliedCompositeGraph(*Asset, *Fixture.Settings, CarriedGraph, CarriedDependencies, Error) &&
         MHEncodeRuntimeCompositeGraph(CarriedGraph, CarriedGraphBytes, Error) &&
-        MHResolveCompositePlan(CarriedGraph, 100, CarriedPlan, Error)))
+        MHResolveCompositePlan(CarriedGraph, 100, 700, CarriedPlan, Error)))
     {
         AddError(Error);
         return false;
     }
     TestEqual(TEXT("carriers add no dependency"), CarriedDependencies.Num(), PlainDependencies.Num());
-    TestTrue(TEXT("carriers never reach the runtime transport bytes"), CarriedGraphBytes == PlainGraphBytes);
+
+    // place_type alone still changes nothing at all, transport bytes included.
+    // The same asset is reused so its logical name, and therefore every other
+    // byte of the transport, is held fixed; only the carriers can move.
+    FMHRandomSourceGraph PlaceTypeGraph;
+    TSet<FMHResourceKey> PlaceTypeDependencies;
+    TArray<uint8> PlaceTypeGraphBytes;
+    if (!TestTrue(TEXT("place_type-only document applies, builds and encodes"),
+            MHApplyCompositeV5(*Asset, PlaceTypeOnly, Error) &&
+            MHBuildAppliedCompositeGraph(*Asset, *Fixture.Settings, PlaceTypeGraph, PlaceTypeDependencies, Error) &&
+            MHEncodeRuntimeCompositeGraph(PlaceTypeGraph, PlaceTypeGraphBytes, Error)))
+    {
+        AddError(Error);
+        return false;
+    }
+    TestTrue(TEXT("place_type never reaches the runtime transport bytes"), PlaceTypeGraphBytes == PlainGraphBytes);
+
+    // The boundary carrier does reach the transport, and only the transport:
+    // without it a cooked or PIE placement would resolve a different appearance
+    // boundary than the editor and the five-way parity would be a lie.
+    TestTrue(TEXT("the boundary carrier reaches the runtime transport bytes"), CarriedGraphBytes != PlainGraphBytes);
+    FMHRandomSourceGraph DecodedGraph;
+    if (TestTrue(TEXT("carrier transport bytes decode"),
+        MHDecodeRuntimeCompositeGraph(CarriedGraphBytes, DecodedGraph, Error)))
+    {
+        const FMHRandomComposite& Decoded = DecodedGraph.Composites.FindChecked(DecodedGraph.RootComposite);
+        TestFalse(TEXT("the parent declares no boundary after transport"), Decoded.Nodes[0].bAppearanceSeedBoundary);
+        TestTrue(TEXT("the declared boundary survives transport"), Decoded.Nodes[0].Children[0].bAppearanceSeedBoundary);
+    }
+    else AddError(Error);
     TestTrue(TEXT("carriers never reach the frozen signature preimage"),
         CarriedPlan.SignaturePreimage == PlainPlan.SignaturePreimage);
     TestEqual(TEXT("carriers never change the resolved signature"),

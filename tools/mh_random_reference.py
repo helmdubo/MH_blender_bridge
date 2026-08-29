@@ -23,6 +23,13 @@ from addon.mh4blend.core.canonical_json import (
 
 RANDOM_STREAM_TAG = "mh.random_stream:1"
 RESOLVER_TAG = "mh.random_resolver:2"
+# V5-S6.3 appearance stage.  The layout stream and its resolver tag do not
+# move: the appearance stage reuses ``mh.random_stream:1`` unchanged and only
+# adds its own stage tag to its own signature preimage (doc 12 §4).
+APPEARANCE_TAG = "mh.appearance:1"
+# OPEN-V5-16 closed by V5-S6.3 with the value 4.  The constant is part of the
+# AppearanceSignature preimage, so changing it can never diverge silently.
+MH_APPEARANCE_CHANNELS = 4
 
 _MASK64 = (1 << 64) - 1
 _INT32_MIN = -(1 << 31)
@@ -347,10 +354,16 @@ class Node:
     profile: str | None = None
     options: tuple[RandomOption, ...] = field(default_factory=tuple)
     children: tuple["Node", ...] = field(default_factory=tuple)
+    # Source metadata only: it never reaches the layout stream, the layout draw
+    # order or ``ResolvedSignature``.  It is the appearance stage's boundary.
+    appearance_seed_boundary: bool = False
 
     def __post_init__(self) -> None:
         if self.kind not in _NODE_KINDS:
             raise RandomReferenceError(f"unsupported node kind {self.kind!r}")
+        if not isinstance(self.appearance_seed_boundary, bool):
+            raise RandomReferenceError(
+                "appearance_seed_boundary must be a bool")
         if self.kind in {"mesh", "actor", "composite", "gameobj"}:
             if not self.resource:
                 raise RandomReferenceError(f"{self.kind} node requires a resource")
@@ -420,6 +433,11 @@ class ResolvedLeaf:
     resource: str
     world_trs: TRS
     origin: str
+    # Nearest ancestor (the leaf's own owning node included) that declared
+    # ``appearance_seed_boundary``; the placement root otherwise.  Derived from
+    # source metadata, never from the layout seed, and deliberately absent from
+    # ``signature_document`` so ``ResolvedSignature`` stays byte-identical.
+    boundary: str = ""
 
     def signature_document(self) -> dict:
         return {
@@ -454,6 +472,8 @@ class ResolvedPlan:
     signature_preimage: bytes
     resolved_signature: str
     nodes: tuple[ResolvedNode, ...] = ()
+    # NodePath of the placement root: the boundary every leaf falls back to.
+    root_boundary: str = ""
 
 
 def _node_source_dependencies(node: Node) -> tuple[ResourceKey, ...]:
@@ -717,22 +737,29 @@ def resolve_composite(
         for dependency in sorted(tuple(dependencies.get(key, ())), key=str):
             add_selected_resource(dependency)
 
-    def add_leaf(kind: str, resource: str, world: TRS, origin: str) -> None:
-        leaves.append(ResolvedLeaf(kind, resource, world, origin))
+    def add_leaf(
+        kind: str,
+        resource: str,
+        world: TRS,
+        origin: str,
+        boundary: str,
+    ) -> None:
+        leaves.append(ResolvedLeaf(kind, resource, world, origin, boundary))
         if kind == "mesh":
             add_selected_resource(ResourceKey("static_mesh", resource))
         elif kind == "actor":
             add_selected(f"actor:{resource}")
 
-    def walk_composite(name: str, parent: TRS, prefix: str) -> None:
+    def walk_composite(name: str, parent: TRS, prefix: str, boundary: str) -> None:
         composite = composites[name]
         for index, node in enumerate(composite.nodes):
-            walk_node(node, parent, f"{prefix}:nodes[{index}]")
+            walk_node(node, parent, f"{prefix}:nodes[{index}]", boundary)
 
     def walk_selected_option(
         option: RandomOption,
         world: TRS,
         option_path: str,
+        boundary: str,
     ) -> None:
         if option.kind == "empty":
             return
@@ -741,11 +768,11 @@ def resolve_composite(
             nodes.append(ResolvedNode(option_path, "gameobj", resource, world))
         elif option.kind == "composite":
             add_selected_resource(ResourceKey("composite", resource))
-            walk_composite(resource, world, f"{option_path}>{resource}")
+            walk_composite(resource, world, f"{option_path}>{resource}", boundary)
         else:
-            add_leaf(option.kind, resource, world, option_path)
+            add_leaf(option.kind, resource, world, option_path, boundary)
 
-    def walk_node(node: Node, parent: TRS, node_path: str) -> None:
+    def walk_node(node: Node, parent: TRS, node_path: str, boundary: str) -> None:
         stream = (
             node_random_stream(seed, node_path)
             if node.kind == "random" or node.profile is not None
@@ -775,25 +802,30 @@ def resolve_composite(
             )
         world = compose_trs(parent, local)
         nodes.append(ResolvedNode(node_path, node.kind, node.resource, world))
+        # Boundary(node) = nearest ancestor, the node itself included.
+        node_boundary = node_path if node.appearance_seed_boundary else boundary
 
         if node.kind == "mesh":
-            add_leaf("mesh", node.resource or "", world, node_path)
+            add_leaf("mesh", node.resource or "", world, node_path, node_boundary)
         elif node.kind == "actor":
-            add_leaf("actor", node.resource or "", world, node_path)
+            add_leaf("actor", node.resource or "", world, node_path, node_boundary)
         elif node.kind == "composite":
             resource = node.resource or ""
             add_selected_resource(ResourceKey("composite", resource))
-            walk_composite(resource, world, f"{node_path}>{resource}")
+            walk_composite(
+                resource, world, f"{node_path}>{resource}", node_boundary)
         elif node.kind == "random":
             assert selected is not None
             option = node.options[selected.option]
             option_path = f"{node_path}/options[{selected.option}]"
-            walk_selected_option(option, world, option_path)
+            walk_selected_option(option, world, option_path, node_boundary)
 
         for child_index, child in enumerate(node.children):
-            walk_node(child, world, f"{node_path}/children[{child_index}]")
+            walk_node(
+                child, world, f"{node_path}/children[{child_index}]",
+                node_boundary)
 
-    walk_composite(root, IDENTITY_TRS, root)
+    walk_composite(root, IDENTITY_TRS, root, root)
 
     signature_document = {
         "v": 1,
@@ -814,10 +846,173 @@ def resolve_composite(
         signature_preimage=preimage,
         resolved_signature=_blake3_160(preimage),
         nodes=tuple(nodes),
+        root_boundary=root,
+    )
+
+
+@dataclass(frozen=True)
+class AppearanceDraw:
+    """One appearance channel draw.  ``raw_u32`` is the only authority."""
+
+    leaf_index: int
+    path: str
+    boundary: str
+    channel: int
+    raw_u32: int
+    unit: float
+
+
+@dataclass(frozen=True)
+class AppearanceLeaf:
+    index: int
+    path: str
+    boundary: str
+    raw_u32: tuple[int, ...]
+    unit: tuple[float, ...]
+
+    def signature_document(self) -> dict:
+        # Only the raw draws are authority.  Kind/resource stay out: they are
+        # layout identity and already signed by ``ResolvedSignature``; keeping
+        # them here would make an AppearanceSignature move on a layout reroll
+        # that did not change the leaf set.
+        return {
+            "path": self.path,
+            "boundary": self.boundary,
+            "channels": list(self.raw_u32),
+        }
+
+
+@dataclass(frozen=True)
+class AppearancePlan:
+    appearance_seed: int
+    channels: int
+    root_boundary: str
+    boundaries: tuple[str, ...]
+    draws: tuple[AppearanceDraw, ...]
+    leaves: tuple[AppearanceLeaf, ...]
+    signature_preimage: bytes
+    appearance_signature: str
+
+
+@dataclass(frozen=True)
+class PlacementResolution:
+    plan: ResolvedPlan
+    appearance: AppearancePlan
+    placement_signature: str
+
+
+def resolve_appearance(
+    plan: ResolvedPlan,
+    appearance_seed: int,
+    *,
+    channels: int = MH_APPEARANCE_CHANNELS,
+) -> AppearancePlan:
+    """Run the ``mh.appearance:1`` stage over one already resolved layout plan.
+
+    The layout plan is read, never rewritten: appearance draws land in their
+    own array so ``Plan.Draws``/``Decisions``/samples stay byte-identical.
+    """
+
+    if isinstance(channels, bool) or not isinstance(channels, int) or channels < 1:
+        raise RandomReferenceError("appearance channel count must be a positive int")
+    # Same int32 domain and the same fail-closed message as the layout seed.
+    placement_state(appearance_seed)
+
+    draws: list[AppearanceDraw] = []
+    leaves: list[AppearanceLeaf] = []
+    for index, leaf in enumerate(plan.leaves):
+        boundary = leaf.boundary
+        if not boundary:
+            raise RandomReferenceError(
+                f"leaf {leaf.origin} carries no appearance boundary")
+        # One stream per leaf, keyed by the BOUNDARY path: two leaves under one
+        # boundary reopen the same stream and get the same channel values.
+        stream = node_random_stream(appearance_seed, boundary)
+        raw_values: list[int] = []
+        unit_values: list[float] = []
+        for channel in range(channels):
+            raw = stream.next_u32()
+            unit = _f32(raw * _UINT32_SCALE)
+            raw_values.append(raw)
+            unit_values.append(unit)
+            draws.append(AppearanceDraw(
+                leaf_index=index,
+                path=leaf.origin,
+                boundary=boundary,
+                channel=channel,
+                raw_u32=raw,
+                unit=unit,
+            ))
+        leaves.append(AppearanceLeaf(
+            index=index,
+            path=leaf.origin,
+            boundary=boundary,
+            raw_u32=tuple(raw_values),
+            unit=tuple(unit_values),
+        ))
+
+    boundaries = tuple(sorted({leaf.boundary for leaf in leaves}))
+    document = {
+        "v": 1,
+        "stage": APPEARANCE_TAG,
+        "appearance_seed": appearance_seed,
+        "channels": channels,
+        "boundaries": list(boundaries),
+        "leaves": [leaf.signature_document() for leaf in leaves],
+    }
+    preimage = canonical_json_bytes(document)
+    return AppearancePlan(
+        appearance_seed=appearance_seed,
+        channels=channels,
+        root_boundary=plan.root_boundary,
+        boundaries=boundaries,
+        draws=tuple(draws),
+        leaves=tuple(leaves),
+        signature_preimage=preimage,
+        appearance_signature=_blake3_160(preimage),
+    )
+
+
+def placement_signature(resolved_signature: str, appearance_signature: str) -> str:
+    """Hash the two signature byte strings concatenated without a separator."""
+    left = _validate_hash(resolved_signature)
+    right = _validate_hash(appearance_signature)
+    return _blake3_160(left.encode("ascii") + right.encode("ascii"))
+
+
+def resolve_placement(
+    root: str,
+    seed: int,
+    appearance_seed: int,
+    composites: Mapping[str, Composite],
+    profiles: Mapping[str, PlacementProfile],
+    raw_hashes: Mapping[ResourceKey, str],
+    resource_dependencies: Mapping[ResourceKey, Sequence[ResourceKey]] | None = None,
+    *,
+    channels: int = MH_APPEARANCE_CHANNELS,
+) -> PlacementResolution:
+    """Run both signed stages in the normative order and combine them."""
+    plan = resolve_composite(
+        root, seed, composites, profiles, raw_hashes, resource_dependencies)
+    appearance = resolve_appearance(plan, appearance_seed, channels=channels)
+    return PlacementResolution(
+        plan=plan,
+        appearance=appearance,
+        placement_signature=placement_signature(
+            plan.resolved_signature, appearance.appearance_signature),
     )
 
 
 __all__ = [
+    "APPEARANCE_TAG",
+    "AppearanceDraw",
+    "AppearanceLeaf",
+    "AppearancePlan",
+    "MH_APPEARANCE_CHANNELS",
+    "PlacementResolution",
+    "placement_signature",
+    "resolve_appearance",
+    "resolve_placement",
     "Composite",
     "DrawTraceEntry",
     "IDENTITY_TRS",

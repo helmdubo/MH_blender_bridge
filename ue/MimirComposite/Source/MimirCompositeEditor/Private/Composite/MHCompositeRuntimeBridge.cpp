@@ -39,6 +39,7 @@ struct FMHRuntimeBridgePreparedPlacement
     TWeakObjectPtr<AMHCompositeActor> Source;
     FMHRuntimeCompositeInput Input;
     int32 Seed = 0;
+    int32 AppearanceSeed = 0;
     FTransform Transform;
 };
 
@@ -290,12 +291,14 @@ bool MHRuntimeBridgePreflight(UWorld& World, TArray<FMHRuntimeBridgePreparedPlac
         FMHRuntimeBridgePreparedPlacement Prepared;
         Prepared.Source = Source;
         Prepared.Seed = Source->GetSeed();
+        // Same append-only handoff path the layout Seed already travels.
+        Prepared.AppearanceSeed = Source->GetAppearanceSeed();
         Prepared.Transform = Source->GetActorTransform();
         if (!MHBuildRuntimeCompositeInput(*Source, Prepared.Input, Error)) return false;
         FMHRandomSourceGraph Graph;
         FMHResolvedCompositePlan Plan;
         if (!MHDecodeRuntimeCompositeGraph(Prepared.Input.GraphBytes, Graph, Error) ||
-            !MHResolveCompositePlan(Graph, Prepared.Seed, Plan, Error) ||
+            !MHResolveCompositePlan(Graph, Prepared.Seed, Prepared.AppearanceSeed, Plan, Error) ||
             !MHValidateResolvedPlacementTransforms(Plan, Prepared.Transform, Error)) return false;
         Out.Add(MoveTemp(Prepared));
     }
@@ -360,7 +363,11 @@ bool MHRuntimeBridgeMaterialize(UWorld& World, const TArray<FMHRuntimeBridgePrep
             return false;
         }
         Overlay.RuntimeActors.Add(Runtime);
-        if (!Runtime->Configure(Placement.Input, Placement.Seed, Error))
+        // The base index is a project setting; the editor module resolves it
+        // once at handoff so cooked runtime never reads editor settings.
+        Runtime->SetAppearanceCustomDataBaseIndex(
+            GetDefault<UMHCompositeSettings>()->AppearanceCustomDataBaseIndex);
+        if (!Runtime->Configure(Placement.Input, Placement.Seed, Placement.AppearanceSeed, Error))
         {
             MHRuntimeBridgeRemoveOverlay(World, Overlay);
             return false;

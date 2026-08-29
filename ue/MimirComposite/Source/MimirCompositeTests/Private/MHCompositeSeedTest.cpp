@@ -468,7 +468,7 @@ bool FMHCompositeSeedDeterminismTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("actor input can be rebuilt strictly from applied receipts"),
         MHBuildAppliedCompositeGraph(*Root, *GetDefault<UMHCompositeSettings>(), AppliedGraph, Dependencies, Error));
     FMHResolvedCompositePlan Direct;
-    if (!TestTrue(TEXT("one shared resolver reproduces actor plan"), MHResolveCompositePlan(AppliedGraph, 100, Direct, Error))) return false;
+    if (!TestTrue(TEXT("one shared resolver reproduces actor plan"), MHResolveCompositePlan(AppliedGraph, 100, First->GetAppearanceSeed(), Direct, Error))) return false;
     TestEqual(TEXT("actor signature equals shared resolver signature"), Before.ResolvedSignature, Direct.ResolvedSignature);
     TestTrue(TEXT("actor trace equals shared resolver trace"), SeedTestTraceEqual(Before, Direct));
     TestEqual(TEXT("read-only derived signature reflects the plan"), SeedTestSignature(*First), Before.ResolvedSignature);
@@ -731,7 +731,7 @@ bool FMHCompositeSeedConstantTraceTest::RunTest(const FString& Parameters)
     FString Error;
     FMHResolvedCompositePlan Expected;
     if (!MHBuildAppliedCompositeGraph(*Root, *GetDefault<UMHCompositeSettings>(), Graph, Dependencies, Error) ||
-        !MHResolveCompositePlan(Graph, 200, Expected, Error))
+        !MHResolveCompositePlan(Graph, 200, Actor->GetAppearanceSeed(), Expected, Error))
     {
         AddError(Error);
         return false;

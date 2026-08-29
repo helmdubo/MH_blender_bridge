@@ -24,6 +24,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
+#include "IO/IoHash.h"
 #include "MeshDescription.h"
 #include "PlayInEditorDataTypes.h"
 #include "Serialization/JsonSerializer.h"
@@ -44,6 +45,18 @@ namespace
 {
 
 const int32 ParitySeeds[] = {0, 1, 2, 42, 123, 1024, 2147483647};
+
+/**
+ * Every parity lane resolves the same appearance seed for a given layout seed,
+ * so the S6.3 appearance arrays can be compared across lanes exactly like the
+ * layout arrays already are. The derivation is the frozen migration primitive,
+ * which keeps the value reproducible from the immutable seed set alone.
+ */
+int32 ParityAppearanceSeed(const int32 Seed)
+{
+    return MHDeriveAppearanceSeedFromLayoutSeed(Seed);
+}
+
 
 bool ParityHostGate(FAutomationTestBase& Test, bool& bRun)
 {
@@ -359,7 +372,9 @@ struct FParityFixture
         AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
         if (!Test.TestNotNull(TEXT("editor parity placement"), Actor)) return nullptr;
         Actor->SetAutoSeed(false);
+        Actor->SetAutoAppearanceSeed(false);
         Actor->SetSeed(Seed);
+        Actor->SetAppearanceSeed(ParityAppearanceSeed(Seed));
         Actor->SetCompositeAsset(Root);
         if (!Test.TestNotNull(*Actor->GetLastPlacementError(), Actor->GetResolvedPlan())) return nullptr;
         return Actor;
@@ -381,6 +396,42 @@ struct FParityFixture
                 UEditorLoadingAndSavingUtils::SaveMap(World, TEXT("/Game/MimirS6/RuntimeParity")));
     }
 };
+
+/**
+ * Independent oracle: rebuild every appearance value straight from the stream
+ * primitive instead of trusting the resolver that produced the report. Also
+ * pins the channel count, the per-channel order, and the PlacementSignature
+ * composition rule.
+ */
+bool CheckAppearanceContract(FAutomationTestBase& Test, const FMHResolvedCompositePlan& Plan, const int32 Seed)
+{
+    bool bPassed = Test.TestEqual(TEXT("lane resolves the agreed appearance seed"),
+        Plan.Appearance.AppearanceSeed, ParityAppearanceSeed(Seed));
+    if (!Test.TestEqual(TEXT("exactly MH_APPEARANCE_CHANNELS draws per leaf"),
+            Plan.Appearance.Draws.Num(), Plan.Leaves.Num() * MH_APPEARANCE_CHANNELS)) return false;
+    for (int32 Index = 0; Index < Plan.Leaves.Num(); ++Index)
+    {
+        const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[Index];
+        FMHRandomStream1 Stream = MHMakeNodeRandomStream(Plan.Appearance.AppearanceSeed, Leaf.AppearanceBoundaryPath);
+        for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+        {
+            const FMHResolvedCompositeAppearanceDraw& Draw = Plan.Appearance.Draws[Index * MH_APPEARANCE_CHANNELS + Channel];
+            const uint32 Expected = Stream.NextU32();
+            bPassed &= Test.TestEqual(TEXT("appearance draw belongs to its leaf"), Draw.NodePath, Leaf.Origin);
+            bPassed &= Test.TestEqual(TEXT("appearance draw records its boundary"), Draw.BoundaryPath, Leaf.AppearanceBoundaryPath);
+            bPassed &= Test.TestEqual(TEXT("channels are drawn in order without gaps"), Draw.Channel, Channel);
+            bPassed &= Test.TestEqual(TEXT("RawU32 matches the independent stream"), Draw.RawU32, Expected);
+            bPassed &= Test.TestEqual(TEXT("leaf channel is derived from RawU32"),
+                Leaf.AppearanceChannels[Channel], static_cast<float>(static_cast<double>(Expected) / 4294967296.0));
+        }
+    }
+    const FString Concatenated = Plan.ResolvedSignature + Plan.Appearance.AppearanceSignature;
+    const FTCHARToUTF8 Utf8(*Concatenated, Concatenated.Len());
+    const FIoHash Hash = FIoHash::HashBuffer(Utf8.Get(), static_cast<uint64>(Utf8.Length()));
+    bPassed &= Test.TestEqual(TEXT("PlacementSignature hashes both signatures without a separator"),
+        Plan.PlacementSignature, TEXT("blake3-160:") + LexToString(Hash).ToLower());
+    return bPassed;
+}
 
 bool RecordEditor(FAutomationTestBase& Test, const AMHCompositeActor& Actor,
     const TSharedPtr<FJsonObject>& Golden, TArray<TSharedPtr<FJsonValue>>& Reports)
@@ -406,7 +457,7 @@ bool RecordEditor(FAutomationTestBase& Test, const AMHCompositeActor& Actor,
         return false;
     }
     Reports.Add(MakeShared<FJsonValueObject>(Report));
-    return CheckParityPlan(Test, Golden, Report);
+    return CheckParityPlan(Test, Golden, Report) & CheckAppearanceContract(Test, *Plan, Plan->Seed);
 }
 
 bool RecordRuntime(FAutomationTestBase& Test, const AMHRuntimeCompositeActor& Actor,
@@ -422,7 +473,7 @@ bool RecordRuntime(FAutomationTestBase& Test, const AMHRuntimeCompositeActor& Ac
         return false;
     }
     Reports.Add(MakeShared<FJsonValueObject>(Report));
-    return CheckParityPlan(Test, Golden, Report);
+    return CheckParityPlan(Test, Golden, Report) & CheckAppearanceContract(Test, *Plan, Plan->Seed);
 }
 
 bool WriteReports(FAutomationTestBase& Test, const FString& Lane, const FString& WorldType,
@@ -556,7 +607,7 @@ bool FMHRuntimeSerializedParityTest::RunTest(const FString& Parameters)
     for (const int32 Seed : ParitySeeds)
     {
         AMHRuntimeCompositeActor* Actor = Fixture.World->SpawnActor<AMHRuntimeCompositeActor>();
-        if (!TestNotNull(TEXT("runtime materializer placement"), Actor) || !Actor->Configure(Input, Seed, Error))
+        if (!TestNotNull(TEXT("runtime materializer placement"), Actor) || !Actor->Configure(Input, Seed, ParityAppearanceSeed(Seed), Error))
         {
             AddError(Error);
             return false;
