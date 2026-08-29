@@ -397,11 +397,27 @@ def _invoke_composite_export(operator, context):
     return operator.execute(context)
 
 
+def _format_export_warning(warning):
+    """Render both warning shapes the report can carry.
+
+    Adapter warnings are dicts with code/node_path/message; writer warnings
+    (material merges, dropped collision nodes) are (code, subjects, message)
+    tuples. Anything else degrades to its repr instead of a formatter crash
+    after a successful publication.
+    """
+    if isinstance(warning, dict):
+        return (f"{warning.get('code', 'MH_W')}: "
+                f"{warning.get('node_path', '')}: "
+                f"{warning.get('message', '')}")
+    if isinstance(warning, (tuple, list)) and len(warning) == 3:
+        code, subjects, message = warning
+        return f"{code}: {', '.join(str(row) for row in subjects)}: {message}"
+    return repr(warning)
+
+
 def _report_export_warnings(operator, report):
     for warning in report.get("warnings", []):
-        operator.report({"WARNING"},
-                        f"{warning['code']}: {warning.get('node_path', '')}: "
-                        f"{warning.get('message', '')}")
+        operator.report({"WARNING"}, _format_export_warning(warning))
 
 
 def _export_failure_report(exc):

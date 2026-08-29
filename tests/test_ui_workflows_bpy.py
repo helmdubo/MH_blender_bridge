@@ -63,6 +63,19 @@ def test_register_exposes_only_v4_workflow_surfaces():
     assert not hasattr(bpy.types.Object, "mh4blend")
 
 
+def test_export_warning_formatter_accepts_both_report_shapes():
+    # Field regression: writer warnings are (code, subjects, message) tuples,
+    # adapter warnings are dicts; the operator reporter crashed on tuples
+    # AFTER a successful publication.
+    as_dict = ops._format_export_warning(
+        {"code": "MH_W_X", "node_path": "root:nodes[0]", "message": "m"})
+    assert as_dict == "MH_W_X: root:nodes[0]: m"
+    as_tuple = ops._format_export_warning(
+        ("MH_W_DAGOR_CONSTRUCT_DROPPED", ("paint", "paint.001"), "merged"))
+    assert as_tuple == "MH_W_DAGOR_CONSTRUCT_DROPPED: paint, paint.001: merged"
+    assert ops._format_export_warning(42) == "42"
+
+
 def test_material_export_option_is_forwarded_to_fbx_workflow(tmp_path, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     mh4blend.register()
