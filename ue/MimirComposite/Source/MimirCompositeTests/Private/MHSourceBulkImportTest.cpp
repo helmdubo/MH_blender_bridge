@@ -12,6 +12,8 @@
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImporter.h"
 #include "Source/MHSourceImportMetrics.h"
+#include "Texture/MHTextureSourceData.h"
+#include "Engine/Texture.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
 
@@ -360,6 +362,10 @@ bool FMHSourceBulkImportCrashRecoveryTest::RunTest(const FString& Parameters)
         bInitialExecuted);
     bool bPassed = EntriesHaveNoErrors(*this, InitialAnalysis, TEXT("initial import"));
     bPassed &= TestTrue(TEXT("initial texture import executes"), bInitialExecuted);
+    const FMHSourceAnalysisEntry* InitialEntry =
+        InitialAnalysis.Find(Fixture.Scope.ResourceKeys[0]);
+    bPassed &= TestNotNull(TEXT("initial analysis contains texture"), InitialEntry);
+    const FString InitialSourceHash = InitialEntry != nullptr ? InitialEntry->RawHash : FString();
 
     const FString PackageFilename = FPackageName::LongPackageNameToFilename(
         BulkGeneratedPackageName(Fixture.Scope.ResourceKeys[0]),
@@ -400,6 +406,22 @@ bool FMHSourceBulkImportCrashRecoveryTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("interruption before save leaves package bytes unchanged"),
         BeforePackageBytes == AfterInterruptedPackageBytes);
+
+    // A real crash discards the mutated in-memory UObject and reloads the last
+    // durable receipt. Reproduce that process boundary without touching the
+    // package file whose byte identity is asserted above.
+    const FString ObjectPath = BulkGeneratedPackageName(Fixture.Scope.ResourceKeys[0]) +
+        TEXT(".") + Fixture.Scope.ResourceKeys[0].LogicalName;
+    UTexture* InterruptedTexture = LoadObject<UTexture>(nullptr, *ObjectPath);
+    UMHTextureSourceData* InterruptedReceipt = InterruptedTexture != nullptr
+        ? Cast<UMHTextureSourceData>(InterruptedTexture->GetAssetUserDataOfClass(
+            UMHTextureSourceData::StaticClass()))
+        : nullptr;
+    bPassed &= TestNotNull(TEXT("interrupted texture retains an in-memory receipt"), InterruptedReceipt);
+    if (InterruptedReceipt != nullptr)
+    {
+        InterruptedReceipt->SourceHash = InitialSourceHash;
+    }
 
     FMHSourceAnalysis RetryAnalysis;
     bool bRetryExecuted = false;

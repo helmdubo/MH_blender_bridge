@@ -15,6 +15,7 @@
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportBatch.h"
 #include "Source/MHSourceImportMetrics.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticParameterSet.h"
@@ -225,6 +226,10 @@ bool ResolveTextures(
 
 bool SaveMaterialPackage(UMaterialInstanceConstant& Material, FString& OutError)
 {
+    if (MHDeferSourceImportPersistence(Material))
+    {
+        return true;
+    }
     FMHSourceImportMetricScope MetricScope(
         EMHSourceImportMetricResource::Material,
         EMHSourceImportMetricStage::SavePackage);
@@ -688,6 +693,11 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
     Material->PostEditChange();
+    if (MHIsSourceImportBatchActive())
+    {
+        MHQueueSourceImportCompilation();
+    }
+    if (!MHIsSourceImportBatchActive())
     {
         FMHSourceImportMetricScope WaitScope(
             EMHSourceImportMetricResource::Material,
@@ -734,7 +744,13 @@ FMHMaterialOperationResult MHImportMaterialV4(
         Result.Warnings.Add(RebindEvent);
         UE_LOG(LogMHMaterialImport, Warning, TEXT("%s"), *RebindEvent);
     }
-    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    if (MHIsSourceImportBatchActive())
+    {
+        MHQueueSourceImportSourceGuard(Entry.Key, Entry.PayloadPath, InitialSourceHash);
+        MHQueueSourceImportPackage(*Material, Entry.Key);
+        MHQueueSourceImportCompletion(Entry.Key, false);
+    }
+    else if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
     {
         return Result;
     }
