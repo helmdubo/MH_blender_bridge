@@ -19,6 +19,7 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "StaticMeshAttributes.h"
@@ -61,6 +62,9 @@ bool LoadSourceBytes(const FString& Filename, TArray<uint8>& OutBytes, FString& 
 
 bool SaveStaticMeshPackage(UStaticMesh& StaticMesh, FString& OutError)
 {
+    FMHSourceImportMetricScope MetricScope(
+        EMHSourceImportMetricResource::StaticMesh,
+        EMHSourceImportMetricStage::SavePackage);
     UPackage* Package = StaticMesh.GetOutermost();
     if (Package == nullptr)
     {
@@ -711,7 +715,12 @@ bool BuildTraceCollisionMesh(
     TArray<FText> BuildErrors;
     TraceMesh->Build(true, &BuildErrors);
     TArray<UStaticMesh*> MeshesToFinish{TraceMesh};
-    FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
+    {
+        FMHSourceImportMetricScope WaitScope(
+            EMHSourceImportMetricResource::StaticMesh,
+            EMHSourceImportMetricStage::BuildWait);
+        FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
+    }
     if (!BuildErrors.IsEmpty())
     {
         return FailStaticMeshImport(
@@ -1063,7 +1072,12 @@ bool FMHStaticMeshBuilder::Rebuild(
     TArray<FText> BuildErrors;
     StaticMesh.Build(true, &BuildErrors);
     TArray<UStaticMesh*> MeshesToFinish{&StaticMesh};
-    FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
+    {
+        FMHSourceImportMetricScope WaitScope(
+            EMHSourceImportMetricResource::StaticMesh,
+            EMHSourceImportMetricStage::BuildWait);
+        FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
+    }
     if (!BuildErrors.IsEmpty())
     {
         return FailStaticMeshImport(
@@ -1082,6 +1096,9 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
     const FString& SourceRoot,
     const bool bForceReimport)
 {
+    FMHSourceImportMetricScope CreateScope(
+        EMHSourceImportMetricResource::StaticMesh,
+        EMHSourceImportMetricStage::Create);
     FMHStaticMeshOperationResult Result;
     if (Entry.Key.Kind != EMHResourceKind::StaticMesh || !Entry.Key.IsCanonical() ||
         Entry.PayloadPath.IsEmpty() || Entry.SourcePath.IsEmpty())

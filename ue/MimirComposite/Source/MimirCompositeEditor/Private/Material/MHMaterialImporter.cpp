@@ -15,6 +15,7 @@
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticParameterSet.h"
 #include "Texture/MHTextureImporter.h"
@@ -224,6 +225,9 @@ bool ResolveTextures(
 
 bool SaveMaterialPackage(UMaterialInstanceConstant& Material, FString& OutError)
 {
+    FMHSourceImportMetricScope MetricScope(
+        EMHSourceImportMetricResource::Material,
+        EMHSourceImportMetricStage::SavePackage);
     UPackage* Package = Material.GetOutermost();
     const FString PackageName = Package->GetName();
     if (!FPackageName::IsValidLongPackageName(PackageName))
@@ -569,6 +573,9 @@ FMHMaterialOperationResult MHImportMaterialV4(
     const FString& SourceRoot,
     const UMHCompositeSettings& Settings)
 {
+    FMHSourceImportMetricScope CreateScope(
+        EMHSourceImportMetricResource::Material,
+        EMHSourceImportMetricStage::Create);
     FMHMaterialOperationResult Result;
     if (Entry.Key.Kind != EMHResourceKind::Material || !Entry.Key.IsCanonical() ||
         Entry.PayloadPath.IsEmpty() || Entry.SourcePath.IsEmpty())
@@ -681,7 +688,12 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
     Material->PostEditChange();
-    FAssetCompilingManager::Get().FinishAllCompilation();
+    {
+        FMHSourceImportMetricScope WaitScope(
+            EMHSourceImportMetricResource::Material,
+            EMHSourceImportMetricStage::BuildWait);
+        FAssetCompilingManager::Get().FinishAllCompilation();
+    }
 
     FMHMaterialDocument AppliedExtract;
     TArray<uint8> AppliedBytes;

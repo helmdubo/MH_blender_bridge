@@ -43,6 +43,7 @@ constexpr double StartupImportDelaySeconds = 1.0;
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void(EMHResourceKind)> GImportStageObserverForTests;
 TFunction<void(const FMHResourceKey&)> GProfileFreshnessAssetLoadObserverForTests;
+TFunction<bool(EMHSourceBulkImportPhase)> GBulkImportPhaseTestHook;
 #endif
 
 void ObserveImportStage(const EMHResourceKind Kind)
@@ -64,6 +65,13 @@ bool ShouldExecuteEntry(const FMHSourceAnalysisEntry& Entry)
          Entry.Change == EMHSourceChange::Reimport ||
          Entry.Change == EMHSourceChange::Move);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+bool ContinueAfterBulkImportPhase(const EMHSourceBulkImportPhase Phase)
+{
+    return !GBulkImportPhaseTestHook || GBulkImportPhaseTestHook(Phase);
+}
+#endif
 
 bool MaterialReferencesFailedTexture(
     const FMHSourceAnalysisEntry& Entry,
@@ -362,6 +370,12 @@ bool ExecutePreparedSourceImports(
             bOutExecuted = true;
         }
     }
+#if WITH_DEV_AUTOMATION_TESTS
+    if (!ContinueAfterBulkImportPhase(EMHSourceBulkImportPhase::AssetsPrepared))
+    {
+        return false;
+    }
+#endif
     return !OutAnalysis.HasErrors();
 }
 
@@ -531,6 +545,12 @@ void MHSetProfileFreshnessAssetLoadObserverForTests(
     TFunction<void(const FMHResourceKey&)> Observer)
 {
     GProfileFreshnessAssetLoadObserverForTests = MoveTemp(Observer);
+}
+
+void MHSetBulkImportPhaseTestHook(
+    TFunction<bool(EMHSourceBulkImportPhase)> Hook)
+{
+    GBulkImportPhaseTestHook = MoveTemp(Hook);
 }
 #endif
 

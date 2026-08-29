@@ -13,6 +13,7 @@
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Texture/MHTextureSourceData.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -94,6 +95,9 @@ bool SaveTexturePackage(
     const FString& PackageName,
     FString& OutError)
 {
+    FMHSourceImportMetricScope MetricScope(
+        EMHSourceImportMetricResource::Texture,
+        EMHSourceImportMetricStage::SavePackage);
     UPackage* Package = Texture.GetOutermost();
     Package->MarkPackageDirty();
     FSavePackageArgs Args;
@@ -126,6 +130,9 @@ FMHTextureOperationResult MHEnsureTextureV4(
     const FString& SourceRoot,
     const bool bForceReimport)
 {
+    FMHSourceImportMetricScope CreateScope(
+        EMHSourceImportMetricResource::Texture,
+        EMHSourceImportMetricStage::Create);
     FMHTextureOperationResult Result;
     if (Entry.Key.Kind != EMHResourceKind::Texture ||
         !Entry.Key.IsCanonical() ||
@@ -247,7 +254,12 @@ FMHTextureOperationResult MHEnsureTextureV4(
 #endif
 
     MHTextureApplyManagedSettings(*Texture, Entry.Key.LogicalName);
-    FAssetCompilingManager::Get().FinishAllCompilation();
+    {
+        FMHSourceImportMetricScope WaitScope(
+            EMHSourceImportMetricResource::Texture,
+            EMHSourceImportMetricStage::BuildWait);
+        FAssetCompilingManager::Get().FinishAllCompilation();
+    }
     if (!SaveTexturePackage(*Texture, PackageName, Result.Error))
     {
         return Result;

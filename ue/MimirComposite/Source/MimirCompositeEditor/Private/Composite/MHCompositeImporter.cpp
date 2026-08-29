@@ -12,6 +12,7 @@
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Source/MHSourceResolver.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -163,6 +164,9 @@ bool CompositeRelativeToRoot(const FString& Root, const FString& Path, FString& 
 
 bool SaveAssetPackage(UMHCompositeAsset& Asset, FString& OutError)
 {
+    FMHSourceImportMetricScope MetricScope(
+        EMHSourceImportMetricResource::Composite,
+        EMHSourceImportMetricStage::SavePackage);
     UPackage* Package = Asset.GetOutermost();
     const FString PackageName = Package->GetName();
     if (!FPackageName::IsValidLongPackageName(PackageName))
@@ -298,6 +302,9 @@ FMHCompositeOperationResult MHImportCompositeV5(
     const FString& SourceRoot,
     const UMHCompositeSettings& Settings)
 {
+    FMHSourceImportMetricScope CreateScope(
+        EMHSourceImportMetricResource::Composite,
+        EMHSourceImportMetricStage::Create);
     FMHCompositeOperationResult Result;
     (void)SourceRoot;
     if (Entry.Key.Kind != EMHResourceKind::Composite || !Entry.Key.IsCanonical() ||
