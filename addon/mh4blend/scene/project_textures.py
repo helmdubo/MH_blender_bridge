@@ -110,6 +110,22 @@ def copy_all_dagor_textures_to_project(
     return report
 
 
+def _write_texture_slot(textures, slot, value):
+    """Write one slot without firing dag4blend's per-slot RNA update callback.
+
+    Every dag4blend ``texN`` StringProperty carries ``update=update_material``,
+    which rebuilds the material's whole shader node tree on each attribute
+    assignment - the reason a full-scene remap took seconds. Item assignment
+    hits the same IDProperty storage the RNA getter reads while bypassing the
+    callback; dag4blend's own ``update_tex_paths`` writes exactly this way.
+    A carrier without item access falls back to plain attribute assignment.
+    """
+    try:
+        textures[slot] = value
+    except TypeError:
+        setattr(textures, slot, value)
+
+
 def remap_all_dagor_textures_to_project(
         *, source_root, materials=None) -> dict:
     """Point every Dagor texture slot at the copied project file or roll back."""
@@ -135,7 +151,7 @@ def remap_all_dagor_textures_to_project(
             current = getattr(textures, binding.slot)
             if current == remapped:
                 continue
-            setattr(textures, binding.slot, remapped)
+            _write_texture_slot(textures, binding.slot, remapped)
             if getattr(textures, binding.slot) != remapped:
                 raise RuntimeError(
                     f"texture path write did not persist: "
@@ -145,7 +161,7 @@ def remap_all_dagor_textures_to_project(
         rollback_errors = []
         for textures, slot, previous in reversed(snapshots):
             try:
-                setattr(textures, slot, previous)
+                _write_texture_slot(textures, slot, previous)
                 if getattr(textures, slot) != previous:
                     raise RuntimeError("rollback read-back differs")
             except Exception as rollback_error:
