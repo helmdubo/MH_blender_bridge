@@ -4,6 +4,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositePlacementMetrics.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "GameFramework/Actor.h"
@@ -231,6 +232,7 @@ struct FAppliedPlanBuilder
             // tag provider, hiding all six valid receipt tags. Join only this
             // closure member before live admission; never skip tag validation.
             UStaticMesh* PendingMeshes[] = {Mesh};
+            FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
             FStaticMeshCompilingManager::Get().FinishCompilation(PendingMeshes);
         }
         const UMHStaticMeshImportData* Receipt = Mesh != nullptr ? Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData()) : nullptr;
@@ -372,9 +374,31 @@ UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
     return Path.IsEmpty() ? nullptr : LoadObject<UObject>(nullptr, *Path);
 }
 
+bool MHValidateAppliedCompositeRoot(const UMHCompositeAsset& Root, FString& OutError)
+{
+    OutError.Reset();
+    const FMHResourceKey Key = AppliedPlanKey(EMHResourceKind::Composite, Root.LogicalName);
+    if (!AppliedPlanReceipt(
+            Root, Key, Root.SourceRelativePath, Root.SourceHash, Root.AppliedHash, OutError))
+    {
+        return false;
+    }
+    if (MHLoadAppliedResource(Key, OutError) != &Root)
+    {
+        if (OutError.IsEmpty())
+        {
+            OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: ") + Key.ToString() +
+                TEXT(" does not identify this unique generated asset");
+        }
+        return false;
+    }
+    return true;
+}
+
 bool MHBuildAppliedCompositeGraph(const UMHCompositeAsset& Root, const UMHCompositeSettings& Settings,
     FMHRandomSourceGraph& OutGraph, TSet<FMHResourceKey>& OutDependencies, FString& OutError)
 {
+    FMHPlacementStageScope Stage(EMHPlacementStage::BuildAppliedGraph);
     OutGraph = FMHRandomSourceGraph();
     OutGraph.RootComposite = Root.LogicalName;
     OutDependencies.Reset();

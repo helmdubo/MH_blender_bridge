@@ -1,11 +1,14 @@
 #include "Composite/MHCompositeActor.h"
 
 #include "Composite/MHCompositeAppearanceTransport.h"
+#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositePlacementCompiler.h"
+#include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Engine/World.h"
+#include "Editor.h"
 #include "LevelEditor.h"
 #include "Logging/MessageLog.h"
 #include "Misc/Guid.h"
@@ -32,6 +35,8 @@ void BroadcastMHCompositeComponentsEdited()
 void DestroyMHRetiredComponents(const TArray<TObjectPtr<UActorComponent>>& Previous,
     const TArray<TObjectPtr<UActorComponent>>& Current)
 {
+    UE::MimirComposite::FMHPlacementStageScope Stage(
+        UE::MimirComposite::EMHPlacementStage::DestroyRetiredComponents);
     if (Previous.IsEmpty()) return;
     // One membership set instead of a linear Contains per retired candidate.
     // Retirement order and the set of destroyed components are unchanged.
@@ -299,6 +304,23 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         TSet<FMHResourceKey> Dependencies;
         if (Asset == nullptr)
             Error = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:") + Name + TEXT(" has no generated asset");
+        else if (UMHCompositeDefinitionSubsystem* Definitions =
+                     GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>() : nullptr)
+        {
+            if (TSharedPtr<const FMHRandomSourceGraph> Shared =
+                    Definitions->GetOrBuildDefinition(*Asset, *Settings, Dependencies, Error))
+            {
+                CandidateGraph = MoveTemp(Shared);
+                PlacementDependencies = MoveTemp(Dependencies);
+            }
+            else
+            {
+                // Failed admissions are never cached. Preserve every key the
+                // builder discovered so its existing targeted notification can
+                // retry this actor when a missing dependency appears.
+                PlacementDependencies.Append(Dependencies);
+            }
+        }
         else if (MHBuildAppliedCompositeGraph(*Asset, *Settings, *Graph, Dependencies, Error))
         {
             CandidateGraph = Graph;
@@ -324,9 +346,15 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             CandidatePlan->Seed = Seed;
             MHResolveCompositeAppearance(*CandidatePlan, AppearanceSeed);
         }
-        else if (!MHResolveCompositePlan(*CandidateGraph, Seed, AppearanceSeed, *CandidatePlan, Error))
+        else
         {
-            if (!Error.StartsWith(TEXT("MH_E_"))) Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
+            bool bResolved = false;
+            {
+                FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
+                bResolved = MHResolveCompositePlan(*CandidateGraph, Seed, AppearanceSeed, *CandidatePlan, Error);
+            }
+            if (!bResolved && !Error.StartsWith(TEXT("MH_E_")))
+                Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
         }
         if (Error.IsEmpty()) MHValidateResolvedPlacementTransforms(*CandidatePlan, GetActorTransform(), Error);
     }

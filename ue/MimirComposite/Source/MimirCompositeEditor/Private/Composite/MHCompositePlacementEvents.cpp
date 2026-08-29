@@ -2,6 +2,8 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeDefinitionSubsystem.h"
+#include "Editor.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 
@@ -10,6 +12,14 @@ namespace UE::MimirComposite
 
 int32 MHRebuildAllLoadedCompositeActors()
 {
+    if (GEditor != nullptr)
+    {
+        if (UMHCompositeDefinitionSubsystem* Definitions =
+                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
+        {
+            Definitions->InvalidateAllDefinitions();
+        }
+    }
     int32 RebuiltCount = 0;
     for (TObjectIterator<AMHCompositeActor> It; It; ++It)
     {
@@ -32,6 +42,15 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
     if (!Key.IsCanonical())
     {
         return;
+    }
+
+    if (GEditor != nullptr)
+    {
+        if (UMHCompositeDefinitionSubsystem* Definitions =
+                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
+        {
+            Definitions->InvalidateDefinition(Key);
+        }
     }
 
     for (TObjectIterator<AMHCompositeActor> It; It; ++It)
