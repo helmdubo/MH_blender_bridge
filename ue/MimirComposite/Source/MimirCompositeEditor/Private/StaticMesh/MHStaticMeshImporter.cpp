@@ -216,12 +216,19 @@ bool ValidateBuildPlan(const FMHStaticMeshBuildPlan& Plan, FString& OutError)
     return true;
 }
 
+/**
+ * Build one LOD MeshDescription and report the slot name of every polygon group
+ * in creation order. UE turns each polygon group into one render section in that
+ * same order, so the reported list is the LOD's section -> slot table.
+ */
 bool BuildMeshDescriptionForLOD(
     const FMHSceneIR& Scene,
     const int32 LODLevel,
     FMeshDescription& OutDescription,
+    TArray<FString>& OutSectionSlotNames,
     FString& OutError)
 {
+    OutSectionSlotNames.Reset();
     FStaticMeshAttributes Attributes(OutDescription);
     Attributes.Register();
     TVertexAttributesRef<FVector3f> Positions = Attributes.GetVertexPositions();
@@ -231,7 +238,8 @@ bool BuildMeshDescriptionForLOD(
     TPolygonGroupAttributesRef<FName> SlotNames = Attributes.GetPolygonGroupMaterialSlotNames();
 
     TMap<FString, FPolygonGroupID> PolygonGroups;
-    auto FindOrCreatePolygonGroup = [&OutDescription, &SlotNames, &PolygonGroups](const FString& SlotName)
+    auto FindOrCreatePolygonGroup =
+        [&OutDescription, &SlotNames, &PolygonGroups, &OutSectionSlotNames](const FString& SlotName)
     {
         if (const FPolygonGroupID* Existing = PolygonGroups.Find(SlotName))
         {
@@ -240,6 +248,7 @@ bool BuildMeshDescriptionForLOD(
         const FPolygonGroupID Created = OutDescription.CreatePolygonGroup();
         SlotNames[Created] = SlotName.IsEmpty() ? NAME_None : FName(*SlotName);
         PolygonGroups.Add(SlotName, Created);
+        OutSectionSlotNames.Add(SlotName);
         return Created;
     };
 
@@ -381,19 +390,31 @@ bool FMHStaticMeshBuilder::Rebuild(
 
     // Build every MeshDescription before touching the target UObject.
     TArray<FMeshDescription> Descriptions;
+    TArray<TArray<FString>> SectionSlotNames;
     Descriptions.SetNum(Scene.LODLevels.Num());
+    SectionSlotNames.SetNum(Scene.LODLevels.Num());
     for (const int32 LODLevel : Scene.LODLevels)
     {
-        if (!BuildMeshDescriptionForLOD(Scene, LODLevel, Descriptions[LODLevel], OutError))
+        if (!BuildMeshDescriptionForLOD(
+                Scene,
+                LODLevel,
+                Descriptions[LODLevel],
+                SectionSlotNames[LODLevel],
+                OutError))
         {
             return false;
         }
     }
 
     TArray<FStaticMaterial> StaticMaterials;
+    // Slot index of every union material name; the mesh material list is exactly
+    // Scene.MaterialNames, so this is the authoritative section -> slot table.
+    TMap<FString, int32> MaterialSlotIndices;
     if (Scene.MaterialNames.IsEmpty())
     {
         StaticMaterials.Emplace(nullptr, NAME_None, NAME_None);
+        // A mesh with no slot at all keeps its single unnamed placeholder.
+        MaterialSlotIndices.Add(FString(), 0);
     }
     else
     {
@@ -401,7 +422,33 @@ bool FMHStaticMeshBuilder::Rebuild(
         for (const FString& MaterialName : Scene.MaterialNames)
         {
             const FName SlotName(*MaterialName);
+            MaterialSlotIndices.Add(MaterialName, StaticMaterials.Num());
             StaticMaterials.Emplace(Plan.Materials.FindRef(MaterialName), SlotName, SlotName);
+        }
+    }
+
+    // Resolve every LOD section to a union slot before mutating the asset, so a
+    // scene whose nodes reference a slot outside the union fails closed instead
+    // of silently rendering with the positionally matching material.
+    TArray<TArray<int32>> SectionMaterialIndices;
+    SectionMaterialIndices.SetNum(SectionSlotNames.Num());
+    for (int32 LODIndex = 0; LODIndex < SectionSlotNames.Num(); ++LODIndex)
+    {
+        SectionMaterialIndices[LODIndex].Reserve(SectionSlotNames[LODIndex].Num());
+        for (const FString& SlotName : SectionSlotNames[LODIndex])
+        {
+            const int32* SlotIndex = MaterialSlotIndices.Find(SlotName);
+            if (SlotIndex == nullptr)
+            {
+                return FailStaticMeshImport(
+                    OutError,
+                    TEXT("MH_E_UNRESOLVED_MATERIAL_REFERENCE"),
+                    FString::Printf(
+                        TEXT("LOD%d section slot '%s' is absent from the mesh material union"),
+                        LODIndex,
+                        SlotName.IsEmpty() ? TEXT("<unassigned>") : *SlotName));
+            }
+            SectionMaterialIndices[LODIndex].Add(*SlotIndex);
         }
     }
 
@@ -414,6 +461,12 @@ bool FMHStaticMeshBuilder::Rebuild(
     for (int32 LODIndex = 0; LODIndex < Descriptions.Num(); ++LODIndex)
     {
         FStaticMeshSourceModel& SourceModel = StaticMesh.GetSourceModel(LODIndex);
+        // Every LOD carries authored geometry. UStaticMesh::SetNumSourceModels
+        // seeds LOD1+ with the LOD group's auto-reduction defaults
+        // (PercentTriangles 0.5), which makes the build discard the authored
+        // mesh description and replace it with a reduction of LOD0 - taking the
+        // LOD's own material sections with it. Reset it on every LOD.
+        SourceModel.ResetReductionSetting();
         SourceModel.BuildSettings.bRecomputeNormals = false;
         SourceModel.BuildSettings.bRecomputeTangents = true;
         SourceModel.BuildSettings.bUseMikkTSpace = true;
@@ -424,6 +477,21 @@ bool FMHStaticMeshBuilder::Rebuild(
         CommitParams.bMarkPackageDirty = false;
         CommitParams.bUseHashAsGuid = true;
         StaticMesh.CommitMeshDescription(LODIndex, CommitParams);
+    }
+
+    // Bind each LOD's sections to their own union slots. Without this the
+    // engine's FStaticMeshRenderData::ResolveSectionInfo falls back to the
+    // identity map (section N -> material N), which silently binds a LOD to the
+    // wrong material whenever its slot inventory or order differs from LOD0.
+    for (int32 LODIndex = 0; LODIndex < SectionMaterialIndices.Num(); ++LODIndex)
+    {
+        for (int32 SectionIndex = 0; SectionIndex < SectionMaterialIndices[LODIndex].Num(); ++SectionIndex)
+        {
+            FMeshSectionInfo SectionInfo;
+            SectionInfo.MaterialIndex = SectionMaterialIndices[LODIndex][SectionIndex];
+            StaticMesh.GetSectionInfoMap().Set(LODIndex, SectionIndex, SectionInfo);
+            StaticMesh.GetOriginalSectionInfoMap().Set(LODIndex, SectionIndex, SectionInfo);
+        }
     }
 
     StaticMesh.Sockets.Reset();

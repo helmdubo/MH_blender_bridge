@@ -20,12 +20,25 @@ __all__ = [
     "MeshImportPlan",
     "MeshNode",
     "build_mesh_import_plan",
+    "lod_ordered_material_union",
+    "strip_blender_duplicate_suffix",
     "validate_node_markers",
 ]
 
 
 _CLASS_SUFFIX_RE = re.compile(r"_cls_(?P<mode>phys|trace|both)$")
 _LOD_SUFFIX_RE = re.compile(r"_lod(?P<level>\d{2})$")
+# Blender appends ``.001``..``.999`` when a name is already taken. The suffix
+# belongs to the Blender datablock namespace, never to a transported logical
+# resource name (docs/15 §2.3).
+_BLENDER_DUPLICATE_SUFFIX_RE = re.compile(r"\.\d{3}$")
+
+
+def strip_blender_duplicate_suffix(name: str) -> str:
+    """Return ``name`` without one trailing Blender ``.NNN`` duplicate suffix."""
+    if not isinstance(name, str):
+        return name
+    return _BLENDER_DUPLICATE_SUFFIX_RE.sub("", name)
 
 
 @dataclass(frozen=True)
@@ -186,6 +199,45 @@ def _validate_parent_graph(nodes: tuple[MeshNode, ...]) -> dict[str, list[str]]:
     return children
 
 
+def lod_ordered_material_union(
+        nodes: Iterable[ClassifiedMeshNode]) -> tuple[str, ...]:
+    """Return one static mesh's material list as the ordered union of its LODs.
+
+    Owner decision 2026-08-30 (docs/15 §1.1) retired the earlier rule that
+    every higher LOD had to reuse LOD0 slots: real Dagor content authors each
+    LOD with its own materials.  The list is therefore the deterministic union
+
+    * LOD0 slots in order of first appearance, then
+    * slots newly introduced by LOD1 in order of first appearance, then LOD2 …
+    * finally slots owned only by non-render nodes (collision transported by
+      the UE-native ``UCX_`` convention), in node order.
+
+    Node order inside one LOD is the FBX Model order, and slot order inside one
+    node is the FBX material order, so writer, reader and the UE importer all
+    derive the same list from the same bytes.  Each LOD then maps its own
+    sections into this list.
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def take(node: ClassifiedMeshNode) -> None:
+        for slot in node.material_slots:
+            if slot not in seen:
+                seen.add(slot)
+                ordered.append(slot)
+
+    rows = tuple(nodes)
+    render_nodes = [node for node in rows if node.kind == "render"]
+    for level in sorted({node.lod_level for node in render_nodes}):
+        for node in render_nodes:
+            if node.lod_level == level:
+                take(node)
+    for node in rows:
+        if node.kind != "render":
+            take(node)
+    return tuple(ordered)
+
+
 def build_mesh_import_plan(
         resource_name: str,
         nodes: Iterable[MeshNode],
@@ -273,23 +325,8 @@ def build_mesh_import_plan(
                 "MH_E_LOD_LEVELS_SPARSE",
                 [f"lod{level:02d}" for level in missing],
                 "FBX LOD levels must be contiguous from lod00")
-        base_slots = {
-            slot for node in render_nodes if node.lod_level == 0
-            for slot in node.material_slots
-        }
-        higher_slots = {
-            slot for node in render_nodes if node.lod_level != 0
-            for slot in node.material_slots
-        }
-        missing_from_base = sorted(higher_slots - base_slots)
-        if missing_from_base:
-            raise MHValidationError(
-                "MH_E_LOD_SLOT_NOT_IN_BASE", missing_from_base,
-                "higher LOD uses material slots absent from LOD0")
 
-    materials = tuple(dict.fromkeys(
-        slot for node in classified for slot in node.material_slots
-    ))
+    materials = lod_ordered_material_union(classified)
     return MeshImportPlan(
         resource_name=resource_name,
         nodes=tuple(classified),

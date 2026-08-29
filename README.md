@@ -102,15 +102,19 @@ python -m pytest tests/ -q
 
 Сценовый адаптер имеет частичную совместимость, не lossless BLK round-trip:
 корневые настройки и другие потерянные dag4blend данные перечисляются в
-отчёте как невосстановимые. `gameObj` становится неисполняемым `marker`.
-Прижатия в UE и обратного экспорта в Dagor не будет. Отдельная команда
-Convert остаётся явной миграцией сцены; external relink — отдельный opt-in.
-Текущая степень готовности и незакрытые acceptance — в
-[квитанции S6.1](docs/receipts/v5_s6_1.md), а не в этом описании целевого UX.
-Сейчас повторная публикация загруженного FBX и новые metadata-carriers
-ограничены OPEN-V5-22/23. Неизменённый JSON и незагруженный managed source
-переиспользуются. Prefab требует явного `Allow Prefab as Mesh (Lossy)`;
-потеря collision/gameplay-семантики сообщается предупреждением.
+отчёте как невосстановимые. `gameObj` сохраняется отдельным неисполняемым
+kind `gameobj` (имя/TRS в плане, ни актора, ни кода в UE; поправка owner
+2026-08-29, док 13). Узловые `place_type` (raw int, провенанс) и
+`appearance_seed_boundary` доезжают в `.composite`; OPEN-V5-22/23 закрыты
+owner: повторная публикация загруженного FBX **перезаписывает** payload
+штатным staged replace path. Неизменённый canonical JSON и незагруженный
+managed source переиспользуются. Прижатия в UE и обратного экспорта в Dagor
+не будет. Отдельная команда Convert остаётся явной миграцией сцены;
+external relink — отдельный opt-in. Prefab требует явного
+`Allow Prefab as Mesh (Lossy)`; потеря collision/gameplay-семантики
+сообщается предупреждением. R3 смержен в main (PR #30, `16b3981`) как
+**field candidate**; срез S6.1 не объявлен принятым — незакрытые acceptance
+перечислены в [квитанции S6.1](docs/receipts/v5_s6_1.md).
 
 ## Структура репозитория
 

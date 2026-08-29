@@ -7,8 +7,15 @@
 namespace UE::MimirComposite
 {
 
-/** Current owner-ratified static-mesh build semantics. */
-inline constexpr int32 MHStaticMeshImporterVersion = 2;
+/**
+ * Current owner-ratified static-mesh build semantics.
+ *
+ * 3 - V5-S6.1.1 LOD material union: the material list is the LOD-major union of
+ *     every LOD's slots and each LOD's sections are bound through SectionInfoMap.
+ *     Meshes applied by version 2 carry the engine identity section map and must
+ *     be rebuilt once to pick up their real per-LOD material bindings.
+ */
+inline constexpr int32 MHStaticMeshImporterVersion = 3;
 
 /**
  * Suppresses managed-mesh local-edit tracking for importer-owned mutations.

@@ -531,8 +531,14 @@ class MH_OT_import_composite(bpy.types.Operator):
 
 class MH_OT_import_dagor_composite(bpy.types.Operator):
     bl_idname = "mh.import_dagor_composite"
-    bl_label = "Import Dagor Composite"
-    bl_description = "Convert an authoritative .composit.blk closure to MH"
+    bl_label = "Import Dagor Composite (Legacy)"
+    bl_description = (
+        "LEGACY/LIMITED path (a): convert an authoritative .composit.blk "
+        "closure with the strict BLK reader. Not the production route and no "
+        "parity is planned (owner decision 2026-08-30): it maps gameObj onto "
+        "the executable actor kind, admits no empty random variant, and emits "
+        "none of the ratified node carriers. Use the dag4blend scene route "
+        "(export the imported dag4blend Collection) instead")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):

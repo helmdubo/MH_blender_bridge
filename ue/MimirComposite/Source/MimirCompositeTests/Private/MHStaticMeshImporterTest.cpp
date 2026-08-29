@@ -68,6 +68,43 @@ public:
     }
 };
 
+/** Resolver for the LOD material union fixture, which needs several slots. */
+class FStaticMeshUnionTestResolver final : public IMHSourceResolver
+{
+public:
+    TMap<FString, TPair<FString, FString>> Materials;
+
+    virtual FMHSourceSnapshot GetSnapshot() const override
+    {
+        FMHSourceSnapshot Snapshot;
+        for (const TPair<FString, TPair<FString, FString>>& Entry : Materials)
+        {
+            FMHResourceKey Key;
+            Key.Kind = EMHResourceKind::Material;
+            Key.LogicalName = Entry.Key;
+            Snapshot.ResourceKeys.Add(Key);
+        }
+        return Snapshot;
+    }
+
+    virtual FMHResolveOutcome Resolve(const FMHResourceKey& Key) override
+    {
+        FMHResolveOutcome Outcome;
+        if (Key.Kind != EMHResourceKind::Material)
+        {
+            return Outcome;
+        }
+        if (const TPair<FString, FString>* Entry = Materials.Find(Key.LogicalName))
+        {
+            Outcome.Status = EMHResolveStatus::Resolved;
+            Outcome.PayloadPath = Entry->Key;
+            Outcome.RawHash = Entry->Value;
+            Outcome.CandidatePaths.Add(Entry->Key);
+        }
+        return Outcome;
+    }
+};
+
 struct FStaticMeshImporterFixture
 {
     FString SourceRoot;
@@ -302,6 +339,68 @@ bool ExportPlainStaticMeshFbx(
         Socket->LclTranslation.Set(FbxDouble3(-5.0, 6.0, 70.0));
         Scene->GetRootNode()->AddChild(Socket);
     }
+
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+    FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
+    const int32 WriterId = Manager->GetIOPluginRegistry()->GetNativeWriterFormat();
+    if (!Exporter->Initialize(TCHAR_TO_UTF8(*Path), WriterId, IOSettings) ||
+        !Exporter->Export(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Exporter->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    Manager->Destroy();
+    return true;
+}
+
+/**
+ * Two-LOD FBX where LOD1 uses a material LOD0 never references. This is the
+ * shape real Dagor content uses for simplified far-LOD shaders.
+ */
+bool ExportLodUnionStaticMeshFbx(
+    const FString& TemplatePath,
+    const FString& Path,
+    const FString& BaseMaterialName,
+    const FString& FarMaterialName,
+    FString& OutError)
+{
+    OutError.Reset();
+    FbxManager* Manager = FbxManager::Create();
+    if (Manager == nullptr)
+    {
+        OutError = TEXT("FbxManager::Create failed");
+        return false;
+    }
+    FbxIOSettings* IOSettings = FbxIOSettings::Create(Manager, IOSROOT);
+    Manager->SetIOSettings(IOSettings);
+    FbxScene* Scene = FbxScene::Create(Manager, "Scene");
+    FbxImporter* Importer = FbxImporter::Create(Manager, "TemplateImporter");
+    if (!Importer->Initialize(TCHAR_TO_UTF8(*TemplatePath), -1, IOSettings) ||
+        !Importer->Import(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Importer->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    FbxNode* Root = Scene->GetRootNode();
+    while (Root != nullptr && Root->GetChildCount() > 0)
+    {
+        FbxNode* Child = Root->GetChild(0);
+        Root->RemoveChild(Child);
+        Child->Destroy(true);
+    }
+
+    FbxSurfacePhong* BaseMaterial = FbxSurfacePhong::Create(Scene, TCHAR_TO_UTF8(*BaseMaterialName));
+    FbxSurfacePhong* FarMaterial = FbxSurfacePhong::Create(Scene, TCHAR_TO_UTF8(*FarMaterialName));
+
+    FbxMesh* LOD0Mesh = CreateTriangleMesh(*Scene, "union_lod00_geometry", 100.0);
+    FbxNode* LOD0 = AddMeshNode(*Scene, "union_lod00", *LOD0Mesh);
+    BindMaterial(*LOD0Mesh, *LOD0, *BaseMaterial);
+
+    FbxMesh* LOD1Mesh = CreateTriangleMesh(*Scene, "union_lod01_geometry", 50.0);
+    FbxNode* LOD1 = AddMeshNode(*Scene, "union_lod01", *LOD1Mesh);
+    BindMaterial(*LOD1Mesh, *LOD1, *FarMaterial);
 
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
@@ -634,6 +733,144 @@ bool FMHStaticMeshImporterEndToEndTest::RunTest(const FString& Parameters)
     {
         bPassed &= TestEqual(TEXT("receipt advances to replacement hash"), Receipt->SourceHash, Entry.RawHash);
         bPassed &= TestFalse(TEXT("successful apply resets local-edit flag"), Receipt->bLocallyModified);
+    }
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHStaticMeshImporterLodMaterialUnionTest,
+    "Mimir.V4.StaticMesh.Importer.LodMaterialUnion",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHStaticMeshImporterLodMaterialUnionTest::RunTest(const FString& Parameters)
+{
+    const FString Token = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    const FString LogicalName = TEXT("s611_union_") + Token;
+    const FString BaseMaterialName = TEXT("s611_base_") + Token;
+    const FString FarMaterialName = TEXT("s611_far_") + Token;
+    const FString MeshPackage = TEXT("/Game/MH/Generated/Meshes/") + LogicalName;
+
+    FGeneratedPackageCleanup MeshCleanup;
+    MeshCleanup.MeshObjectPath = MeshPackage + TEXT(".") + LogicalName;
+    MeshCleanup.MaterialObjectPath =
+        TEXT("/Game/MH/Generated/Materials/") + BaseMaterialName + TEXT(".") + BaseMaterialName;
+    FGeneratedPackageCleanup FarCleanup;
+    FarCleanup.MaterialObjectPath =
+        TEXT("/Game/MH/Generated/Materials/") + FarMaterialName + TEXT(".") + FarMaterialName;
+
+    FStaticMeshImporterFixture Fixture;
+    FString GoldenRoot;
+    if (!ResolveGoldenRoot(*this, GoldenRoot)) return false;
+    const FString TemplateFbx = FPaths::Combine(GoldenRoot, TEXT("fixtures/axis/axis_probe.fbx"));
+
+    bool bPassed = true;
+    FStaticMeshUnionTestResolver Resolver;
+    TMap<FString, UMaterialInstanceConstant*> Managed;
+    for (const FString& MaterialName : {BaseMaterialName, FarMaterialName})
+    {
+        const FString MaterialPackage = TEXT("/Game/MH/Generated/Materials/") + MaterialName;
+        UPackage* MaterialOuter = CreatePackage(*MaterialPackage);
+        UMaterialInstanceConstant* Material = NewObject<UMaterialInstanceConstant>(
+            MaterialOuter,
+            FName(*MaterialName),
+            RF_Public | RF_Standalone | RF_Transactional);
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
+            .Get()
+            .AssetCreated(Material);
+        const FString MaterialPath = FPaths::Combine(
+            Fixture.SourceRoot,
+            TEXT("materials"),
+            MaterialName + TEXT(".material"));
+        bPassed &= TestTrue(
+            TEXT("write resolved material source"),
+            WriteStaticMeshImporterUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n")));
+        FString MaterialHash;
+        bPassed &= TestTrue(TEXT("hash resolved material source"), ReadSourceHash(MaterialPath, MaterialHash));
+        UMHMaterialSourceData* Receipt = NewObject<UMHMaterialSourceData>(Material);
+        Receipt->LogicalName = MaterialName;
+        Receipt->SourceRelativePath = TEXT("materials/") + MaterialName + TEXT(".material");
+        Receipt->SourceHash = MaterialHash;
+        Receipt->AppliedHash = MaterialHash;
+        Receipt->AppliedParent = TEXT("class:simple");
+        Material->AddAssetUserData(Receipt);
+        Resolver.Materials.Add(MaterialName, TPair<FString, FString>(MaterialPath, MaterialHash));
+        Managed.Add(MaterialName, Material);
+    }
+
+    const FString MeshPath = FPaths::Combine(
+        Fixture.SourceRoot,
+        TEXT("meshes"),
+        LogicalName + TEXT(".mesh.fbx"));
+    FString Error;
+    bPassed &= TestTrue(
+        TEXT("export LOD union FBX"),
+        ExportLodUnionStaticMeshFbx(TemplateFbx, MeshPath, BaseMaterialName, FarMaterialName, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key.Kind = EMHResourceKind::StaticMesh;
+    Entry.Key.LogicalName = LogicalName;
+    Entry.PayloadPath = MeshPath;
+    Entry.SourcePath = TEXT("meshes/") + LogicalName + TEXT(".mesh.fbx");
+    Entry.Change = EMHSourceChange::Create;
+    bPassed &= TestTrue(TEXT("hash LOD union FBX"), ReadSourceHash(MeshPath, Entry.RawHash));
+
+    FMHStaticMeshOperationResult Import = MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
+    if (!Import.Succeeded())
+    {
+        AddError(FString::Printf(TEXT("LOD union import failed: %s"), *Import.Error));
+        return false;
+    }
+    UStaticMesh* Mesh = Import.StaticMesh;
+    bPassed &= TestEqual(TEXT("union import has two LODs"), Mesh->GetNumSourceModels(), 2);
+    bPassed &= TestEqual(TEXT("union material slot count"), Mesh->GetStaticMaterials().Num(), 2);
+    if (Mesh->GetStaticMaterials().Num() == 2)
+    {
+        bPassed &= TestEqual(
+            TEXT("LOD0 slot is first"),
+            Mesh->GetStaticMaterials()[0].MaterialSlotName,
+            FName(*BaseMaterialName));
+        bPassed &= TestEqual(
+            TEXT("LOD1-only slot is appended"),
+            Mesh->GetStaticMaterials()[1].MaterialSlotName,
+            FName(*FarMaterialName));
+        bPassed &= TestTrue(
+            TEXT("LOD1-only slot binds its managed MI"),
+            Mesh->GetStaticMaterials()[1].MaterialInterface.Get() == Managed.FindRef(FarMaterialName));
+    }
+    bPassed &= TestEqual(
+        TEXT("LOD0 section 0 addresses the LOD0 slot"),
+        Mesh->GetSectionInfoMap().Get(0, 0).MaterialIndex,
+        0);
+    bPassed &= TestEqual(
+        TEXT("LOD1 section 0 addresses the LOD1-only slot"),
+        Mesh->GetSectionInfoMap().Get(1, 0).MaterialIndex,
+        1);
+
+    // Reimport of unchanged bytes must not reorder the union.
+    const FMHStaticMeshOperationResult NoChange = MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
+    bPassed &= TestTrue(TEXT("unchanged reimport succeeds"), NoChange.Succeeded());
+    bPassed &= TestEqual(TEXT("unchanged reimport keeps the asset"), NoChange.StaticMesh, Mesh);
+    bPassed &= TestFalse(TEXT("unchanged reimport performs no rebuild"), NoChange.bRebuilt);
+
+    // A forced full rebuild of the same bytes reproduces the same order.
+    const FMHStaticMeshOperationResult Forced = MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot, true);
+    bPassed &= TestTrue(TEXT("forced reimport succeeds"), Forced.Succeeded());
+    bPassed &= TestTrue(TEXT("forced reimport rebuilds"), Forced.bRebuilt);
+    if (Forced.StaticMesh != nullptr && Forced.StaticMesh->GetStaticMaterials().Num() == 2)
+    {
+        bPassed &= TestEqual(
+            TEXT("forced reimport keeps LOD0 slot first"),
+            Forced.StaticMesh->GetStaticMaterials()[0].MaterialSlotName,
+            FName(*BaseMaterialName));
+        bPassed &= TestEqual(
+            TEXT("forced reimport keeps LOD1-only slot second"),
+            Forced.StaticMesh->GetStaticMaterials()[1].MaterialSlotName,
+            FName(*FarMaterialName));
+        bPassed &= TestEqual(
+            TEXT("forced reimport keeps LOD1 section mapping"),
+            Forced.StaticMesh->GetSectionInfoMap().Get(1, 0).MaterialIndex,
+            1);
     }
     return bPassed;
 }

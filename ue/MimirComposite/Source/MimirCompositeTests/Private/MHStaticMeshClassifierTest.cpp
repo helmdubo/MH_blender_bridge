@@ -187,12 +187,6 @@ bool FMHStaticMeshClassifierLodAndSlotTest::RunTest(const FString& Parameters)
     Sparse.Nodes = {Node(TEXT("body_lod00"), EMHSceneNodeAttribute::Mesh), Node(TEXT("body_lod02"), EMHSceneNodeAttribute::Mesh)};
     bSuccess &= TestTrue(TEXT("sparse LOD rejected"), Rejects(Sparse, TEXT("MH_E_LOD_LEVELS_SPARSE")));
 
-    FMHSceneIR MissingBaseSlot;
-    MissingBaseSlot.Nodes = {
-        Node(TEXT("body_lod00"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body")}),
-        Node(TEXT("body_lod01"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("glass")})};
-    bSuccess &= TestTrue(TEXT("higher-only slot rejected"), Rejects(MissingBaseSlot, TEXT("MH_E_LOD_SLOT_NOT_IN_BASE")));
-
     FMHSceneIR Noncanonical;
     Noncanonical.Nodes = {Node(TEXT("body"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("Body")})};
     bSuccess &= TestTrue(TEXT("noncanonical slot rejected"), Rejects(Noncanonical, TEXT("MH_E_NONCANONICAL_RESOURCE_NAME")));
@@ -211,5 +205,114 @@ bool FMHStaticMeshClassifierLodAndSlotTest::RunTest(const FString& Parameters)
     bSuccess &= TestFalse(TEXT("lod01 without lod00 fails"), MHClassifySceneIR(Atomic, Error));
     bSuccess &= TestEqual(TEXT("failed classification preserves input"), Atomic.MaterialNames[0], FString(TEXT("sentinel")));
     bSuccess &= TestEqual(TEXT("failed classification leaves kind untouched"), Atomic.Nodes[0].Kind, EMHSceneNodeKind::Unclassified);
+    return bSuccess;
+}
+
+namespace
+{
+/** Compare a classified material union against the expected canonical order. */
+bool CheckUnion(
+    FAutomationTestBase& Test,
+    const TCHAR* Label,
+    FMHSceneIR Scene,
+    const TArray<FString>& Expected)
+{
+    if (Scene.ResourceName.IsEmpty())
+    {
+        Scene.ResourceName = TEXT("test_mesh");
+    }
+    FString Error;
+    if (!MHClassifySceneIR(Scene, Error))
+    {
+        Test.AddError(FString::Printf(TEXT("%s: classification failed: %s"), Label, *Error));
+        return false;
+    }
+    bool bSuccess = Test.TestEqual(
+        FString::Printf(TEXT("%s: union size"), Label),
+        Scene.MaterialNames.Num(),
+        Expected.Num());
+    for (int32 Index = 0; Index < Expected.Num() && Index < Scene.MaterialNames.Num(); ++Index)
+    {
+        bSuccess &= Test.TestEqual(
+            FString::Printf(TEXT("%s: union[%d]"), Label, Index),
+            Scene.MaterialNames[Index],
+            Expected[Index]);
+    }
+    return bSuccess;
+}
+} // namespace
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHStaticMeshClassifierLodMaterialUnionTest,
+    "Mimir.V4.StaticMesh.Classifier.LodMaterialUnion",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHStaticMeshClassifierLodMaterialUnionTest::RunTest(const FString& Parameters)
+{
+    bool bSuccess = true;
+
+    // (a) A LOD1-only material slot is admitted and joins the union after LOD0.
+    FMHSceneIR HigherOnly;
+    HigherOnly.ResourceName = TEXT("gaz53");
+    HigherOnly.Nodes = {
+        Node(TEXT("body_lod00"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body")}),
+        Node(TEXT("body_lod01"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body_simple")})};
+    bSuccess &= CheckUnion(
+        *this,
+        TEXT("higher-only slot"),
+        HigherOnly,
+        {TEXT("body"), TEXT("body_simple")});
+
+    // (b) Subset regression: every LOD reuses LOD0 slots, order unchanged.
+    FMHSceneIR Subset;
+    Subset.ResourceName = TEXT("gaz53");
+    Subset.Nodes = {
+        Node(TEXT("body_lod00"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body"), TEXT("glass")}),
+        Node(TEXT("body_lod01"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("glass")}),
+        Node(TEXT("body_lod02"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body")})};
+    bSuccess &= CheckUnion(*this, TEXT("subset"), Subset, {TEXT("body"), TEXT("glass")});
+
+    // (c) Deterministic LOD-major order even when the FBX lists a higher LOD
+    // node before LOD0 and reuses a slot at several levels.
+    FMHSceneIR Interleaved;
+    Interleaved.ResourceName = TEXT("gaz53");
+    Interleaved.Nodes = {
+        Node(TEXT("far_lod02"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("far_simple")}),
+        Node(TEXT("mid_lod01"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("glass"), TEXT("mid_simple")}),
+        Node(TEXT("hull_lod00"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body"), TEXT("glass")}),
+        Node(TEXT("trim_lod00"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("trim"), TEXT("body")}),
+        Node(TEXT("wheel_lod01"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("rubber")})};
+    bSuccess &= CheckUnion(
+        *this,
+        TEXT("lod-major union"),
+        Interleaved,
+        {
+            TEXT("body"),
+            TEXT("glass"),
+            TEXT("trim"),
+            TEXT("mid_simple"),
+            TEXT("rubber"),
+            TEXT("far_simple")});
+
+    // The retired subset guard must not resurface for admitted content.
+    FMHSceneIR Admitted;
+    Admitted.ResourceName = TEXT("gaz53");
+    Admitted.Nodes = {
+        Node(TEXT("body_lod00"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body")}),
+        Node(TEXT("body_lod01"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body_simple")})};
+    FString Error;
+    bSuccess &= TestTrue(TEXT("union scene classifies"), MHClassifySceneIR(Admitted, Error));
+    bSuccess &= TestFalse(
+        TEXT("MH_E_LOD_SLOT_NOT_IN_BASE is not raised"),
+        Error.Contains(TEXT("MH_E_LOD_SLOT_NOT_IN_BASE"), ESearchCase::CaseSensitive));
+
+    // Sparse and mixed LOD guards survive the union contract.
+    FMHSceneIR SparseWithUnion;
+    SparseWithUnion.Nodes = {
+        Node(TEXT("body_lod00"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body")}),
+        Node(TEXT("body_lod02"), EMHSceneNodeAttribute::Mesh, INDEX_NONE, {TEXT("body_simple")})};
+    bSuccess &= TestTrue(
+        TEXT("sparse LOD still rejected under union"),
+        Rejects(SparseWithUnion, TEXT("MH_E_LOD_LEVELS_SPARSE")));
     return bSuccess;
 }

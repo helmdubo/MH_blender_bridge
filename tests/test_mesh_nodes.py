@@ -110,15 +110,50 @@ def test_plan_rejects_parent_escape_cycle_and_socket_children():
     assert socket.value.code == "MH_E_INVALID_NODE_MARKERS"
 
 
-def test_plan_rejects_slot_only_present_in_higher_lod():
-    with pytest.raises(MHValidationError) as exc:
-        build_mesh_import_plan("mesh", [
-            MeshNode("body_lod00", "MESH", material_slots=("base",),
-                     geometry_name="Body"),
-            MeshNode("body_lod01", "MESH", material_slots=("high",),
-                     geometry_name="BodyLow"),
-        ])
-    assert exc.value.code == "MH_E_LOD_SLOT_NOT_IN_BASE"
+def test_slot_only_present_in_higher_lod_joins_the_union():
+    """Retired behavior: MH_E_LOD_SLOT_NOT_IN_BASE is never raised again.
+
+    Owner decision 2026-08-30 (docs/15 §1.1): real content authors every LOD
+    with its own materials, so the resource material list is the ordered union
+    of all LOD slots instead of a subset of LOD0.
+    """
+    plan = build_mesh_import_plan("mesh", [
+        MeshNode("body_lod00", "MESH", material_slots=("base",),
+                 geometry_name="Body"),
+        MeshNode("body_lod01", "MESH", material_slots=("high",),
+                 geometry_name="BodyLow"),
+    ])
+    assert plan.material_names == ("base", "high")
+
+
+def test_material_union_is_ordered_lod_major_by_first_appearance():
+    plan = build_mesh_import_plan("mesh", [
+        # Deliberately unsorted node order: the union order is defined by the
+        # LOD level first and only then by node/slot appearance.
+        MeshNode("hull_lod02", "MESH", material_slots=("simple",),
+                 geometry_name="HullFar"),
+        MeshNode("hull_lod00", "MESH", material_slots=("paint", "glass"),
+                 geometry_name="Hull"),
+        MeshNode("trim_lod01", "MESH", material_slots=("glass", "paint_low"),
+                 geometry_name="TrimMid"),
+        MeshNode("hull_lod01", "MESH", material_slots=("paint_low", "rubber"),
+                 geometry_name="HullMid"),
+    ])
+    assert plan.lod_levels == (0, 1, 2)
+    assert plan.material_names == (
+        "paint", "glass", "paint_low", "rubber", "simple")
+
+
+def test_material_union_appends_non_render_slots_after_every_lod():
+    plan = build_mesh_import_plan("mesh", [
+        MeshNode("UCX_hull", "MESH", material_slots=("hull_shell",),
+                 geometry_name="Collision"),
+        MeshNode("hull_lod00", "MESH", material_slots=("paint",),
+                 geometry_name="Hull"),
+        MeshNode("hull_lod01", "MESH", material_slots=("paint_low",),
+                 geometry_name="HullMid"),
+    ])
+    assert plan.material_names == ("paint", "paint_low", "hull_shell")
 
 
 @pytest.mark.parametrize("node", [

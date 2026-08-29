@@ -379,7 +379,10 @@ def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):
     models = _fbx_models(report["filepath"])
     assert report["lod_levels"] == [0, 1]
     assert {"Body_lod00", "BodyA_lod01", "BodyB_lod01"} <= set(models)
-    assert "Body_cls_phys" in models
+    # docs/15 §2.2: recognized Dagor collision leaves the render payload;
+    # UCX_ stays because it is the native UE collision transport, not a
+    # Dagor `cls` construct.
+    assert "Body_cls_phys" not in models
     assert "UCX_Body" in models
     assert "SOCKET_Muzzle" in models
     assert "UCX_Body_High" not in models
@@ -438,14 +441,41 @@ def test_lods_container_group_empty_is_transported(tmp_path):
     assert parents["Body_lod00"] == "Rig"
 
 
-def test_lod_slot_set_must_be_subset_of_lod0(tmp_path):
+def test_lod_material_union_replaces_the_lod0_subset_rule(tmp_path):
+    """Retired behavior: MH_E_LOD_SLOT_NOT_IN_BASE is never raised again.
+
+    Owner decision 2026-08-30 (docs/15 §1.1/§2.1). The published material list
+    is the ordered union of every authored LOD, LOD-major by first appearance.
+    """
     bpy.ops.wm.read_factory_settings(use_empty=True)
     built = _build_lods("slots")
-    _assign_material(built["render"][0], _material("base"))
+    base = _material("base")
+    _assign_material(built["render"][0], base)
     _assign_material(built["render"][1], _material("only_higher"))
-    with pytest.raises(MHValidationError) as exc:
-        export_fbx_collection(built["root"], tmp_path, source_root=tmp_path)
-    assert exc.value.code == "MH_E_LOD_SLOT_NOT_IN_BASE"
+    _assign_material(built["render"][2], base)
+    report = export_fbx_collection(
+        built["root"], tmp_path, source_root=tmp_path)
+    assert report["materials"] == ["base", "only_higher"]
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == ("base", "only_higher")
+
+
+def test_material_union_order_is_lod_major_first_appearance(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    built = _build_lods("union_order")
+    glass = _material("glass")
+    paint_low = _material("paint_low")
+    _assign_material(built["render"][0], _material("paint"))
+    _assign_material(built["render"][0], glass)
+    _assign_material(built["render"][1], glass)
+    _assign_material(built["render"][1], paint_low)
+    _assign_material(built["render"][2], _material("rubber"))
+    report = export_fbx_collection(
+        built["root"], tmp_path, source_root=tmp_path)
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == (
+        "paint", "glass", "paint_low", "rubber")
+    assert report["materials"] == list(plan.material_names)
 
 
 def test_centimeter_context_preserves_exact_mesh_datablock(tmp_path):
@@ -533,6 +563,210 @@ def test_export_rejects_socket_with_children(tmp_path):
     with pytest.raises(MHValidationError) as exc:
         export_fbx_collection(collection, tmp_path, source_root=tmp_path)
     assert exc.value.code == "MH_E_INVALID_NODE_MARKERS"
+
+
+@pytest.fixture
+def registered_material_properties():
+    from mh4blend.ui import ops
+
+    owned = not hasattr(bpy.types.Material, "mh4blend")
+    if owned:
+        ops.register()
+    try:
+        yield
+    finally:
+        if owned:
+            ops.unregister()
+
+
+def _warning_codes(report):
+    return [row["code"] for row in report["validation"]["warnings"]]
+
+
+def _warning_message(report, code):
+    return next(row["message"] for row in report["validation"]["warnings"]
+                if row["code"] == code)
+
+
+@pytest.mark.parametrize("name", [
+    "hull_cls_phys", "hull_cls_trace", "hull_cls_both",
+    "gaz53_a_body.lod01 cls phys.001", "gaz53_a_bumper.lod01 cls.002",
+])
+def test_dagor_collision_nodes_leave_the_render_payload(tmp_path, name):
+    """docs/15 §1.3/§2.2: recognized collision is excluded, never transported.
+
+    Transport of collision geometry is V5-S6.1.2; this slice only has to stop
+    silently shipping it as render payload.
+    """
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("collision_free")
+    _mesh_object("body", collection)
+    _mesh_object(name, collection)
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    assert "body" in models
+    assert name not in models
+    assert "MH_W_DAGOR_CONSTRUCT_DROPPED" in _warning_codes(report)
+    assert name in _warning_message(report, "MH_W_DAGOR_CONSTRUCT_DROPPED")
+
+
+def test_cls_material_mesh_is_excluded_from_payload_and_closure(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("technical_free")
+    body = _mesh_object("body", collection)
+    _assign_material(body, _material("paint"))
+    # Real dag4blend content names collision meshes arbitrarily; the `cls`
+    # material is the only reliable marker.
+    technical = _mesh_object("Cube.774", collection)
+    _assign_material(technical, _material("cls"))
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    assert "Cube.774" not in models
+    assert report["materials"] == ["paint"]
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == ("paint",)
+    assert "cls" in _warning_message(report, "MH_W_DAGOR_CONSTRUCT_DROPPED")
+
+
+def test_gi_black_material_mesh_is_excluded(tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("gi_black_free")
+    body = _mesh_object("body", collection)
+    _assign_material(body, _material("paint"))
+    technical = _mesh_object("Cube.775", collection)
+    _assign_material(technical, _material("technical_shell"))
+
+    import mh4blend.scene.export_material as export_material_module
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        export_material_module, "_authored_dagormat",
+        lambda material: (
+            SimpleNamespace(shader_class="gi_black")
+            if material.name == "technical_shell"
+            else SimpleNamespace(shader_class="rendinst_simple")))
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert "Cube.775" not in _fbx_models(report["filepath"])
+    assert report["materials"] == ["paint"]
+
+
+def test_mesh_mixing_technical_and_render_slots_fails_closed(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("mixed_slots")
+    body = _mesh_object("body", collection)
+    _assign_material(body, _material("paint"))
+    _assign_material(body, _material("cls"))
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_MATERIAL_SLOT_CONFLICT"
+
+
+def test_equivalent_duplicate_material_merges_into_the_base_name(
+        tmp_path, registered_material_properties):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("merged_material")
+    base = _material("paint")
+    base.mh4blend.material_class = "rendinst_simple"
+    duplicate = _material("paint.001")
+    duplicate.mh4blend.material_class = "rendinst_simple"
+    first = _mesh_object("front", collection)
+    second = _mesh_object("rear", collection)
+    _assign_material(first, base)
+    _assign_material(second, duplicate)
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert report["materials"] == ["paint"]
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == ("paint",)
+    # The scene keeps both authored datablocks and their authored names.
+    assert duplicate.name == "paint.001"
+    assert [slot.material for slot in second.material_slots] == [duplicate]
+
+
+def test_duplicate_material_without_base_uses_the_unsuffixed_name(
+        tmp_path, registered_material_properties):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("suffix_only_material")
+    duplicate = _material("gaz53_tiled_wood_b.001")
+    duplicate.mh4blend.material_class = "rendinst_perlin_layered"
+    body = _mesh_object("body", collection)
+    _assign_material(body, duplicate)
+
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert report["materials"] == ["gaz53_tiled_wood_b"]
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == ("gaz53_tiled_wood_b",)
+    assert duplicate.name == "gaz53_tiled_wood_b.001"
+
+
+def test_divergent_duplicate_material_is_ambiguous(
+        tmp_path, registered_material_properties):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("ambiguous_material")
+    base = _material("paint")
+    base.mh4blend.material_class = "rendinst_simple"
+    duplicate = _material("paint.001")
+    duplicate.mh4blend.material_class = "rendinst_mask_layered"
+    body = _mesh_object("body", collection)
+    _assign_material(body, duplicate)
+
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert exc.value.subjects == ["paint", "paint.001"]
+    # The refusal has to name the field that actually diverges: real content
+    # hides the divergence in one Dagor parameter out of a dozen.
+    assert "class 'rendinst_mask_layered' vs 'rendinst_simple'" in str(
+        exc.value)
+    assert not (tmp_path / "ambiguous_material.mesh.fbx").exists()
+
+
+def test_divergent_duplicate_blocks_even_when_only_the_base_is_transported(
+        tmp_path, registered_material_properties):
+    """`<name>.material` is one file, so the conflict is file-wide.
+
+    The exported mesh only uses `paint`, but publishing `paint.material` while
+    a second datablock claims that logical name would hand the artist a file
+    that is wrong for the other mesh.
+    """
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("base_only_mesh")
+    base = _material("paint")
+    base.mh4blend.material_class = "rendinst_simple"
+    elsewhere = _material("paint.001")
+    elsewhere.mh4blend.material_class = "rendinst_mask_layered"
+    _assign_material(_mesh_object("body", collection), base)
+
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert exc.value.subjects == ["paint", "paint.001"]
+
+
+def test_divergent_duplicate_names_the_diverging_dagor_parameter(
+        tmp_path, registered_material_properties):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("ambiguous_parameter")
+    base = _material("paint")
+    base.mh4blend.material_class = "rendinst_mask_layered"
+    base_row = base.mh4blend.params.add()
+    base_row.name = "paint_details"
+    base_row.kind = "VECTOR"
+    base_row.vector = (0.9, 0.0, 0.0, 94.0)
+    duplicate = _material("paint.001")
+    duplicate.mh4blend.material_class = "rendinst_mask_layered"
+    duplicate_row = duplicate.mh4blend.params.add()
+    duplicate_row.name = "paint_details"
+    duplicate_row.kind = "VECTOR"
+    duplicate_row.vector = (0.6, 0.0, 0.0, 94.0)
+    _assign_material(_mesh_object("body", collection), duplicate)
+
+    with pytest.raises(MHValidationError) as exc:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert exc.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert "params.paint_details" in str(exc.value)
 
 
 def test_export_rejects_socket_with_child_outside_resource(tmp_path):

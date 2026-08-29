@@ -61,7 +61,11 @@ def _validate_mesh_input(key, collection):
     if not ("type" in collection and "name" in collection):
         _fail("MH_E_INVALID_RESOURCE_SOURCE", [key, collection.name],
               "mesh input requires explicit dag4blend type/name identity")
-    if _collection_instance_identity(collection) != ("mesh", key.name):
+    # This planner is the dag4blend route itself, so it is one of the two
+    # callers allowed to read Dagor identity (doc 15 2.5); the generic MH
+    # reader passes dagor_identity=False and refuses the same collection.
+    if _collection_instance_identity(
+            collection, dagor_identity=True) != ("mesh", key.name):
         _fail("MH_E_RESOURCE_KIND_MISMATCH", [key, collection.name],
               "mesh input disagrees with its ResourceKey")
     if bool(collection.get(INCOMPLETE_IMPORT_KEY, False)):
