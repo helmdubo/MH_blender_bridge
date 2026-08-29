@@ -504,6 +504,7 @@ bool ParseClipboardSeed(const FString& Text, int32& OutSeed)
 enum class EMHSeedCommand : uint8
 {
     Reseed,
+    ReseedAppearance,
     Individual,
     Equal,
     Paste,
@@ -517,6 +518,7 @@ FText SeedCommandTitle(const EMHSeedCommand Command)
     switch (Command)
     {
     case EMHSeedCommand::Reseed: return LOCTEXT("ReseedCompositePage", "Reseed MH Composite");
+    case EMHSeedCommand::ReseedAppearance: return LOCTEXT("ReseedAppearancePage", "Reseed MH Composite Appearance");
     case EMHSeedCommand::Individual: return LOCTEXT("IndividualSeedPage", "Randomize Selected: Individual");
     case EMHSeedCommand::Equal: return LOCTEXT("EqualSeedPage", "Randomize Selected: Equal");
     case EMHSeedCommand::Paste: return LOCTEXT("PasteSeedPage", "Paste MH Composite Seed");
@@ -594,6 +596,9 @@ void ExecuteSeedCommand(
             case EMHSeedCommand::Reseed:
                 Actor->Reseed();
                 break;
+            case EMHSeedCommand::ReseedAppearance:
+                Actor->ReseedAppearance();
+                break;
             case EMHSeedCommand::Individual:
             case EMHSeedCommand::Equal:
             case EMHSeedCommand::Paste:
@@ -607,7 +612,8 @@ void ExecuteSeedCommand(
                 Actor->SetAutoSeed(true);
                 break;
             }
-            if ((Command == EMHSeedCommand::Reseed || !NewSeeds.IsEmpty()) &&
+            if ((Command == EMHSeedCommand::Reseed ||
+                 Command == EMHSeedCommand::ReseedAppearance || !NewSeeds.IsEmpty()) &&
                 !Actor->GetLastPlacementError().IsEmpty())
             {
                 Error += FString::Printf(TEXT("%s: %s\n"),
@@ -1003,6 +1009,9 @@ void AddCompositeSeedActions(
         AddSeedCommand(TEXT("MHReseedComposite"), LOCTEXT("ReseedComposite", "Reseed"),
             LOCTEXT("ReseedCompositeTip", "Assign a new nonzero seed, including when automatic duplicate reseeding is locked."),
             EMHSeedCommand::Reseed);
+        AddSeedCommand(TEXT("MHReseedAppearance"), LOCTEXT("ReseedAppearance", "Reseed Appearance"),
+            LOCTEXT("ReseedAppearanceTip", "Assign a new appearance seed: tint and wear channels reroll, layout stays."),
+            EMHSeedCommand::ReseedAppearance);
         AddLevelAction(Seeds, TEXT("MHCopyCompositeSeed"), LOCTEXT("CopyCompositeSeed", "Copy Seed"),
             LOCTEXT("CopyCompositeSeedTip", "Copy this placement's signed int32 seed to the clipboard."),
             FToolMenuExecuteAction::CreateLambda([Actors](const FToolMenuContext&)

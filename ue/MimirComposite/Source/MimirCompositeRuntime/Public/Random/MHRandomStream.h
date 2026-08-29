@@ -8,6 +8,14 @@ namespace UE::MimirComposite
 
 inline constexpr const TCHAR* MHRandomStream1Tag = TEXT("mh.random_stream:1");
 inline constexpr const TCHAR* MHRandomResolverTag = TEXT("mh.random_resolver:2");
+/** Appearance stage only; the layout resolver token above is unchanged by it. */
+inline constexpr const TCHAR* MHAppearanceTag = TEXT("mh.appearance:1");
+
+/**
+ * Ratified constant of V5-S6.3 (OPEN-V5-16, value 4). It is part of the
+ * AppearanceSignature preimage, so changing it can never diverge silently.
+ */
+inline constexpr int32 MH_APPEARANCE_CHANNELS = 4;
 
 /** Frozen cross-host SplitMix64 stream for Source Protocol v5. */
 class MIMIRCOMPOSITERUNTIME_API FMHRandomStream1
@@ -88,6 +96,8 @@ struct MIMIRCOMPOSITERUNTIME_API FMHRandomNode
     FString DisplayName;
     FMHRandomTrs Transform;
     FString Profile;
+    /** Opens a new appearance stream for this node and its whole subtree (§3). */
+    bool bAppearanceSeedBoundary = false;
     TArray<FMHRandomOption> Options;
     TArray<FMHRandomNode> Children;
 };
@@ -136,6 +146,30 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeDraw
     double Sample = 0.0;
 };
 
+/**
+ * One appearance channel draw. RawU32 is the authority; Unit and the leaf's
+ * float32 channel value are derived from it and never the other way round.
+ */
+struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeAppearanceDraw
+{
+    /** Leaf origin NodePath the value belongs to. */
+    FString NodePath;
+    /** NodePath of Boundary(leaf); the stream key, shared by sibling leaves. */
+    FString BoundaryPath;
+    int32 Channel = 0;
+    uint32 RawU32 = 0;
+    double Unit = 0.0;
+};
+
+/** Second signed stage; layout arrays above it stay byte-identical (§4). */
+struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeAppearance
+{
+    int32 AppearanceSeed = 0;
+    TArray<FMHResolvedCompositeAppearanceDraw> Draws;
+    TArray<uint8> SignaturePreimage;
+    FString AppearanceSignature;
+};
+
 /** Derived traversal metadata; excluded from the frozen signature preimage. */
 struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeNode
 {
@@ -149,6 +183,10 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeNode
     /** Full parent-local product in root-placement space, before actor transform. */
     FMatrix WorldMatrix = FMatrix::Identity;
     int32 RootNodeIndex = INDEX_NONE;
+    /** Pre-order invariant: strictly smaller than this node's own index (§5.1). */
+    int32 ParentResolvedNodeIndex = INDEX_NONE;
+    /** Only for kind random; equals Decisions[i].OptionIndex of the same path. */
+    int32 SelectedOptionIndex = INDEX_NONE;
 };
 
 struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeLeaf
@@ -162,6 +200,12 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositeLeaf
     FMatrix WorldMatrix = FMatrix::Identity;
     FString DisplayName;
     int32 RootNodeIndex = INDEX_NONE;
+    /** Node that produced this leaf: the mesh/actor node, or its random node (§5.3). */
+    int32 OwningResolvedNodeIndex = INDEX_NONE;
+    /** Resolved Boundary(leaf) path; the appearance stream key of this leaf. */
+    FString AppearanceBoundaryPath;
+    /** Derived from the RawU32 authority of the appearance stage. */
+    float AppearanceChannels[MH_APPEARANCE_CHANNELS] = {};
 };
 
 /** Immutable semantic result consumed by later preview/runtime/cook slices. */
@@ -176,6 +220,10 @@ struct MIMIRCOMPOSITERUNTIME_API FMHResolvedCompositePlan
     TArray<FString> SelectedDependencies;
     TArray<uint8> SignaturePreimage;
     FString ResolvedSignature;
+    /** Separate stage, separate array: layout goldens are never regenerated. */
+    FMHResolvedCompositeAppearance Appearance;
+    /** Hash160(utf8(ResolvedSignature) || utf8(AppearanceSignature)), no separator. */
+    FString PlacementSignature;
 };
 
 MIMIRCOMPOSITERUNTIME_API bool MHBuildRandomSourceClosure(
@@ -183,14 +231,31 @@ MIMIRCOMPOSITERUNTIME_API bool MHBuildRandomSourceClosure(
     FMHRandomSourceClosure& OutClosure,
     FString& OutError);
 
+/**
+ * Stage order (§6): applied graph -> layout -> appearance -> basis -> validate.
+ * The two seeds are independent inputs; neither derives from the other here.
+ */
 MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositePlan(
     const FMHRandomSourceGraph& Graph,
     int32 Seed,
+    int32 AppearanceSeed,
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError);
 
+/**
+ * Appearance stage over an already resolved layout: exactly
+ * MH_APPEARANCE_CHANNELS NextU32 draws per leaf from
+ * MHMakeNodeRandomStream(AppearanceSeed, Boundary(leaf)), no gaps.
+ */
+MIMIRCOMPOSITERUNTIME_API void MHResolveCompositeAppearance(
+    FMHResolvedCompositePlan& Plan,
+    int32 AppearanceSeed);
+
 /** Rehash an otherwise unchanged, seed-independent plan without sampling again. */
 MIMIRCOMPOSITERUNTIME_API void MHRefreshResolvedCompositeSignature(FMHResolvedCompositePlan& Plan);
+
+/** Deterministic one-time migration value for a placement with no stored AppearanceSeed. */
+MIMIRCOMPOSITERUNTIME_API int32 MHDeriveAppearanceSeedFromLayoutSeed(int32 LayoutSeed);
 
 MIMIRCOMPOSITERUNTIME_API bool MHSelectWeightedOption(
     FMHRandomStream1& Stream,

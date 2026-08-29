@@ -28,8 +28,9 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeNode
      */
     int32 PlaceType = INDEX_NONE;
     /**
-     * Carrier for `ignoreParentInstSeed` (13 §7.2). No consumer before
-     * V5-S6.3; it must not reach the resolver, streams, or signatures.
+     * Carrier for `ignoreParentInstSeed` (13 §7.2). Consumed since V5-S6.3 by
+     * the appearance stage only: it keys AppearanceSignature and never enters
+     * the layout stream, the layout preimage, or ResolvedSignature.
      */
     bool bAppearanceSeedBoundary = false;
     TArray<FMHCompositeOption> Options;

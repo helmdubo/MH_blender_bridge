@@ -130,6 +130,7 @@ FMHRandomNode AppliedPlanNode(const FMHCompositeNode& Node)
     Result.Resource = Node.Resource;
     Result.DisplayName = Node.Name;
     Result.Profile = Node.Profile;
+    Result.bAppearanceSeedBoundary = Node.bAppearanceSeedBoundary;
     Result.Transform.TranslationCm = FVector3f(Node.Transform.TranslationCm);
     Result.Transform.RotationQuat = FQuat4f(Node.Transform.RotationQuat);
     Result.Transform.Scale = FVector3f(Node.Transform.Scale);

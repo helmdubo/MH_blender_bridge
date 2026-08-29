@@ -1,3 +1,5 @@
+#include "MHGoldenRoot.h"
+
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
@@ -9,6 +11,8 @@
 #include "Math/Transform.h"
 #include "Math/UnrealMathUtility.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Random/MHRandomStream.h"
 
 namespace UE::MimirComposite::Tests
@@ -84,12 +88,96 @@ bool MetadataResolve(
     FAutomationTestBase& Test,
     const FMHRandomSourceGraph& Graph,
     const int32 Seed,
-    FMHResolvedCompositePlan& OutPlan)
+    FMHResolvedCompositePlan& OutPlan,
+    const int32 AppearanceSeed = 777)
 {
     FString Error;
-    const bool bResolved = MHResolveCompositePlan(Graph, Seed, OutPlan, Error);
+    const bool bResolved = MHResolveCompositePlan(Graph, Seed, AppearanceSeed, OutPlan, Error);
     Test.TestTrue(*FString::Printf(TEXT("synthetic graph resolves for seed %d: %s"), Seed, *Error), bResolved);
     return bResolved;
+}
+
+EMHRandomSemanticKind MetadataNodeKind(const EMHCompositeNodeKind Kind)
+{
+    switch (Kind)
+    {
+    case EMHCompositeNodeKind::Mesh: return EMHRandomSemanticKind::Mesh;
+    case EMHCompositeNodeKind::Actor: return EMHRandomSemanticKind::Actor;
+    case EMHCompositeNodeKind::Composite: return EMHRandomSemanticKind::Composite;
+    case EMHCompositeNodeKind::Random: return EMHRandomSemanticKind::Random;
+    case EMHCompositeNodeKind::GameObj: return EMHRandomSemanticKind::GameObj;
+    default: return EMHRandomSemanticKind::Group;
+    }
+}
+
+EMHRandomSemanticKind MetadataOptionKind(const EMHCompositeOptionKind Kind)
+{
+    switch (Kind)
+    {
+    case EMHCompositeOptionKind::Mesh: return EMHRandomSemanticKind::Mesh;
+    case EMHCompositeOptionKind::Actor: return EMHRandomSemanticKind::Actor;
+    case EMHCompositeOptionKind::Composite: return EMHRandomSemanticKind::Composite;
+    case EMHCompositeOptionKind::GameObj: return EMHRandomSemanticKind::GameObj;
+    default: return EMHRandomSemanticKind::Empty;
+    }
+}
+
+FMHRandomNode MetadataConvertNode(const FMHCompositeNode& Node)
+{
+    FMHRandomNode Result;
+    Result.Kind = MetadataNodeKind(Node.Kind);
+    Result.Resource = Node.Resource;
+    Result.DisplayName = Node.Name;
+    Result.Profile = Node.Profile;
+    Result.bAppearanceSeedBoundary = Node.bAppearanceSeedBoundary;
+    Result.Transform.TranslationCm = FVector3f(Node.Transform.TranslationCm);
+    Result.Transform.RotationQuat = FQuat4f(Node.Transform.RotationQuat);
+    Result.Transform.Scale = FVector3f(Node.Transform.Scale);
+    for (const FMHCompositeOption& Option : Node.Options)
+        Result.Options.Add({MetadataOptionKind(Option.Kind), Option.Resource, Option.Weight});
+    for (const FMHCompositeNode& Child : Node.Children) Result.Children.Add(MetadataConvertNode(Child));
+    return Result;
+}
+
+/**
+ * Loads the ratified GAZ-53 documents from `golden/` unchanged and terminates
+ * the three option payloads the fixture manifest itself declares unresolved
+ * (`unresolved_random_option_payloads`). The terminators are declared here, in
+ * the test, and nothing is written back to `golden/`.
+ */
+bool MetadataLoadGaz53(FAutomationTestBase& Test, FMHRandomSourceGraph& OutGraph)
+{
+    FString GoldenRoot;
+    if (!ResolveGoldenRoot(Test, GoldenRoot)) return false;
+    OutGraph.RootComposite = TEXT("gaz53_b_random_cmp");
+    for (const TCHAR* Name : {TEXT("gaz53_b_random_cmp"), TEXT("gaz53_b_body_cmp"), TEXT("gaz53_body_bc_random_cmp")})
+    {
+        TArray<uint8> Bytes;
+        const FString Path = FPaths::Combine(GoldenRoot, TEXT("v5/gaz53"), FString(Name) + TEXT(".composite"));
+        if (!FFileHelper::LoadFileToArray(Bytes, *Path))
+        {
+            Test.AddError(TEXT("cannot read frozen GAZ-53 document: ") + Path);
+            return false;
+        }
+        FMHCompositeDocument Document;
+        FString Error;
+        if (!MHParseCompositeV5(Bytes, Document, Error))
+        {
+            Test.AddError(TEXT("frozen GAZ-53 document rejected: ") + Error);
+            return false;
+        }
+        FMHRandomComposite Composite;
+        Composite.Name = Name;
+        for (const FMHCompositeNode& Node : Document.Nodes) Composite.Nodes.Add(MetadataConvertNode(Node));
+        OutGraph.Composites.Add(Composite.Name, MoveTemp(Composite));
+        MetadataAddRawHash(OutGraph, TEXT("composite:") + FString(Name));
+    }
+    for (const TCHAR* Name : {TEXT("gaz53_bread_b_cmp"), TEXT("gaz53_wooden_b_cmp"), TEXT("gaz53_wooden_c_cmp")})
+    {
+        MetadataAddComposite(OutGraph, Name, {MetadataMesh(TEXT("gaz53_b_body"))});
+    }
+    MetadataAddRawHash(OutGraph, TEXT("static_mesh:gaz53_b_body"));
+    return true;
 }
 
 } // namespace
@@ -385,6 +473,129 @@ bool FMHResolvedPlanConstantProfileTraceTest::RunTest(const FString& Parameters)
     TestNotEqual(TEXT("draw-aware guard is required even when refreshed signature matches"),
         IncorrectShortcut.Draws[0].RawU32, After.Draws[0].RawU32);
     return true;
+}
+
+/**
+ * Acceptance 7: the pre-order parent invariant, the nested-composite border,
+ * the random-option owner, and SelectedOptionIndex agreeing with Decisions.
+ */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHResolvedPlanParentOwnerMetadataTest,
+    "Mimir.V5.Random.PlanMetadata.ParentAndOwnerIndices",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHResolvedPlanParentOwnerMetadataTest::RunTest(const FString& Parameters)
+{
+    FMHRandomSourceGraph Graph = MetadataGraph(MetadataMesh(TEXT("mesh_a")));
+    FMHRandomNode Random;
+    Random.Kind = EMHRandomSemanticKind::Random;
+    Random.Options.Add(MetadataOption(EMHRandomSemanticKind::Composite, TEXT("metadata_nested")));
+    Random.Children.Add(MetadataMesh(TEXT("mesh_b"), 2.0f));
+    Graph.Composites.FindChecked(Graph.RootComposite).Nodes.Add(Random);
+    FMHRandomNode NestedGroup;
+    NestedGroup.Children.Add(MetadataMesh(TEXT("mesh_b"), 5.0f));
+    FMHRandomNode NestedComposite;
+    NestedComposite.Kind = EMHRandomSemanticKind::Composite;
+    NestedComposite.Resource = TEXT("metadata_deep");
+    MetadataAddComposite(Graph, TEXT("metadata_nested"), {NestedGroup, NestedComposite});
+    MetadataAddComposite(Graph, TEXT("metadata_deep"), {MetadataMesh(TEXT("mesh_a"), 10.0f)});
+
+    FMHResolvedCompositePlan Plan;
+    if (!MetadataResolve(*this, Graph, 100, Plan)) return false;
+    if (!TestEqual(TEXT("all source nodes recorded"), Plan.Nodes.Num(), 7) ||
+        !TestEqual(TEXT("nested composites flatten to four leaves"), Plan.Leaves.Num(), 4)) return false;
+
+    // Indices follow the frozen DFS order already asserted by the sibling test.
+    bool bPassed = TestEqual(TEXT("first root node has no parent"), Plan.Nodes[0].ParentResolvedNodeIndex, INDEX_NONE);
+    bPassed &= TestEqual(TEXT("second root node has no parent"), Plan.Nodes[1].ParentResolvedNodeIndex, INDEX_NONE);
+    bPassed &= TestEqual(TEXT("the option composite's first node hangs off the random node"),
+        Plan.Nodes[2].ParentResolvedNodeIndex, 1);
+    bPassed &= TestEqual(TEXT("a group child keeps its own group as parent"),
+        Plan.Nodes[3].ParentResolvedNodeIndex, 2);
+    bPassed &= TestEqual(TEXT("the second node of the option composite is not chained to the previous subtree"),
+        Plan.Nodes[4].ParentResolvedNodeIndex, 1);
+    bPassed &= TestEqual(TEXT("a node behind a nested composite border names the referencing node"),
+        Plan.Nodes[5].ParentResolvedNodeIndex, 4);
+    bPassed &= TestEqual(TEXT("a direct child of the random node returns to it after the option subtree"),
+        Plan.Nodes[6].ParentResolvedNodeIndex, 1);
+    for (int32 Index = 0; Index < Plan.Nodes.Num(); ++Index)
+        bPassed &= TestTrue(TEXT("pre-order invariant Parent < Index"),
+            Plan.Nodes[Index].ParentResolvedNodeIndex < Index);
+
+    bPassed &= TestEqual(TEXT("only the random node records a selected option"),
+        Plan.Nodes[0].SelectedOptionIndex, INDEX_NONE);
+    if (TestEqual(TEXT("one decision"), Plan.Decisions.Num(), 1))
+    {
+        bPassed &= TestEqual(TEXT("SelectedOptionIndex equals the decision of the same NodePath"),
+            Plan.Nodes[1].SelectedOptionIndex, Plan.Decisions[0].OptionIndex);
+        bPassed &= TestEqual(TEXT("the decision belongs to that node"),
+            Plan.Nodes[1].NodePath, Plan.Decisions[0].NodePath);
+    }
+    for (const FMHResolvedCompositeNode& Node : Plan.Nodes)
+        if (Node.SemanticKind != EMHRandomSemanticKind::Random)
+            bPassed &= TestEqual(TEXT("non-random nodes carry no selected option"), Node.SelectedOptionIndex, INDEX_NONE);
+
+    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+    {
+        if (!TestTrue(TEXT("every leaf names an owning node"),
+            Plan.Nodes.IsValidIndex(Leaf.OwningResolvedNodeIndex))) { bPassed = false; continue; }
+        bPassed &= TestTrue(TEXT("the owning node's path prefixes the leaf origin"),
+            Leaf.Origin.StartsWith(Plan.Nodes[Leaf.OwningResolvedNodeIndex].NodePath, ESearchCase::CaseSensitive));
+    }
+    bPassed &= TestEqual(TEXT("a plain mesh leaf is owned by its own node"), Plan.Leaves[0].OwningResolvedNodeIndex, 0);
+    bPassed &= TestEqual(TEXT("a leaf inside the selected option is owned by its own node"),
+        Plan.Leaves[1].OwningResolvedNodeIndex, 3);
+    return bPassed;
+}
+
+/**
+ * The same invariants on the ratified GAZ-53 documents, which exercise both a
+ * nested composite border and a random composite option in one graph.
+ */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHResolvedPlanGaz53MetadataTest,
+    "Mimir.V5.Random.PlanMetadata.Gaz53ParentAndOwnerIndices",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHResolvedPlanGaz53MetadataTest::RunTest(const FString& Parameters)
+{
+    FMHRandomSourceGraph Graph;
+    if (!MetadataLoadGaz53(*this, Graph)) return false;
+    bool bPassed = true;
+    for (const int32 Seed : {0, 1, 2, 42, 123, 1024, 2147483647})
+    {
+        FMHResolvedCompositePlan Plan;
+        if (!MetadataResolve(*this, Graph, Seed, Plan, Seed)) return false;
+        for (int32 Index = 0; Index < Plan.Nodes.Num(); ++Index)
+        {
+            const FMHResolvedCompositeNode& Node = Plan.Nodes[Index];
+            bPassed &= TestTrue(*FString::Printf(TEXT("GAZ-53 seed %d node %d keeps Parent < Index"), Seed, Index),
+                Node.ParentResolvedNodeIndex < Index);
+            if (Node.ParentResolvedNodeIndex != INDEX_NONE)
+                bPassed &= TestTrue(TEXT("GAZ-53 parent path prefixes the child path"),
+                    Node.NodePath.StartsWith(Plan.Nodes[Node.ParentResolvedNodeIndex].NodePath, ESearchCase::CaseSensitive));
+            bPassed &= TestEqual(TEXT("GAZ-53 selected option only on random nodes"),
+                Node.SelectedOptionIndex != INDEX_NONE, Node.SemanticKind == EMHRandomSemanticKind::Random);
+        }
+        for (const FMHResolvedCompositeDecision& Decision : Plan.Decisions)
+        {
+            const FMHResolvedCompositeNode* Owner = Plan.Nodes.FindByPredicate(
+                [&Decision](const FMHResolvedCompositeNode& Node) { return Node.NodePath == Decision.NodePath; });
+            if (!TestNotNull(TEXT("GAZ-53 decision has a node"), Owner)) { bPassed = false; continue; }
+            bPassed &= TestEqual(TEXT("GAZ-53 SelectedOptionIndex mirrors the decision"),
+                Owner->SelectedOptionIndex, Decision.OptionIndex);
+        }
+        for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+        {
+            if (!TestTrue(TEXT("GAZ-53 leaf names an owning node"),
+                Plan.Nodes.IsValidIndex(Leaf.OwningResolvedNodeIndex))) { bPassed = false; continue; }
+            bPassed &= TestTrue(TEXT("GAZ-53 owning node path prefixes the leaf origin"),
+                Leaf.Origin.StartsWith(Plan.Nodes[Leaf.OwningResolvedNodeIndex].NodePath, ESearchCase::CaseSensitive));
+            bPassed &= TestEqual(TEXT("GAZ-53 has no declared boundary, so every leaf keys the placement root"),
+                Leaf.AppearanceBoundaryPath, Graph.RootComposite);
+        }
+    }
+    return bPassed;
 }
 
 } // namespace UE::MimirComposite::Tests

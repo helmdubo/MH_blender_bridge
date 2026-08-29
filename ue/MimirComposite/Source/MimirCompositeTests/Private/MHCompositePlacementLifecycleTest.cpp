@@ -336,4 +336,140 @@ bool FMHPlacementLifecycleLookupTest::RunTest(const FString& Parameters)
     World->DestroyWorld(false);
     return bPassed;
 }
+
+/**
+ * Field defect regression: a duplicated or pasted placement carried MH-tagged
+ * components its transient tracking arrays no longer knew, so a rebuild doubled
+ * every node. The previous view now unions untracked MH-tagged instance
+ * components, so a stale twin is adopted or retired - never accumulated.
+ */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHPlacementLifecycleOrphanTest,
+    "Mimir.V5.Composite.Lifecycle.OrphanComponentsNeverAccumulate",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPlacementLifecycleOrphanTest::RunTest(const FString& Parameters)
+{
+    constexpr int32 TopLevelNodes = 3;
+    FMHLifecycleFixture Fixture(*this);
+    if (!Fixture.Build(TopLevelNodes)) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    Actor->SetAutoSeed(false);
+    Actor->SetCompositeAsset(Fixture.Asset);
+    bool bPassed = TestNotNull(*Actor->GetLastPlacementError(), Actor->GetResolvedPlan());
+    bPassed &= TestEqual(TEXT("baseline view"), LifecycleLeafCount(*Actor), TopLevelNodes);
+
+    // Simulate the duplicate: MH-tagged components the arrays do not track.
+    UStaticMeshComponent* Stale = NewObject<UStaticMeshComponent>(Actor,
+        UStaticMeshComponent::StaticClass(), TEXT("MH_Leaf_stale_twin"), RF_Transient);
+    Actor->AddInstanceComponent(Stale);
+    Stale->ComponentTags.Add(FName(TEXT("MH.Leaf:stale:0:twin")));
+    Stale->SetupAttachment(Actor->GetRootComponent());
+    Stale->RegisterComponent();
+    USceneComponent* StaleHandle = NewObject<USceneComponent>(Actor,
+        USceneComponent::StaticClass(), TEXT("MH_Node_stale_twin"), RF_Transient);
+    Actor->AddInstanceComponent(StaleHandle);
+    StaleHandle->ComponentTags.Add(FName(TEXT("MH.Handle:stale_twin")));
+    StaleHandle->SetupAttachment(Actor->GetRootComponent());
+    StaleHandle->RegisterComponent();
+
+    Actor->RebuildComposite();
+    bPassed &= TestEqual(TEXT("stale twins are retired, not accumulated"),
+        LifecycleLeafCount(*Actor), TopLevelNodes);
+    int32 TaggedInstances = 0;
+    for (UActorComponent* Component : Actor->GetInstanceComponents())
+    {
+        if (!IsValid(Component)) continue;
+        for (const FName& Tag : Component->ComponentTags)
+            if (Tag.ToString().StartsWith(TEXT("MH."))) { ++TaggedInstances; break; }
+    }
+    bPassed &= TestEqual(TEXT("every MH-tagged instance component is tracked"),
+        TaggedInstances, Actor->GetDerivedComponents().Num());
+    bPassed &= TestFalse(TEXT("the stale leaf twin was destroyed"), IsValid(Stale));
+    Actor->Destroy();
+    World->DestroyWorld(false);
+    return bPassed;
+}
+
+/**
+ * S6.3.1: every mesh leaf carries its four appearance channels as Custom
+ * Primitive Data, and an appearance reseed refreshes the floats on the same
+ * component objects without recreating the view.
+ */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHPlacementAppearanceTransportTest,
+    "Mimir.V5.Composite.Lifecycle.AppearanceCustomDataTransport",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPlacementAppearanceTransportTest::RunTest(const FString& Parameters)
+{
+    constexpr int32 TopLevelNodes = 3;
+    FMHLifecycleFixture Fixture(*this);
+    if (!Fixture.Build(TopLevelNodes)) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    Actor->SetAutoSeed(false);
+    Actor->SetCompositeAsset(Fixture.Asset);
+    bool bPassed = TestNotNull(*Actor->GetLastPlacementError(), Actor->GetResolvedPlan());
+    const int32 Base = GetDefault<UMHCompositeSettings>()->AppearanceCustomDataBaseIndex;
+
+    const auto ChannelsMatchPlan = [&](const TCHAR* What) -> bool
+    {
+        const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
+        const TArray<TObjectPtr<USceneComponent>>& Leaves = Actor->GetLeafPlacementComponents();
+        if (Plan == nullptr || Leaves.Num() != Plan->Leaves.Num()) return false;
+        for (int32 Index = 0; Index < Leaves.Num(); ++Index)
+        {
+            const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Leaves[Index]);
+            if (Mesh == nullptr) return false;
+            const TArray<float>& Data = Mesh->GetCustomPrimitiveData().Data;
+            for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+            {
+                if (!Data.IsValidIndex(Base + Channel) ||
+                    Data[Base + Channel] != Plan->Leaves[Index].AppearanceChannels[Channel])
+                {
+                    AddError(FString::Printf(TEXT("%s: leaf %d channel %d mismatch"), What, Index, Channel));
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    bPassed &= TestTrue(TEXT("channels transported on first build"), ChannelsMatchPlan(TEXT("initial")));
+
+    const TArray<TObjectPtr<USceneComponent>> Before = Actor->GetLeafPlacementComponents();
+    const float FirstBefore = CastChecked<UStaticMeshComponent>(Before[0].Get())
+        ->GetCustomPrimitiveData().Data[Base];
+    Actor->SetAppearanceSeed(Actor->GetAppearanceSeed() + 1);
+    bPassed &= TestTrue(TEXT("channels refreshed after appearance reseed"), ChannelsMatchPlan(TEXT("reseed")));
+    bPassed &= TestTrue(TEXT("the same component objects survived the reseed"),
+        Before == Actor->GetLeafPlacementComponents());
+    const float FirstAfter = CastChecked<UStaticMeshComponent>(Before[0].Get())
+        ->GetCustomPrimitiveData().Data[Base];
+    bPassed &= TestNotEqual(TEXT("the tint value actually moved"), FirstBefore, FirstAfter);
+    Actor->Destroy();
+    World->DestroyWorld(false);
+    return bPassed;
+}
+
+/** Browse to Asset (Ctrl+B) resolves a placed composite to its source asset. */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHPlacementBrowseToAssetTest,
+    "Mimir.V5.Composite.Lifecycle.BrowseToAssetFindsComposite",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPlacementBrowseToAssetTest::RunTest(const FString& Parameters)
+{
+    FMHLifecycleFixture Fixture(*this);
+    if (!Fixture.Build(1)) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    Actor->SetAutoSeed(false);
+    Actor->SetCompositeAsset(Fixture.Asset);
+    TArray<UObject*> Referenced;
+    Actor->GetReferencedContentObjects(Referenced);
+    const bool bPassed = TestTrue(TEXT("Ctrl+B reaches the composite asset"),
+        Referenced.Contains(Fixture.Asset));
+    Actor->Destroy();
+    World->DestroyWorld(false);
+    return bPassed;
+}
 } // namespace UE::MimirComposite::Tests

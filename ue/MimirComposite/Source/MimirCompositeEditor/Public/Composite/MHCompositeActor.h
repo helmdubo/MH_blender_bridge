@@ -38,6 +38,20 @@ public:
     void Reseed();
     void SetAutoSeed(bool bEnabled);
     static int32 GenerateAutoSeed(int32 DifferentFrom = 0);
+
+    /**
+     * Stored value only. There is deliberately no computed default and no
+     * fallback here: a getter that derived from Seed would silently reroll the
+     * appearance on every layout reseed (§3, acceptance 5).
+     */
+    int32 GetAppearanceSeed() const { return AppearanceSeed; }
+    bool GetAutoAppearanceSeed() const { return bAutoAppearanceSeed; }
+    void SetAppearanceSeed(int32 NewSeed);
+    void ReseedAppearance();
+    void SetAutoAppearanceSeed(bool bEnabled);
+    /** True once this placement owns a stored AppearanceSeed (migrated or authored). */
+    bool HasStoredAppearanceSeed() const { return bAppearanceSeedStored; }
+
     const UE::MimirComposite::FMHResolvedCompositePlan* GetResolvedPlan() const;
     const FString& GetLastPlacementError() const { return LastPlacementError; }
     EMHCompositeSeedEffect GetSeedAffectsResult() const { return SeedAffectsResult; }
@@ -75,6 +89,12 @@ public:
         return TopLevelPlacementComponents;
     }
 
+    /** Materialized leaves in plan order, index-aligned with Plan.Leaves. */
+    const TArray<TObjectPtr<USceneComponent>>& GetLeafPlacementComponents() const
+    {
+        return LeafPlacementComponents;
+    }
+
     const TArray<FString>& GetLastPlacementWarnings() const
     {
         return LastPlacementWarnings;
@@ -101,9 +121,11 @@ public:
     virtual void PostEditImport() override;
     virtual bool CanEditChange(const FProperty* InProperty) const override;
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+    virtual bool GetReferencedContentObjects(TArray<UObject*>& Objects) const override;
 #endif
 
 private:
+    TArray<TObjectPtr<UActorComponent>> CollectPreviousDerivedComponents() const;
     void ClearDerivedComponents();
     void RebuildPlacement(bool bSeedOnly);
     void UpdatePlacementBasis(USceneComponent*, EUpdateTransformFlags, ETeleportType);
@@ -117,13 +139,32 @@ private:
     UPROPERTY(VisibleInstanceOnly, Category = "Mimir")
     TSoftObjectPtr<UMHCompositeAsset> CompositeAsset;
 
-    /** The sole persisted random input of a placement; explicit zero is valid. */
-    UPROPERTY(EditInstanceOnly, Category = "Mimir|Random")
+    /**
+     * Layout random input; explicit zero is valid. The serialized name stays
+     * `Seed` for level compatibility: only the displayed name changed (§3).
+     */
+    UPROPERTY(EditInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Layout Seed"))
     int32 Seed = 0;
 
     /** Default duplicate reseeds; explicit Lock/Keep Seed disables it. */
     UPROPERTY(EditInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Auto Seed on Duplicate"))
     bool bAutoSeed = true;
+
+    /** Second, independent random input: appearance channels only (§3). */
+    UPROPERTY(EditInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Appearance Seed"))
+    int32 AppearanceSeed = 0;
+
+    UPROPERTY(EditInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Auto Appearance Seed on Duplicate"))
+    bool bAutoAppearanceSeed = true;
+
+    /**
+     * Distinguishes "this placement has no serialized AppearanceSeed" from
+     * "its serialized AppearanceSeed happens to be 0". Both this flag and
+     * AppearanceSeed equal their archetype defaults on a pre-S6.3 level, so a
+     * legacy record carries neither tagged property and loads as not-stored.
+     */
+    UPROPERTY()
+    bool bAppearanceSeedStored = false;
 
     UPROPERTY(VisibleInstanceOnly, Transient, DuplicateTransient, TextExportTransient, Category = "Mimir|Random")
     FString ResolvedSignature;
@@ -156,6 +197,12 @@ private:
     bool bPlacementEditMode = false;
     /** Set by PostLoad; consumed by the single admitted first-build point. */
     bool bNeedsInitialPlacementBuild = false;
+    /**
+     * Set by the one-time AppearanceSeed migration. MarkPackageDirty is a no-op
+     * while a package is still loading, so the dirty flag is raised at the same
+     * admitted post-registration point, once, and never re-derives the value.
+     */
+    bool bNeedsAppearanceSeedDirty = false;
 
     uint32 PlacementRebuildCount = 0;
     uint32 PlacementDesyncCount = 0;

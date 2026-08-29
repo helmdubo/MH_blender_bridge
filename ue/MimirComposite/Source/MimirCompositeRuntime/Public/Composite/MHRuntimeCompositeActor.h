@@ -17,9 +17,20 @@ public:
     AMHRuntimeCompositeActor();
 
     /** Validate the entire closure and resolve before replacing any live component. */
-    bool Configure(const FMHRuntimeCompositeInput& Input, int32 InSeed, FString& OutError);
+    bool Configure(const FMHRuntimeCompositeInput& Input, int32 InSeed, int32 InAppearanceSeed, FString& OutError);
     bool RebuildRuntime(FString& OutError);
     int32 GetSeed() const { return Seed; }
+    int32 GetAppearanceSeed() const { return AppearanceSeed; }
+
+    /**
+     * A cooked placement cannot read the Editor-only plugin settings, so the
+     * appearance Custom Primitive Data base index travels with it exactly like
+     * the two seeds do. Set before Configure; the value is used at
+     * materialization time and never enters any signature.
+     */
+    void SetAppearanceCustomDataBaseIndex(int32 InBaseIndex) { AppearanceCustomDataBaseIndex = FMath::Max(0, InBaseIndex); }
+    int32 GetAppearanceCustomDataBaseIndex() const { return AppearanceCustomDataBaseIndex; }
+
     const FMHRuntimeCompositeInput& GetRuntimeInput() const { return RuntimeInput; }
     const UE::MimirComposite::FMHResolvedCompositePlan* GetResolvedPlan() const;
     const FString& GetLastRuntimeError() const { return LastRuntimeError; }
@@ -32,7 +43,7 @@ public:
     virtual void Destroyed() override;
 
 private:
-    bool BuildCandidate(const FMHRuntimeCompositeInput& Input, int32 InSeed,
+    bool BuildCandidate(const FMHRuntimeCompositeInput& Input, int32 InSeed, int32 InAppearanceSeed,
         UE::MimirComposite::FMHResolvedCompositePlan& OutPlan, FString& OutError) const;
     bool Materialize(const FMHRuntimeCompositeInput& Input,
         const UE::MimirComposite::FMHResolvedCompositePlan& Plan, FString& OutError);
@@ -48,11 +59,22 @@ private:
     FMHRuntimeCompositeInput RuntimeInput;
 
     /** Copied from the authoring placement. Explicit zero remains legal. */
-    UPROPERTY(VisibleInstanceOnly, Category = "Mimir|Random")
+    UPROPERTY(VisibleInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Layout Seed"))
     int32 Seed = 0;
+
+    /** Copied from the authoring placement by the same handoff as Seed. */
+    UPROPERTY(VisibleInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Appearance Seed"))
+    int32 AppearanceSeed = 0;
+
+    /** Resolved from the project setting at handoff; see the setter above. */
+    UPROPERTY(VisibleInstanceOnly, Category = "Mimir|Random")
+    int32 AppearanceCustomDataBaseIndex = 0;
 
     UPROPERTY(VisibleInstanceOnly, Transient, Category = "Mimir|Random")
     FString ResolvedSignature;
+
+    UPROPERTY(VisibleInstanceOnly, Transient, Category = "Mimir|Random")
+    FString PlacementSignature;
 
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> MaterializedComponents;

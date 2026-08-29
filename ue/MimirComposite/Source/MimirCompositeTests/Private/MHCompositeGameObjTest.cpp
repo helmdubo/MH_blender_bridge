@@ -252,7 +252,7 @@ bool FMHCompositeGameObjAdmissionTest::RunTest(const FString& Parameters)
         }
         TestEqual(TEXT("only the root composite is a dependency"), Dependencies.Num(), 1);
         FMHResolvedCompositePlan Plan;
-        if (!TestTrue(TEXT("gameobj plan resolves"), MHResolveCompositePlan(Graph, 100, Plan, Error))) return false;
+        if (!TestTrue(TEXT("gameobj plan resolves"), MHResolveCompositePlan(Graph, 100, 700, Plan, Error))) return false;
         TestTrue(TEXT("ordinary and selected gameobjs emit no leaves"), Plan.Leaves.IsEmpty());
         TestEqual(TEXT("gameobj tokens do not enter source closure"), Plan.Closure.Resources.Num(), 1);
         TestTrue(TEXT("gameobj-only graph has no SelectedDependencies"), Plan.SelectedDependencies.IsEmpty());
@@ -355,7 +355,7 @@ bool FMHCompositeGameObjRuntimeTransportTest::RunTest(const FString& Parameters)
 
     FMHResolvedCompositePlan Before;
     FMHResolvedCompositePlan After;
-    if (!MHResolveCompositePlan(Graph, 100, Before, Error) || !MHResolveCompositePlan(Decoded, 100, After, Error)) return false;
+    if (!MHResolveCompositePlan(Graph, 100, 700, Before, Error) || !MHResolveCompositePlan(Decoded, 100, 700, After, Error)) return false;
     TestEqual(TEXT("runtime transport preserves signature"), After.ResolvedSignature, Before.ResolvedSignature);
     TestTrue(TEXT("runtime transport preserves signature preimage"), After.SignaturePreimage == Before.SignaturePreimage);
     TestEqual(TEXT("gameobj profile samples XYZ; random selection consumes one"), After.Draws.Num(), 4);
@@ -377,7 +377,7 @@ bool FMHCompositeGameObjRuntimeTransportTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("runtime gameobj test world"), Fixture.World)) return false;
     AMHRuntimeCompositeActor* Runtime = Fixture.World->SpawnActor<AMHRuntimeCompositeActor>();
     if (!TestNotNull(TEXT("runtime gameobj placement exists"), Runtime)) return false;
-    if (!TestTrue(TEXT("runtime gameobj-only placement configures"), Runtime->Configure(Input, 100, Error)))
+    if (!TestTrue(TEXT("runtime gameobj-only placement configures"), Runtime->Configure(Input, 100, 700, Error)))
     {
         AddError(Error);
         return false;
@@ -436,7 +436,7 @@ bool FMHCompositeGameObjPreviewNoSpawnTest::RunTest(const FString& Parameters)
     Binding.Object = AStaticMeshActor::StaticClass();
     AMHRuntimeCompositeActor* Runtime = Fixture.World->SpawnActor<AMHRuntimeCompositeActor>();
     if (!TestNotNull(TEXT("actor-control runtime placement exists"), Runtime) ||
-        !TestTrue(TEXT("native actor runtime remains admitted"), Runtime->Configure(Input, 100, Error))) return false;
+        !TestTrue(TEXT("native actor runtime remains admitted"), Runtime->Configure(Input, 100, 700, Error))) return false;
     TestEqual(TEXT("native actor still spawns at runtime"), GameObjSpawnedChildCount(*Runtime), 1);
 
     Fixture.Settings->ActorClassRegistry.Remove(Token);

@@ -438,8 +438,12 @@ void BuildSignaturePreimage(FMHResolvedCompositePlan& Plan)
     Text += LexToString(Plan.Seed);
     Text += TEXT(",\n  \"closure\": ");
     AppendQuoted(Plan.Closure.ClosureHash, Text);
-    Text += TEXT(",\n  \"decisions\": [");
-    if (!Plan.Decisions.IsEmpty()) Text += TEXT("\n");
+    // An empty array is "[]", exactly what the Python reference emitter writes.
+    // The former "[  ]" form was never exercised by the frozen S1 fixture, which
+    // always has decisions, and silently diverged from the reference on any
+    // composite without random nodes.
+    Text += TEXT(",\n  \"decisions\": ");
+    Text += Plan.Decisions.IsEmpty() ? TEXT("[]") : TEXT("[\n");
     for (int32 Index = 0; Index < Plan.Decisions.Num(); ++Index)
     {
         const FMHResolvedCompositeDecision& Decision = Plan.Decisions[Index];
@@ -451,8 +455,9 @@ void BuildSignaturePreimage(FMHResolvedCompositePlan& Plan)
         Text += TEXT(",\n      \"draw\": ") + LexToString(Decision.RawU32) + TEXT("\n    }");
         Text += Index + 1 < Plan.Decisions.Num() ? TEXT(",\n") : TEXT("\n");
     }
-    Text += TEXT("  ],\n  \"leaves\": [");
-    if (!Plan.Leaves.IsEmpty()) Text += TEXT("\n");
+    if (!Plan.Decisions.IsEmpty()) Text += TEXT("  ]");
+    Text += TEXT(",\n  \"leaves\": ");
+    Text += Plan.Leaves.IsEmpty() ? TEXT("[]") : TEXT("[\n");
     for (int32 Index = 0; Index < Plan.Leaves.Num(); ++Index)
     {
         const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[Index];
@@ -465,10 +470,87 @@ void BuildSignaturePreimage(FMHResolvedCompositePlan& Plan)
         Text += TEXT("\n    }");
         Text += Index + 1 < Plan.Leaves.Num() ? TEXT(",\n") : TEXT("\n");
     }
-    Text += TEXT("  ]\n}\n");
+    if (!Plan.Leaves.IsEmpty()) Text += TEXT("  ]");
+    Text += TEXT("\n}\n");
     Plan.SignaturePreimage.Reset();
     AppendUtf8(Text, Plan.SignaturePreimage);
     Plan.ResolvedSignature = Hash160(Plan.SignaturePreimage);
+}
+
+/**
+ * AppearanceSignature preimage, byte-mirrored with the Python appearance
+ * goldens: same two-space pretty form as the layout preimage above, key order
+ * v / stage / appearance_seed / channels / boundaries / leaves. The stage tag,
+ * the AppearanceSeed, MH_APPEARANCE_CHANNELS, the distinct boundaries and every
+ * per-leaf RawU32 are inside; Unit and the float32 channels are derived values
+ * and are deliberately absent.
+ */
+void BuildAppearancePreimage(FMHResolvedCompositePlan& Plan)
+{
+    checkf(Plan.Appearance.Draws.Num() == Plan.Leaves.Num() * MH_APPEARANCE_CHANNELS,
+        TEXT("appearance stage must produce exactly %d draws per leaf: %d leaves, %d draws"),
+        MH_APPEARANCE_CHANNELS, Plan.Leaves.Num(), Plan.Appearance.Draws.Num());
+    TArray<FString> Boundaries;
+    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves) Boundaries.AddUnique(Leaf.AppearanceBoundaryPath);
+    // Ascending by UTF-8 bytes. NodePath characters are ASCII by grammar, so an
+    // explicitly case-sensitive compare is exactly that byte order.
+    Boundaries.Sort([](const FString& Left, const FString& Right)
+    {
+        return Left.Compare(Right, ESearchCase::CaseSensitive) < 0;
+    });
+
+    FString Text = TEXT("{\n  \"v\": 1,\n  \"stage\": \"");
+    Text += MHAppearanceTag;
+    Text += TEXT("\",\n  \"appearance_seed\": ");
+    Text += LexToString(Plan.Appearance.AppearanceSeed);
+    Text += TEXT(",\n  \"channels\": ");
+    Text += LexToString(MH_APPEARANCE_CHANNELS);
+    Text += TEXT(",\n  \"boundaries\": ");
+    Text += Boundaries.IsEmpty() ? TEXT("[]") : TEXT("[\n");
+    for (int32 Index = 0; Index < Boundaries.Num(); ++Index)
+    {
+        Text += TEXT("    ");
+        AppendQuoted(Boundaries[Index], Text);
+        Text += Index + 1 < Boundaries.Num() ? TEXT(",\n") : TEXT("\n");
+    }
+    if (!Boundaries.IsEmpty()) Text += TEXT("  ]");
+    Text += TEXT(",\n  \"leaves\": ");
+    Text += Plan.Leaves.IsEmpty() ? TEXT("[]") : TEXT("[\n");
+    for (int32 Index = 0; Index < Plan.Leaves.Num(); ++Index)
+    {
+        const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[Index];
+        Text += TEXT("    {\n      \"path\": ");
+        AppendQuoted(Leaf.Origin, Text);
+        Text += TEXT(",\n      \"boundary\": ");
+        AppendQuoted(Leaf.AppearanceBoundaryPath, Text);
+        Text += TEXT(",\n      \"channels\": [\n");
+        for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+        {
+            const int32 DrawIndex = Index * MH_APPEARANCE_CHANNELS + Channel;
+            Text += TEXT("        ");
+            Text += LexToString(Plan.Appearance.Draws[DrawIndex].RawU32);
+            Text += Channel + 1 < MH_APPEARANCE_CHANNELS ? TEXT(",\n") : TEXT("\n");
+        }
+        Text += TEXT("      ]\n    }");
+        Text += Index + 1 < Plan.Leaves.Num() ? TEXT(",\n") : TEXT("\n");
+    }
+    if (!Plan.Leaves.IsEmpty()) Text += TEXT("  ]");
+    Text += TEXT("\n}\n");
+    Plan.Appearance.SignaturePreimage.Reset();
+    AppendUtf8(Text, Plan.Appearance.SignaturePreimage);
+    Plan.Appearance.AppearanceSignature = Hash160(Plan.Appearance.SignaturePreimage);
+}
+
+/**
+ * Both operands are fixed-width canonical hashes (51 chars), so concatenating
+ * them without a separator stays unambiguous, exactly as the slice specifies.
+ */
+void BuildPlacementSignature(FMHResolvedCompositePlan& Plan)
+{
+    TArray<uint8> Preimage;
+    AppendUtf8(Plan.ResolvedSignature, Preimage);
+    AppendUtf8(Plan.Appearance.AppearanceSignature, Preimage);
+    Plan.PlacementSignature = Hash160(Preimage);
 }
 
 } // namespace
@@ -718,6 +800,7 @@ bool MHBuildRandomSourceClosure(
 bool MHResolveCompositePlan(
     const FMHRandomSourceGraph& Graph,
     const int32 Seed,
+    const int32 AppearanceSeed,
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError)
 {
@@ -748,7 +831,9 @@ bool MHResolveCompositePlan(
         const FMatrix& WorldMatrix,
         const FString& Origin,
         const FString& DisplayName,
-        const int32 RootNodeIndex)
+        const int32 RootNodeIndex,
+        const int32 OwningResolvedNodeIndex,
+        const FString& BoundaryPath)
     {
         FMHResolvedCompositeLeaf& Leaf = OutPlan.Leaves.AddDefaulted_GetRef();
         Leaf.Kind = Kind;
@@ -758,18 +843,29 @@ bool MHResolveCompositePlan(
         Leaf.WorldMatrix = WorldMatrix;
         Leaf.DisplayName = DisplayName;
         Leaf.RootNodeIndex = RootNodeIndex;
+        Leaf.OwningResolvedNodeIndex = OwningResolvedNodeIndex;
+        Leaf.AppearanceBoundaryPath = BoundaryPath;
         if (Kind == EMHRandomSemanticKind::Mesh) AddSelectedResource(TEXT("static_mesh:") + Resource);
         else if (Kind == EMHRandomSemanticKind::Actor) AddSelected(TEXT("actor:") + Resource);
     };
 
-    TFunction<bool(const FString&, const FMHRandomTrs&, const FMatrix&, const FString&, int32)> WalkComposite;
-    TFunction<bool(const FMHRandomNode&, const FMHRandomTrs&, const FMatrix&, const FString&, int32)> WalkNode;
+    // Parent index and boundary path travel down the same traversal that already
+    // produces NodePath: crossing into a nested composite or into a selected
+    // random option keeps the referencing node as parent and as boundary owner.
+    struct FWalkContext
+    {
+        int32 RootNodeIndex = INDEX_NONE;
+        int32 ParentResolvedNodeIndex = INDEX_NONE;
+        FString BoundaryPath;
+    };
+    TFunction<bool(const FString&, const FMHRandomTrs&, const FMatrix&, const FString&, const FWalkContext&)> WalkComposite;
+    TFunction<bool(const FMHRandomNode&, const FMHRandomTrs&, const FMatrix&, const FString&, const FWalkContext&)> WalkNode;
     WalkComposite = [&](
         const FString& Name,
         const FMHRandomTrs& Parent,
         const FMatrix& ParentMatrix,
         const FString& Prefix,
-        const int32 RootNodeIndex)
+        const FWalkContext& Context)
     {
         const FMHRandomComposite* Composite = Graph.Composites.Find(Name);
         if (Composite == nullptr)
@@ -779,12 +875,14 @@ bool MHResolveCompositePlan(
         }
         for (int32 Index = 0; Index < Composite->Nodes.Num(); ++Index)
         {
+            FWalkContext ChildContext = Context;
+            ChildContext.RootNodeIndex = Context.RootNodeIndex == INDEX_NONE ? Index : Context.RootNodeIndex;
             if (!WalkNode(
                     Composite->Nodes[Index],
                     Parent,
                     ParentMatrix,
                     FString::Printf(TEXT("%s:nodes[%d]"), *Prefix, Index),
-                    RootNodeIndex == INDEX_NONE ? Index : RootNodeIndex)) return false;
+                    ChildContext)) return false;
         }
         return true;
     };
@@ -793,8 +891,9 @@ bool MHResolveCompositePlan(
         const FMHRandomTrs& Parent,
         const FMatrix& ParentMatrix,
         const FString& NodePath,
-        const int32 RootNodeIndex)
+        const FWalkContext& Context)
     {
+        const int32 RootNodeIndex = Context.RootNodeIndex;
         TOptional<FMHRandomStream1> NodeStream;
         if (Node.Kind == EMHRandomSemanticKind::Random || !Node.Profile.IsEmpty())
         {
@@ -839,6 +938,13 @@ bool MHResolveCompositePlan(
         const FTransform LocalTransform(
             FQuat(Local.RotationQuat), FVector(Local.TranslationCm), FVector(Local.Scale));
         const FMatrix WorldMatrix = LocalTransform.ToMatrixWithScale() * ParentMatrix;
+        // OutPlan.Nodes is filled strictly pre-order, so this node's own index is
+        // the array size taken before it is appended, and every descendant that
+        // names it as parent is appended after it (§5.1).
+        const int32 ResolvedNodeIndex = OutPlan.Nodes.Num();
+        checkf(Context.ParentResolvedNodeIndex < ResolvedNodeIndex,
+            TEXT("resolved node %s violates the pre-order parent invariant: parent %d, index %d"),
+            *NodePath, Context.ParentResolvedNodeIndex, ResolvedNodeIndex);
         FMHResolvedCompositeNode& ResolvedNode = OutPlan.Nodes.AddDefaulted_GetRef();
         ResolvedNode.NodePath = NodePath;
         ResolvedNode.DisplayName = Node.DisplayName;
@@ -848,15 +954,25 @@ bool MHResolveCompositePlan(
         ResolvedNode.LocalTrs = Local;
         ResolvedNode.WorldMatrix = WorldMatrix;
         ResolvedNode.RootNodeIndex = RootNodeIndex;
+        ResolvedNode.ParentResolvedNodeIndex = Context.ParentResolvedNodeIndex;
+        ResolvedNode.SelectedOptionIndex = Node.Kind == EMHRandomSemanticKind::Random ? SelectedIndex : INDEX_NONE;
+
+        // Boundary(node) is the node itself when it declares the flag, otherwise
+        // the nearest declaring ancestor, otherwise the placement root (§3).
+        FWalkContext Inner;
+        Inner.RootNodeIndex = RootNodeIndex;
+        Inner.ParentResolvedNodeIndex = ResolvedNodeIndex;
+        Inner.BoundaryPath = Node.bAppearanceSeedBoundary ? NodePath : Context.BoundaryPath;
 
         if (Node.Kind == EMHRandomSemanticKind::Mesh || Node.Kind == EMHRandomSemanticKind::Actor)
         {
-            AddLeaf(Node.Kind, Node.Resource, World, WorldMatrix, NodePath, Node.DisplayName, RootNodeIndex);
+            AddLeaf(Node.Kind, Node.Resource, World, WorldMatrix, NodePath, Node.DisplayName,
+                RootNodeIndex, ResolvedNodeIndex, Inner.BoundaryPath);
         }
         else if (Node.Kind == EMHRandomSemanticKind::Composite)
         {
             AddSelectedResource(TEXT("composite:") + Node.Resource);
-            if (!WalkComposite(Node.Resource, World, WorldMatrix, NodePath + TEXT(">") + Node.Resource, RootNodeIndex)) return false;
+            if (!WalkComposite(Node.Resource, World, WorldMatrix, NodePath + TEXT(">") + Node.Resource, Inner)) return false;
         }
         else if (Node.Kind == EMHRandomSemanticKind::Random)
         {
@@ -865,11 +981,12 @@ bool MHResolveCompositePlan(
             if (Option.Kind == EMHRandomSemanticKind::Composite)
             {
                 AddSelectedResource(TEXT("composite:") + Option.Resource);
-                if (!WalkComposite(Option.Resource, World, WorldMatrix, OptionPath + TEXT(">") + Option.Resource, RootNodeIndex)) return false;
+                if (!WalkComposite(Option.Resource, World, WorldMatrix, OptionPath + TEXT(">") + Option.Resource, Inner)) return false;
             }
             else if (Option.Kind == EMHRandomSemanticKind::Mesh || Option.Kind == EMHRandomSemanticKind::Actor)
             {
-                AddLeaf(Option.Kind, Option.Resource, World, WorldMatrix, OptionPath, Node.DisplayName, RootNodeIndex);
+                AddLeaf(Option.Kind, Option.Resource, World, WorldMatrix, OptionPath, Node.DisplayName,
+                    RootNodeIndex, ResolvedNodeIndex, Inner.BoundaryPath);
             }
             else if (Option.Kind == EMHRandomSemanticKind::GameObj)
             {
@@ -883,6 +1000,7 @@ bool MHResolveCompositePlan(
                 GameObj.Resource = Option.Resource;
                 GameObj.WorldMatrix = WorldMatrix;
                 GameObj.RootNodeIndex = RootNodeIndex;
+                GameObj.ParentResolvedNodeIndex = ResolvedNodeIndex;
             }
         }
         for (int32 ChildIndex = 0; ChildIndex < Node.Children.Num(); ++ChildIndex)
@@ -892,20 +1010,61 @@ bool MHResolveCompositePlan(
                     World,
                     WorldMatrix,
                     FString::Printf(TEXT("%s/children[%d]"), *NodePath, ChildIndex),
-                    RootNodeIndex)) return false;
+                    Inner)) return false;
         }
         return true;
     };
 
     FMHRandomTrs Identity;
-    if (!WalkComposite(Graph.RootComposite, Identity, FMatrix::Identity, Graph.RootComposite, INDEX_NONE)) return false;
-    MHRefreshResolvedCompositeSignature(OutPlan);
+    FWalkContext Root;
+    // No declared boundary anywhere means one stream for the whole placement,
+    // keyed by the root composite's own canonical NodePath prefix.
+    Root.BoundaryPath = Graph.RootComposite;
+    if (!WalkComposite(Graph.RootComposite, Identity, FMatrix::Identity, Graph.RootComposite, Root)) return false;
+    MHResolveCompositeAppearance(OutPlan, AppearanceSeed);
     return true;
+}
+
+void MHResolveCompositeAppearance(FMHResolvedCompositePlan& Plan, const int32 AppearanceSeed)
+{
+    Plan.Appearance = FMHResolvedCompositeAppearance();
+    Plan.Appearance.AppearanceSeed = AppearanceSeed;
+    Plan.Appearance.Draws.Reserve(Plan.Leaves.Num() * MH_APPEARANCE_CHANNELS);
+    for (FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+    {
+        // One stream per leaf, keyed by the boundary path: two leaves under the
+        // same boundary therefore receive identical channel values (§3).
+        FMHRandomStream1 Stream = MHMakeNodeRandomStream(AppearanceSeed, Leaf.AppearanceBoundaryPath);
+        for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+        {
+            FMHResolvedCompositeAppearanceDraw& Draw = Plan.Appearance.Draws.AddDefaulted_GetRef();
+            Draw.NodePath = Leaf.Origin;
+            Draw.BoundaryPath = Leaf.AppearanceBoundaryPath;
+            Draw.Channel = Channel;
+            Draw.RawU32 = Stream.NextU32();
+            Draw.Unit = static_cast<double>(Draw.RawU32) * Uint32Scale;
+            Leaf.AppearanceChannels[Channel] = static_cast<float>(Draw.Unit);
+        }
+    }
+    MHRefreshResolvedCompositeSignature(Plan);
 }
 
 void MHRefreshResolvedCompositeSignature(FMHResolvedCompositePlan& Plan)
 {
     BuildSignaturePreimage(Plan);
+    BuildAppearancePreimage(Plan);
+    BuildPlacementSignature(Plan);
+}
+
+int32 MHDeriveAppearanceSeedFromLayoutSeed(const int32 LayoutSeed)
+{
+    // One draw from the node stream of the reserved path "appearance": the same
+    // frozen primitive the resolver uses, not a new mixing function.
+    FMHRandomStream1 Stream = MHMakeNodeRandomStream(LayoutSeed, TEXT("appearance"));
+    const uint32 Bits = Stream.NextU32();
+    int32 Result = 0;
+    FMemory::Memcpy(&Result, &Bits, sizeof(Result));
+    return Result;
 }
 
 } // namespace UE::MimirComposite

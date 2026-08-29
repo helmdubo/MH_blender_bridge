@@ -331,7 +331,7 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
         if (!ReadInt32(Expected, TEXT("seed"), Seed)) return false;
         FMHResolvedCompositePlan Actual;
         FString Error;
-        bPassed &= TestTrue(*FString::Printf(TEXT("seed %d resolves"), Seed), MHResolveCompositePlan(Graph, Seed, Actual, Error));
+        bPassed &= TestTrue(*FString::Printf(TEXT("seed %d resolves"), Seed), MHResolveCompositePlan(Graph, Seed, Seed, Actual, Error));
         if (!Error.IsEmpty()) AddError(Error);
 
         const TArray<TSharedPtr<FJsonValue>>* ExpectedDecisions = nullptr;

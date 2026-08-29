@@ -1,5 +1,6 @@
 #include "Composite/MHCompositeActor.h"
 
+#include "Composite/MHCompositeAppearanceTransport.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
@@ -103,9 +104,40 @@ void AMHCompositeActor::SetAutoSeed(const bool bEnabled)
     }
 }
 
+void AMHCompositeActor::SetAppearanceSeed(const int32 NewSeed)
+{
+    if (bPlacementEditMode)
+    {
+        LastPlacementError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel Edit before changing Appearance Seed");
+        return;
+    }
+    if (AppearanceSeed != NewSeed || !bAppearanceSeedStored)
+    {
+        Modify();
+        AppearanceSeed = NewSeed;
+        bAppearanceSeedStored = true;
+    }
+    RebuildPlacement(true);
+}
+
+void AMHCompositeActor::ReseedAppearance()
+{
+    SetAppearanceSeed(GenerateAutoSeed(AppearanceSeed));
+}
+
+void AMHCompositeActor::SetAutoAppearanceSeed(const bool bEnabled)
+{
+    if (bAutoAppearanceSeed != bEnabled)
+    {
+        Modify();
+        bAutoAppearanceSeed = bEnabled;
+    }
+}
+
 const UE::MimirComposite::FMHResolvedCompositePlan* AMHCompositeActor::GetResolvedPlan() const
 {
     return bPlanAvailable && ResolvedPlan.IsValid() && ResolvedPlan->Seed == Seed &&
+        ResolvedPlan->Appearance.AppearanceSeed == AppearanceSeed &&
         LastPlacementError.IsEmpty() ? ResolvedPlan.Get() : nullptr;
 }
 
@@ -171,6 +203,31 @@ void AMHCompositeActor::AttachRootTransformHook()
         CompositeRoot->TransformUpdated.RemoveAll(this);
         CompositeRoot->TransformUpdated.AddUObject(this, &AMHCompositeActor::UpdatePlacementBasis);
     }
+}
+
+TArray<TObjectPtr<UActorComponent>> AMHCompositeActor::CollectPreviousDerivedComponents() const
+{
+    // The tracking arrays are transient: a duplicated, pasted or reloaded actor
+    // can carry MH-tagged instance components the arrays no longer know about.
+    // Feed those into the reuse index and the retirement set alike, so a stale
+    // twin is either adopted by its tag or destroyed - never accumulated.
+    TArray<TObjectPtr<UActorComponent>> Previous = DerivedComponents;
+    TSet<const UActorComponent*> Tracked;
+    Tracked.Reserve(Previous.Num());
+    for (const UActorComponent* Component : Previous) Tracked.Add(Component);
+    for (UActorComponent* Component : GetInstanceComponents())
+    {
+        if (!IsValid(Component) || Tracked.Contains(Component)) continue;
+        for (const FName& Tag : Component->ComponentTags)
+        {
+            if (Tag.ToString().StartsWith(TEXT("MH.")))
+            {
+                Previous.Add(Component);
+                break;
+            }
+        }
+    }
+    return Previous;
 }
 
 void AMHCompositeActor::ClearDerivedComponents()
@@ -261,11 +318,13 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         if (bSeedOnly && bPlanAvailable && ResolvedPlan.IsValid() &&
             ResolvedPlan->Draws.IsEmpty() && ResolvedPlan->Decisions.IsEmpty())
         {
+            // Layout has no draws to redo, but appearance draws depend only on
+            // AppearanceSeed and the leaf set, so rerun that stage explicitly.
             *CandidatePlan = *ResolvedPlan;
             CandidatePlan->Seed = Seed;
-            MHRefreshResolvedCompositeSignature(*CandidatePlan);
+            MHResolveCompositeAppearance(*CandidatePlan, AppearanceSeed);
         }
-        else if (!MHResolveCompositePlan(*CandidateGraph, Seed, *CandidatePlan, Error))
+        else if (!MHResolveCompositePlan(*CandidateGraph, Seed, AppearanceSeed, *CandidatePlan, Error))
         {
             if (!Error.StartsWith(TEXT("MH_E_"))) Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
         }
@@ -284,16 +343,16 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             return;
         }
         FMHCompositePlacementCompileResult View;
+        const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
         if (ResolvedPlan.IsValid() && AppliedGraph.IsValid() && AppliedGraph->RootComposite == Name)
         {
             const FMHRandomComposite* PreviousRoot = AppliedGraph->Composites.Find(Name);
             if (PreviousRoot != nullptr)
-                View = MHCompileCompositePlacementV5(*this, *ResolvedPlan, *PreviousRoot, *Settings, DerivedComponents);
+                View = MHCompileCompositePlacementV5(*this, *ResolvedPlan, *PreviousRoot, *Settings, Previous);
         }
         FMHCompositePlacementCompileResult Marker = MHBuildCompositeDiagnosticView(*this, TEXT("composite:") + Name, Error);
         View.Components.Append(Marker.Components);
         View.Warnings.Append(Marker.Warnings);
-        const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
         DerivedComponents = MoveTemp(View.Components);
         TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
         LeafPlacementComponents = MoveTemp(View.LeafComponents);
@@ -309,24 +368,37 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     SeedAffectsResult = MHClassifyCompositeGraph(*CandidateGraph);
     // None means visual invariance, not absence of random draws. Resolve above
     // still refreshes decision traces for single-option and zero-deviation nodes.
-    if (!(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
+    const auto CompileFullView = [&]() -> bool
     {
-        FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(*this, *CandidatePlan, *Root, *Settings, DerivedComponents);
+        const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
+        FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(*this, *CandidatePlan, *Root, *Settings, Previous);
         if (!View.Succeeded())
         {
             LastPlacementError = View.Error;
             bPlanAvailable = false;
             ResolvedSignature.Reset();
             ReportPlacementError();
-            return;
+            return false;
         }
-        const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
         DerivedComponents = MoveTemp(View.Components);
         TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
         LeafPlacementComponents = MoveTemp(View.LeafComponents);
         LastPlacementWarnings = MoveTemp(View.Warnings);
         DestroyMHRetiredComponents(Previous, DerivedComponents);
         if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
+        return true;
+    };
+    if (!(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
+    {
+        if (!CompileFullView()) return;
+    }
+    // S6.3.1: a skipped recompile still refreshes the appearance Custom
+    // Primitive Data - the channels depend on AppearanceSeed alone. A leaf
+    // view that no longer matches the plan is repaired by the full path.
+    else if (MHApplyCompositeAppearanceCustomData(LeafPlacementComponents,
+                 *CandidatePlan, Settings->AppearanceCustomDataBaseIndex) == INDEX_NONE)
+    {
+        if (!CompileFullView()) return;
     }
     AppliedGraph = CandidateGraph;
     ResolvedPlan = CandidatePlan;
@@ -343,8 +415,8 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
         Tick(0.0f);
         return;
     }
-    if (!ResolvedPlan.IsValid() ||
-        !AppliedGraph.IsValid() || ResolvedPlan->Seed != Seed) return;
+    if (!ResolvedPlan.IsValid() || !AppliedGraph.IsValid() || ResolvedPlan->Seed != Seed ||
+        ResolvedPlan->Appearance.AppearanceSeed != AppearanceSeed) return;
     if (!bPlanAvailable && !bBasisRejected)
     {
         // The cached plan may predate a rejected dependency update. Never let
@@ -394,13 +466,30 @@ void AMHCompositeActor::OnConstruction(const FTransform& Transform)
 void AMHCompositeActor::PostActorCreated()
 {
     Super::PostActorCreated();
-    if (!IsTemplate() && bAutoSeed) Seed = GenerateAutoSeed();
+    if (!IsTemplate())
+    {
+        if (bAutoSeed) Seed = GenerateAutoSeed();
+        if (bAutoAppearanceSeed) AppearanceSeed = GenerateAutoSeed();
+        // A newly created placement authors its own AppearanceSeed, including an
+        // explicit zero when auto is off. It is never a migration candidate.
+        bAppearanceSeedStored = true;
+    }
     AttachRootTransformHook();
 }
 
 void AMHCompositeActor::PostLoad()
 {
     Super::PostLoad();
+    // Migration (§3): a placement saved before this slice carries no stored
+    // AppearanceSeed. Materialize it exactly once, here, into the property.
+    // This is data, not components, so it is legal in PostLoad; and it is not a
+    // computed default, so a later Seed reroll cannot move the appearance.
+    if (!IsTemplate() && !bAppearanceSeedStored)
+    {
+        AppearanceSeed = UE::MimirComposite::MHDeriveAppearanceSeedFromLayoutSeed(Seed);
+        bAppearanceSeedStored = true;
+        bNeedsAppearanceSeedDirty = true;
+    }
     AttachRootTransformHook();
     // A loaded actor is not required to be in a world yet, so PostLoad cannot
     // create or register placement components. Record the need; the single
@@ -411,6 +500,13 @@ void AMHCompositeActor::PostLoad()
 void AMHCompositeActor::PostRegisterAllComponents()
 {
     Super::PostRegisterAllComponents();
+    // The migrated AppearanceSeed is already in the property; only the dirty
+    // flag has to wait until the package is no longer loading.
+    if (bNeedsAppearanceSeedDirty)
+    {
+        bNeedsAppearanceSeedDirty = false;
+        MarkPackageDirty();
+    }
     // The one lifecycle point where the actor is in a world and its own
     // components are already registered. OnConstruction stays a basis update:
     // it runs on every PostEditMove and must never become a full rebuild.
@@ -422,9 +518,20 @@ void AMHCompositeActor::PostRegisterAllComponents()
 void AMHCompositeActor::PostDuplicate(const EDuplicateMode::Type DuplicateMode)
 {
     Super::PostDuplicate(DuplicateMode);
-    if (DuplicateMode == EDuplicateMode::Normal && !IsTemplate() && bAutoSeed) Seed = GenerateAutoSeed(Seed);
+    if (DuplicateMode == EDuplicateMode::Normal && !IsTemplate())
+    {
+        // Mirror of the existing layout auto-seed, one gate per seed.
+        if (bAutoSeed) Seed = GenerateAutoSeed(Seed);
+        if (bAutoAppearanceSeed) AppearanceSeed = GenerateAutoSeed(AppearanceSeed);
+        bAppearanceSeedStored = true;
+    }
     AttachRootTransformHook();
-    RebuildComposite();
+    // Field defect: a duplicate that built here, before its components were
+    // registered, left its transient tracking arrays out of sync with the
+    // editor's later text re-import and doubled every node. Extend the S6.2
+    // single-build-point invariant to duplication: defer to registration.
+    if (HasActorRegisteredAllComponents()) RebuildComposite();
+    else bNeedsInitialPlacementBuild = true;
 }
 
 void AMHCompositeActor::Destroyed()
@@ -495,7 +602,7 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
         // asset/receipt. A pure basis move keeps the original applied raw hash.
         EditingGraph->RawHashes.Add(TEXT("composite:") + EditingGraph->RootComposite, MHRawPayloadHash(ProspectiveBytes));
     }
-    if (!MHResolveCompositePlan(*EditingGraph, Seed, *Plan, Error) ||
+    if (!MHResolveCompositePlan(*EditingGraph, Seed, AppearanceSeed, *Plan, Error) ||
         !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), Error))
     {
         LastPlacementError = Error;
@@ -535,16 +642,36 @@ void AMHCompositeActor::PostEditUndo()
 void AMHCompositeActor::PostEditImport()
 {
     Super::PostEditImport();
-    if (!IsTemplate() && bAutoSeed) Seed = GenerateAutoSeed(Seed);
+    if (!IsTemplate())
+    {
+        if (bAutoSeed) Seed = GenerateAutoSeed(Seed);
+        if (bAutoAppearanceSeed) AppearanceSeed = GenerateAutoSeed(AppearanceSeed);
+        bAppearanceSeedStored = true;
+    }
     AttachRootTransformHook();
-    RebuildComposite();
+    // Same single-build-point rule as PostDuplicate: paste re-imports the
+    // transient tracking arrays as empty, so building before registration
+    // orphans an earlier view instead of retiring it.
+    if (HasActorRegisteredAllComponents()) RebuildComposite();
+    else bNeedsInitialPlacementBuild = true;
+}
+
+bool AMHCompositeActor::GetReferencedContentObjects(TArray<UObject*>& Objects) const
+{
+    Super::GetReferencedContentObjects(Objects);
+    // Browse to Asset (Ctrl+B) from a placed composite selects its generated
+    // source asset in the Content Browser.
+    if (UMHCompositeAsset* Asset = CompositeAsset.LoadSynchronous()) Objects.AddUnique(Asset);
+    return true;
 }
 
 bool AMHCompositeActor::CanEditChange(const FProperty* Property) const
 {
     if (bPlacementEditMode && Property != nullptr &&
         (Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, Seed) ||
-         Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, bAutoSeed))) return false;
+         Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, bAutoSeed) ||
+         Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, AppearanceSeed) ||
+         Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, bAutoAppearanceSeed))) return false;
     return Super::CanEditChange(Property);
 }
 
@@ -554,5 +681,10 @@ void AMHCompositeActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
     const FName Name = PropertyChangedEvent.GetPropertyName();
     if (Name == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, CompositeAsset)) RebuildComposite();
     else if (Name == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, Seed)) RebuildPlacement(true);
+    else if (Name == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, AppearanceSeed))
+    {
+        bAppearanceSeedStored = true;
+        RebuildPlacement(true);
+    }
 }
 #endif

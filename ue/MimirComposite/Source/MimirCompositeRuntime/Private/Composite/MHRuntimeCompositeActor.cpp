@@ -1,5 +1,6 @@
 #include "Composite/MHRuntimeCompositeActor.h"
 
+#include "Composite/MHCompositeAppearanceTransport.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -22,23 +23,24 @@ AMHRuntimeCompositeActor::AMHRuntimeCompositeActor()
 
 const UE::MimirComposite::FMHResolvedCompositePlan* AMHRuntimeCompositeActor::GetResolvedPlan() const
 {
-    return LastRuntimeError.IsEmpty() && ResolvedPlan.IsValid() && ResolvedPlan->Seed == Seed
-        ? ResolvedPlan.Get() : nullptr;
+    return LastRuntimeError.IsEmpty() && ResolvedPlan.IsValid() && ResolvedPlan->Seed == Seed &&
+        ResolvedPlan->Appearance.AppearanceSeed == AppearanceSeed ? ResolvedPlan.Get() : nullptr;
 }
 
 bool AMHRuntimeCompositeActor::BuildCandidate(const FMHRuntimeCompositeInput& Input, const int32 InSeed,
-    UE::MimirComposite::FMHResolvedCompositePlan& OutPlan, FString& OutError) const
+    const int32 InAppearanceSeed, UE::MimirComposite::FMHResolvedCompositePlan& OutPlan, FString& OutError) const
 {
     using namespace UE::MimirComposite;
     FMHRandomSourceGraph Graph;
     // Admission uses all source options, never the selected subset.
     return MHDecodeRuntimeCompositeGraph(Input.GraphBytes, Graph, OutError) &&
         MHValidateRuntimeCompositeBindings(Graph, Input.Bindings, OutError) &&
-        MHResolveCompositePlan(Graph, InSeed, OutPlan, OutError) &&
+        MHResolveCompositePlan(Graph, InSeed, InAppearanceSeed, OutPlan, OutError) &&
         MHValidateResolvedPlacementTransforms(OutPlan, GetActorTransform(), OutError);
 }
 
-bool AMHRuntimeCompositeActor::Configure(const FMHRuntimeCompositeInput& Input, const int32 InSeed, FString& OutError)
+bool AMHRuntimeCompositeActor::Configure(const FMHRuntimeCompositeInput& Input, const int32 InSeed,
+    const int32 InAppearanceSeed, FString& OutError)
 {
     OutError.Reset();
     if (bUpdating || IsActorBeingDestroyed())
@@ -49,15 +51,18 @@ bool AMHRuntimeCompositeActor::Configure(const FMHRuntimeCompositeInput& Input, 
     TGuardValue<bool> Guard(bUpdating, true);
     bBasisRejected = false;
     auto Candidate = MakeShared<UE::MimirComposite::FMHResolvedCompositePlan>();
-    if (!BuildCandidate(Input, InSeed, *Candidate, OutError) || !Materialize(Input, *Candidate, OutError))
+    if (!BuildCandidate(Input, InSeed, InAppearanceSeed, *Candidate, OutError) || !Materialize(Input, *Candidate, OutError))
     {
         LastRuntimeError = OutError;
         ResolvedSignature.Reset();
+        PlacementSignature.Reset();
         return false;
     }
     RuntimeInput = Input;
     Seed = InSeed;
+    AppearanceSeed = InAppearanceSeed;
     ResolvedSignature = Candidate->ResolvedSignature;
+    PlacementSignature = Candidate->PlacementSignature;
     ResolvedPlan = MoveTemp(Candidate);
     LastRuntimeError.Reset();
     AttachTransformHook();
@@ -66,7 +71,7 @@ bool AMHRuntimeCompositeActor::Configure(const FMHRuntimeCompositeInput& Input, 
 
 bool AMHRuntimeCompositeActor::RebuildRuntime(FString& OutError)
 {
-    return Configure(RuntimeInput, Seed, OutError);
+    return Configure(RuntimeInput, Seed, AppearanceSeed, OutError);
 }
 
 bool AMHRuntimeCompositeActor::Materialize(const FMHRuntimeCompositeInput& Input,
@@ -120,6 +125,10 @@ bool AMHRuntimeCompositeActor::Materialize(const FMHRuntimeCompositeInput& Input
         if (UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(Component))
         {
             MeshComponent->SetStaticMesh(Endpoint.Mesh);
+            // S6.3.1: the same appearance Custom Primitive Data as the editor
+            // preview, so PIE and packaged tint byte-identically.
+            UE::MimirComposite::MHApplyLeafAppearanceCustomData(
+                MeshComponent, Leaf, AppearanceCustomDataBaseIndex);
         }
         else if (UChildActorComponent* ActorComponent = Cast<UChildActorComponent>(Component))
         {
@@ -173,11 +182,13 @@ void AMHRuntimeCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTra
     {
         LastRuntimeError = MoveTemp(Error);
         ResolvedSignature.Reset();
+        PlacementSignature.Reset();
         bBasisRejected = true;
         return;
     }
     LastRuntimeError.Reset();
     ResolvedSignature = ResolvedPlan->ResolvedSignature;
+    PlacementSignature = ResolvedPlan->PlacementSignature;
     bBasisRejected = false;
     const FMatrix Basis = GetActorTransform().ToMatrixWithScale();
     for (int32 Index = 0; Index < MaterializedComponents.Num(); ++Index)
@@ -205,6 +216,7 @@ void AMHRuntimeCompositeActor::PostLoad()
     ResolvedPlan.Reset();
     LastRuntimeError.Reset();
     ResolvedSignature.Reset();
+    PlacementSignature.Reset();
 }
 
 void AMHRuntimeCompositeActor::BeginPlay()

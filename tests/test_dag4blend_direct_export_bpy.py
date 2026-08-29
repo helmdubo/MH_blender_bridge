@@ -308,6 +308,32 @@ def test_compatibility_report_names_the_ratified_carriers_as_preserved(tmp_path)
                    for item in report["compatibility"]["blocked"])
 
 
+def test_place_type_is_never_inherited_from_the_parent_node():
+    """Owner 2026-08-29: place_type belongs to each node on its own.
+
+    Every composite node, and the composite itself, carries its own place_type
+    and it does NOT propagate. Doc 12 §2.9 one-level inheritance is retracted
+    as mistaken, so absence on a child stays absence: ``None`` means the source
+    never stated a value, and the adapter must not invent one from the parent.
+    """
+
+    root = legacy("direct_root")
+    parent = empty("parent", root)
+    parent["place_type:i"] = 3
+    empty("child", root, parent=parent)
+    before = snapshot()
+    document, _resources = convert_dag4blend_collection(root)
+    assert snapshot() == before
+
+    parent_node = document.nodes[0]
+    child_node = parent_node.children[0]
+    assert parent_node.place_type == 3
+    assert child_node.place_type is None
+    payload = composite_json_bytes(document)
+    # One occurrence only: the parent's. Nothing was materialized on the child.
+    assert payload.count(b"place_type") == 1
+
+
 def test_native_mh_carriers_round_trip_through_import_and_export(tmp_path):
     document, _resources = convert_dag4blend_collection(_carrier_scene("legacy"))
     report = materialize_composite_documents(

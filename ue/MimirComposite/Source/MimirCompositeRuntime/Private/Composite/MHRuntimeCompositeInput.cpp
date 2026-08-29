@@ -16,7 +16,11 @@ namespace
 
 // This transport is private to cooked UObject data. It does not change any
 // source-file version, random stream, resolver token, hash or signature domain.
-constexpr uint8 RuntimeInputMagic[] = {'M', 'H', 'R', 'C', 'I', 'N', 'P', 1};
+// Append-only: version 1 payloads stay readable and decode with an absent
+// appearance boundary flag, which is exactly that grammar's default.
+constexpr uint8 RuntimeInputTag[] = {'M', 'H', 'R', 'C', 'I', 'N', 'P'};
+constexpr uint8 RuntimeInputVersion1 = 1;
+constexpr uint8 RuntimeInputVersion = 2;
 constexpr int32 RuntimeInputMaxBytes = 64 * 1024 * 1024;
 constexpr uint32 RuntimeInputMaxStringBytes = 1024 * 1024;
 constexpr uint32 RuntimeInputMaxItems = 1024 * 1024;
@@ -246,7 +250,7 @@ bool RuntimeInputOptionKind(const EMHRandomSemanticKind Kind)
     }
 }
 
-bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nodes, const int32 Depth)
+bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nodes, const int32 Depth, const uint8 Version)
 {
     if (Depth > RuntimeInputMaxDepth) return Archive.Fail(TEXT("node hierarchy exceeds bounded transport depth"));
     return Archive.Array(Nodes, [&](FMHRandomNode& Node)
@@ -257,6 +261,14 @@ bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nod
         Node.Kind = static_cast<EMHRandomSemanticKind>(Kind);
         if (!Archive.String(Node.Resource) || !Archive.String(Node.DisplayName) || !Archive.String(Node.Profile) ||
             !RuntimeInputTrs(Archive, Node.Transform)) return false;
+        if (Version >= 2)
+        {
+            uint8 Boundary = Node.bAppearanceSeedBoundary ? 1 : 0;
+            if (!Archive.Byte(Boundary)) return false;
+            if (Boundary > 1) return Archive.Fail(TEXT("appearance_seed_boundary is not a boolean byte"));
+            Node.bAppearanceSeedBoundary = Boundary != 0;
+        }
+        else Node.bAppearanceSeedBoundary = false;
         if (!Archive.Array(Node.Options, [&](FMHRandomOption& Option)
         {
             uint8 OptionKind = static_cast<uint8>(Option.Kind);
@@ -265,7 +277,7 @@ bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nod
             Option.Kind = static_cast<EMHRandomSemanticKind>(OptionKind);
             return Archive.String(Option.Resource) && Archive.Float(Option.Weight);
         })) return false;
-        return RuntimeInputNodes(Archive, Node.Children, Depth + 1);
+        return RuntimeInputNodes(Archive, Node.Children, Depth + 1, Version);
     });
 }
 
@@ -289,16 +301,22 @@ bool RuntimeInputProfile(FRuntimeInputArchive& Archive, FMHRandomPlacementProfil
 
 bool RuntimeInputGraph(FRuntimeInputArchive& Archive, FMHRandomSourceGraph& Graph)
 {
-    for (const uint8 Expected : RuntimeInputMagic)
+    for (const uint8 Expected : RuntimeInputTag)
     {
         uint8 Value = Expected;
         if (!Archive.Byte(Value)) return false;
         if (Value != Expected) return Archive.Fail(TEXT("unknown internal transport tag/version"));
     }
+    // Writing always emits the current version; reading also accepts the frozen
+    // predecessor so previously cooked graph bytes keep decoding unchanged.
+    uint8 Version = RuntimeInputVersion;
+    if (!Archive.Byte(Version)) return false;
+    if (Version != RuntimeInputVersion && Version != RuntimeInputVersion1)
+        return Archive.Fail(TEXT("unknown internal transport tag/version"));
     return Archive.String(Graph.RootComposite) &&
         Archive.Map(Graph.Composites, [&](FMHRandomComposite& Composite)
         {
-            return Archive.String(Composite.Name) && RuntimeInputNodes(Archive, Composite.Nodes, 0);
+            return Archive.String(Composite.Name) && RuntimeInputNodes(Archive, Composite.Nodes, 0, Version);
         }) &&
         Archive.Map(Graph.Profiles, [&](FMHRandomPlacementProfile& Profile) { return RuntimeInputProfile(Archive, Profile); }) &&
         Archive.Map(Graph.RawHashes, [&](FString& Hash) { return Archive.String(Hash); }) &&
