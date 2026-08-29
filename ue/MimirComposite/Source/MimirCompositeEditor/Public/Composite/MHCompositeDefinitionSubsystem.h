@@ -45,7 +45,14 @@ struct FMHCompositeDefinitionEntry
     FString RootSourceHash;
     TSharedPtr<const FMHRandomSourceGraph> Graph;
     TSet<FMHResourceKey> Dependencies;
+    TMap<FMHResourceKey, TWeakObjectPtr<UObject>> Endpoints;
 };
+
+/** Resolve one managed mesh endpoint through an admitted shared definition. */
+MIMIRCOMPOSITEEDITOR_API UObject* MHResolveCompositeDefinitionEndpoint(
+    FMHCompositeDefinitionEntry& Definition,
+    const FMHResourceKey& Key,
+    FString& OutError);
 } // namespace UE::MimirComposite
 
 /** Session-only pool of successful immutable editor definition graphs. */
@@ -57,7 +64,7 @@ class MIMIRCOMPOSITEEDITOR_API UMHCompositeDefinitionSubsystem final : public UE
 public:
     virtual void Deinitialize() override;
 
-    TSharedPtr<const UE::MimirComposite::FMHRandomSourceGraph> GetOrBuildDefinition(
+    TSharedPtr<UE::MimirComposite::FMHCompositeDefinitionEntry> GetOrBuildDefinition(
         const UMHCompositeAsset& Root,
         const UMHCompositeSettings& Settings,
         TSet<UE::MimirComposite::FMHResourceKey>& OutDependencies,
@@ -77,7 +84,7 @@ private:
         const TSet<UE::MimirComposite::FMHResourceKey>& Dependencies) const;
 
     TMap<UE::MimirComposite::FMHCompositeDefinitionKey,
-        UE::MimirComposite::FMHCompositeDefinitionEntry> Definitions;
+        TSharedPtr<UE::MimirComposite::FMHCompositeDefinitionEntry>> Definitions;
     TMap<FString, FSoftClassPath> ActorClassRegistrySnapshot;
     TMap<UE::MimirComposite::FMHResourceKey, uint64> ResourceInvalidationRevisions;
     uint64 ActorClassRegistryRevision = 1;

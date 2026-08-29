@@ -13,6 +13,11 @@ class UActorComponent;
 class UMHCompositeAsset;
 class USceneComponent;
 
+namespace UE::MimirComposite
+{
+struct FMHCompositeDefinitionEntry;
+}
+
 /** Persisted level instance of one managed composite; its component view is always derived. */
 UCLASS(NotBlueprintable)
 class MIMIRCOMPOSITEEDITOR_API AMHCompositeActor final : public AActor
@@ -181,6 +186,7 @@ private:
     TSet<UE::MimirComposite::FMHResourceKey> PlacementDependencies;
     TArray<FString> LastPlacementWarnings;
     FString LastPlacementError;
+    TSharedPtr<UE::MimirComposite::FMHCompositeDefinitionEntry> AppliedDefinition;
     TSharedPtr<const UE::MimirComposite::FMHRandomSourceGraph> AppliedGraph;
     TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> ResolvedPlan;
     TOptional<UE::MimirComposite::FMHRandomSourceGraph> EditingGraph;

@@ -3,10 +3,47 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Engine/StaticMesh.h"
 #include "Settings/MHCompositeSettings.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 
 using namespace UE::MimirComposite;
+
+namespace
+{
+bool MatchesDefinitionEndpointIdentity(const FMHResourceKey& Key, const UObject& Object)
+{
+    if (Key.Kind != EMHResourceKind::StaticMesh || !Object.IsA<UStaticMesh>()) return false;
+    const FString ExpectedPath = FString::Printf(
+        TEXT("/Game/MH/Generated/Meshes/%s.%s"), *Key.LogicalName, *Key.LogicalName);
+    return Object.GetPathName() == ExpectedPath;
+}
+} // namespace
+
+UObject* UE::MimirComposite::MHResolveCompositeDefinitionEndpoint(
+    FMHCompositeDefinitionEntry& Definition, const FMHResourceKey& Key, FString& OutError)
+{
+    if (TWeakObjectPtr<UObject>* Cached = Definition.Endpoints.Find(Key))
+    {
+        if (UObject* Object = Cached->Get();
+            Object != nullptr && MatchesDefinitionEndpointIdentity(Key, *Object))
+        {
+            MHRecordDefinitionEndpointHit();
+            return Object;
+        }
+        MHRecordDefinitionDeadEndpointReload();
+        Definition.Endpoints.Remove(Key);
+    }
+
+    MHRecordDefinitionEndpointResolve();
+    UObject* Object = MHLoadAppliedResource(Key, OutError);
+    if (Object != nullptr && MatchesDefinitionEndpointIdentity(Key, *Object))
+    {
+        Definition.Endpoints.Add(Key, Object);
+        MHRecordDefinitionEndpointStore();
+    }
+    return Object;
+}
 
 void UMHCompositeDefinitionSubsystem::Deinitialize()
 {
@@ -36,7 +73,8 @@ uint64 UMHCompositeDefinitionSubsystem::RefreshActorClassRegistryRevision(
 void UMHCompositeDefinitionSubsystem::RemoveDeadDefinitions()
 {
     for (auto It = Definitions.CreateIterator(); It; ++It)
-        if (!It.Value().RootObject.IsValid() || !It.Value().Graph.IsValid()) It.RemoveCurrent();
+        if (!It.Value().IsValid() || !It.Value()->RootObject.IsValid() ||
+            !It.Value()->Graph.IsValid()) It.RemoveCurrent();
 }
 
 bool UMHCompositeDefinitionSubsystem::WasInvalidatedDuring(
@@ -49,7 +87,7 @@ bool UMHCompositeDefinitionSubsystem::WasInvalidatedDuring(
     return false;
 }
 
-TSharedPtr<const FMHRandomSourceGraph> UMHCompositeDefinitionSubsystem::GetOrBuildDefinition(
+TSharedPtr<FMHCompositeDefinitionEntry> UMHCompositeDefinitionSubsystem::GetOrBuildDefinition(
     const UMHCompositeAsset& Root, const UMHCompositeSettings& Settings,
     TSet<FMHResourceKey>& OutDependencies, FString& OutError)
 {
@@ -67,12 +105,12 @@ TSharedPtr<const FMHRandomSourceGraph> UMHCompositeDefinitionSubsystem::GetOrBui
     for (auto It = Definitions.CreateIterator(); It; ++It)
     {
         const FMHCompositeDefinitionKey& Key = It.Key();
-        FMHCompositeDefinitionEntry& Entry = It.Value();
+        const TSharedPtr<FMHCompositeDefinitionEntry>& Entry = It.Value();
         if (Key.RootResourceKey != RootKey) continue;
         if (Key.RootAppliedHash != RootAppliedHash ||
             Key.ActorClassRegistryRevision != RegistryRevision ||
             Key.ImporterVersion != MHStaticMeshImporterVersion ||
-            Entry.RootSourceHash != RootSourceHash)
+            Entry->RootSourceHash != RootSourceHash)
         {
             It.RemoveCurrent();
             continue;
@@ -82,17 +120,8 @@ TSharedPtr<const FMHRandomSourceGraph> UMHCompositeDefinitionSubsystem::GetOrBui
             It.RemoveCurrent();
             break;
         }
-        FMHRandomSourceClosure StoredClosure;
-        FString ValidationError;
-        MHRecordDefinitionClosureHitBuild();
-        if (!MHBuildRandomSourceClosure(*Entry.Graph, StoredClosure, ValidationError) ||
-            StoredClosure.ClosureHash != Key.ClosureHash)
-        {
-            It.RemoveCurrent();
-            continue;
-        }
-        OutDependencies = Entry.Dependencies;
-        return Entry.Graph;
+        OutDependencies = Entry->Dependencies;
+        return Entry;
     }
 
     const uint64 AdmissionSerial = InvalidationSerial;
@@ -117,13 +146,13 @@ TSharedPtr<const FMHRandomSourceGraph> UMHCompositeDefinitionSubsystem::GetOrBui
     Key.ClosureHash = Closure.ClosureHash;
     Key.ActorClassRegistryRevision = RegistryRevision;
     Key.ImporterVersion = MHStaticMeshImporterVersion;
-    FMHCompositeDefinitionEntry Entry;
-    Entry.RootObject = &Root;
-    Entry.RootSourceHash = RootSourceHash;
-    Entry.Graph = Graph;
-    Entry.Dependencies = OutDependencies;
-    Definitions.Add(MoveTemp(Key), MoveTemp(Entry));
-    return Graph;
+    TSharedRef<FMHCompositeDefinitionEntry> Entry = MakeShared<FMHCompositeDefinitionEntry>();
+    Entry->RootObject = &Root;
+    Entry->RootSourceHash = RootSourceHash;
+    Entry->Graph = Graph;
+    Entry->Dependencies = OutDependencies;
+    Definitions.Add(MoveTemp(Key), Entry);
+    return Entry;
 }
 
 void UMHCompositeDefinitionSubsystem::InvalidateDefinition(const FMHResourceKey& ChangedKey)
@@ -132,7 +161,7 @@ void UMHCompositeDefinitionSubsystem::InvalidateDefinition(const FMHResourceKey&
     ++InvalidationSerial;
     ResourceInvalidationRevisions.Add(ChangedKey, InvalidationSerial);
     for (auto It = Definitions.CreateIterator(); It; ++It)
-        if (It.Value().Dependencies.Contains(ChangedKey)) It.RemoveCurrent();
+        if (It.Value().IsValid() && It.Value()->Dependencies.Contains(ChangedKey)) It.RemoveCurrent();
 }
 
 void UMHCompositeDefinitionSubsystem::InvalidateAllDefinitions()

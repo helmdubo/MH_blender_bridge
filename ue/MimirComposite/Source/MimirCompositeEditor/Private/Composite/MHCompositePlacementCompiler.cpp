@@ -1,6 +1,7 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 
 #include "Composite/MHCompositeAppearanceTransport.h"
+#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
@@ -193,7 +194,8 @@ bool MHUpdateCompositePlacementBasis(AActor& Target, const FMHResolvedCompositeP
 
 FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
     const FMHResolvedCompositePlan& Plan, const FMHRandomComposite& RootDefinition,
-    const UMHCompositeSettings& Settings, TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents)
+    const UMHCompositeSettings& Settings, TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
+    FMHCompositeDefinitionEntry* Definition)
 {
     FMHPlacementStageScope CompileStage(EMHPlacementStage::CompilePlacement);
     FMHCompositePlacementCompileResult Result;
@@ -211,8 +213,16 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
                 FMHResourceKey Key;
                 Key.Kind = EMHResourceKind::StaticMesh;
                 Key.LogicalName = Leaf.Resource;
-                MHRecordDefinitionEndpointResolve();
-                Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, Result.Error));
+                if (Definition != nullptr)
+                {
+                    Endpoint.Mesh = Cast<UStaticMesh>(
+                        MHResolveCompositeDefinitionEndpoint(*Definition, Key, Result.Error));
+                }
+                else
+                {
+                    MHRecordDefinitionEndpointResolve();
+                    Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, Result.Error));
+                }
                 if (!Result.Error.IsEmpty()) return Result;
             }
             else if (Leaf.Kind == EMHRandomSemanticKind::Actor)
