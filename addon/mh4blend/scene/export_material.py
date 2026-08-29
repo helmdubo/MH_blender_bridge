@@ -65,6 +65,10 @@ class MaterialBinding:
 
     name: str
     material: object
+    # Owner decision 2026-08-30: diverging ``.NNN`` claimants merge into the
+    # base logical name; this carries the one warning row describing what the
+    # representative overrode, or ``None`` when the group agrees.
+    divergence: tuple = None
 
     @property
     def library(self):
@@ -169,11 +173,13 @@ def _duplicate_group(logical_name: str) -> list:
 def resolve_material_binding(material) -> MaterialBinding:
     """Merge Blender ``.NNN`` duplicates onto one representative datablock.
 
-    ``X.001`` is a Blender duplicate of ``X``, not a second resource. When the
-    duplicate's v4 content matches ``X`` the pair publishes one ``X.material``
-    and the FBX slot is written as ``X``; a real divergence is the existing
-    ambiguity refusal naming both datablocks. A duplicate whose base name is
-    unused simply drops the suffix.
+    ``X.001`` is a Blender duplicate of ``X``, not a second resource: the pair
+    publishes one ``X.material`` and the FBX slot is written as ``X``. Owner
+    decision 2026-08-30: this holds even when the duplicate's v4 content
+    diverges - the representative (the base-named datablock when it exists) is
+    the published authority for every object, and the divergence is reported
+    as a warning naming the overridden fields, never refused. The dropped
+    parameters stay authored in the scene datablocks.
     """
     if isinstance(material, MaterialBinding):
         return material
@@ -183,29 +189,35 @@ def resolve_material_binding(material) -> MaterialBinding:
         group = [material]
     exact = [row for row in group if row.name == logical_name]
     representative = exact[0] if exact else group[0]
+    divergence = None
     if len(group) > 1:
         reference = material_content_fingerprint(representative)
+        diverging = []
         for other in group:
             if other == representative:
                 continue
             candidate = material_content_fingerprint(other)
             if candidate != reference:
-                raise MHValidationError(
-                    "MH_E_AMBIGUOUS_RESOURCE_NAME",
-                    [representative.name, other.name],
-                    f"'{other.name}' is not a Blender duplicate of "
-                    f"'{representative.name}' but a second material claiming "
-                    f"the logical name '{logical_name}' "
-                    f"({_fingerprint_difference(candidate, reference)}); give "
-                    "one of them its own name")
+                diverging.append(
+                    f"'{other.name}' "
+                    f"({_fingerprint_difference(candidate, reference)})")
+        if diverging:
+            divergence = (
+                "MH_W_DAGOR_CONSTRUCT_DROPPED",
+                (logical_name,
+                 *[row.name for row in group if row != representative]),
+                f"materials merged into '{logical_name}': "
+                f"'{representative.name}' is the published authority; "
+                "overridden: " + "; ".join(diverging))
     cached = _BINDINGS.get(logical_name)
     if cached is not None:
         try:
-            if cached.material == representative:
+            if cached.material == representative and cached.divergence == divergence:
                 return cached
         except ReferenceError:
             pass
-    binding = MaterialBinding(name=logical_name, material=representative)
+    binding = MaterialBinding(
+        name=logical_name, material=representative, divergence=divergence)
     _BINDINGS[logical_name] = binding
     return binding
 

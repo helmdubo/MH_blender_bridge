@@ -1234,6 +1234,11 @@ def prepare_fbx_collection(
 
     scene = _find_export_scene(collection)
     warnings = []
+    # Owner decision 2026-08-30: diverging .NNN duplicates merge into the base
+    # logical name; the artist sees exactly what the representative overrode.
+    for binding in materials:
+        if binding.divergence is not None and binding.divergence not in warnings:
+            warnings.append(binding.divergence)
     if lod_structure is not None and lod_structure["ignored_aux"]:
         ignored = ", ".join(
             (f"LOD{level} '{name}'" if level != "root"
@@ -1502,5 +1507,6 @@ def export_fbx_collection(
         "lod_levels": list(prepared.lod_levels),
         "materials": [binding.name for binding in prepared.materials],
         "material_updates": material_updates,
+        "warnings": list(prepared.warnings),
         "validation": _validation_report(prepared),
     }
