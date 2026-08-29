@@ -1,12 +1,14 @@
 #include "Composite/MHCompositeActor.h"
 
 #include "Composite/MHCompositeAppearanceTransport.h"
+#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Engine/World.h"
+#include "Editor.h"
 #include "LevelEditor.h"
 #include "Logging/MessageLog.h"
 #include "Misc/Guid.h"
@@ -302,6 +304,23 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         TSet<FMHResourceKey> Dependencies;
         if (Asset == nullptr)
             Error = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:") + Name + TEXT(" has no generated asset");
+        else if (UMHCompositeDefinitionSubsystem* Definitions =
+                     GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>() : nullptr)
+        {
+            if (TSharedPtr<const FMHRandomSourceGraph> Shared =
+                    Definitions->GetOrBuildDefinition(*Asset, *Settings, Dependencies, Error))
+            {
+                CandidateGraph = MoveTemp(Shared);
+                PlacementDependencies = MoveTemp(Dependencies);
+            }
+            else
+            {
+                // Failed admissions are never cached. Preserve every key the
+                // builder discovered so its existing targeted notification can
+                // retry this actor when a missing dependency appears.
+                PlacementDependencies.Append(Dependencies);
+            }
+        }
         else if (MHBuildAppliedCompositeGraph(*Asset, *Settings, *Graph, Dependencies, Error))
         {
             CandidateGraph = Graph;
