@@ -927,10 +927,19 @@ def test_duplicate_material_without_base_uses_the_unsuffixed_name(
     assert duplicate.name == "gaz53_tiled_wood_b.001"
 
 
-def test_divergent_duplicate_material_is_ambiguous(
+def _divergence_warnings(report):
+    return [row for row in report["warnings"]
+            if row[0] == "MH_W_DAGOR_CONSTRUCT_DROPPED"
+            and "merged into" in row[2]]
+
+
+def test_divergent_duplicate_merges_into_the_base_authority(
         tmp_path, registered_material_properties):
+    # Owner decision 2026-08-30: a diverging .NNN claimant merges into the
+    # base logical name; the base datablock is the published authority for
+    # every object and the divergence is reported, never refused.
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    collection = _collection("ambiguous_material")
+    collection = _collection("merged_material")
     base = _material("paint")
     base.mh4blend.material_class = "rendinst_simple"
     duplicate = _material("paint.001")
@@ -938,25 +947,24 @@ def test_divergent_duplicate_material_is_ambiguous(
     body = _mesh_object("body", collection)
     _assign_material(body, duplicate)
 
-    with pytest.raises(MHValidationError) as exc:
-        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
-    assert exc.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
-    assert exc.value.subjects == ["paint", "paint.001"]
-    # The refusal has to name the field that actually diverges: real content
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert report["materials"] == ["paint"]
+    plan = parse_mesh_fbx(report["filepath"])
+    assert plan.material_names == ("paint",)
+    merged = _divergence_warnings(report)
+    assert len(merged) == 1
+    assert tuple(merged[0][1]) == ("paint", "paint.001")
+    # The warning has to name the field that actually diverges: real content
     # hides the divergence in one Dagor parameter out of a dozen.
-    assert "class 'rendinst_mask_layered' vs 'rendinst_simple'" in str(
-        exc.value)
-    assert not (tmp_path / "ambiguous_material.mesh.fbx").exists()
+    assert "class 'rendinst_mask_layered' vs 'rendinst_simple'" in merged[0][2]
+    assert "'paint' is the published authority" in merged[0][2]
+    # The scene stays authored: the diverging datablock is not modified.
+    assert duplicate.mh4blend.material_class == "rendinst_mask_layered"
 
 
-def test_divergent_duplicate_blocks_even_when_only_the_base_is_transported(
+def test_divergent_duplicate_warns_even_when_only_the_base_is_transported(
         tmp_path, registered_material_properties):
-    """`<name>.material` is one file, so the conflict is file-wide.
-
-    The exported mesh only uses `paint`, but publishing `paint.material` while
-    a second datablock claims that logical name would hand the artist a file
-    that is wrong for the other mesh.
-    """
+    """`<name>.material` is one file, so the merge group is file-wide."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("base_only_mesh")
     base = _material("paint")
@@ -965,16 +973,17 @@ def test_divergent_duplicate_blocks_even_when_only_the_base_is_transported(
     elsewhere.mh4blend.material_class = "rendinst_mask_layered"
     _assign_material(_mesh_object("body", collection), base)
 
-    with pytest.raises(MHValidationError) as exc:
-        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
-    assert exc.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
-    assert exc.value.subjects == ["paint", "paint.001"]
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    assert report["materials"] == ["paint"]
+    merged = _divergence_warnings(report)
+    assert len(merged) == 1
+    assert tuple(merged[0][1]) == ("paint", "paint.001")
 
 
-def test_divergent_duplicate_names_the_diverging_dagor_parameter(
+def test_divergence_warning_names_the_diverging_dagor_parameter(
         tmp_path, registered_material_properties):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    collection = _collection("ambiguous_parameter")
+    collection = _collection("merged_parameter")
     base = _material("paint")
     base.mh4blend.material_class = "rendinst_mask_layered"
     base_row = base.mh4blend.params.add()
@@ -989,10 +998,10 @@ def test_divergent_duplicate_names_the_diverging_dagor_parameter(
     duplicate_row.vector = (0.6, 0.0, 0.0, 94.0)
     _assign_material(_mesh_object("body", collection), duplicate)
 
-    with pytest.raises(MHValidationError) as exc:
-        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
-    assert exc.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
-    assert "params.paint_details" in str(exc.value)
+    report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    merged = _divergence_warnings(report)
+    assert len(merged) == 1
+    assert "params.paint_details" in merged[0][2]
 
 
 def test_export_rejects_socket_with_child_outside_resource(tmp_path):
