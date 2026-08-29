@@ -17,6 +17,9 @@ namespace
 {
 constexpr EObjectFlags PlanViewFlags = RF_Transactional | RF_Transient | RF_DuplicateTransient | RF_TextExportTransient;
 
+/** Instrumentation counter behind MHGetPlacementPreviousComponentProbes. */
+uint64 GMHPlacementPreviousComponentProbes = 0;
+
 FMatrix PlanViewTrsMatrix(const FMHRandomTrs& Trs)
 {
     return FTransform(FQuat(Trs.RotationQuat), FVector(Trs.TranslationCm), FVector(Trs.Scale)).ToMatrixWithScale();
@@ -29,8 +32,14 @@ void PlanViewSetWorld(USceneComponent& Component, const FMatrix& Matrix)
         Component.SetWorldTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
 }
 
+/**
+ * Canonical creation order: NewObject, AddInstanceComponent, SetupAttachment,
+ * SetAbsolute, endpoint configuration, RegisterComponent. Nothing that decides
+ * what the component renders may happen after registration.
+ */
 USceneComponent* PlanViewNew(AActor& Target, UClass* Class, const FString& Label,
-    const FName Key, FMHCompositePlacementCompileResult& Result, USceneComponent* Parent = nullptr)
+    const FName Key, FMHCompositePlacementCompileResult& Result, USceneComponent* Parent = nullptr,
+    const TFunction<void(USceneComponent&)>& Configure = TFunction<void(USceneComponent&)>())
 {
     USceneComponent* Component = NewObject<USceneComponent>(&Target, Class,
         MakeUniqueObjectName(&Target, Class, FName(*Label)), PlanViewFlags);
@@ -40,19 +49,59 @@ USceneComponent* PlanViewNew(AActor& Target, UClass* Class, const FString& Label
     // Componentwise FTransform multiplication can even lose representable
     // scale-axis permutations. Apply the admitted full world matrix instead.
     Component->SetAbsolute(Parent == nullptr, Parent == nullptr, Parent == nullptr);
+    if (Configure) Configure(*Component);
     Component->RegisterComponent();
     Result.Components.Add(Component);
     return Component;
 }
 
-USceneComponent* PlanViewFind(TConstArrayView<TObjectPtr<UActorComponent>> Previous, const FName Key, UClass* Class)
+/** One tag/class row of the previous component view. */
+struct FPlanViewPreviousKey
 {
+    FName Tag;
+    const UClass* Class = nullptr;
+
+    bool operator==(const FPlanViewPreviousKey& Other) const
+    {
+        return Tag == Other.Tag && Class == Other.Class;
+    }
+};
+
+uint32 GetTypeHash(const FPlanViewPreviousKey& Key)
+{
+    return HashCombine(GetTypeHash(Key.Tag), GetTypeHash(Key.Class));
+}
+
+using FPlanViewPreviousIndex = TMap<FPlanViewPreviousKey, USceneComponent*>;
+
+/**
+ * Build the reuse index once instead of rescanning the previous view per leaf.
+ * The former linear scan returned the first previous component matching both
+ * tag and class, so insertion keeps the first occurrence and never overwrites.
+ */
+FPlanViewPreviousIndex PlanViewIndexPrevious(TConstArrayView<TObjectPtr<UActorComponent>> Previous)
+{
+    FPlanViewPreviousIndex Index;
+    Index.Reserve(Previous.Num());
     for (UActorComponent* Component : Previous)
     {
-        if (IsValid(Component) && Component->GetClass() == Class && Component->ComponentTags.Contains(Key))
-            return Cast<USceneComponent>(Component);
+        if (!IsValid(Component)) continue;
+        USceneComponent* Scene = Cast<USceneComponent>(Component);
+        for (const FName& Tag : Component->ComponentTags)
+        {
+            ++GMHPlacementPreviousComponentProbes;
+            const FPlanViewPreviousKey Key{Tag, Component->GetClass()};
+            if (!Index.Contains(Key)) Index.Add(Key, Scene);
+        }
     }
-    return nullptr;
+    return Index;
+}
+
+USceneComponent* PlanViewFind(const FPlanViewPreviousIndex& Previous, const FName Key, UClass* Class)
+{
+    ++GMHPlacementPreviousComponentProbes;
+    USceneComponent* const* Found = Previous.Find(FPlanViewPreviousKey{Key, Class});
+    return Found != nullptr ? *Found : nullptr;
 }
 
 USceneComponent* PlanViewPlaceholder(AActor& Target, const FString& Label, const FName Key,
@@ -100,17 +149,37 @@ bool PlanViewPreflight(const FMHResolvedCompositePlan& Plan, const FMHRandomComp
 }
 } // namespace
 
+uint64 MHGetPlacementPreviousComponentProbes()
+{
+    return GMHPlacementPreviousComponentProbes;
+}
+
+void MHResetPlacementPreviousComponentProbes()
+{
+    GMHPlacementPreviousComponentProbes = 0;
+}
+
 bool MHUpdateCompositePlacementBasis(AActor& Target, const FMHResolvedCompositePlan& Plan,
     const FMHRandomComposite& RootDefinition, TConstArrayView<TObjectPtr<USceneComponent>> Handles,
     TConstArrayView<TObjectPtr<USceneComponent>> Leaves, FString& OutError)
 {
+    // Fail-closed before any mutation: an intersection-length walk leaves the
+    // surplus silently stale and still reports success. Require exact agreement
+    // and let the caller rebuild the whole placement instead.
+    if (Handles.Num() != RootDefinition.Nodes.Num() || Leaves.Num() != Plan.Leaves.Num())
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_PLACEMENT_STATE_DESYNC: %s handles %d of %d, leaves %d of %d"),
+            *RootDefinition.Name, Handles.Num(), RootDefinition.Nodes.Num(), Leaves.Num(), Plan.Leaves.Num());
+        return false;
+    }
     if (!PlanViewPreflight(Plan, RootDefinition, Target.GetActorTransform(), OutError)) return false;
     const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
-    for (int32 Index = 0; Index < Handles.Num() && Index < RootDefinition.Nodes.Num(); ++Index)
+    for (int32 Index = 0; Index < Handles.Num(); ++Index)
     {
         if (IsValid(Handles[Index])) PlanViewSetWorld(*Handles[Index], PlanViewTrsMatrix(RootDefinition.Nodes[Index].Transform) * Basis);
     }
-    for (int32 Index = 0; Index < Leaves.Num() && Index < Plan.Leaves.Num(); ++Index)
+    for (int32 Index = 0; Index < Leaves.Num(); ++Index)
     {
         if (IsValid(Leaves[Index])) PlanViewSetWorld(*Leaves[Index], Plan.Leaves[Index].WorldMatrix * Basis);
     }
@@ -150,10 +219,13 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         }
     }
     const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
+    // Handles and leaves share one index; their tag prefixes already separate
+    // MH.Handle: from MH.Leaf:, so no second pass over the previous view.
+    const FPlanViewPreviousIndex PreviousIndex = PlanViewIndexPrevious(PreviousComponents);
     for (int32 Index = 0; Index < RootDefinition.Nodes.Num(); ++Index)
     {
         const FName Key(*FString::Printf(TEXT("MH.Handle:%d"), Index));
-        USceneComponent* Handle = PlanViewFind(PreviousComponents, Key, USceneComponent::StaticClass());
+        USceneComponent* Handle = PlanViewFind(PreviousIndex, Key, USceneComponent::StaticClass());
         if (Handle == nullptr) Handle = PlanViewNew(Target, USceneComponent::StaticClass(), TEXT("MH_Node"), Key, Result);
         else Result.Components.Add(Handle);
         PlanViewSetWorld(*Handle, PlanViewTrsMatrix(RootDefinition.Nodes[Index].Transform) * Basis);
@@ -167,13 +239,27 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         const FName Key(*FString::Printf(TEXT("MH.Leaf:%s:%d:%s"), *Leaf.Origin, static_cast<int32>(Leaf.Kind), *Leaf.Resource));
         UClass* Class = Endpoint.Mesh != nullptr ? UStaticMeshComponent::StaticClass() :
             (Endpoint.ActorClass != nullptr ? UChildActorComponent::StaticClass() : nullptr);
-        USceneComponent* Component = Class != nullptr ? PlanViewFind(PreviousComponents, Key, Class) : nullptr;
+        USceneComponent* Component = Class != nullptr ? PlanViewFind(PreviousIndex, Key, Class) : nullptr;
         if (Class == nullptr)
         {
             Component = PlanViewPlaceholder(Target, Label, Key, Result);
             Result.Warnings.Add(TEXT("MH_W_UNRESOLVED_PLACEMENT: ") + Leaf.Origin + TEXT(" -> ") + Leaf.Resource);
         }
-        else if (Component == nullptr) Component = PlanViewNew(Target, Class, TEXT("MH_Leaf_") + Leaf.Resource, Key, Result);
+        else if (Component == nullptr)
+        {
+            // A newly created leaf knows its endpoint before it registers; a
+            // reused one is configured below, where it is already registered.
+            Component = PlanViewNew(Target, Class, TEXT("MH_Leaf_") + Leaf.Resource, Key, Result, nullptr,
+                [&Endpoint](USceneComponent& New)
+                {
+                    if (UStaticMeshComponent* NewMesh = Cast<UStaticMeshComponent>(&New)) NewMesh->SetStaticMesh(Endpoint.Mesh);
+                    else if (UChildActorComponent* NewChild = Cast<UChildActorComponent>(&New))
+                    {
+                        NewChild->SetEditorTreeViewVisualizationMode(EChildActorComponentTreeViewVisualizationMode::Hidden);
+                        NewChild->SetChildActorClass(Endpoint.ActorClass);
+                    }
+                });
+        }
         else Result.Components.Add(Component);
         // Organizational ancestry only: keep the admitted full world matrix,
         // never recompose it through the author's handle using FTransform.

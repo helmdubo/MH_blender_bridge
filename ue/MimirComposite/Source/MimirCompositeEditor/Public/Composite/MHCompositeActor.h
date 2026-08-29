@@ -50,6 +50,15 @@ public:
     /** Rebuild from managed applied assets, never from the source filesystem. */
     void RebuildComposite();
 
+    /** Instrumentation only: full placement rebuilds performed by this actor. */
+    uint32 GetPlacementRebuildCount() const { return PlacementRebuildCount; }
+
+    /** Instrumentation only: rebuilds forced by a fail-closed state desync. */
+    uint32 GetPlacementDesyncCount() const { return PlacementDesyncCount; }
+
+    /** Instrumentation only: rebuilds entered before this actor was registered. */
+    uint32 GetPlacementUnregisteredBuildCount() const { return PlacementUnregisteredBuildCount; }
+
     const TArray<TObjectPtr<UActorComponent>>& GetDerivedComponents() const
     {
         return DerivedComponents;
@@ -80,6 +89,7 @@ public:
 
     virtual void OnConstruction(const FTransform& Transform) override;
     virtual void PostLoad() override;
+    virtual void PostRegisterAllComponents() override;
     virtual void PostActorCreated() override;
     virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
     virtual void Tick(float DeltaSeconds) override;
@@ -144,4 +154,10 @@ private:
 
     bool bRebuildInProgress = false;
     bool bPlacementEditMode = false;
+    /** Set by PostLoad; consumed by the single admitted first-build point. */
+    bool bNeedsInitialPlacementBuild = false;
+
+    uint32 PlacementRebuildCount = 0;
+    uint32 PlacementDesyncCount = 0;
+    uint32 PlacementUnregisteredBuildCount = 0;
 };

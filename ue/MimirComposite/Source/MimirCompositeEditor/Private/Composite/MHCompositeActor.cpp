@@ -31,8 +31,12 @@ void BroadcastMHCompositeComponentsEdited()
 void DestroyMHRetiredComponents(const TArray<TObjectPtr<UActorComponent>>& Previous,
     const TArray<TObjectPtr<UActorComponent>>& Current)
 {
+    if (Previous.IsEmpty()) return;
+    // One membership set instead of a linear Contains per retired candidate.
+    // Retirement order and the set of destroyed components are unchanged.
+    const TSet<TObjectPtr<UActorComponent>> Kept(Current);
     for (int32 Index = Previous.Num() - 1; Index >= 0; --Index)
-        if (IsValid(Previous[Index]) && !Current.Contains(Previous[Index])) Previous[Index]->DestroyComponent();
+        if (IsValid(Previous[Index]) && !Kept.Contains(Previous[Index])) Previous[Index]->DestroyComponent();
 }
 }
 
@@ -210,6 +214,10 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     if (bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
+    ++PlacementRebuildCount;
+    // Instrumentation for the S6.2 lifecycle guard: placement components may
+    // only be created once this actor's own components are already registered.
+    if (!HasActorRegisteredAllComponents()) ++PlacementUnregisteredBuildCount;
     bBasisRejected = false;
     AttachRootTransformHook();
     if (CompositeAsset.ToSoftObjectPath().IsNull())
@@ -346,23 +354,33 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
     }
     const FMHRandomComposite* Root = AppliedGraph->Composites.Find(AppliedGraph->RootComposite);
     if (Root == nullptr) return;
-    TGuardValue<bool> Guard(bRebuildInProgress, true);
-    FString Error;
-    if (!MHUpdateCompositePlacementBasis(*this, *ResolvedPlan, *Root, TopLevelPlacementComponents, LeafPlacementComponents, Error))
+    bool bDesynchronized = false;
     {
-        LastPlacementError = Error;
-        ResolvedSignature.Reset();
-        bPlanAvailable = false;
-        bBasisRejected = true;
-        ReportPlacementError();
+        TGuardValue<bool> Guard(bRebuildInProgress, true);
+        FString Error;
+        if (!MHUpdateCompositePlacementBasis(*this, *ResolvedPlan, *Root, TopLevelPlacementComponents, LeafPlacementComponents, Error))
+        {
+            LastPlacementError = Error;
+            ResolvedSignature.Reset();
+            bPlanAvailable = false;
+            bBasisRejected = true;
+            ReportPlacementError();
+            bDesynchronized = Error.StartsWith(TEXT("MH_E_PLACEMENT_STATE_DESYNC"));
+        }
+        else if (bBasisRejected)
+        {
+            LastPlacementError.Reset();
+            ResolvedSignature = ResolvedPlan->ResolvedSignature;
+            bPlanAvailable = true;
+            bBasisRejected = false;
+        }
     }
-    else if (bBasisRejected)
-    {
-        LastPlacementError.Reset();
-        ResolvedSignature = ResolvedPlan->ResolvedSignature;
-        bPlanAvailable = true;
-        bBasisRejected = false;
-    }
+    if (!bDesynchronized) return;
+    // A component view that no longer matches the plan is never repaired by a
+    // partial walk over the shorter array. Rebuild the whole placement instead,
+    // outside the reentrancy guard the basis update runs under.
+    ++PlacementDesyncCount;
+    RebuildComposite();
 }
 
 void AMHCompositeActor::OnConstruction(const FTransform& Transform)
@@ -384,6 +402,20 @@ void AMHCompositeActor::PostLoad()
 {
     Super::PostLoad();
     AttachRootTransformHook();
+    // A loaded actor is not required to be in a world yet, so PostLoad cannot
+    // create or register placement components. Record the need; the single
+    // admitted first-build point below runs once the actor is registered.
+    bNeedsInitialPlacementBuild = true;
+}
+
+void AMHCompositeActor::PostRegisterAllComponents()
+{
+    Super::PostRegisterAllComponents();
+    // The one lifecycle point where the actor is in a world and its own
+    // components are already registered. OnConstruction stays a basis update:
+    // it runs on every PostEditMove and must never become a full rebuild.
+    if (!bNeedsInitialPlacementBuild) return;
+    bNeedsInitialPlacementBuild = false;
     RebuildComposite();
 }
 

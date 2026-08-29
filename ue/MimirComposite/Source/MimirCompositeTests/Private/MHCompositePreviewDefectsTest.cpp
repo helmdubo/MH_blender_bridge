@@ -5,11 +5,15 @@
 #include "Composite/MHCompositeProtocol.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
+#include "Engine/Selection.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "FileHelpers.h"
 #include "HAL/IConsoleManager.h"
+#include "InputCoreTypes.h"
 #include "LevelEditorViewport.h"
+#include "Misc/PackageName.h"
 #include "MeshDescription.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/CommandLine.h"
@@ -110,6 +114,15 @@ UStaticMeshComponent* ReviewPreviewRegressionLeaf(AMHCompositeActor& Actor)
 {
     for (UActorComponent* Component : Actor.GetDerivedComponents())
         if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) return Mesh;
+    return nullptr;
+}
+
+/** The perspective level viewport of the isolated host, or nullptr. */
+FLevelEditorViewportClient* ReviewPreviewLevelViewport()
+{
+    if (GEditor == nullptr) return nullptr;
+    for (FLevelEditorViewportClient* Candidate : GEditor->GetLevelViewportClients())
+        if (Candidate != nullptr && Candidate->IsPerspective() && Candidate->Viewport != nullptr) return Candidate;
     return nullptr;
 }
 }
@@ -214,6 +227,125 @@ bool FMHReviewRenderedHitProxyRegression::RunTest(const FString& Parameters)
     Client->SetViewRotation(OldRotation);
     Actor->Destroy();
     Client->Invalidate(true, true);
+    return bPassed;
+}
+
+/**
+ * V5-S6.2 acceptance 1. Not a component-existence check: reopen a saved level
+ * and route a real viewport click through the leaf pixel, then assert the
+ * editor selection actually holds the composite actor.
+ */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHLoadedPlacementClickSelection,
+    "Mimir.Audit.MainBaseline.LoadedPlacementClickSelectsActor",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHLoadedPlacementClickSelection::RunTest(const FString& Parameters)
+{
+    if (!FParse::Param(FCommandLine::Get(), TEXT("MHPreviewRenderSmoke")))
+    {
+        AddInfo(TEXT("RHI lane NOT RUN: requires -MHPreviewRenderSmoke in the isolated host without -nullrhi"));
+        return true;
+    }
+    if (FPaths::GetBaseFilename(FPaths::GetProjectFilePath()) != TEXT("MimirCompositeV5S6") || GEditor == nullptr)
+    {
+        AddError(TEXT("click selection smoke refuses a non-isolated project"));
+        return false;
+    }
+    FReviewPreviewRegressionFixture Fixture;
+    if (!Fixture.Build(*this, true)) return false;
+
+    const FVector Origin(20000, 20000, 20000);
+    UWorld* Authoring = UEditorLoadingAndSavingUtils::NewBlankMap(false);
+    if (!TestNotNull(TEXT("blank authoring map"), Authoring)) return false;
+    AMHCompositeActor* Authored = Authoring->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("authored placement"), Authored)) return false;
+    Authored->SetActorLocation(Origin);
+    Authored->SetCompositeAsset(Fixture.Asset);
+    if (!TestNotNull(*Authored->GetLastPlacementError(), Authored->GetResolvedPlan())) return false;
+
+    TArray<UPackage*> Packages;
+    for (UObject* Object : Fixture.Assets) Packages.AddUnique(Object->GetOutermost());
+    const FString MapPackage = TEXT("/Game/MimirS6/PlacementClick");
+    FString MapFile;
+    const bool bSaved = TestTrue(TEXT("fixture asset packages saved"),
+            UEditorLoadingAndSavingUtils::SavePackages(Packages, false)) &&
+        TestTrue(TEXT("authored placement map saved"), UEditorLoadingAndSavingUtils::SaveMap(Authoring, MapPackage)) &&
+        TestTrue(TEXT("map filename resolves"), FPackageName::TryConvertLongPackageNameToFilename(
+            MapPackage, MapFile, FPackageName::GetMapPackageExtension()));
+    if (!bSaved)
+    {
+        UEditorLoadingAndSavingUtils::NewBlankMap(false);
+        return false;
+    }
+    UEditorLoadingAndSavingUtils::NewBlankMap(false);
+
+    // Open the level exactly as the owner does, then click what is on screen.
+    UWorld* World = UEditorLoadingAndSavingUtils::LoadMap(MapFile);
+    if (!TestNotNull(TEXT("reopened level"), World))
+    {
+        UEditorLoadingAndSavingUtils::NewBlankMap(false);
+        return false;
+    }
+    AMHCompositeActor* Actor = nullptr;
+    for (TActorIterator<AMHCompositeActor> It(World); It; ++It) { Actor = *It; break; }
+    FLevelEditorViewportClient* Client = ReviewPreviewLevelViewport();
+    if (!TestNotNull(TEXT("reopened level holds the placement"), Actor) ||
+        !TestNotNull(TEXT("real level viewport"), Client) ||
+        !TestTrue(TEXT("viewport shows the reopened level"), Client->GetWorld() == World))
+    {
+        UEditorLoadingAndSavingUtils::NewBlankMap(false);
+        return false;
+    }
+    UStaticMeshComponent* Leaf = ReviewPreviewRegressionLeaf(*Actor);
+    bool bPassed = TestNotNull(TEXT("reopened placement has a rendered leaf"), Leaf);
+    bPassed &= TestEqual(TEXT("no placement build ran before the actor was registered"),
+        Actor->GetPlacementUnregisteredBuildCount(), 0u);
+    if (Leaf == nullptr)
+    {
+        UEditorLoadingAndSavingUtils::NewBlankMap(false);
+        return false;
+    }
+
+    const FVector OldLocation = Client->GetViewLocation();
+    const FRotator OldRotation = Client->GetViewRotation();
+    const EViewModeIndex OldMode = Client->GetViewMode();
+    Client->SetViewMode(VMI_Unlit);
+    Client->SetViewLocation(Origin + FVector(500, 0, 0));
+    Client->SetViewRotation(FRotator(0, 180, 0));
+    Client->SetGameView(false);
+    World->SendAllEndOfFrameUpdates();
+    FlushRenderingCommands();
+    Client->Invalidate(true, true);
+    Client->Viewport->Draw();
+    FlushRenderingCommands();
+
+    GEditor->SelectNone(false, true, false);
+    const FIntPoint Size = Client->Viewport->GetSizeXY();
+    const uint32 HitX = Size.X / 2;
+    const uint32 HitY = Size.Y / 2;
+    HHitProxy* Hit = Client->Viewport->GetHitProxy(HitX, HitY);
+    bPassed &= TestTrue(TEXT("reopened leaf rasterizes a native HActor of the composite actor"),
+        Hit != nullptr && Hit->IsA(HActor::StaticGetType()) && static_cast<HActor*>(Hit)->Actor == Actor);
+    FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+        Client->Viewport, World->Scene, Client->EngineShowFlags).SetRealtimeUpdate(false));
+    FSceneView* View = Client->CalcSceneView(&ViewFamily);
+    if (View != nullptr)
+    {
+        Client->ProcessClick(*View, Hit, EKeys::LeftMouseButton, IE_Released, HitX, HitY);
+    }
+    const bool bSelected = GEditor->GetSelectedActors() != nullptr &&
+        GEditor->GetSelectedActors()->IsSelected(Actor);
+    AddInfo(FString::Printf(TEXT("reopened-level click at %dx%d hit=%s selected=%d selection-count=%d"),
+        HitX, HitY, Hit != nullptr ? Hit->GetType()->GetName() : TEXT("none"), bSelected ? 1 : 0,
+        GEditor->GetSelectedActors() != nullptr ? GEditor->GetSelectedActors()->Num() : -1));
+    bPassed &= TestTrue(TEXT("clicking the leaf selects the composite actor"), bSelected);
+
+    GEditor->SelectNone(false, true, false);
+    Client->SetViewMode(OldMode);
+    Client->SetViewLocation(OldLocation);
+    Client->SetViewRotation(OldRotation);
+    Client->Invalidate(true, true);
+    UEditorLoadingAndSavingUtils::NewBlankMap(false);
     return bPassed;
 }
 }

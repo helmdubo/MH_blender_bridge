@@ -238,7 +238,10 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
     FString ResolverTag;
     bool bPassed = TestTrue(TEXT("stream tag"), Root->TryGetStringField(TEXT("stream"), StreamTag) && StreamTag == MHRandomStream1Tag);
     bPassed &= TestTrue(TEXT("resolver tag"), Root->TryGetStringField(TEXT("resolver"), ResolverTag) && ResolverTag == MHRandomResolverTag);
-	bPassed &= TestEqual(TEXT("exact registered MH_E count"), MHRegisteredErrorCodes().Num(), 52);
+	bPassed &= TestEqual(TEXT("exact registered MH_E count"), MHRegisteredErrorCodes().Num(), 53);
+	bPassed &= TestTrue(
+		TEXT("placement state desync code is registered"),
+		MHRegisteredErrorCodes().Contains(TEXT("MH_E_PLACEMENT_STATE_DESYNC")));
 	bPassed &= TestTrue(
 		TEXT("duplicate random option index code is registered"),
 		MHRegisteredErrorCodes().Contains(TEXT("MH_E_DUPLICATE_RANDOM_OPTION_INDEX")));
