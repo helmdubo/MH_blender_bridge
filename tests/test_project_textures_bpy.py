@@ -29,6 +29,32 @@ def _material(name, slots):
     )
 
 
+class _CallbackTextures:
+    """Mimics dag4blend RNA textures: attribute writes fire the update
+    callback (a full shader node tree rebuild per slot in dag4blend), item
+    writes hit the IDProperty storage directly."""
+
+    def __init__(self, slots):
+        object.__setattr__(
+            self, "_values",
+            {f"tex{index}": slots.get(f"tex{index}", "")
+             for index in range(16)})
+        object.__setattr__(self, "rebuilds", 0)
+
+    def __getattr__(self, name):
+        try:
+            return object.__getattribute__(self, "_values")[name]
+        except KeyError:
+            raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        self._values[name] = value
+        object.__setattr__(self, "rebuilds", self.rebuilds + 1)
+
+    def __setitem__(self, name, value):
+        self._values[name] = value
+
+
 class _FailOnceTextures:
     def __init__(self, slots, fail_slot):
         object.__setattr__(
@@ -98,6 +124,30 @@ def test_remap_all_materials_preserves_transport_suffix(tmp_path):
     second_report = remap_all_dagor_textures_to_project(
         source_root=project, materials=[material])
     assert second_report["remapped"] == 0
+
+
+def test_remap_never_fires_the_per_slot_update_callback(tmp_path):
+    # dag4blend's texN properties rebuild the whole shader node tree on every
+    # attribute assignment; the remap writes through IDProperty item access
+    # instead, so a full-scene remap performs zero rebuilds.
+    source = _external_texture(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    textures = _CallbackTextures({"tex0": str(source), "tex3": str(source)})
+    material = SimpleNamespace(
+        name="glass", dagormat=SimpleNamespace(textures=textures))
+    copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+
+    report = remap_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    expected = str(
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / source.name)
+
+    assert report["remapped"] == 2
+    assert textures.tex0 == expected and textures.tex3 == expected
+    assert textures.rebuilds == 0
 
 
 def test_remap_preflight_failure_leaves_every_path_unchanged(tmp_path):
