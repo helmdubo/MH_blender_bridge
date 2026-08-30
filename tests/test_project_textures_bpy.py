@@ -105,6 +105,59 @@ def test_copy_all_materials_preserves_assets_tree_and_deduplicates(tmp_path):
     assert materials[1].dagormat.textures.tex2 == str(source)
 
 
+def test_copy_and_remap_project_external_dagor_case_to_lowercase(tmp_path):
+    source = _external_texture(tmp_path, "Sovmod_bag_tex_d.TGA")
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("Sovmod_bag_leather", {"tex0": str(source)})
+
+    copy_report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "sovmod_bag_tex_d.tga")
+
+    assert copy_report["copied"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+
+    remap_report = remap_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    assert remap_report["remapped"] == 1
+    assert material.dagormat.textures.tex0 == str(destination)
+
+
+def test_copy_all_reads_proxy_file_instead_of_stale_scene_slots(tmp_path):
+    source = _external_texture(tmp_path, "Tree_Leaf_D.TGA")
+    project = tmp_path / "project"
+    project.mkdir()
+    proxy_dir = tmp_path / "proxymats"
+    proxy_dir.mkdir()
+    (proxy_dir / "Tree_Leaf.proxymat.blk").write_text(
+        'class:t="rendinst_tree_colored"\n'
+        f'tex0:t="{source}"\n',
+        encoding="utf-8",
+    )
+    material = _material("Tree_Leaf", {"tex0": "stale_cache.tif"})
+    material.dagormat.is_proxy = True
+    material.dagormat.proxy_path = str(proxy_dir)
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "tree_leaf_d.tga")
+
+    assert report["copied"] == 1
+    assert report["referenced_slots"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+    assert material.dagormat.textures.tex0 == "stale_cache.tif"
+
+    remap_report = remap_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    assert remap_report["remapped"] == 0
+    assert remap_report["read_only_proxy_slots"] == 1
+
+
 def test_remap_all_materials_preserves_transport_suffix(tmp_path):
     source = _external_texture(tmp_path)
     project = tmp_path / "project"

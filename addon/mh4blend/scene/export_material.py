@@ -10,6 +10,7 @@ import bpy
 
 from ..core.canonical import validate_resource_name
 from ..core.canonical_json import narrow_float32
+from ..core.dagor_names import project_dagor_resource_name
 from ..core.materials import (
     MATERIAL_TEXTURE_EXTENSIONS,
     MaterialValueError,
@@ -87,10 +88,27 @@ def _material_datablock(material):
     return material.material if isinstance(material, MaterialBinding) else material
 
 
+def _authored_material_name(material) -> str:
+    return strip_blender_duplicate_suffix(str(material.name))
+
+
+def _uses_dagor_name_boundary(material) -> bool:
+    dagormat = existing_property_group(material, "dagormat")
+    if dagormat is None:
+        return False
+    if getattr(dagormat, "is_proxy", False) is True:
+        return True
+    shader_class = str(getattr(dagormat, "shader_class", "") or "")
+    return shader_class not in ("", "None")
+
+
 def _logical_material_name(material) -> str:
     if isinstance(material, MaterialBinding):
         return material.name
-    return strip_blender_duplicate_suffix(str(material.name))
+    authored_name = _authored_material_name(material)
+    if _uses_dagor_name_boundary(material):
+        return project_dagor_resource_name(authored_name)
+    return authored_name
 
 
 def is_technical_material(material) -> bool:
@@ -156,7 +174,7 @@ def _fingerprint_difference(left: tuple, right: tuple) -> str:
     return "; ".join(differences) or "content differs"
 
 
-def _duplicate_group(logical_name: str) -> list:
+def _duplicate_group(authored_name: str) -> list:
     """Every scene material claiming one logical name, in a stable order.
 
     The group is deliberately file-wide rather than limited to the meshes being
@@ -167,7 +185,7 @@ def _duplicate_group(logical_name: str) -> list:
     """
     return sorted(
         (material for material in bpy.data.materials
-         if strip_blender_duplicate_suffix(material.name) == logical_name),
+         if strip_blender_duplicate_suffix(material.name) == authored_name),
         key=lambda material: material.name)
 
 
@@ -184,11 +202,12 @@ def resolve_material_binding(material) -> MaterialBinding:
     """
     if isinstance(material, MaterialBinding):
         return material
+    authored_name = _authored_material_name(material)
     logical_name = _logical_material_name(material)
-    group = _duplicate_group(logical_name)
+    group = _duplicate_group(authored_name)
     if not group:  # pragma: no cover - a live datablock is always its own group
         group = [material]
-    exact = [row for row in group if row.name == logical_name]
+    exact = [row for row in group if row.name == authored_name]
     representative = exact[0] if exact else group[0]
     divergence = None
     if len(group) > 1:
@@ -274,7 +293,8 @@ def _texture_token(image, path: str) -> str:
     return token
 
 
-def _texture_token_from_path(authored_path, path: str) -> str:
+def _texture_token_from_path(
+        authored_path, path: str, *, project_dagor_case: bool = False) -> str:
     if not isinstance(authored_path, str) or not authored_path:
         raise MaterialValueError(
             "MH_E_NONCANONICAL_TEXTURE_REFERENCE", path,
@@ -290,6 +310,14 @@ def _texture_token_from_path(authored_path, path: str) -> str:
             "MH_E_NONCANONICAL_TEXTURE_REFERENCE", path,
             f"texture path uses unsupported extension {source_name.suffix!r}")
     token = source_name.stem if source_name.suffix else source_name.name
+    if project_dagor_case:
+        try:
+            token = project_dagor_resource_name(token)
+        except (TypeError, ValueError) as exc:
+            raise MaterialValueError(
+                "MH_E_NONCANONICAL_TEXTURE_REFERENCE", path,
+                "Dagor texture filename stem must contain only ASCII "
+                "letters, digits and underscore") from exc
     # The codec performs the exact fail-closed token validation.
     try:
         parse_material({"class": "probe", "textures": {"tex0": token}})
@@ -317,10 +345,12 @@ def _proxy_dagormat(material):
     return dagormat if shader_class.endswith(":proxymat") else None
 
 
-def _proxy_resource(material, logical_name: str, dagormat) -> MaterialResource:
+def _proxy_resource(
+        material, logical_name: str, authored_name: str,
+        dagormat) -> MaterialResource:
     directory = str(getattr(dagormat, "proxy_path", "") or "")
     source = Path(bpy.path.abspath(directory)).resolve(strict=False)
-    source = source / f"{logical_name}.proxymat.blk"
+    source = source / f"{authored_name}.proxymat.blk"
     try:
         proxy = read_proxymat(source)
     except (OSError, UnicodeError) as exc:
@@ -339,7 +369,8 @@ def _proxy_resource(material, logical_name: str, dagormat) -> MaterialResource:
             f"publication ({details}); macro slots were not added to textures")
 
     textures = {
-        slot: _texture_token_from_path(value, f"proxymat.{slot}")
+        slot: _texture_token_from_path(
+            value, f"proxymat.{slot}", project_dagor_case=True)
         for slot, value in proxy.textures.items()
     }
     params = {
@@ -457,7 +488,9 @@ def _extract_resource(material) -> MaterialResource:
     validate_resource_name(logical_name)
     proxy_dagormat = _proxy_dagormat(material)
     if proxy_dagormat is not None:
-        return _proxy_resource(material, logical_name, proxy_dagormat)
+        return _proxy_resource(
+            material, logical_name, _authored_material_name(material),
+            proxy_dagormat)
     if not hasattr(type(material) if isinstance(material, bpy.types.ID) else material,
                    "mh4blend"):
         raise MaterialValueError(
@@ -492,7 +525,8 @@ def _extract_resource(material) -> MaterialResource:
         if slot in explicit_texture_slots:
             continue
         textures[slot] = _texture_token_from_path(
-            authored_path, f"dagormat.textures.{slot}")
+            authored_path, f"dagormat.textures.{slot}",
+            project_dagor_case=True)
 
     params = _dagor_params(dagormat) if dagormat is not None else {}
     explicit_param_names = set()

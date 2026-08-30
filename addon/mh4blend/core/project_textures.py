@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from .canonical import validate_resource_name
+from .dagor_names import project_dagor_resource_name
 from .materials import MATERIAL_TEXTURE_EXTENSIONS
 from .payload_publish_v2 import payload_lock
 
@@ -74,17 +74,18 @@ def plan_project_texture(authored_path, project_root) -> TextureCopyPlan:
             "MH_E_INVALID_RESOURCE_SOURCE", str(root),
             "Project Source Root does not exist")
     source = _path_from_transport(raw_path).resolve(strict=False)
-    suffix = source.suffix
+    suffix = source.suffix.lower()
     if suffix not in MATERIAL_TEXTURE_EXTENSIONS:
         raise ProjectTextureError(
             "MH_E_NONCANONICAL_RESOURCE_NAME", str(source),
-            "texture filename must use a lowercase supported image extension")
+            "texture filename must use a supported image extension")
     try:
-        validate_resource_name(source.stem)
+        projected_stem = project_dagor_resource_name(source.stem)
     except ValueError as exc:
         raise ProjectTextureError(
             "MH_E_NONCANONICAL_RESOURCE_NAME", str(source),
-            "texture filename stem must match [a-z0-9_]+ exactly") from exc
+            "texture filename stem must contain only ASCII letters, digits "
+            "and underscore") from exc
 
     assets_indices = [
         index for index, part in enumerate(source.parts)
@@ -101,7 +102,9 @@ def plan_project_texture(authored_path, project_root) -> TextureCopyPlan:
             "MH_E_INVALID_RESOURCE_SOURCE", str(source),
             "texture path must contain a file below the assets folder")
 
-    destination = (root / "assets" / Path(*tail)).resolve(strict=False)
+    projected_tail = (*tail[:-1], projected_stem + suffix)
+    destination = (
+        root / "assets" / Path(*projected_tail)).resolve(strict=False)
     if not _inside(root, destination):
         raise ProjectTextureError(
             "MH_E_INVALID_RESOURCE_SOURCE", str(source),

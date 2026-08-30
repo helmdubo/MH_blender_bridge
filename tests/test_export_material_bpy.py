@@ -238,6 +238,23 @@ def test_dagormat_extracts_scalar_params_and_sparse_texture_slots():
     }
 
 
+def test_dagor_material_and_texture_ascii_case_publish_lowercase(tmp_path):
+    (tmp_path / "sovmod_bag_tex_d.tga").write_bytes(b"texture")
+    material = _dagor_material(
+        "Sovmod_bag_leather",
+        textures={
+            "tex0": r"H:\foreign\assets\gameproj\Sovmod_bag_tex_d.TGA",
+        },
+    )
+
+    prepared = prepare_blender_material_export(
+        material, tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.name == "sovmod_bag_leather"
+    assert prepared.resource.textures == {"tex0": "sovmod_bag_tex_d"}
+    assert prepared.target == tmp_path / "sovmod_bag_leather.material"
+
+
 def test_dagormat_real_two_sided_fails_instead_of_losing_semantics():
     with pytest.raises(MaterialValueError) as excinfo:
         export_material_module._extract_resource(_dagor_material(sides=2))
@@ -339,6 +356,22 @@ script:t="is_pivoted=1"
     assert prepared.target == tmp_path / "tree_leaf.material"
     assert repr(material) == before
     assert proxy.read_text(encoding="utf-8").startswith('class:t=')
+
+
+def test_proxy_source_keeps_authored_case_but_publishes_lowercase(tmp_path):
+    (tmp_path / "sovmod_bag_tex_d.tga").write_bytes(b"texture")
+    _write_proxymat(tmp_path, "Sovmod_bag_leather", '''\
+class:t="rendinst_simple"
+tex0:t="H:\\\\foreign\\\\assets\\\\gameproj\\\\Sovmod_bag_tex_d.TGA"
+''')
+    material = _proxy_material("Sovmod_bag_leather", tmp_path)
+
+    prepared = prepare_blender_material_export(
+        material, tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.name == "sovmod_bag_leather"
+    assert prepared.resource.textures == {"tex0": "sovmod_bag_tex_d"}
+    assert prepared.target == tmp_path / "sovmod_bag_leather.material"
 
 
 def test_proxy_shader_suffix_is_file_authority_and_not_a_class_token(tmp_path):

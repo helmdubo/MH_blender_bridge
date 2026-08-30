@@ -289,7 +289,37 @@ def test_plan_requires_exactly_one_assets_segment(tmp_path, relative):
     assert excinfo.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
 
 
-@pytest.mark.parametrize("name", ["Wall_D.tif", "wall.d.tif", "wall_d.TIF"])
+def test_plan_projects_external_dagor_ascii_case_to_lowercase(tmp_path):
+    source = _external_texture(tmp_path, name="Sovmod_bag_tex_d.TGA")
+    project = tmp_path / "project"
+    project.mkdir()
+
+    plan = plan_project_texture(source, project)
+
+    assert plan.source == source
+    assert plan.destination.name == "sovmod_bag_tex_d.tga"
+
+
+def test_case_projection_collision_is_rejected_before_copy(tmp_path):
+    first = _external_texture(
+        tmp_path, branch="first", name="Sovmod_bag_tex_d.TGA")
+    second = _external_texture(
+        tmp_path, branch="second", name="sovmod_bag_tex_d.tga")
+    project = tmp_path / "project"
+    project.mkdir()
+
+    plans = [
+        plan_project_texture(first, project),
+        plan_project_texture(second, project),
+    ]
+    with pytest.raises(ProjectTextureError) as excinfo:
+        validate_texture_plans(plans, require_sources=True)
+
+    assert excinfo.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert not (project / "assets").exists()
+
+
+@pytest.mark.parametrize("name", ["wall.d.tif", "wall-d.tif", "wall_д.tif"])
 def test_plan_rejects_files_that_project_index_cannot_canonicalize(
         tmp_path, name):
     source = _external_texture(tmp_path, name=name)

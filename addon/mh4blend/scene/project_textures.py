@@ -8,6 +8,7 @@ from pathlib import Path
 
 import bpy
 
+from ..core.mesh_nodes import strip_blender_duplicate_suffix
 from ..core.project_textures import (
     ProjectTextureError,
     TextureCopyPlan,
@@ -15,6 +16,7 @@ from ..core.project_textures import (
     plan_project_texture,
     validate_texture_plans,
 )
+from ..core.proxymat import read_proxymat
 
 __all__ = [
     "DagorTextureBinding",
@@ -32,6 +34,7 @@ class DagorTextureBinding:
     authored_path: str
     transport_suffix: str
     plan: TextureCopyPlan
+    writable_textures: object = None
 
 
 def _project_root(source_root) -> Path:
@@ -52,6 +55,29 @@ def _split_transport_suffix(path: str) -> tuple[str, str]:
     return source_path, marker + suffix if marker else ""
 
 
+def _is_proxy_dagormat(dagormat) -> bool:
+    if dagormat is None:
+        return False
+    if getattr(dagormat, "is_proxy", False) is True:
+        return True
+    shader_class = str(getattr(dagormat, "shader_class", "") or "")
+    return shader_class.endswith(":proxymat")
+
+
+def _proxy_texture_paths(material, dagormat) -> dict[str, str]:
+    directory = str(getattr(dagormat, "proxy_path", "") or "")
+    source = Path(bpy.path.abspath(directory)).resolve(strict=False)
+    source = source / (
+        strip_blender_duplicate_suffix(str(material.name)) + ".proxymat.blk")
+    try:
+        return read_proxymat(source).textures
+    except (OSError, UnicodeError) as exc:
+        raise ProjectTextureError(
+            "MH_E_INVALID_RESOURCE_SOURCE", str(source),
+            "proxymat source cannot be read; check proxy_path or run the "
+            "dag4blend proxymat search") from exc
+
+
 def collect_dagor_texture_bindings(
         materials, *, source_root) -> list[DagorTextureBinding]:
     """Preflight every non-empty tex0..tex15 path in deterministic order."""
@@ -60,11 +86,19 @@ def collect_dagor_texture_bindings(
     for material in sorted(materials, key=lambda value: value.name):
         dagormat = getattr(material, "dagormat", None)
         textures = getattr(dagormat, "textures", None)
-        if textures is None:
+        is_proxy = _is_proxy_dagormat(dagormat)
+        if is_proxy:
+            authored_rows = _proxy_texture_paths(material, dagormat)
+            writable_textures = None
+        elif textures is not None:
+            authored_rows = {
+                f"tex{index}": getattr(textures, f"tex{index}", "")
+                for index in range(16)
+            }
+            writable_textures = textures
+        else:
             continue
-        for index in range(16):
-            slot = f"tex{index}"
-            authored = getattr(textures, slot, "")
+        for slot, authored in sorted(authored_rows.items()):
             if authored in (None, ""):
                 continue
             if not isinstance(authored, str):
@@ -90,6 +124,7 @@ def collect_dagor_texture_bindings(
                 authored_path=authored,
                 transport_suffix=transport_suffix,
                 plan=plan,
+                writable_textures=writable_textures,
             ))
     return bindings
 
@@ -138,15 +173,19 @@ def remap_all_dagor_textures_to_project(
         require_destinations=True,
     )
 
+    writable_bindings = [
+        binding for binding in bindings
+        if binding.writable_textures is not None
+    ]
     snapshots = [
-        (binding.material.dagormat.textures, binding.slot,
-         getattr(binding.material.dagormat.textures, binding.slot))
-        for binding in bindings
+        (binding.writable_textures, binding.slot,
+         getattr(binding.writable_textures, binding.slot))
+        for binding in writable_bindings
     ]
     changed = 0
     try:
-        for binding in bindings:
-            textures = binding.material.dagormat.textures
+        for binding in writable_bindings:
+            textures = binding.writable_textures
             remapped = str(binding.plan.destination) + binding.transport_suffix
             current = getattr(textures, binding.slot)
             if current == remapped:
@@ -177,6 +216,7 @@ def remap_all_dagor_textures_to_project(
         "ok": True,
         "materials": len({binding.material_name for binding in bindings}),
         "referenced_slots": len(bindings),
+        "read_only_proxy_slots": len(bindings) - len(writable_bindings),
         "remapped": changed,
         "paths": sorted({
             str(binding.plan.destination) + binding.transport_suffix
