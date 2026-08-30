@@ -158,6 +158,59 @@ def test_copy_all_reads_proxy_file_instead_of_stale_scene_slots(tmp_path):
     assert remap_report["read_only_proxy_slots"] == 1
 
 
+def test_basename_slot_resolves_loaded_dagor_image_path(tmp_path):
+    source = _external_texture(tmp_path, "bush_tree_cotton_branch_a_tex_d.tif")
+    project = tmp_path / "project"
+    project.mkdir()
+    image = bpy.data.images.new(
+        "bush_tree_cotton_branch_a_tex_d", width=1, height=1)
+    image.filepath = str(source)
+    material = _material("bush_tree_cotton_branch", {
+        "tex0": "bush_tree_cotton_branch_a_tex_d.tif",
+    })
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "bush_tree_cotton_branch_a_tex_d.tif")
+
+    assert report["copied"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+    assert material.dagormat.textures.tex0 == (
+        "bush_tree_cotton_branch_a_tex_d.tif")
+
+
+def test_basename_slot_with_multiple_loaded_sources_fails_before_copy(
+        tmp_path):
+    first = _external_texture(
+        tmp_path, "ambiguous_branch_tex_d.tif")
+    second = (
+        tmp_path / "other" / "develop" / "assets" / "gameproj"
+        / "manmade_common" / "textures" / "tile_textures"
+        / "ambiguous_branch_tex_d.tif")
+    second.parent.mkdir(parents=True)
+    second.write_bytes(b"different texture")
+    for source in (first, second):
+        image = bpy.data.images.new(
+            "ambiguous_branch_tex_d", width=1, height=1)
+        image.filepath = str(source)
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("ambiguous_branch", {
+        "tex0": "ambiguous_branch_tex_d.tif",
+    })
+
+    with pytest.raises(ProjectTextureError) as excinfo:
+        copy_all_dagor_textures_to_project(
+            source_root=project, materials=[material])
+
+    assert excinfo.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert str(first) in str(excinfo.value)
+    assert str(second) in str(excinfo.value)
+    assert not (project / "assets").exists()
+
+
 def test_remap_all_materials_preserves_transport_suffix(tmp_path):
     source = _external_texture(tmp_path)
     project = tmp_path / "project"

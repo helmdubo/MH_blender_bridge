@@ -55,6 +55,54 @@ def _split_transport_suffix(path: str) -> tuple[str, str]:
     return source_path, marker + suffix if marker else ""
 
 
+def _has_assets_segment(path: str) -> bool:
+    return any(
+        part.casefold() == "assets"
+        for part in Path(path.replace("\\", "/")).parts
+    )
+
+
+def _loaded_image_texture_source_index() -> dict[str, list[Path]]:
+    """Index dag4blend's loaded image carriers once for the whole batch."""
+    matches: dict[str, dict[str, Path]] = {}
+    for image in bpy.data.images:
+        authored_image_path = str(getattr(image, "filepath", "") or "")
+        if not authored_image_path:
+            continue
+        absolute = Path(
+            bpy.path.abspath(authored_image_path)).resolve(strict=False)
+        if not absolute.is_file():
+            continue
+        token = absolute.stem.casefold()
+        key = os.path.normcase(str(absolute)).casefold()
+        matches.setdefault(token, {})[key] = absolute
+    return {
+        token: sorted(paths.values(), key=lambda path: str(path).casefold())
+        for token, paths in matches.items()
+    }
+
+
+def _resolve_dagor_texture_source(
+        source_path: str, image_sources: dict[str, list[Path]]) -> str:
+    if _has_assets_segment(source_path):
+        return bpy.path.abspath(source_path)
+    filename = source_path.replace("\\", "/").rsplit("/", 1)[-1]
+    parsed = Path(filename)
+    token = parsed.stem if parsed.suffix else parsed.name
+    candidates = image_sources.get(token.casefold(), [])
+    if len(candidates) == 1:
+        return str(candidates[0])
+    if len(candidates) > 1:
+        raise ProjectTextureError(
+            "MH_E_AMBIGUOUS_RESOURCE_NAME", source_path,
+            "Dagor texture basename resolves to multiple loaded image files: "
+            + ", ".join(str(path) for path in candidates))
+    raise ProjectTextureError(
+        "MH_E_INVALID_RESOURCE_SOURCE", source_path,
+        "Dagor texture basename has no resolved loaded image; run dag4blend "
+        "Find missing textures for all materials")
+
+
 def _is_proxy_dagormat(dagormat) -> bool:
     if dagormat is None:
         return False
@@ -82,6 +130,7 @@ def collect_dagor_texture_bindings(
         materials, *, source_root) -> list[DagorTextureBinding]:
     """Preflight every non-empty tex0..tex15 path in deterministic order."""
     root = _project_root(source_root)
+    image_sources = _loaded_image_texture_source_index()
     bindings = []
     for material in sorted(materials, key=lambda value: value.name):
         dagormat = getattr(material, "dagormat", None)
@@ -107,8 +156,9 @@ def collect_dagor_texture_bindings(
                     f"material {material.name!r} / dagormat.textures.{slot}",
                     f"texture path must be a string, got {authored!r}")
             source_path, transport_suffix = _split_transport_suffix(authored)
-            absolute_source = bpy.path.abspath(source_path)
             try:
+                absolute_source = _resolve_dagor_texture_source(
+                    source_path, image_sources)
                 plan = plan_project_texture(absolute_source, root)
             except ProjectTextureError as exc:
                 raise ProjectTextureError(
