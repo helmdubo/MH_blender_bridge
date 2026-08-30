@@ -11,6 +11,7 @@
 #include "DirectoryWatcherModule.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
+#include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
 #include "IDirectoryWatcher.h"
 #include "Logging/MessageLog.h"
@@ -1151,6 +1152,27 @@ bool UMHSourceImporter::ReimportStaticMesh(
         return false;
     }
 
+    FString AbsoluteRoot = FPaths::ConvertRelativePathToFull(SourceRoot);
+    FPaths::NormalizeDirectoryName(AbsoluteRoot);
+    FString ReceiptSourcePath = FPaths::ConvertRelativePathToFull(
+        FPaths::Combine(AbsoluteRoot, Data->SourceRelativePath));
+    FPaths::NormalizeFilename(ReceiptSourcePath);
+    if (!FPaths::IsUnderDirectory(ReceiptSourcePath, AbsoluteRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: managed mesh source path '%s' is outside '%s'"),
+            *ReceiptSourcePath,
+            *AbsoluteRoot);
+        return false;
+    }
+    if (!IFileManager::Get().FileExists(*ReceiptSourcePath))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: managed mesh source file '%s' does not exist"),
+            *ReceiptSourcePath);
+        return false;
+    }
+
     FMHSourceAnalysisServices Services;
     if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
     {
@@ -1166,19 +1188,26 @@ bool UMHSourceImporter::ReimportStaticMesh(
             : Outcome.Diagnostic;
         return false;
     }
-    Entry.PayloadPath = Outcome.PayloadPath;
-    FString RelativeBase = FPaths::ConvertRelativePathToFull(SourceRoot);
-    FPaths::NormalizeDirectoryName(RelativeBase);
-    RelativeBase += TEXT("/");
-    Entry.SourcePath = Outcome.PayloadPath;
-    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    if (!FPaths::IsSamePath(Outcome.PayloadPath, ReceiptSourcePath))
     {
-        OutError = TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive the current mesh source path");
+        OutError = FString::Printf(
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: receipt source '%s' does not uniquely resolve for %s"),
+            *ReceiptSourcePath,
+            *Entry.Key.ToString());
         return false;
     }
+    Entry.PayloadPath = ReceiptSourcePath;
+    Entry.SourcePath = Data->SourceRelativePath;
     FPaths::NormalizeFilename(Entry.SourcePath);
     Entry.RawHash = Outcome.RawHash;
     Entry.Change = EMHSourceChange::Reimport;
+
+    const bool bOwnBatch = !MHIsSourceImportBatchActive();
+    TUniquePtr<FMHSourceImportBatchContext> Batch;
+    if (bOwnBatch)
+    {
+        Batch = MakeUnique<FMHSourceImportBatchContext>();
+    }
     FMHStaticMeshOperationResult Result = MHImportStaticMeshV4(
         Entry,
         *Services.Resolver,
@@ -1195,7 +1224,31 @@ bool UMHSourceImporter::ReimportStaticMesh(
         OutError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: explicit reimport resolved a different managed UObject");
         return false;
     }
-    return Result.bRebuilt;
+    if (!Result.bRebuilt)
+    {
+        OutError = TEXT("MH_E_IMPORT_FAILED: forced static-mesh reimport did not rebuild the target");
+        return false;
+    }
+    if (!bOwnBatch)
+    {
+        return true;
+    }
+
+    TMap<FMHResourceKey, FString> CompilationErrors;
+    if (!Batch->FinishCompilation(CompilationErrors))
+    {
+        OutError = CompilationErrors.FindRef(Entry.Key);
+        if (OutError.IsEmpty())
+        {
+            OutError = TEXT("MH_E_IMPORT_FAILED: targeted static-mesh compilation failed");
+        }
+        return false;
+    }
+    if (!Batch->SavePackages(OutError))
+    {
+        return false;
+    }
+    return Batch->CommitProjectionAndNotifications(SourceRoot, OutError);
 }
 
 bool UMHSourceImporter::ReimportMaterial(

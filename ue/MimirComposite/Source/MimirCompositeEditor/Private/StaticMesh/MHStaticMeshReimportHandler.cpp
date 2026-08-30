@@ -1,10 +1,12 @@
 #include "StaticMesh/MHStaticMeshReimportHandler.h"
 
 #include "EditorReimportHandler.h"
+#include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Misc/Paths.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceResolver.h"
+#include "Source/MHSourceImporter.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMHStaticMeshReimport, Log, All);
@@ -76,11 +78,47 @@ public:
 
     virtual EReimportResult::Type Reimport(UObject* Object) override
     {
-        UE_LOG(
-            LogMHStaticMeshReimport,
-            Warning,
-            TEXT("Managed static-mesh force-reimport is not implemented"));
-        return EReimportResult::Failed;
+        TArray<FString> SourcePaths;
+        if (!CanReimport(Object, SourcePaths))
+        {
+            return EReimportResult::Failed;
+        }
+        UMHSourceImporter* Importer = GEditor != nullptr
+            ? GEditor->GetEditorSubsystem<UMHSourceImporter>()
+            : nullptr;
+        if (Importer == nullptr)
+        {
+            UE_LOG(
+                LogMHStaticMeshReimport,
+                Error,
+                TEXT("MH_E_IMPORT_THREAD_INVALID: MH Source Importer subsystem is unavailable for '%s'"),
+                *Object->GetPathName());
+            return EReimportResult::Failed;
+        }
+
+        TArray<FString> Warnings;
+        FString Error;
+        if (!Importer->ReimportStaticMesh(CastChecked<UStaticMesh>(Object), Warnings, Error))
+        {
+            UE_LOG(
+                LogMHStaticMeshReimport,
+                Error,
+                TEXT("Managed static-mesh reimport failed for '%s' from '%s': %s"),
+                *Object->GetPathName(),
+                SourcePaths.IsEmpty() ? TEXT("<unresolved>") : *SourcePaths[0],
+                Error.IsEmpty() ? TEXT("unknown error") : *Error);
+            return EReimportResult::Failed;
+        }
+        for (const FString& Warning : Warnings)
+        {
+            UE_LOG(
+                LogMHStaticMeshReimport,
+                Warning,
+                TEXT("%s: %s"),
+                *Object->GetPathName(),
+                *Warning);
+        }
+        return EReimportResult::Succeeded;
     }
 };
 
