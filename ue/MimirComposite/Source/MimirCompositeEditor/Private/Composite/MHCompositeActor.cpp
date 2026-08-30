@@ -469,14 +469,46 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
         return true;
     };
-    if (!(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
+    bool bViewCompiled = false;
+    if (bLayoutReseed && SeedAffectsResult != EMHCompositeSeedEffect::None)
+    {
+        const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
+        FMHCompositePlacementCompileResult View;
+        if (MHTryCompileCompositePlacementReseedV5(
+                *this, *ResolvedPlan, *CandidatePlan, *Root, *Settings, Previous,
+                TopLevelPlacementComponents, LeafPlacementComponents,
+                CandidateDefinition.Get(), View))
+        {
+            if (!View.Succeeded())
+            {
+                LastPlacementError = View.Error;
+                bPlanAvailable = false;
+                ResolvedSignature.Reset();
+                ReportPlacementError();
+                return;
+            }
+            DerivedComponents = MoveTemp(View.Components);
+            TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
+            LeafPlacementComponents = MoveTemp(View.LeafComponents);
+            LastPlacementWarnings = MoveTemp(View.Warnings);
+            DestroyMHRetiredComponents(Previous, DerivedComponents);
+            if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
+            MHRecordPlacementReseedIncrementalApplied();
+            bViewCompiled = true;
+        }
+        else
+        {
+            MHRecordPlacementReseedFullFallback();
+        }
+    }
+    if (!bViewCompiled && !(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
     {
         if (!CompileFullView()) return;
     }
     // S6.3.1: a skipped recompile still refreshes the appearance Custom
     // Primitive Data - the channels depend on AppearanceSeed alone. A leaf
     // view that no longer matches the plan is repaired by the full path.
-    else if (MHApplyCompositeAppearanceCustomData(LeafPlacementComponents,
+    else if (!bViewCompiled && MHApplyCompositeAppearanceCustomData(LeafPlacementComponents,
                  *CandidatePlan, Settings->AppearanceCustomDataBaseIndex) == INDEX_NONE)
     {
         if (!CompileFullView()) return;

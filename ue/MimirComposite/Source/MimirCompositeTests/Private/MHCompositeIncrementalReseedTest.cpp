@@ -524,6 +524,37 @@ bool FMHIncrementalReseedDesyncFallbackTest::RunTest(const FString& Parameters)
     if (Actor->GetResolvedPlan() != nullptr)
         bPassed &= TestEqual(TEXT("fallback restores complete leaf view"),
             Actor->GetLeafPlacementComponents().Num(), Actor->GetResolvedPlan()->Leaves.Num());
+
+    UStaticMeshComponent* StableMesh = Actor->GetLeafPlacementComponents().Num() > 1
+        ? Cast<UStaticMeshComponent>(Actor->GetLeafPlacementComponents()[1]) : nullptr;
+    UStaticMesh* ExpectedMesh = StableMesh != nullptr ? StableMesh->GetStaticMesh() : nullptr;
+    UStaticMesh* WrongMesh = nullptr;
+    for (UObject* Object : Fixture.Assets)
+    {
+        UStaticMesh* Mesh = Cast<UStaticMesh>(Object);
+        if (Mesh != nullptr && Mesh != ExpectedMesh)
+        {
+            WrongMesh = Mesh;
+            break;
+        }
+    }
+    if (!TestNotNull(TEXT("stable mesh component"), StableMesh) ||
+        !TestNotNull(TEXT("alternate mesh endpoint"), WrongMesh))
+    {
+        Actor->Destroy();
+        World->DestroyWorld(false);
+        return false;
+    }
+    StableMesh->SetStaticMesh(WrongMesh);
+    ResetReseedMeasurements();
+    Actor->SetSeed(FirstSeed);
+    const FMHPlacementReseedMetrics EndpointMetrics = MHGetPlacementReseedMetrics();
+    bPassed &= TestEqual(TEXT("endpoint desync rejects incremental path"),
+        EndpointMetrics.IncrementalApplied, 0ull);
+    bPassed &= TestEqual(TEXT("endpoint desync records one full fallback"),
+        EndpointMetrics.FullFallbacks, 1ull);
+    bPassed &= TestEqual<UStaticMesh*>(TEXT("full fallback restores the endpoint"),
+        StableMesh->GetStaticMesh().Get(), ExpectedMesh);
     Actor->Destroy();
     World->DestroyWorld(false);
     return bPassed;

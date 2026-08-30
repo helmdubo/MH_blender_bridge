@@ -29,6 +29,22 @@ MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePl
     TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
     FMHCompositeDefinitionEntry* Definition = nullptr);
 
+/**
+ * Attempt a seed-only reconciliation against a strictly validated prior view.
+ * Returns false without mutation when structural admission fails, so the caller
+ * can run the unchanged full compiler. A true return may still carry the same
+ * endpoint error that the full compiler would report.
+ */
+MIMIRCOMPOSITEEDITOR_API bool MHTryCompileCompositePlacementReseedV5(
+    AActor& Target, const FMHResolvedCompositePlan& PreviousPlan,
+    const FMHResolvedCompositePlan& CandidatePlan,
+    const FMHRandomComposite& RootDefinition, const UMHCompositeSettings& Settings,
+    TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
+    TConstArrayView<TObjectPtr<USceneComponent>> PreviousHandles,
+    TConstArrayView<TObjectPtr<USceneComponent>> PreviousLeaves,
+    FMHCompositeDefinitionEntry* Definition,
+    FMHCompositePlacementCompileResult& OutResult);
+
 /** No resolution or signature: explicit diagnostics when no applied plan is available. */
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHBuildCompositeDiagnosticView(
     AActor& Target, const FString& Label, const FString& Diagnostic);
