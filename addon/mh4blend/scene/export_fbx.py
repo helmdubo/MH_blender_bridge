@@ -764,8 +764,16 @@ def _transport_material_binding(obj, index, slot):
             "MH_E_EMPTY_MATERIAL_SLOT", [obj.name],
             f"'{obj.name}' material slot {index} is empty")
     slot_name = str(slot.name or material.name)
-    logical_slot = strip_blender_duplicate_suffix(slot_name)
-    logical_material = strip_blender_duplicate_suffix(material.name)
+    authored_slot = strip_blender_duplicate_suffix(slot_name)
+    authored_material = strip_blender_duplicate_suffix(material.name)
+    binding = resolve_material_binding(material)
+    # A normal Blender slot carries the authored material name. At the Dagor
+    # adapter boundary that name may project to a canonical transport token;
+    # compare the projected binding while retaining fail-closed handling for
+    # a genuinely mismatched/custom slot name.
+    logical_slot = (
+        binding.name if authored_slot == authored_material else authored_slot)
+    logical_material = binding.name
     try:
         validate_resource_name(logical_slot)
         validate_resource_name(logical_material)
@@ -787,7 +795,7 @@ def _transport_material_binding(obj, index, slot):
             f"'{obj.name}' mixes the technical material "
             f"'{material.name}' with render materials; technical paint "
             "belongs to collision-only meshes")
-    return resolve_material_binding(material)
+    return binding
 
 
 def _material_slot_names(objects):

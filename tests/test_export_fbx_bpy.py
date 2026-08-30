@@ -24,6 +24,7 @@ from mh4blend.scene.resource_markers import (  # noqa: E402
 )
 
 export_fbx_module = importlib.import_module("mh4blend.scene.export_fbx")
+export_material_module = importlib.import_module("mh4blend.scene.export_material")
 
 
 def _mesh_object(name, collection):
@@ -369,6 +370,28 @@ def test_noncanonical_material_slot_preserves_resource_name_code(tmp_path):
         export_fbx_collection(collection, tmp_path, source_root=tmp_path)
     assert excinfo.value.code == "MH_E_NONCANONICAL_RESOURCE_NAME"
     assert not (tmp_path / "canonical_mesh.mesh.fbx").exists()
+
+
+def test_dagor_default_material_name_projects_in_fbx_without_scene_mutation(
+        tmp_path, registered_material_properties, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("canonical_mesh")
+    body = _mesh_object("body", collection)
+    material = _material("Material #2644")
+    material.mh4blend.material_class = "rendinst_simple"
+    _assign_material(body, material)
+    monkeypatch.setattr(
+        export_material_module, "_uses_dagor_name_boundary",
+        lambda candidate: candidate == material)
+
+    report = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path)
+    plan = parse_mesh_fbx(report["filepath"])
+
+    assert report["materials"] == ["material_2644"]
+    assert plan.material_names == ("material_2644",)
+    assert material.name == "Material #2644"
+    assert body.material_slots[0].material == material
 
 
 def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):

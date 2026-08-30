@@ -255,6 +255,14 @@ def test_dagor_material_and_texture_ascii_case_publish_lowercase(tmp_path):
     assert prepared.target == tmp_path / "sovmod_bag_leather.material"
 
 
+def test_dagor_default_material_name_publishes_canonical_token(tmp_path):
+    prepared = prepare_blender_material_export(
+        _dagor_material("Material #2644"), tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.name == "material_2644"
+    assert prepared.target == tmp_path / "material_2644.material"
+
+
 def test_dagor_texture_filename_whitespace_publishes_canonical_token(
         tmp_path):
     token = "sovmod_building_school_robe_a_tex_d"
