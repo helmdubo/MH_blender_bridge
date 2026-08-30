@@ -31,7 +31,11 @@ from .export_closure import (
 )
 from .export_composite import _collection_instance_identity
 from .export_fbx import prepare_fbx_collection
-from .export_material import prepare_blender_material_export
+from .export_material import (
+    _active_material_export_session,
+    material_export_session,
+    prepare_blender_material_export,
+)
 from .import_composite import _validate_document_mapping
 from .import_fbx import parse_mesh_fbx
 from .resource_markers import (
@@ -111,11 +115,18 @@ def prepare_dag4blend_publication(
     like actor tokens, have no filesystem payload. The caller stages/publishes
     through S4, without a Blender finalizer.
     """
+    if _active_material_export_session() is None:
+        with material_export_session():
+            return prepare_dag4blend_publication(
+                documents, mesh_inputs, root_name=root_name,
+                source_root=source_root, output_dir=output_dir, mode=mode,
+                generated_profiles=generated_profiles)
     if mode not in {CLOSURE_MODE_ROOT, CLOSURE_MODE_COMPOSITES,
                     CLOSURE_MODE_INCLUDE_ALL}:
         raise ValueError(f"unsupported closure export mode {mode!r}")
     documents = _validate_document_mapping(root_name, documents)
     inventory = scan_source_inventory(source_root)
+    _active_material_export_session().bind_inventory(inventory)
     output = _resolved_output(inventory.root, output_dir)
     resolved = {root_name: documents[root_name]}
     composite_rows = {}
@@ -245,6 +256,8 @@ def prepare_dag4blend_publication(
         materials.append(row)
         for token in resource.textures.values():
             texture_key = ResourceKey("texture", token)
+            if texture_key in textures:
+                continue
             candidate = _resolve_texture_source(inventory, texture_key, owners)
             textures[texture_key] = candidate.snapshot()
 

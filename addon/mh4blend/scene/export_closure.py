@@ -60,7 +60,9 @@ from .export_composite import (
 from .export_fbx import PreparedFBXExport, prepare_fbx_collection
 from .export_material import (
     PreparedMaterialExport,
+    _active_material_export_session,
     _extract_resource as _extract_material_resource,
+    material_export_session,
     prepare_blender_material_export,
 )
 from .import_fbx import parse_mesh_fbx
@@ -206,7 +208,11 @@ def _resolve_excluded_source(
 def _resolve_texture_source(
         inventory: SourceInventory, key: ResourceKey, owners) -> SourceCandidate:
     try:
-        path = resolve_texture_reference(inventory.root, key.name)
+        session = _active_material_export_session()
+        path = (
+            session.resolve_texture(key.name)
+            if session is not None and session.inventory is inventory
+            else resolve_texture_reference(inventory.root, key.name))
     except MaterialValueError as exc:
         _raise(
             exc.code,
@@ -483,12 +489,18 @@ def prepare_composite_closure_export(
         mode=CLOSURE_MODE_COMPOSITES) -> ClosureExportPlan:
     """Build and fully validate one closure without staging or publication."""
 
+    if _active_material_export_session() is None:
+        with material_export_session():
+            return prepare_composite_closure_export(
+                collection, output_dir, source_root=source_root, mode=mode)
+
     if collection is None:
         raise ValueError("collection is required")
     if mode not in _CLOSURE_MODES:
         raise ValueError(f"unsupported closure export mode {mode!r}")
 
     inventory = scan_source_inventory(source_root)
+    _active_material_export_session().bind_inventory(inventory)
     output = _resolved_output(inventory.root, output_dir)
     root_resource = _extract_composite(collection)
     root_key = ResourceKey("composite", root_resource.name)
@@ -788,6 +800,10 @@ def stage_composite_closure_export(
         plan: ClosureExportPlan, *, staging_dir
 ) -> tuple[StagedClosurePayload, ...]:
     """Stage and read back every member, including reuse-only sources."""
+
+    session = _active_material_export_session()
+    if session is not None:
+        session.validate_sources()
 
     if not isinstance(plan, ClosureExportPlan):
         raise TypeError("plan must be ClosureExportPlan")
@@ -1291,6 +1307,16 @@ def export_composite_closure_collection(
         lock_root=None, allow_prefab_as_mesh_lossy=False,
         _boundary_hook=None) -> dict:
     """Run write-free preflight, full staging, then ordered publication."""
+
+    if _active_material_export_session() is None:
+        with material_export_session() as session:
+            report = export_composite_closure_collection(
+                collection, output_dir, source_root=source_root, mode=mode,
+                lock_root=lock_root,
+                allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
+                _boundary_hook=_boundary_hook)
+        report["material_export_metrics"] = session.metrics_snapshot()
+        return report
 
     from .composite_scene_adapter import composite_scene_form
     if composite_scene_form(collection) == "dag4blend":

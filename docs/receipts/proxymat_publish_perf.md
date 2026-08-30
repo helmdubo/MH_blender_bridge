@@ -462,3 +462,72 @@ sovmod_tropospheric_station_building_gate_a__5347490fdc85_lod00 63 bytes
 полный `test_export_fbx_bpy.py`: **62 passed**; pure suite:
 **308 passed / 14 skipped**; все 12 Blender-hosted модулей:
 **356 passed / 0 failed**.
+
+### 10.8. Полевое дополнение — operation-scoped material preflight
+
+Независимый аудит верно указал на повторные обходы Source Root, повторное
+сканирование `bpy.data.materials` и повторное чтение proxymat в
+`include_all`. Исправление ограничено одной синхронной операцией экспорта:
+
+- один immutable `SourceInventory` обслуживает разрешение material/texture;
+- один индекс Blender material claims обслуживает все mesh bindings;
+- один proxymat читается и парсится один раз, а перед staging его bytes
+  повторно подтверждаются SHA-256 (одинаковые size/mtime не обходят guard);
+- один texture `ResourceKey`, встречающийся в нескольких материалах,
+  хэшируется для batch snapshot ровно один раз.
+
+Глобального кэша между операциями нет. Blender datablocks не мутируются.
+Публикационный guard, canonical bytes, FBX writer, формат, `golden/` и
+`reference/` не менялись.
+
+Red-first доказательства:
+
+```text
+ImportError: cannot import name 'material_export_session'
+```
+
+После введения session отдельный тест общей текстуры воспроизвёл второй
+повторный SHA-256:
+
+```text
+assert texture_snapshots == 1
+E assert 2 == 1
+```
+
+После дедупликации: **1 passed / 39 deselected**. Дополнительно покрыты:
+запрет per-material `Path.rglob`, один material claim index, инвалидирование
+при изменении Blender material catalog, повторный parse proxymat после его
+изменения и fail-closed SHA-256 guard при подмене proxymat с сохранёнными
+size/mtime.
+
+Read-only A/B выполнен в Blender 4.5.12 на одной сохранённой сцене
+`E:\portfolio\sovmod_cottage_i_cmp_source_lod00.blend`, source root
+`E:\blender_plugin`. Замер охватывает DTO bundle и полный
+`prepare_dag4blend_publication`, но не staging/publish и ничего не пишет:
+
+| Вариант | Documents | Mesh inputs | Payloads | Prepare |
+|---|---:|---:|---:|---:|
+| baseline `aed20b6` | 239 | 732 | 1595 | **336353.33 ms** |
+| общий inventory/index/proxymat cache | 239 | 732 | 1595 | **106852.59 ms** |
+| плюс unique texture snapshot | 239 | 732 | 1595 | **46200.27 ms** |
+
+Итог preflight: **7.28x быстрее**, либо **13.74% baseline wall**. В финальном
+прогоне было 1316 texture references и 647 уникальных texture dependencies.
+До дедупликации профиль относил **98.51 s из 109.32 s** к 2120 вызовам
+SHA-256; после неё каждый из 647 уникальных texture payload всё ещё проходит
+обязательное полное хэш-подтверждение. Параллельное чтение не вводилось:
+его польза зависит от накопителя и требует отдельного полевого профиля, а
+последовательный exact-hash остаётся безопасным fail-closed допущением.
+
+Гейты дополнения:
+
+| Гейт | Результат |
+|---|---|
+| Pure `python -m pytest tests/ -q` | **309 passed / 14 skipped / 0 failed** |
+| Blender 4.5.12, 12 отдельных factory-startup процессов | **361 passed / 0 failed** |
+| Focus: session/root-scan/shared-hash | **5 passed / 0 failed** |
+
+Следующий gate — owner field test полного `Export Composite All Stuff`:
+нужно сравнить полный wall (включая 732 FBX stage и publication) и приложить
+`material_export_metrics`. До этих данных parallel hashing и Changed Only FBX
+остаются отдельными кандидатами, не частью этого исправления.

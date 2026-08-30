@@ -13,6 +13,7 @@ from mh4blend.core.composites import composite_json_bytes  # noqa: E402
 from mh4blend.core.model import Composite, Node, PlacementProfile, RandomOption  # noqa: E402
 from mh4blend.core.placements import placement_json_bytes  # noqa: E402
 from mh4blend.core.source_closure import ResourceKey  # noqa: E402
+from mh4blend.core.source_inventory import SourceCandidate  # noqa: E402
 from mh4blend.scene.export_closure import (  # noqa: E402
     CLOSURE_MODE_ROOT,
     CLOSURE_MODE_COMPOSITES,
@@ -160,7 +161,59 @@ def test_public_command_exports_dagor_mesh_without_mutating_scene(tmp_path):
         legacy, source, source_root=source, mode=CLOSURE_MODE_INCLUDE_ALL)
     assert report["published"] == [
         "material:bridge_surface", "static_mesh:bridge_mesh", "composite:bridge_root"]
+    assert report["material_export_metrics"]["material_index_builds"] == 1
+    assert report["material_export_metrics"]["inventory_material_resolves"] == 1
     assert _snapshot() == before
+
+
+def test_public_include_all_never_rescans_source_root_per_material(
+        tmp_path, monkeypatch):
+    source, _documents, _inputs, mesh, _material, legacy = _fixture(tmp_path)
+    placement = bpy.data.objects.new("mesh_placement", None)
+    legacy.objects.link(placement)
+    placement.instance_type = "COLLECTION"
+    placement.instance_collection = mesh
+
+    def forbid_rglob(*_args, **_kwargs):
+        raise AssertionError("include_all used a per-resource source_root scan")
+
+    monkeypatch.setattr(Path, "rglob", forbid_rglob)
+    report = export_composite_closure_collection(
+        legacy, source, source_root=source, mode=CLOSURE_MODE_INCLUDE_ALL)
+
+    assert report["published"] == [
+        "material:bridge_surface", "static_mesh:bridge_mesh",
+        "composite:bridge_root"]
+
+
+def test_include_all_hashes_shared_texture_once_per_batch(tmp_path, monkeypatch):
+    source, documents, inputs, mesh, first, _legacy = _fixture(tmp_path)
+    texture_path = source / "shared.png"
+    texture_path.write_bytes(b"shared texture payload")
+    image = bpy.data.images.new("shared.png", 1, 1)
+    image.filepath = str(texture_path)
+    for material in (first, bpy.data.materials.new("bridge_trim")):
+        material.mh4blend.material_class = "bridge_shader"
+        row = material.mh4blend.textures.add()
+        row.slot = 0
+        row.image = image
+    second = bpy.data.materials["bridge_trim"]
+    mesh.objects[0].data.materials.append(second)
+
+    original_snapshot = SourceCandidate.snapshot
+    texture_snapshots = 0
+
+    def count_snapshot(candidate):
+        nonlocal texture_snapshots
+        if candidate.key == ResourceKey("texture", "shared"):
+            texture_snapshots += 1
+        return original_snapshot(candidate)
+
+    monkeypatch.setattr(SourceCandidate, "snapshot", count_snapshot)
+    plan = _prepare(source, documents, inputs)
+
+    assert plan.texture_dependencies == (ResourceKey("texture", "shared"),)
+    assert texture_snapshots == 1
 
 
 def test_writer_drop_warnings_reach_the_public_report(tmp_path):

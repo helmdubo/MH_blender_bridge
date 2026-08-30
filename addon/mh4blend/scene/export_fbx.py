@@ -28,9 +28,12 @@ from ..core.mesh_nodes import (
     validate_node_markers,
 )
 from ..core.payload_publish_v2 import atomic_publish_bytes
+from ..core.source_inventory import scan_source_inventory
 from ..core.validate import MHValidationError
 from .export_material import (
+    _active_material_export_session,
     is_technical_material,
+    material_export_session,
     resolve_material_binding,
 )
 from .resource_markers import (
@@ -1156,6 +1159,11 @@ def prepare_fbx_collection(
     incomplete-import guard and every FBX dialect check happen here, before a
     staging directory or source payload can be created.
     """
+    if _active_material_export_session() is None:
+        with material_export_session():
+            return prepare_fbx_collection(
+                collection, output_dir, source_root=source_root,
+                export_materials=export_materials)
     if collection is None:
         raise ValueError("collection is required")
     linked = []
@@ -1238,6 +1246,10 @@ def prepare_fbx_collection(
     if isinstance(source_root, (str, os.PathLike)) and str(source_root).strip():
         resolved_source_root = _resolved_source_root(source_root)
         _assert_output_under_root(resolved_output_dir, resolved_source_root)
+        session = _active_material_export_session()
+        if (export_materials and session is not None
+                and session.inventory is None):
+            session.bind_inventory(scan_source_inventory(resolved_source_root))
     _assert_existing_target(filepath)
 
     # AMENDMENT_node_hierarchy: Blender silently re-roots children of
@@ -1387,6 +1399,11 @@ def stage_prepared_fbx(prepared, staged_filepath):
     that will be published, while returned bytes are the exact file read-back.
     Existing paths are never overwritten, and a failed stage is removed.
     """
+    session = _active_material_export_session()
+    if session is None:
+        with material_export_session():
+            return stage_prepared_fbx(prepared, staged_filepath)
+    session.validate_sources()
     if not isinstance(prepared, PreparedFBXExport):
         raise TypeError("prepared must be PreparedFBXExport")
     if not isinstance(staged_filepath, (str, os.PathLike)) \
@@ -1505,6 +1522,13 @@ def export_fbx_collection(
     names temporarily carry their ``_lodNN`` suffix; the only MH properties
     written to the FBX are the collision carrier of docs/15 §3.4.
     """
+    if _active_material_export_session() is None:
+        with material_export_session() as session:
+            report = export_fbx_collection(
+                collection, output_dir, dry_run=dry_run,
+                source_root=source_root, export_materials=export_materials)
+        report["material_export_metrics"] = session.metrics_snapshot()
+        return report
     prepared = prepare_fbx_collection(
         collection,
         output_dir,

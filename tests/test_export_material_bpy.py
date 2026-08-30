@@ -3,6 +3,7 @@
 from pathlib import Path
 import importlib
 import json
+import os
 import sys
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ from mh4blend.core.materials import (  # noqa: E402
 from mh4blend.scene.export_material import (  # noqa: E402
     MaterialBinding,
     apply_material_resource,
+    material_export_session,
     material_class_for_export,
     prepare_blender_material_export,
     read_material_file,
@@ -26,6 +28,8 @@ from mh4blend.scene.export_material import (  # noqa: E402
 )
 from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
 from mh4blend.core.model import MaterialResource  # noqa: E402
+from mh4blend.core.source_inventory import scan_source_inventory  # noqa: E402
+from mh4blend.core.validate import MHValidationError  # noqa: E402
 from mh4blend.ui import ops  # noqa: E402
 
 export_fbx_module = importlib.import_module("mh4blend.scene.export_fbx")
@@ -403,6 +407,87 @@ def _write_proxymat(directory, name, body):
     path = directory / f"{name}.proxymat.blk"
     path.write_text(body, encoding="utf-8", newline="")
     return path
+
+
+def test_material_export_session_reuses_inventory_without_root_rescans(
+        tmp_path, monkeypatch):
+    texture = tmp_path / "assets" / "wall_d.png"
+    texture.parent.mkdir()
+    texture.write_bytes(b"texture")
+    existing = tmp_path / "nested" / "wall.material"
+    existing.parent.mkdir()
+    existing.write_bytes(b"old")
+    inventory = scan_source_inventory(tmp_path)
+    material = _class_material("wall")
+    image = bpy.data.images.new("wall_d.png", width=1, height=1)
+    image.filepath = str(texture)
+    row = material.mh4blend.textures.add()
+    row.slot = 0
+    row.image = image
+
+    def forbid_rglob(*_args, **_kwargs):
+        raise AssertionError("batch material export rescanned source_root")
+
+    monkeypatch.setattr(Path, "rglob", forbid_rglob)
+    with material_export_session(inventory=inventory) as session:
+        first = prepare_blender_material_export(
+            material, tmp_path, source_root=tmp_path)
+        second = prepare_blender_material_export(
+            material, tmp_path, source_root=tmp_path)
+
+    assert first.target == second.target == existing
+    assert session.metrics_snapshot()["inventory_texture_resolves"] == 2
+    assert session.metrics_snapshot()["inventory_material_resolves"] == 2
+
+
+def test_material_export_session_indexes_claimants_once_and_detects_mutation():
+    materials = [_class_material(f"indexed_{index}") for index in range(12)]
+
+    with material_export_session() as session:
+        for _index in range(20):
+            export_material_module.resolve_material_binding(materials[0])
+        assert session.metrics_snapshot()["material_index_builds"] == 1
+        assert session.metrics_snapshot()["material_indexed"] == len(materials)
+
+        bpy.data.materials.new("late_claimant")
+        with pytest.raises(MHValidationError) as excinfo:
+            session.validate_sources()
+
+    assert excinfo.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+
+
+def test_material_export_session_caches_proxymat_and_invalidates_on_change(
+        tmp_path):
+    source = _write_proxymat(tmp_path, "tree_leaf", '''\
+class:t="rendinst_tree_colored"
+script:t="wind_strength=1"
+''')
+    material = _proxy_material("tree_leaf", tmp_path)
+
+    with material_export_session() as session:
+        first = export_material_module._extract_resource(material)
+        repeated = export_material_module._extract_resource(material)
+        source.write_text('''\
+class:t="rendinst_tree_colored_v2"
+script:t="wind_strength=2"
+''', encoding="utf-8", newline="")
+        changed = export_material_module._extract_resource(material)
+        observation = source.stat()
+        source.write_text('''\
+class:t="rendinst_tree_colored_v2"
+script:t="wind_strength=3"
+''', encoding="utf-8", newline="")
+        os.utime(source, ns=(observation.st_atime_ns, observation.st_mtime_ns))
+        with pytest.raises(MaterialValueError) as excinfo:
+            session.validate_sources()
+
+    metrics = session.metrics_snapshot()
+    assert first == repeated
+    assert changed.material_class == "rendinst_tree_colored_v2"
+    assert changed.params == {"wind_strength": 2}
+    assert metrics["proxymat_reads"] == 2
+    assert metrics["proxymat_cache_hits"] >= 1
+    assert excinfo.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
 
 
 def test_proxy_placeholder_reloads_file_and_duplicate_script_last_wins(

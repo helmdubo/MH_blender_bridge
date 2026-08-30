@@ -1355,6 +1355,19 @@ def publish_dag4blend_composite_collection(
         mode="include_all", lock_root=None, allow_prefab_as_mesh_lossy=False,
         _boundary_hook=None) -> dict:
     """Publish source files from the scene DTOs without changing any datablock."""
+    from .export_material import (
+        _active_material_export_session,
+        material_export_session,
+    )
+    if _active_material_export_session() is None:
+        with material_export_session() as session:
+            report = publish_dag4blend_composite_collection(
+                collection, output_dir, source_root=source_root, mode=mode,
+                lock_root=lock_root,
+                allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
+                _boundary_hook=_boundary_hook)
+        report["material_export_metrics"] = session.metrics_snapshot()
+        return report
     from .dag4blend_publication import prepare_dag4blend_publication
     from .export_closure import (
         publish_composite_closure_export,

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
 import os
@@ -27,11 +30,14 @@ from ..core.mesh_nodes import strip_blender_duplicate_suffix
 from ..core.model import MaterialResource
 from ..core.payload_publish_v2 import atomic_publish_bytes
 from ..core.proxymat import read_proxymat
+from ..core.source_closure import ResourceKey
+from ..core.source_inventory import SourceInventory
 from ..core.validate import MHValidationError
 from .readonly_properties import existing_property_group
 
 __all__ = [
     "MaterialBinding",
+    "MaterialExportSession",
     "PreparedMaterialExport",
     "TECHNICAL_MATERIAL_NAMES",
     "TECHNICAL_MATERIAL_SHADER_CLASSES",
@@ -39,6 +45,7 @@ __all__ = [
     "is_technical_material",
     "material_class_for_export",
     "material_content_fingerprint",
+    "material_export_session",
     "prepare_blender_material_export",
     "read_material_file",
     "resolve_material_binding",
@@ -86,10 +93,203 @@ class MaterialBinding:
         return self.material.library
 
 
-# Publication planners compare bindings by identity to detect two different
-# Blender materials claiming one token, so one representative datablock must
-# always yield one binding object across every mesh in a closure.
-_BINDINGS: dict[str, MaterialBinding] = {}
+_SESSION_METRIC_KEYS = (
+    "binding_cache_hits",
+    "binding_cache_misses",
+    "inventory_material_resolves",
+    "inventory_texture_resolves",
+    "material_claim_lookups",
+    "material_index_builds",
+    "material_indexed",
+    "proxymat_cache_hits",
+    "proxymat_reads",
+)
+
+
+class MaterialExportSession:
+    """Operation-scoped read snapshot for material-heavy export paths.
+
+    The session owns no Blender authority and never mutates a datablock.  It
+    amortizes indices and external proxymat parsing only for one synchronous
+    export operation.  Files are keyed by a live size/mtime snapshot, and the
+    whole snapshot can be revalidated at the prepare-to-stage boundary.
+    """
+
+    def __init__(self, *, inventory: SourceInventory | None = None):
+        self.inventory = None
+        self.bindings: dict[str, MaterialBinding] = {}
+        self._claimants = None
+        self._catalog_snapshot = None
+        self._proxy_cache = {}
+        self._metrics = Counter()
+        self._sources_validated = False
+        if inventory is not None:
+            self.bind_inventory(inventory)
+
+    def bind_inventory(self, inventory: SourceInventory) -> None:
+        if not isinstance(inventory, SourceInventory):
+            raise TypeError("inventory must be SourceInventory")
+        if (self.inventory is not None
+                and self.inventory.root != inventory.root):
+            raise ValueError(
+                "one material export session cannot span multiple source roots")
+        self.inventory = inventory
+
+    @staticmethod
+    def _catalog_rows():
+        rows = []
+        claimants = {}
+        for candidate in bpy.data.materials:
+            try:
+                logical_name = _logical_material_name(candidate)
+            except (ReferenceError, TypeError, ValueError):
+                logical_name = None
+            rows.append((
+                candidate.as_pointer(), str(candidate.name), logical_name))
+            if logical_name is not None:
+                claimants.setdefault(logical_name, []).append(candidate)
+        return tuple(rows), claimants
+
+    def claimants(self, logical_name: str) -> list:
+        self._metrics["material_claim_lookups"] += 1
+        if self._claimants is None:
+            rows, claimants = self._catalog_rows()
+            self._catalog_snapshot = rows
+            self._claimants = {
+                name: tuple(sorted(values, key=lambda candidate: candidate.name))
+                for name, values in claimants.items()
+            }
+            self._metrics["material_index_builds"] += 1
+            self._metrics["material_indexed"] = len(rows)
+            self._sources_validated = False
+        return list(self._claimants.get(logical_name, ()))
+
+    @staticmethod
+    def _proxy_observation(path: Path) -> tuple[int, int]:
+        path_stat = path.stat()
+        return path_stat.st_size, path_stat.st_mtime_ns
+
+    def read_proxymat(self, path: Path):
+        physical = path.resolve(strict=True)
+        before = self._proxy_observation(physical)
+        cached = self._proxy_cache.get(physical)
+        if cached is not None and cached[0] == before:
+            self._metrics["proxymat_cache_hits"] += 1
+            return cached[2]
+        raw_before = physical.read_bytes()
+        parsed = read_proxymat(physical)
+        raw_after = physical.read_bytes()
+        after = self._proxy_observation(physical)
+        if after != before or raw_after != raw_before:
+            raise OSError(
+                f"proxymat source changed while it was being read: {physical}")
+        self._proxy_cache[physical] = (
+            after, hashlib.sha256(raw_after).digest(), parsed)
+        self._metrics["proxymat_reads"] += 1
+        self._sources_validated = False
+        return parsed
+
+    def resolve_texture(self, token: str) -> Path:
+        if self.inventory is None:
+            raise RuntimeError("material export session has no SourceInventory")
+        key = ResourceKey("texture", token)
+        matches = self.inventory.candidates_for(key)
+        if len(matches) > 1:
+            raise MaterialValueError(
+                "MH_E_AMBIGUOUS_RESOURCE_NAME", token,
+                "multiple texture resources share this logical name: "
+                + ", ".join(str(row.path) for row in matches))
+        if not matches:
+            invalid = tuple(
+                row for row in self.inventory.invalid_candidates
+                if row.claims(key))
+            if invalid:
+                outside = next((
+                    row for row in invalid
+                    if "outside source_root" in row.message), None)
+                if outside is not None:
+                    raise MaterialValueError(
+                        "MH_E_TEXTURE_OUTSIDE_ROOT", str(outside.path),
+                        outside.message)
+                raise MaterialValueError(
+                    "MH_E_NONCANONICAL_RESOURCE_NAME", str(invalid[0].path),
+                    "texture filename must use the exact lowercase logical "
+                    "name and extension")
+            raise MaterialValueError(
+                "MH_E_UNRESOLVED_TEXTURE_REFERENCE", token,
+                "no texture resource with this logical name exists in source_root")
+        self._metrics["inventory_texture_resolves"] += 1
+        return matches[0].path
+
+    def resolve_material_target(
+            self, output: Path, name: str) -> Path:
+        if self.inventory is None:
+            raise RuntimeError("material export session has no SourceInventory")
+        key = ResourceKey("material", name)
+        try:
+            candidate = self.inventory.resolve(key, allow_missing=True)
+        except MHValidationError as exc:
+            raise MaterialValueError(
+                exc.code, ", ".join(exc.subjects), exc.message) from exc
+        self._metrics["inventory_material_resolves"] += 1
+        return candidate.path if candidate is not None else output / f"{name}.material"
+
+    def validate_sources(self) -> None:
+        """Fail closed if indexed Blender identities or proxymats changed."""
+        if self._sources_validated:
+            return
+        if self._catalog_snapshot is not None:
+            current, _claimants = self._catalog_rows()
+            if current != self._catalog_snapshot:
+                raise MHValidationError(
+                    "MH_E_INVALID_RESOURCE_SOURCE",
+                    ["Blender material catalog"],
+                    "material identities changed between export preflight and staging",
+                )
+        for path, (expected, expected_digest, _parsed) in self._proxy_cache.items():
+            try:
+                current = self._proxy_observation(path)
+                current_digest = hashlib.sha256(path.read_bytes()).digest()
+            except OSError as exc:
+                raise MaterialValueError(
+                    "MH_E_INVALID_RESOURCE_SOURCE", str(path),
+                    f"proxymat source disappeared after preflight: {exc}") from exc
+            if current != expected or current_digest != expected_digest:
+                raise MaterialValueError(
+                    "MH_E_INVALID_RESOURCE_SOURCE", str(path),
+                    "proxymat source changed between export preflight and staging")
+        self._sources_validated = True
+
+    def metrics_snapshot(self) -> dict[str, int]:
+        return {
+            key: int(self._metrics.get(key, 0))
+            for key in _SESSION_METRIC_KEYS
+        }
+
+
+_ACTIVE_MATERIAL_EXPORT_SESSION = ContextVar(
+    "mh_active_material_export_session", default=None)
+
+
+@contextmanager
+def material_export_session(*, inventory: SourceInventory | None = None):
+    """Create or reuse the material read snapshot for one export operation."""
+    active = _ACTIVE_MATERIAL_EXPORT_SESSION.get()
+    if active is not None:
+        if inventory is not None:
+            active.bind_inventory(inventory)
+        yield active
+        return
+    session = MaterialExportSession(inventory=inventory)
+    token = _ACTIVE_MATERIAL_EXPORT_SESSION.set(session)
+    try:
+        yield session
+    finally:
+        _ACTIVE_MATERIAL_EXPORT_SESSION.reset(token)
+
+
+def _active_material_export_session() -> MaterialExportSession | None:
+    return _ACTIVE_MATERIAL_EXPORT_SESSION.get()
 
 
 def _material_datablock(material):
@@ -175,6 +375,9 @@ def material_content_fingerprint(material) -> tuple:
 
 def _projected_claim_group(logical_name: str) -> list:
     """Return every scene material whose external name projects to one token."""
+    session = _active_material_export_session()
+    if session is not None:
+        return session.claimants(logical_name)
     claimants = []
     for candidate in bpy.data.materials:
         try:
@@ -223,11 +426,15 @@ def _binding_for_macro_asset(
     name = _fit_blender_transport_name(
         f"{binding.name}__{asset_name}")
     validate_resource_name(name)
-    cached = _BINDINGS.get(name)
+    session = _active_material_export_session()
+    if session is None:  # resolve_material_binding always owns a session
+        raise RuntimeError("macro material binding requires an export session")
+    cached = session.bindings.get(name)
     if cached is not None:
         try:
             if (cached.material == binding.material
                     and cached.macro_asset_name == asset_name):
+                session._metrics["binding_cache_hits"] += 1
                 return cached
         except ReferenceError:
             pass
@@ -237,7 +444,8 @@ def _binding_for_macro_asset(
         divergence=binding.divergence,
         macro_asset_name=asset_name,
     )
-    _BINDINGS[name] = specialized
+    session.bindings[name] = specialized
+    session._metrics["binding_cache_misses"] += 1
     return specialized
 
 
@@ -250,6 +458,10 @@ def resolve_material_binding(
     Distinct content receives a deterministic suffix derived from the stable
     Blender datablock name, so no material semantics are discarded.
     """
+    session = _active_material_export_session()
+    if session is None:
+        with material_export_session():
+            return resolve_material_binding(material, asset_name=asset_name)
     if isinstance(material, MaterialBinding):
         return _binding_for_macro_asset(material, asset_name)
     logical_name = _logical_material_name(material)
@@ -261,16 +473,18 @@ def resolve_material_binding(
         claimants = [material]
     if len(claimants) == 1:
         representative = claimants[0]
-        cached = _BINDINGS.get(logical_name)
+        cached = session.bindings.get(logical_name)
         if cached is not None:
             try:
                 if cached.material == representative and cached.divergence is None:
+                    session._metrics["binding_cache_hits"] += 1
                     return _binding_for_macro_asset(cached, asset_name)
             except ReferenceError:
                 pass
         binding = MaterialBinding(
             name=logical_name, material=representative, divergence=None)
-        _BINDINGS[logical_name] = binding
+        session.bindings[logical_name] = binding
+        session._metrics["binding_cache_misses"] += 1
         return _binding_for_macro_asset(binding, asset_name)
 
     fingerprints = {
@@ -292,16 +506,18 @@ def resolve_material_binding(
         logical_name if material_fingerprint == primary_fingerprint
         else _disambiguated_material_name(logical_name, representative))
 
-    cached = _BINDINGS.get(binding_name)
+    cached = session.bindings.get(binding_name)
     if cached is not None:
         try:
             if cached.material == representative and cached.divergence is None:
+                session._metrics["binding_cache_hits"] += 1
                 return _binding_for_macro_asset(cached, asset_name)
         except ReferenceError:
             pass
     binding = MaterialBinding(
         name=binding_name, material=representative, divergence=None)
-    _BINDINGS[binding_name] = binding
+    session.bindings[binding_name] = binding
+    session._metrics["binding_cache_misses"] += 1
     return _binding_for_macro_asset(binding, asset_name)
 
 
@@ -413,7 +629,10 @@ def _read_proxy_source(material, authored_name: str, dagormat):
     source = Path(bpy.path.abspath(directory)).resolve(strict=False)
     source = source / f"{authored_name}.proxymat.blk"
     try:
-        proxy = read_proxymat(source)
+        session = _active_material_export_session()
+        proxy = (
+            session.read_proxymat(source)
+            if session is not None else read_proxymat(source))
     except (OSError, UnicodeError) as exc:
         raise MaterialValueError(
             "MH_E_INVALID_RESOURCE_SOURCE", str(source),
@@ -682,6 +901,10 @@ def _extract_resource(material) -> MaterialResource:
 def prepare_blender_material_export(
         material, output_dir, *, source_root) -> PreparedMaterialExport:
     """Extract and fully validate one Blender material without writing files."""
+    if _active_material_export_session() is None:
+        with material_export_session():
+            return prepare_blender_material_export(
+                material, output_dir, source_root=source_root)
     if material is None:
         raise ValueError("material is required")
     binding = resolve_material_binding(material)
@@ -694,8 +917,12 @@ def prepare_blender_material_export(
     try:
         resource = _extract_resource(binding)
         payload = material_json_bytes(resource)
+        session = _active_material_export_session()
         for token in resource.textures.values():
-            resolve_texture_reference(root, token)
+            if session is not None and session.inventory is not None:
+                session.resolve_texture(token)
+            else:
+                resolve_texture_reference(root, token)
     except MaterialValueError as exc:
         raise MaterialValueError(
             exc.code,
@@ -703,7 +930,10 @@ def prepare_blender_material_export(
             exc.message,
         ) from exc
 
-    target = _resolve_material_target(root, output, resource.name)
+    target = (
+        session.resolve_material_target(output, resource.name)
+        if session is not None and session.inventory is not None
+        else _resolve_material_target(root, output, resource.name))
     if target.exists() and target.is_dir():
         raise ValueError(f"Material target exists as a directory: {target}")
     return PreparedMaterialExport(resource=resource, target=target, payload=payload)
