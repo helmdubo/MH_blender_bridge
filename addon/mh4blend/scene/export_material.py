@@ -20,6 +20,7 @@ from ..core.materials import (
 from ..core.mesh_nodes import strip_blender_duplicate_suffix
 from ..core.model import MaterialResource
 from ..core.payload_publish_v2 import atomic_publish_bytes
+from ..core.proxymat import read_proxymat
 from ..core.validate import MHValidationError
 from .readonly_properties import existing_property_group
 
@@ -305,6 +306,55 @@ def _authored_dagormat(material):
     return dagormat
 
 
+def _proxy_dagormat(material):
+    """Return dagormat when the datablock denotes a proxymat source."""
+    dagormat = existing_property_group(material, "dagormat")
+    if dagormat is None:
+        return None
+    shader_class = str(getattr(dagormat, "shader_class", "") or "")
+    if getattr(dagormat, "is_proxy", False) is True:
+        return dagormat
+    return dagormat if shader_class.endswith(":proxymat") else None
+
+
+def _proxy_resource(material, logical_name: str, dagormat) -> MaterialResource:
+    directory = str(getattr(dagormat, "proxy_path", "") or "")
+    source = Path(bpy.path.abspath(directory)).resolve(strict=False)
+    source = source / f"{logical_name}.proxymat.blk"
+    try:
+        proxy = read_proxymat(source)
+    except (OSError, UnicodeError) as exc:
+        raise MaterialValueError(
+            "MH_E_INVALID_RESOURCE_SOURCE", str(source),
+            "proxymat source cannot be read; check proxy_path or run the "
+            "dag4blend proxymat search") from exc
+
+    if proxy.macro_textures:
+        details = ", ".join(
+            f"{slot}={value!r}"
+            for slot, value in sorted(proxy.macro_textures.items()))
+        raise _not_roundtrippable(
+            str(source),
+            "proxymat macro texture provenance requires string params before "
+            f"publication ({details}); macro slots were not added to textures")
+
+    textures = {
+        slot: _texture_token_from_path(value, f"proxymat.{slot}")
+        for slot, value in proxy.textures.items()
+    }
+    params = {
+        name: _dagor_parameter_value(value, f"proxymat.script.{name}")
+        for name, value in proxy.params.items()
+    }
+    return MaterialResource(
+        name=logical_name,
+        material_class=proxy.material_class,
+        twosided=proxy.twosided,
+        textures=textures,
+        params=params,
+    )
+
+
 def _dagor_texture_paths(dagormat) -> dict[str, str]:
     textures = existing_property_group(dagormat, "textures")
     if textures is None:
@@ -405,6 +455,9 @@ def _extract_resource(material) -> MaterialResource:
     # the material grammar and must not be reclassified as a codec failure.
     logical_name = _logical_material_name(material)
     validate_resource_name(logical_name)
+    proxy_dagormat = _proxy_dagormat(material)
+    if proxy_dagormat is not None:
+        return _proxy_resource(material, logical_name, proxy_dagormat)
     if not hasattr(type(material) if isinstance(material, bpy.types.ID) else material,
                    "mh4blend"):
         raise MaterialValueError(

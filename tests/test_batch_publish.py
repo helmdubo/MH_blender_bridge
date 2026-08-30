@@ -96,6 +96,31 @@ def test_directory_fsync_failure_after_replace_counts_resource_as_published(
     assert items[0].target.read_bytes() == items[0].payload
 
 
+def test_batch_fsyncs_each_parent_once_after_all_replaces(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    items = _items(source)
+    calls = []
+
+    def observe_fsync(directory):
+        calls.append(directory)
+        return True
+
+    monkeypatch.setattr(
+        payload_publish_v2, "_fsync_parent_directory", observe_fsync)
+    receipts = publish_ordered_batch(
+        items,
+        source_root=source,
+        lock_root=tmp_path / "locks",
+        pre_replace_guard=lambda _published: None,
+    )
+
+    assert calls == [source.resolve()]
+    assert all(not row["parent_directory_fsynced"] for row in receipts[:-1])
+    assert receipts[-1]["parent_directory_fsynced"] is True
+    assert receipts[-1]["parent_fsync_directories"] == 1
+
+
 def _crash_worker(source, lock_root, targets, identities, crash_identity, crash_at):
     items = tuple(BatchPublishItem(
         identity,

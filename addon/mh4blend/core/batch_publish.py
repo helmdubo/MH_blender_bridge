@@ -12,7 +12,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
+from . import payload_publish_v2
 from .payload_publish_v2 import atomic_publish_bytes
 
 __all__ = [
@@ -66,6 +68,7 @@ def publish_ordered_batch(
     *,
     source_root,
     pre_replace_guard: Callable[[tuple[str, ...]], None],
+    replace_observer: Callable[[BatchPublishItem], None] | None = None,
     lock_root=None,
     _boundary_hook: Callable[[str, BatchPublishItem, tuple[str, ...]], None]
     | None = None,
@@ -87,6 +90,8 @@ def publish_ordered_batch(
         raise ValueError("batch item identities must be unique")
     if not callable(pre_replace_guard):
         raise TypeError("pre_replace_guard must be callable")
+    if replace_observer is not None and not callable(replace_observer):
+        raise TypeError("replace_observer must be callable")
     if _boundary_hook is not None and not callable(_boundary_hook):
         raise TypeError("_boundary_hook must be callable")
     if _crash_at not in {None, "before_replace", "after_replace"}:
@@ -103,13 +108,19 @@ def publish_ordered_batch(
             if _boundary_hook is not None:
                 _boundary_hook("before_replace", row, tuple(published))
             crash_at = _crash_at if row.identity == _crash_identity else None
+            def replaced():
+                published.append(row.identity)
+                if replace_observer is not None:
+                    replace_observer(row)
+
             receipt = atomic_publish_bytes(
                 row.target,
                 row.payload,
                 source_root=source_root,
                 lock_root=lock_root,
                 pre_replace_guard=lambda: pre_replace_guard(tuple(published)),
-                replace_observer=lambda: published.append(row.identity),
+                replace_observer=replaced,
+                fsync_parent=False,
                 _crash_at=crash_at,
             )
             receipts.append(receipt)
@@ -123,6 +134,28 @@ def publish_ordered_batch(
             raise BatchPartialPublishError(
                 published=tuple(published),
                 unpublished=unpublished,
+                cause=exc,
+            ) from exc
+    if receipts:
+        try:
+            started = time.monotonic()
+            fsynced = False
+            directories = tuple(dict.fromkeys(
+                row.target.resolve(strict=False).parent for row in rows))
+            for directory in directories:
+                fsynced = (
+                    payload_publish_v2._fsync_parent_directory(directory)
+                    or fsynced)
+            elapsed_ms = round((time.monotonic() - started) * 1000.0, 3)
+            receipts[-1]["parent_directory_fsynced"] = fsynced
+            receipts[-1]["parent_fsync_directories"] = len(directories)
+            receipts[-1]["timings_ms"]["parent_fsync"] = elapsed_ms
+            receipts[-1]["elapsed_ms"] = round(
+                receipts[-1]["elapsed_ms"] + elapsed_ms, 3)
+        except Exception as exc:
+            raise BatchPartialPublishError(
+                published=tuple(published),
+                unpublished=(),
                 cause=exc,
             ) from exc
     return tuple(receipts)

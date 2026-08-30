@@ -1,0 +1,249 @@
+# Квитанция: proxymat-материалы и публикация include_all
+
+Статус: **STOP — ожидается одно решение Lead по строковому provenance**.  
+Дата: 2026-08-30  
+Ветка: `feat/proxymat-and-publish-perf`  
+База: `3ee5a2cdbca5bcf94eb3d62cc978f4470cf9eb11`  
+Scope: `addon/mh4blend`, `tests`, эта квитанция.
+
+## 1. Итог на checkpoint
+
+Реализованы и проверены:
+
+- read-only parser `.proxymat.blk`, повторяющий чтение dag4blend;
+- file-authority для proxy-материала при `dagormat.is_proxy == True` или
+  `shader_class.endswith(":proxymat")`;
+- stem-резолв обычных `texN`, file-authority fingerprint и точный отказ при
+  отсутствующем proxy-файле;
+- отдельное инструментирование публикации;
+- full-hash admission один раз на batch, далее size/mtime-проверки и полный
+  read/hash только изменившегося или текущего target;
+- один parent-directory fsync на директорию после всего успешного batch;
+- детект внешней модификации опубликованного prefix до следующего replace.
+
+Не завершён один ратификационно зависимый пункт: frozen `.material.params`
+принимает только scalar/vector4 и отклоняет строки. Все 37 реальных proxymat из
+найденного `trees_leaf` содержат `$(ASSET_NAME)`. Parser сохраняет их отдельно
+от textures, а публикация сейчас fail-closed останавливается; данные не
+теряются и в texture closure не попадают. Полный CDK include_all и UE-import
+provenance-кейса поэтому не объявляются пройденными.
+
+## 2. Часть A — red-first и семантика proxymat
+
+### Красный baseline
+
+Blender 4.5.12, `tests/test_export_material_bpy.py`, четыре новых кейса:
+
+```text
+FAILED test_proxy_placeholder_reloads_file_and_duplicate_script_last_wins
+FAILED test_proxy_shader_suffix_is_file_authority_and_not_a_class_token
+FAILED test_proxy_missing_source_fails_with_full_path_and_remedy
+FAILED test_two_proxy_claimants_of_one_file_have_identical_payload
+4 failed, 33 passed in 2.67s
+```
+
+Пустышка молча брала stale dagormat-cache и затем падала
+`MH_E_MATERIAL_GRAMMAR` на пустом class или `*:proxymat`, то есть файл не был
+authority и отсутствующий файл не давал требуемого source-отказа.
+
+### Green
+
+После `3935682`:
+
+- тот же Blender-модуль: **38 passed / 0 failed**;
+- чистый parser: **2 passed / 0 failed**;
+- scene-placeholder и сам `.proxymat.blk` остаются неизменными;
+- два proxy-claimant одного логического имени/файла дают одинаковые canonical
+  `.material` bytes;
+- отсутствующий файл даёт `MH_E_INVALID_RESOURCE_SOURCE`, полный exact path и
+  remedy `check proxy_path or run the dag4blend proxymat search`;
+- обычный абсолютный чужой texture path сводится к basename stem существующим
+  контрактом.
+
+Правило дублей установлено по reference:
+`dagormat_prop_add -> add_custom_prop -> try_remove_custom_prop` удаляет
+предыдущее custom property перед добавлением. Поэтому повторяющийся
+`script:t="key=value"` использует **последнее значение (last wins)**. Parser
+читает строки по порядку и присваивает тот же ключ повторно. `power:r`, как и
+в `dagormat_from_text`, не входит в сериализуемый материал.
+
+Пробелы удаляются на стадии `read_proxy_blk` из всей строки до semantic parse.
+Тип script-value определяется в порядке reference: matrix marker, bool,
+vector, float, int, string; неподдерживаемые frozen-форматом типы не
+ремонтируются, а блокируются существующим
+`MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`.
+
+### Реальное CDK-дерево
+
+Read-only профиль:
+
+```text
+CDK_PROXY files=37 macro_files=37 textures=154 params=563
+CDK_DUPLICATE file=tree_castanea_aesculus_city_burnt_cut.proxymat.blk
+is_pivoted=1
+macros={'tex7': '$(ASSET_NAME)_pivot_pos.dds',
+        'tex8': '$(ASSET_NAME)_pivot_dir.dds'}
+```
+
+Источник:
+`H:\_Gaijin_Entertainment\EnlistedCDK\ActiveMatterCDK.2024.11.11\EnlistedCDK\develop\assets\gameproj\nature_common\entities\vegetation\trees_leaf`.
+
+Реальный Blender read-path доходит до сохранённого macro provenance и
+останавливается до записи:
+
+```text
+MH_E_MATERIAL_NOT_ROUNDTRIPPABLE:
+...\tree_bark_apple_dead.proxymat.blk:
+proxymat macro texture provenance requires string params before publication
+(tex7='$(ASSET_NAME)_pivot_pos.dds',
+ tex8='$(ASSET_NAME)_pivot_dir.dds');
+macro slots were not added to textures
+```
+
+Это ожидаемый временный STOP, а не green acceptance реального include_all.
+
+## 3. Часть B — инструментирование
+
+Отдельный commit `a3b7263` добавил к atomic receipt длительности:
+
+- `lock`;
+- `write_fsync`;
+- `read_back`;
+- `guard`;
+- `replace`;
+- `parent_fsync`.
+
+Guard дополнительно считает inventory scan, source/staged read bytes и число
+полностью проверенных hash bytes. Метрики находятся только в operation
+receipt, не сериализуются в Source Protocol payload и не меняют canonical
+bytes.
+
+Красный 100-payload synthetic на прежнем guard:
+
+```text
+MH_PUBLISH_100 wall_ms=15078.000 guard_reads=14950
+assert guard_reads <= 200
+E assert 14950 <= 200
+1 failed, 1 passed, 14 deselected
+```
+
+`14950 = 10000` повторных staged reads + `4950` повторных reads уже
+опубликованного prefix. Отдельная инъекция внешней модификации между первым и
+вторым replace была поймана и до оптимизации.
+
+## 4. Часть B — после оптимизации
+
+Финальный прогон той же 100-payload фикстуры:
+
+```text
+MH_PUBLISH_100 wall_ms=3422.000
+guard_reads=0
+metadata_checks=4950
+max_payload_ms=94.000
+stages={
+  'lock': 156.0,
+  'write_fsync': 140.0,
+  'read_back': 30.0,
+  'guard': 2450.0,
+  'replace': 127.0,
+  'parent_fsync': 32.0
+}
+16 passed in 5.83s
+```
+
+Результат:
+
+- повторные source/staged reads: **14950 -> 0**;
+- local synthetic wall: **15.078 s -> 3.422 s**;
+- относительно ратифицированной полевой базы Lead `196 s` — **1.75%** и ниже
+  абсолютного acceptance `20 s`;
+- малый payload: максимум **94 ms**, порог `<=100 ms` выполнен;
+- metadata checks остаются: это нормативная size/mtime сверка snapshot между
+  replace, а не повторное чтение/хэширование;
+- fsync каждого payload сохранён; unit gate доказывает один directory-fsync
+  для единственной общей parent directory в конце batch.
+
+Staging-файл после полного admission больше не опрашивается N раз: atomic
+publisher использует immutable bytes из `StagedClosurePayload`, а не заново
+открывает staged path. Изменение staged path после admission не способно
+изменить публикуемые bytes.
+
+Инъекция после первого replace теперь даёт:
+
+```text
+published=('composite:bulk_000',)
+cause=MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED
+second target does not exist
+```
+
+После появления необратимого prefix тот же отказ оборачивается штатным
+`MH_E_PARTIAL_PUBLISH`. Crash/failure-boundary тесты до/после replace остались
+зелёными.
+
+## 5. Гейты
+
+| Гейт | Результат |
+|---|---|
+| Pure `python -m pytest tests/ -q` до правок | **298 passed / 14 skipped** |
+| Pure после | **302 passed / 14 skipped / 0 failed** |
+| Blender 4.5.12, 12 отдельных factory-startup процессов | **328 passed / 0 failed** |
+| `test_payload_publish_v2.py + test_batch_publish.py` | **25 passed / 0 failed** |
+| `test_export_closure_bpy.py` | **16 passed / 0 failed** |
+| `test_dag4blend_publication_bpy.py` | **38 passed / 0 failed** |
+| `test_export_material_bpy.py` | **38 passed / 0 failed** |
+| `git diff --check` | **PASS** |
+
+Blender-модули: `22 + 20 + 76 + 38 + 16 + 16 + 58 + 38 + 15 + 6 +
+12 + 11 = 328`.
+
+Полный реальный `trees_leaf -> include_all -> .material` и UE importer test
+для строковых provenance params: **NOT RUN / STOP**, причина в §1/§7.
+
+## 6. Frozen-инварианты
+
+- `golden` tree до/после:
+  `71b30ebf65ca3cc8473f50305990c2bf2b332727`;
+- `reference` tree до/после:
+  `12e25b76b19aa824458221cf23f77236a17382cd`;
+- `addon/mh4blend/core/canonical.py` blob до/после:
+  `bbe340ce0f7c46d50e097ac1b7f8ea0b831dd945`;
+- новых E/W-кодов нет;
+- canonical payload writers, golden и reference не менялись;
+- Blender snapshot-гейты зелёные; proxy-read не заполняет dagormat и не
+  мутирует сцену.
+
+## 7. Вопросы
+
+1. **Контекст:** `.material.params` frozen v4 принимает только number/vector4;
+   строка отклоняется. Все 37 реальных `trees_leaf` proxymat содержат macro
+   texture slots, а owner требует сохранить их как
+   `params["proxymat_texN_macro"] = "$(ASSET_NAME)..."`. UE-side importer test
+   также лежит вне заданного общего scope `addon/mh4blend + tests`.
+   **Вопрос:** ратифицировать ли минимальное расширение params-грамматики —
+   string разрешена только для ключей `proxymat_tex0_macro` ...
+   `proxymat_tex15_macro` — и точечный UE importer Automation-тест в
+   `ue/MimirComposite`?
+   **Временное fail-closed допущение:** macro slots распознаются и сохраняются
+   parser-моделью, не входят в `textures`/texture closure, но `.material` с
+   ними не публикуется до решения; реальный CDK acceptance остаётся STOP.
+
+## 8. Изменённые файлы
+
+- `addon/mh4blend/core/batch_publish.py`;
+- `addon/mh4blend/core/payload_publish_v2.py`;
+- `addon/mh4blend/core/proxymat.py`;
+- `addon/mh4blend/scene/export_closure.py`;
+- `addon/mh4blend/scene/export_material.py`;
+- `tests/test_batch_publish.py`;
+- `tests/test_export_closure_bpy.py`;
+- `tests/test_export_material_bpy.py`;
+- `tests/test_payload_publish_v2.py`;
+- `tests/test_proxymat.py`;
+- `docs/receipts/proxymat_publish_perf.md`.
+
+## 9. Коммиты checkpoint
+
+- `a3b7263` — `Instrument payload publication stages`;
+- `3935682` — `Read proxymat materials from authoritative sources`;
+- `d72dc6d` — `Reuse batch inventory validation during publication`;
+- квитанция — отдельный documentation commit.

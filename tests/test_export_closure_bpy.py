@@ -5,6 +5,7 @@ from dataclasses import replace
 import os
 from pathlib import Path
 import sys
+import time
 
 import pytest
 
@@ -25,11 +26,16 @@ from mh4blend.core.model import (  # noqa: E402
     PlacementProfile,
 )
 from mh4blend.core.placements import placement_json_bytes  # noqa: E402
-from mh4blend.core.source_closure import ResourceKey  # noqa: E402
+from mh4blend.core.source_closure import (  # noqa: E402
+    CompositeSourceClosure,
+    ResourceKey,
+)
 from mh4blend.core.validate import MHValidationError  # noqa: E402
 from mh4blend.scene.export_closure import (  # noqa: E402
     CLOSURE_MODE_COMPOSITES,
     CLOSURE_MODE_INCLUDE_ALL,
+    ClosureExportPlan,
+    PlannedClosurePayload,
     export_composite_closure_collection,
     prepare_composite_closure_export,
     publish_composite_closure_export,
@@ -223,6 +229,105 @@ def test_partial_failure_after_loaded_leaf_reports_exact_prefix_and_no_root(
     assert caught.value.unpublished == ("composite:root",)
     assert (source / "nested.composite").is_file()
     assert not (source / "root.composite").exists()
+
+
+def _synthetic_publish_plan(source: Path, count: int) -> ClosureExportPlan:
+    keys = tuple(
+        ResourceKey("composite", f"bulk_{index:03d}")
+        for index in range(count))
+    rows = tuple(PlannedClosurePayload(
+        key=key,
+        target=source / f"{key.name}.composite",
+        action="publish",
+        payload=composite_json_bytes(Composite(key.name, [])),
+        source_snapshot=None,
+    ) for key in keys)
+    closure = CompositeSourceClosure(
+        root=keys[-1],
+        composites_postorder=keys,
+        placement_profiles=(),
+        static_meshes=(),
+        resources=keys,
+        referrers=(),
+    )
+    return ClosureExportPlan(
+        mode=CLOSURE_MODE_INCLUDE_ALL,
+        source_root=source,
+        output_dir=source,
+        closure=closure,
+        payloads=rows,
+        validated_only=(),
+        texture_dependencies=(),
+    )
+
+
+def test_hundred_payload_batch_revalidation_reads_scale_linearly(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    source = tmp_path / "source"
+    source.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    plan = _synthetic_publish_plan(source, 100)
+    staged = stage_composite_closure_export(plan, staging_dir=staging)
+
+    started = time.monotonic()
+    report = publish_composite_closure_export(
+        plan, staged, lock_root=tmp_path / "locks")
+    wall_ms = (time.monotonic() - started) * 1000.0
+    guard_reads = sum(
+        (receipt["guard"].get("source_read_files", 0)
+         + receipt["guard"].get("staged_read_files", 0))
+        for receipt in report["receipts"])
+    stage_totals = {
+        name: sum(receipt["timings_ms"].get(name, 0.0)
+                  for receipt in report["receipts"])
+        for name in (
+            "lock", "write_fsync", "read_back", "guard", "replace",
+            "parent_fsync")
+    }
+    guard_metadata_checks = sum(
+        receipt["guard"].get("metadata_checked_files", 0)
+        for receipt in report["receipts"])
+    max_payload_ms = max(
+        receipt["elapsed_ms"] for receipt in report["receipts"])
+    print(
+        "MH_PUBLISH_100 wall_ms="
+        f"{wall_ms:.3f} guard_reads={guard_reads} "
+        f"metadata_checks={guard_metadata_checks} "
+        f"max_payload_ms={max_payload_ms:.3f} stages={stage_totals}")
+
+    assert len(report["published"]) == 100
+    assert guard_reads <= 200
+    assert max_payload_ms <= 100.0
+
+
+def test_external_modification_of_published_prefix_is_caught_before_next_replace(
+        tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    source = tmp_path / "source"
+    source.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    plan = _synthetic_publish_plan(source, 3)
+    staged = stage_composite_closure_export(plan, staging_dir=staging)
+    first = plan.to_publish[0]
+
+    def corrupt_published_prefix(event, item, published):
+        if event == "after_replace" and published == (str(first.key),):
+            item.target.write_bytes(b"external modification")
+
+    with pytest.raises(BatchPartialPublishError) as caught:
+        publish_composite_closure_export(
+            plan,
+            staged,
+            lock_root=tmp_path / "locks",
+            _boundary_hook=corrupt_published_prefix,
+        )
+
+    assert caught.value.published == (str(first.key),)
+    assert not plan.to_publish[1].target.exists()
+    assert caught.value.cause.code == (
+        "MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED")
 
 
 def test_high_level_closure_export_finalizes_blender_identity(tmp_path):

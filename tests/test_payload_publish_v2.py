@@ -77,12 +77,34 @@ def test_atomic_publish_uses_external_lock_sibling_temp_and_complete_bytes(
     assert target.read_bytes() == b"complete payload"
     assert Path(receipt["lock_path"]).parent == locks.resolve()
     assert receipt["target"] == canonical_payload_path(target)
+    assert set(receipt["timings_ms"]) == {
+        "lock", "write_fsync", "read_back", "guard", "replace",
+        "parent_fsync",
+    }
+    assert all(value >= 0.0 for value in receipt["timings_ms"].values())
     assert list(source.glob(".*.mh-tmp-*")) == []
     with pytest.raises(PayloadPublishV2Error) as caught:
         atomic_publish_bytes(
             target, b"blocked", lock_root=source / ".locks",
             source_root=source)
     assert caught.value.code == "MH_E_SOURCE_INDEX_INVALID"
+
+
+def test_guard_metrics_are_attributed_to_the_atomic_receipt(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    target = source / "asset.fbx"
+
+    receipt = atomic_publish_bytes(
+        target,
+        b"payload",
+        source_root=source,
+        lock_root=tmp_path / "locks",
+        pre_replace_guard=lambda: {"hashed_files": 7, "hashed_bytes": 1234},
+    )
+
+    assert receipt["guard"] == {"hashed_files": 7, "hashed_bytes": 1234}
+    assert receipt["timings_ms"]["guard"] >= 0.0
 
 
 def test_read_back_validator_runs_before_replace_and_preserves_old_on_reject(

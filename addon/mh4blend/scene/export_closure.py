@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import time
 from typing import Any
 
 import bpy
@@ -164,6 +165,15 @@ class ClosureExportPlan:
         )))
 
 
+@dataclass(frozen=True)
+class _FileObservation:
+    """Cheap identity used only after one full-hash batch admission."""
+
+    physical_path: Path
+    size: int
+    mtime_ns: int
+
+
 def _raise(code: str, subjects, message: str) -> None:
     raise MHValidationError(code, subjects, message)
 
@@ -255,6 +265,54 @@ def _snapshot_matches(snapshot: SourceSnapshot, payload: bytes) -> bool:
         snapshot.size == len(payload)
         and snapshot.sha256 == hashlib.sha256(payload).hexdigest()
     )
+
+
+def _file_observation(path: Path) -> _FileObservation:
+    path_stat = os.lstat(path)
+    if not stat.S_ISREG(path_stat.st_mode) or os.path.islink(path):
+        raise OSError(f"path is not a regular non-link file: {path}")
+    return _FileObservation(
+        physical_path=path.resolve(strict=True),
+        size=path_stat.st_size,
+        mtime_ns=path_stat.st_mtime_ns,
+    )
+
+
+def _metadata_observation(
+        path: Path, physical_path: Path) -> _FileObservation:
+    """Read size/mtime in one lstat after physical identity was admitted."""
+    path_stat = os.lstat(path)
+    if not stat.S_ISREG(path_stat.st_mode):
+        raise OSError(f"path is not a regular non-link file: {path}")
+    return _FileObservation(
+        physical_path=physical_path,
+        size=path_stat.st_size,
+        mtime_ns=path_stat.st_mtime_ns,
+    )
+
+
+def _observed_read(
+        path: Path, physical_path: Path | None = None
+) -> tuple[bytes, _FileObservation]:
+    observe = (
+        _file_observation if physical_path is None
+        else lambda value: _metadata_observation(value, physical_path))
+    before = observe(path)
+    payload = path.read_bytes()
+    after = observe(path)
+    if before != after or after.size != len(payload):
+        raise OSError(f"file changed while it was being read: {path}")
+    return payload, after
+
+
+def _record_validation_read(metrics: dict, category: str, payload: bytes, *,
+                            hashed: bool = False) -> None:
+    metrics[f"{category}_files"] = metrics.get(f"{category}_files", 0) + 1
+    metrics[f"{category}_bytes"] = (
+        metrics.get(f"{category}_bytes", 0) + len(payload))
+    if hashed:
+        metrics["hashed_files"] = metrics.get("hashed_files", 0) + 1
+        metrics["hashed_bytes"] = metrics.get("hashed_bytes", 0) + len(payload)
 
 
 def _exact_source_payload(
@@ -787,9 +845,12 @@ def stage_composite_closure_export(
 def revalidate_composite_closure_export(
         plan: ClosureExportPlan,
         staged: tuple[StagedClosurePayload, ...], *,
-        published=()) -> None:
+        published=(), _metrics=None, _observations=None,
+        _inventory_out=None) -> None:
     """Recheck all identities and bytes at the edge before first replace."""
 
+    metrics = {} if _metrics is None else _metrics
+    validation_started = time.monotonic()
     if not isinstance(plan, ClosureExportPlan):
         raise TypeError("plan must be ClosureExportPlan")
     rows = tuple(staged)
@@ -804,7 +865,12 @@ def revalidate_composite_closure_export(
     if not published_keys.issubset(publishable_keys):
         raise ValueError("published contains a non-publishable closure member")
 
+    scan_started = time.monotonic()
     inventory = scan_source_inventory(plan.source_root)
+    if _inventory_out is not None:
+        _inventory_out["inventory"] = inventory
+    metrics["inventory_scan_ms"] = round(
+        (time.monotonic() - scan_started) * 1000.0, 3)
     for key, snapshot in plan.validated_only:
         current = inventory.resolve(key)
         if current.path != snapshot.path:
@@ -812,10 +878,19 @@ def revalidate_composite_closure_export(
                 "MH_E_AMBIGUOUS_RESOURCE_NAME",
                 [key, snapshot.path, current.path],
                 "validated-only closure identity changed after preflight")
-        if not _snapshot_matches(snapshot, current.read_bytes()):
+        try:
+            raw, observation = _observed_read(current.path)
+        except OSError as exc:
+            _raise(
+                "MH_E_INVALID_RESOURCE_SOURCE", [key, current.path],
+                f"validated-only closure source could not be read stably: {exc}")
+        _record_validation_read(metrics, "source_read", raw, hashed=True)
+        if not _snapshot_matches(snapshot, raw):
             _raise(
                 "MH_E_INVALID_RESOURCE_SOURCE", [key, current.path],
                 "validated-only closure bytes changed after preflight")
+        if _observations is not None:
+            _observations[("source", key)] = observation
     for staged_row in rows:
         row = staged_row.planned
         try:
@@ -824,26 +899,48 @@ def revalidate_composite_closure_export(
         except OSError:
             path_stat = None
             physical = None
-        if (path_stat is None
-                or not stat.S_ISREG(path_stat.st_mode)
-                or os.path.islink(staged_row.staged_path)
-                or physical != staged_row.physical_path
-                or _physical_inside(plan.source_root, physical)
-                or staged_row.staged_path.read_bytes() != staged_row.payload):
+        staged_valid = not (
+            path_stat is None
+            or not stat.S_ISREG(path_stat.st_mode)
+            or os.path.islink(staged_row.staged_path)
+            or physical != staged_row.physical_path
+            or _physical_inside(plan.source_root, physical)
+        )
+        try:
+            staged_raw, staged_observation = (
+                _observed_read(staged_row.staged_path)
+                if staged_valid else (b"", None))
+        except OSError:
+            staged_raw, staged_observation = b"", None
+        if staged_valid:
+            _record_validation_read(metrics, "staged_read", staged_raw)
+        if not staged_valid or staged_raw != staged_row.payload:
             _raise(
                 "MH_E_INVALID_RESOURCE_SOURCE", [row.key, staged_row.staged_path],
                 "staged closure payload changed before publication")
+        if _observations is not None:
+            _observations[("staged", row.key)] = staged_observation
         current = inventory.resolve(row.key, allow_missing=True)
         if row.key in published_keys:
+            try:
+                current_raw, current_observation = (
+                    _observed_read(current.path)
+                    if current is not None else (b"", None))
+            except OSError:
+                current_raw, current_observation = b"", None
+            if current is not None:
+                _record_validation_read(metrics, "source_read", current_raw)
             if (current is None
                     or current.path != row.target.resolve(strict=True)
-                    or current.read_bytes() != staged_row.payload):
+                    or current_raw != staged_row.payload):
                 subjects = [row.key, row.target]
                 if current is not None:
                     subjects.append(current.path)
                 _raise(
                     "MH_E_INVALID_RESOURCE_SOURCE", subjects,
                     "already-published closure prefix changed during batch")
+            if _observations is not None:
+                _observations[("source", row.key)] = current_observation
             continue
         if row.source_snapshot is None:
             if current is not None or os.path.lexists(row.target):
@@ -863,11 +960,235 @@ def revalidate_composite_closure_export(
                 "MH_E_AMBIGUOUS_RESOURCE_NAME",
                 subjects,
                 "closure source identity changed after preflight")
-        raw = current.read_bytes()
+        try:
+            raw, observation = _observed_read(current.path)
+        except OSError as exc:
+            _raise(
+                "MH_E_INVALID_RESOURCE_SOURCE", [row.key, current.path],
+                f"closure source could not be read stably: {exc}")
+        _record_validation_read(metrics, "source_read", raw, hashed=True)
         if not _snapshot_matches(row.source_snapshot, raw):
             _raise(
                 "MH_E_INVALID_RESOURCE_SOURCE", [row.key, current.path],
                 "closure source bytes changed after preflight")
+        if _observations is not None:
+            _observations[("source", row.key)] = observation
+    metrics["total_ms"] = round(
+        (time.monotonic() - validation_started) * 1000.0, 3)
+
+
+class _IncrementalClosureGuard:
+    """Metadata-delta guard after full-hash admission of one batch."""
+
+    def __init__(self, plan, rows, observations, inventory):
+        self.plan = plan
+        self.rows = tuple(rows)
+        self.observations = dict(observations)
+        self.validated_only = dict(plan.validated_only)
+        self.inventory = inventory
+        self.key_by_identity = {
+            str(row.planned.key): row.planned.key for row in self.rows}
+        self.directory_observations = self._capture_directories()
+
+    def _prefetch_source_metadata(self):
+        current = {}
+        for (category, key), observation in self.observations.items():
+            if category != "source":
+                continue
+            try:
+                current[key] = _metadata_observation(
+                    observation.physical_path, observation.physical_path)
+            except OSError as exc:
+                current[key] = exc
+        return current
+
+    def _capture_directories(self):
+        observations = {}
+        pending = [self.plan.source_root]
+        while pending:
+            directory = pending.pop()
+            path_stat = os.stat(directory, follow_symlinks=False)
+            observations[directory] = (
+                path_stat.st_size,
+                path_stat.st_mtime_ns,
+            )
+            with os.scandir(directory) as entries:
+                pending.extend(
+                    Path(entry.path).resolve(strict=True)
+                    for entry in entries
+                    if entry.is_dir(follow_symlinks=False))
+        return observations
+
+    def _directories_changed(self):
+        for directory, expected in self.directory_observations.items():
+            try:
+                path_stat = os.stat(directory, follow_symlinks=False)
+            except OSError:
+                return True
+            if (path_stat.st_size, path_stat.st_mtime_ns) != expected:
+                return True
+        return False
+
+    def mark_published(self, item):
+        key = self.key_by_identity[item.identity]
+        physical = item.target.resolve(strict=True)
+        try:
+            raw, observation = _observed_read(item.target, physical)
+        except OSError as exc:
+            self._changed(
+                [key, item.target],
+                f"published target could not be observed: {exc}")
+        if raw != item.payload:
+            self._changed(
+                [key, item.target],
+                "published target bytes differ immediately after replace")
+        self.observations[("source", key)] = observation
+        parent = physical.parent
+        path_stat = os.stat(parent, follow_symlinks=False)
+        self.directory_observations[parent] = (
+            path_stat.st_size,
+            path_stat.st_mtime_ns,
+        )
+
+    @staticmethod
+    def _changed(subjects, message):
+        _raise(
+            "MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED",
+            subjects,
+            message,
+        )
+
+    def _resolve(self, inventory, key, *, allow_missing=False):
+        try:
+            return inventory.resolve(key, allow_missing=allow_missing)
+        except MHValidationError as exc:
+            self._changed(
+                [key, *exc.subjects],
+                "source identity changed after the batch preflight")
+
+    def _check_source(
+            self, metrics, key, candidate, *, force_hash,
+            snapshot=None, payload=None, prefetched=None):
+        expected = self.observations.get(("source", key))
+        physical = (
+            expected.physical_path if expected is not None
+            else candidate.path)
+        current = (
+            prefetched.get(key) if prefetched is not None
+            and key in prefetched else None)
+        if isinstance(current, OSError):
+            self._changed(
+                [key, candidate.path],
+                f"source payload is no longer a stable regular file: {current}")
+        if current is None:
+            try:
+                current = _metadata_observation(candidate.path, physical)
+            except OSError as exc:
+                self._changed(
+                    [key, candidate.path],
+                    f"source payload is no longer a stable regular file: {exc}")
+        metrics["metadata_checked_files"] = (
+            metrics.get("metadata_checked_files", 0) + 1)
+        if expected is not None and current == expected and not force_hash:
+            return
+        if expected is not None and current != expected:
+            metrics["metadata_changed_files"] = (
+                metrics.get("metadata_changed_files", 0) + 1)
+        try:
+            raw, stable = _observed_read(candidate.path, physical)
+        except OSError as exc:
+            self._changed(
+                [key, candidate.path],
+                f"source payload could not be read stably: {exc}")
+        _record_validation_read(metrics, "source_read", raw, hashed=True)
+        matches = (
+            raw == payload if payload is not None
+            else snapshot is not None and _snapshot_matches(snapshot, raw))
+        if not matches:
+            self._changed(
+                [key, candidate.path],
+                "source bytes changed after the batch preflight")
+        self.observations[("source", key)] = stable
+
+    def validate(self, published_keys, current_key):
+        metrics = {}
+        started = time.monotonic()
+        inventory = self.inventory
+        metrics["inventory_scan_ms"] = 0.0
+        source_changed = self._directories_changed()
+        if source_changed:
+            scan_started = time.monotonic()
+            inventory = scan_source_inventory(self.plan.source_root)
+            metrics["inventory_scan_ms"] = round(
+                (time.monotonic() - scan_started) * 1000.0, 3)
+            self.inventory = inventory
+            self.directory_observations = self._capture_directories()
+        published = frozenset(published_keys)
+        prefetched = (
+            self._prefetch_source_metadata() if source_changed else {})
+
+        # Full admission already matched every staging file to the immutable
+        # bytes carried by StagedClosurePayload. Atomic publication consumes
+        # those in-memory bytes, never reopens the staging file, so later
+        # staging-path changes cannot affect authority and need no N-per-edge
+        # metadata polling.
+        for key, snapshot in self.validated_only.items():
+            if not source_changed:
+                continue
+            candidate = self._resolve(inventory, key)
+            assert candidate is not None
+            if candidate.path != snapshot.path:
+                self._changed(
+                    [key, snapshot.path, candidate.path],
+                    "validated-only source identity changed after preflight")
+            self._check_source(
+                metrics, key, candidate, force_hash=False,
+                snapshot=snapshot, prefetched=prefetched)
+
+        for staged_row in self.rows:
+            row = staged_row.planned
+            candidate = self._resolve(inventory, row.key, allow_missing=True)
+            if row.key in published:
+                if not source_changed:
+                    continue
+                if candidate is None and row.source_snapshot is None:
+                    candidate = SourceCandidate(
+                        row.key,
+                        self.observations[("source", row.key)].physical_path)
+                if (candidate is None
+                        or candidate.path != self.observations[
+                            ("source", row.key)].physical_path):
+                    self._changed(
+                        [row.key, row.target],
+                        "published closure prefix identity changed during batch")
+                self._check_source(
+                    metrics, row.key, candidate,
+                    force_hash=(
+                        ("source", row.key) not in self.observations),
+                    payload=staged_row.payload, prefetched=prefetched)
+                continue
+            if row.source_snapshot is None:
+                if ((source_changed and candidate is not None)
+                        or (row.key == current_key
+                            and os.path.lexists(row.target))):
+                    self._changed(
+                        [row.key, row.target],
+                        "new closure target appeared after preflight")
+                continue
+            if (candidate is None
+                    or candidate.path != row.source_snapshot.path):
+                self._changed(
+                    [row.key, row.source_snapshot.path],
+                    "closure source identity changed after preflight")
+            if source_changed or row.key == current_key:
+                self._check_source(
+                    metrics, row.key, candidate,
+                    force_hash=(row.key == current_key),
+                    snapshot=row.source_snapshot, prefetched=prefetched)
+
+        metrics["total_ms"] = round(
+            (time.monotonic() - started) * 1000.0, 3)
+        return metrics
 
 
 def publish_composite_closure_export(
@@ -880,7 +1201,12 @@ def publish_composite_closure_export(
     """Publish the irreversible dependency-closed prefix in plan order."""
 
     rows = tuple(staged)
-    revalidate_composite_closure_export(plan, rows)
+    preflight_validation = {}
+    observations = {}
+    inventory_out = {}
+    revalidate_composite_closure_export(
+        plan, rows, _metrics=preflight_validation,
+        _observations=observations, _inventory_out=inventory_out)
     staged_by_key = {row.planned.key: row for row in rows}
     if len(staged_by_key) != len(rows):
         raise ValueError("staged closure contains duplicate ResourceKeys")
@@ -896,15 +1222,17 @@ def publish_composite_closure_export(
 
     identity_to_key = {
         str(row.planned.key): row.planned.key for row in publish_rows}
+    incremental_guard = _IncrementalClosureGuard(
+        plan, rows, observations, inventory_out["inventory"])
 
-    def guard(published_identities: tuple[str, ...]) -> None:
-        revalidate_composite_closure_export(
-            plan,
-            rows,
-            published=tuple(
-                identity_to_key[identity]
-                for identity in published_identities),
-        )
+    def guard(published_identities: tuple[str, ...]) -> dict:
+        published_keys = tuple(
+            identity_to_key[identity]
+            for identity in published_identities)
+        current_key = (
+            publish_rows[len(published_keys)].planned.key
+            if len(published_keys) < len(publish_rows) else None)
+        return incremental_guard.validate(published_keys, current_key)
 
     items = tuple(BatchPublishItem(
         identity=str(row.planned.key),
@@ -916,6 +1244,7 @@ def publish_composite_closure_export(
         source_root=plan.source_root,
         lock_root=lock_root,
         pre_replace_guard=guard,
+        replace_observer=incremental_guard.mark_published,
         _boundary_hook=_boundary_hook,
         _crash_identity=_crash_identity,
         _crash_at=_crash_at,
@@ -926,6 +1255,7 @@ def publish_composite_closure_export(
         "unpublished": [],
         "reused": [str(row.key) for row in plan.reused],
         "receipts": list(receipts),
+        "preflight_validation": preflight_validation,
     }
 
 
