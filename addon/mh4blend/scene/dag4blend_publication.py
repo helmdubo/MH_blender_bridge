@@ -6,7 +6,9 @@ the canonical writers and S4 publisher, never adoption or Blender ID planning.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import os
 
 import bpy
 
@@ -45,6 +47,10 @@ from .resource_markers import (
 )
 
 __all__ = ["prepare_dag4blend_publication"]
+
+
+_TEXTURE_SNAPSHOT_WORKERS = min(
+    8, max(2, (os.cpu_count() or 2) // 2))
 
 
 def _fail(code, subjects, message):
@@ -102,6 +108,23 @@ def _generated_profile_row(inventory, output, key, payload):
             "content-addressed dag4blend p2 profile collides with different "
             "existing source bytes")
     return _json_row(inventory, output, key, ".placement", payload)
+
+
+def _snapshot_texture_candidates(candidates):
+    """Hash unique immutable texture candidates without touching Blender."""
+
+    ordered = sorted(candidates.items())
+    if len(ordered) < 2 or _TEXTURE_SNAPSHOT_WORKERS < 2:
+        return {key: candidate.snapshot() for key, candidate in ordered}
+    with ThreadPoolExecutor(
+            max_workers=min(_TEXTURE_SNAPSHOT_WORKERS, len(ordered)),
+            thread_name_prefix="MHTextureHash") as executor:
+        snapshots = executor.map(
+            lambda row: row[1].snapshot(), ordered)
+        return {
+            key: snapshot
+            for (key, _candidate), snapshot in zip(ordered, snapshots)
+        }
 
 
 def prepare_dag4blend_publication(
@@ -230,7 +253,7 @@ def prepare_dag4blend_publication(
             material_owners.setdefault(name, set()).update(owners)
 
     materials = []
-    textures = {}
+    texture_candidates = {}
     for name in sorted(material_names):
         key = ResourceKey("material", name)
         owners = sorted(material_owners[name])
@@ -256,10 +279,12 @@ def prepare_dag4blend_publication(
         materials.append(row)
         for token in resource.textures.values():
             texture_key = ResourceKey("texture", token)
-            if texture_key in textures:
+            if texture_key in texture_candidates:
                 continue
             candidate = _resolve_texture_source(inventory, texture_key, owners)
-            textures[texture_key] = candidate.snapshot()
+            texture_candidates[texture_key] = candidate
+
+    textures = _snapshot_texture_candidates(texture_candidates)
 
     for key in closure.composites_postorder:
         if key.name not in composite_rows:

@@ -663,6 +663,37 @@ def _temporary_ue_centimeter_export_state(objects):
 
 
 @contextlib.contextmanager
+def _temporary_fbx_batch_scene(scene):
+    """Keep one shared export scene active across a closure mesh batch."""
+
+    window = bpy.context.window
+    if window is None:
+        raise RuntimeError("FBX export requires an active Blender window")
+    original_scene = window.scene
+    if scene == original_scene:
+        yield
+        return
+
+    original_view_layer = window.view_layer
+    original_active = original_view_layer.objects.active
+    original_mode = getattr(original_active, "mode", "OBJECT")
+    if original_mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    window.scene = scene
+    try:
+        yield
+    finally:
+        window.scene = original_scene
+        if (original_active is not None
+                and original_active.name in original_view_layer.objects):
+            original_view_layer.objects.active = original_active
+        if (original_mode != "OBJECT" and original_active is not None
+                and original_active.name in original_view_layer.objects):
+            with contextlib.suppress(RuntimeError):
+                bpy.ops.object.mode_set(mode=original_mode)
+
+
+@contextlib.contextmanager
 def _temporary_selection_context(scene, objects):
     """Select only ``objects`` for FBX and restore host interaction state."""
     window = bpy.context.window
@@ -679,7 +710,9 @@ def _temporary_selection_context(scene, objects):
     if original_mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
 
-    window.scene = scene
+    switches_scene = scene != original_scene
+    if switches_scene:
+        window.scene = scene
     export_view_layer = window.view_layer
     same_view_layer = export_view_layer == original_view_layer
     export_active = export_view_layer.objects.active
@@ -690,7 +723,7 @@ def _temporary_selection_context(scene, objects):
     selectability = [(obj, obj.hide_select) for obj in objects]
 
     try:
-        for obj in export_view_layer.objects:
+        for obj in export_selected:
             obj.select_set(False)
         for obj in objects:
             if obj.name not in export_view_layer.objects:
@@ -704,7 +737,7 @@ def _temporary_selection_context(scene, objects):
         for obj, hide_select in selectability:
             if obj and obj.name in bpy.data.objects:
                 obj.hide_select = hide_select
-        for obj in export_view_layer.objects:
+        for obj in tuple(bpy.context.selected_objects):
             obj.select_set(False)
         for obj in export_selected:
             if obj and obj.name in export_view_layer.objects:
@@ -714,15 +747,8 @@ def _temporary_selection_context(scene, objects):
         else:
             export_view_layer.objects.active = None
 
-        window.scene = original_scene
-        if not same_view_layer:
-            for obj in original_view_layer.objects:
-                obj.select_set(False)
-            for obj in original_selected:
-                if obj and obj.name in original_view_layer.objects:
-                    obj.select_set(True)
-            if original_active and original_active.name in original_view_layer.objects:
-                original_view_layer.objects.active = original_active
+        if switches_scene:
+            window.scene = original_scene
         if original_mode != "OBJECT" and original_active \
                 and original_active.name in original_view_layer.objects:
             with contextlib.suppress(RuntimeError):

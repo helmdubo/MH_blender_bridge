@@ -288,16 +288,21 @@ def test_hundred_payload_batch_revalidation_reads_scale_linearly(tmp_path):
     guard_metadata_checks = sum(
         receipt["guard"].get("metadata_checked_files", 0)
         for receipt in report["receipts"])
+    guard_inventory_scans = sum(
+        receipt["guard"].get("inventory_scans", 1)
+        for receipt in report["receipts"])
     max_payload_ms = max(
         receipt["elapsed_ms"] for receipt in report["receipts"])
     print(
         "MH_PUBLISH_100 wall_ms="
         f"{wall_ms:.3f} guard_reads={guard_reads} "
         f"metadata_checks={guard_metadata_checks} "
+        f"inventory_scans={guard_inventory_scans} "
         f"max_payload_ms={max_payload_ms:.3f} stages={stage_totals}")
 
     assert len(report["published"]) == 100
     assert guard_reads <= 200
+    assert guard_inventory_scans == 0
     assert max_payload_ms <= 100.0
 
 

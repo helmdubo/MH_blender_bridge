@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import sys
+import threading
+import time
 
 import pytest
 
@@ -23,6 +25,8 @@ from mh4blend.scene.export_closure import (  # noqa: E402
     stage_composite_closure_export,
 )
 from mh4blend.scene.export_material import prepare_blender_material_export  # noqa: E402
+from mh4blend.scene import export_fbx as export_fbx_module  # noqa: E402
+from mh4blend.scene.export_fbx import StagedFBXExport  # noqa: E402
 from mh4blend.scene.import_fbx import parse_mesh_fbx  # noqa: E402
 from mh4blend.scene.resource_markers import (  # noqa: E402
     COLLECTION_KIND_KEY,
@@ -214,6 +218,112 @@ def test_include_all_hashes_shared_texture_once_per_batch(tmp_path, monkeypatch)
 
     assert plan.texture_dependencies == (ResourceKey("texture", "shared"),)
     assert texture_snapshots == 1
+
+
+def test_include_all_hashes_independent_textures_concurrently(
+        tmp_path, monkeypatch):
+    source, documents, inputs, mesh, first, _legacy = _fixture(tmp_path)
+    second = bpy.data.materials.new("bridge_trim")
+    second.mh4blend.material_class = "bridge_shader"
+    mesh.objects[0].data.materials.append(second)
+    for index, material in enumerate((first, second)):
+        texture_path = source / f"parallel_{index}.png"
+        texture_path.write_bytes(f"texture {index}".encode("ascii"))
+        image = bpy.data.images.new(texture_path.name, 1, 1)
+        image.filepath = str(texture_path)
+        row = material.mh4blend.textures.add()
+        row.slot = 0
+        row.image = image
+
+    original_snapshot = SourceCandidate.snapshot
+    state = {"active": 0, "maximum": 0}
+    lock = threading.Lock()
+
+    def observe_snapshot(candidate):
+        if candidate.key.kind != "texture":
+            return original_snapshot(candidate)
+        with lock:
+            state["active"] += 1
+            state["maximum"] = max(state["maximum"], state["active"])
+        try:
+            time.sleep(0.05)
+            return original_snapshot(candidate)
+        finally:
+            with lock:
+                state["active"] -= 1
+
+    monkeypatch.setattr(SourceCandidate, "snapshot", observe_snapshot)
+    plan = _prepare(source, documents, inputs)
+
+    assert len(plan.texture_dependencies) == 2
+    assert state["maximum"] >= 2
+
+
+def test_staging_hoists_one_shared_export_scene_across_meshes(
+        tmp_path, monkeypatch):
+    source, documents, inputs, first_mesh, material, _legacy = _fixture(tmp_path)
+    second_mesh = _collection("bridge_trim")
+    second_mesh["type"] = "rendinst"
+    second_mesh["name"] = "bridge_trim"
+    data = bpy.data.meshes.new("bridge_trim_data")
+    data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+    data.materials.append(material)
+    second_mesh.objects.link(bpy.data.objects.new("bridge_trim", data))
+    documents["bridge_child"] = Composite("bridge_child", [
+        Node("mesh", resource="bridge_mesh"),
+        Node("mesh", resource="bridge_trim"),
+    ])
+    inputs[("mesh", "bridge_trim")] = second_mesh
+
+    host_scene = bpy.context.scene
+    host_anchor = bpy.data.objects.new("host_anchor", None)
+    host_scene.collection.objects.link(host_anchor)
+    host_anchor.select_set(True)
+    bpy.context.view_layer.objects.active = host_anchor
+    export_scene = bpy.data.scenes.new("shared_export_scene")
+    for collection in (first_mesh, second_mesh):
+        host_scene.collection.children.unlink(collection)
+        export_scene.collection.children.link(collection)
+    plan = _prepare(source, documents, inputs)
+    observed_scenes = []
+
+    def fake_stage(_prepared, path):
+        observed_scenes.append(bpy.context.window.scene)
+        path.write_bytes(b"synthetic fbx")
+        return StagedFBXExport(path, b"synthetic fbx")
+
+    monkeypatch.setattr(export_fbx_module, "stage_prepared_fbx", fake_stage)
+    staging = tmp_path / "stage"
+    staging.mkdir()
+    stage_composite_closure_export(plan, staging_dir=staging)
+
+    assert observed_scenes == [export_scene, export_scene]
+    assert bpy.context.window.scene is host_scene
+    assert bpy.context.view_layer.objects.active is host_anchor
+    assert host_anchor.select_get() is True
+
+    calls = 0
+
+    def fail_second_stage(_prepared, path):
+        nonlocal calls
+        calls += 1
+        path.write_bytes(b"partial fbx")
+        if calls == 2:
+            path.unlink()
+            raise RuntimeError("synthetic batch stage failure")
+        return StagedFBXExport(path, b"partial fbx")
+
+    monkeypatch.setattr(
+        export_fbx_module, "stage_prepared_fbx", fail_second_stage)
+    failed_staging = tmp_path / "failed_stage"
+    failed_staging.mkdir()
+    with pytest.raises(RuntimeError, match="synthetic batch stage failure"):
+        stage_composite_closure_export(plan, staging_dir=failed_staging)
+
+    assert bpy.context.window.scene is host_scene
+    assert bpy.context.view_layer.objects.active is host_anchor
+    assert host_anchor.select_get() is True
+    assert list(failed_staging.rglob("*")) == []
 
 
 def test_writer_drop_warnings_reach_the_public_report(tmp_path):

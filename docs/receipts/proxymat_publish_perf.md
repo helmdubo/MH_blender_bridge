@@ -531,3 +531,89 @@ SHA-256; после неё каждый из 647 уникальных texture pa
 нужно сравнить полный wall (включая 732 FBX stage и publication) и приложить
 `material_export_metrics`. До этих данных parallel hashing и Changed Only FBX
 остаются отдельными кандидатами, не частью этого исправления.
+
+### 10.9. Автономное продолжение — parallel hash, batch scene и temp-aware guard
+
+Owner не мог выполнить полевой тест и ратифицировал дальнейшую оптимизацию по
+локальному профилю. Пункт про parallel hashing из §10.8 проверен на том же
+host и той же сохранённой сцене. Потоки выполняют только `Path.read_bytes` и
+SHA-256 immutable `SourceCandidate`; Blender RNA остаётся строго main-thread.
+Результаты worker sweep для 647 уникальных texture payload:
+
+| Workers | Prepare |
+|---:|---:|
+| 1 | **46176.06 ms** |
+| 2 | **25357.19 ms** |
+| 4 | **15122.29 ms** |
+| 8 | **10284.07 ms** |
+| 1, контроль после sweep | **46222.36 ms** |
+
+Принят ограниченный предел **8 workers**. Red-first concurrency-тест до
+изменения видел `maximum=1`, после — одновременно не менее двух независимых
+snapshot. Порядок результата остаётся сортированным по `ResourceKey`, ошибка
+любого worker отменяет prepare до staging.
+
+Полный temp-only staging реальной сцены выявил второй bottleneck: каждый из
+732 FBX-вызовов переключал `Window Scene` на export scene и обратно. Это
+давало 8.20 s из 11.96 s в профиле 20 мешей; сам штатный FBX operator занимал
+3.04 s. Теперь общий export scene удерживается один раз на весь mesh batch,
+но только если все prepared mesh принадлежат одной сцене. Для нескольких сцен
+остаётся прежний per-mesh fail-closed путь. Низкоуровневый
+`io_scene_fbx.save_single` не используется: остаётся штатный
+`bpy.ops.export_scene.fbx` с его view-layer synchronization.
+
+Red-first batch-scene тест до изменения наблюдал host `Scene` перед каждым
+`stage_prepared_fbx`, а ожидал `shared_export_scene`. Green покрывает success
+и injected failure: Window Scene, active object, selection, mode и временные
+файлы восстанавливаются.
+
+Реальный полный staging (без publication, temp удалён после замера):
+
+| Метрика | До hoist | После hoist |
+|---|---:|---:|
+| Payloads | 1595 | 1595 |
+| FBX | 732 | 732 |
+| Staged bytes | 40728658 | 40728658 |
+| FBX median | ~579 ms | **164.65 ms** |
+| Stage wall | **444740.90 ms** | **141007.72 ms** |
+
+Prepare + stage относительно установленного §10.8 снизился с примерно
+**490.92 s до 151.25 s (3.25x)**. От исходного `aed20b6` prepare + прежнего
+stage — с примерно **781.09 s до 151.25 s (5.16x)**. Это не объявляется
+полным UI wall: ordered publication измеряется отдельно.
+
+Последний профиль publication показал, что sibling `.mh-tmp` самого publisher
+менял mtime Source Root и заставлял incremental guard повторно строить полный
+`SourceInventory` перед каждой заменой. Новый temp-aware admission исключает
+ровно один ожидаемый regular temp по точному prefix и только если полный набор
+остальных directory entries совпадает со snapshot. Любое другое появление,
+исчезновение или смена типа entry оставляет прежний full-rescan путь.
+Size/mtime всех известных source payload проверяются между заменами; текущий
+target и любой изменившийся payload по-прежнему проходят полный hash.
+
+Red -> green на 100 payload:
+
+```text
+before: inventory_scans=100, wall_ms=3062, guard_ms=2160
+after:  inventory_scans=0,   wall_ms=1328, guard_ms=364
+```
+
+Injected изменение уже опубликованного prefix по-прежнему даёт
+`MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED` до следующего replace.
+Stress 1000 payload: **37.531 s**, `inventory_scans=0`,
+`metadata_checks=499500`, `guard_ms=22.153 s`. Квадратичное число дешёвых
+metadata comparisons остаётся сознательной ценой требования «поймать подмену
+prefix до следующей замены»; ослаблять его без отдельного контракта нельзя.
+
+Гейты дополнения:
+
+| Гейт | Результат |
+|---|---|
+| Focus: closure + dag4blend publication | **58 passed / 0 failed** |
+| Pure `python -m pytest tests/ -q` | **309 passed / 14 skipped / 0 failed** |
+| Blender 4.5.12, 12 отдельных factory-startup процессов | **363 passed / 0 failed** |
+
+`golden/`, `reference/`, canonical registry, Source Protocol bytes и Engine не
+изменялись. Changed Only FBX не реализован: текущий authority fingerprint не
+покрывает vertex/topology bytes, поэтому использовать его для пропуска writer
+было бы семантическим ослаблением.

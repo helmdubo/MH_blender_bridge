@@ -13,6 +13,7 @@ Resolution state never enters this API.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, replace
 import hashlib
 import os
@@ -57,7 +58,11 @@ from .export_composite import (
     _extract_composite,
     _node_kind_and_resource,
 )
-from .export_fbx import PreparedFBXExport, prepare_fbx_collection
+from .export_fbx import (
+    PreparedFBXExport,
+    _temporary_fbx_batch_scene,
+    prepare_fbx_collection,
+)
 from .export_material import (
     PreparedMaterialExport,
     _active_material_export_session,
@@ -815,43 +820,58 @@ def stage_composite_closure_export(
             "MH_E_INVALID_RESOURCE_SOURCE", [directory, plan.source_root],
             "closure staging_dir must be outside Project Source Root")
 
+    prepared_mesh_scenes = {
+        row.prepared.scene.as_pointer(): row.prepared.scene
+        for row in plan.payloads
+        if (row.key.kind == "static_mesh" and row.action == "publish"
+            and isinstance(row.prepared, PreparedFBXExport))
+    }
+    batch_scene = (
+        next(iter(prepared_mesh_scenes.values()))
+        if len(prepared_mesh_scenes) == 1 else None)
+    scene_scope = (
+        _temporary_fbx_batch_scene(batch_scene)
+        if batch_scene is not None else contextlib.nullcontext())
+
     staged_rows = []
     created_files = []
     created_directories = []
     try:
-        for index, row in enumerate(plan.payloads):
-            member_dir = directory / f"{index:04d}-{row.key.kind}"
-            if os.path.lexists(member_dir):
-                raise FileExistsError(
-                    f"closure staging member already exists: {member_dir}")
-            member_dir.mkdir()
-            created_directories.append(member_dir)
-            path = member_dir / _stage_filename(row.key)
+        with scene_scope:
+            for index, row in enumerate(plan.payloads):
+                member_dir = directory / f"{index:04d}-{row.key.kind}"
+                if os.path.lexists(member_dir):
+                    raise FileExistsError(
+                        f"closure staging member already exists: {member_dir}")
+                member_dir.mkdir()
+                created_directories.append(member_dir)
+                path = member_dir / _stage_filename(row.key)
 
-            if row.key.kind == "static_mesh" and row.action == "publish":
-                if not isinstance(row.prepared, PreparedFBXExport):
-                    raise TypeError(
-                        "published mesh row requires PreparedFBXExport")
-                from .export_fbx import stage_prepared_fbx
-                staged = stage_prepared_fbx(row.prepared, path)
-                payload = staged.payload
-                created_files.append(path)
-            else:
-                if row.payload is None:
-                    raise ValueError(f"closure row has no stageable bytes: {row.key}")
-                with path.open("xb") as stream:
-                    stream.write(row.payload)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                created_files.append(path)
-                payload = path.read_bytes()
-                if payload != row.payload:
-                    raise OSError(
-                        f"staged closure read-back differs for {row.key}")
-                _validate_staged_document(row, path, payload)
+                if row.key.kind == "static_mesh" and row.action == "publish":
+                    if not isinstance(row.prepared, PreparedFBXExport):
+                        raise TypeError(
+                            "published mesh row requires PreparedFBXExport")
+                    from .export_fbx import stage_prepared_fbx
+                    staged = stage_prepared_fbx(row.prepared, path)
+                    payload = staged.payload
+                    created_files.append(path)
+                else:
+                    if row.payload is None:
+                        raise ValueError(
+                            f"closure row has no stageable bytes: {row.key}")
+                    with path.open("xb") as stream:
+                        stream.write(row.payload)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    created_files.append(path)
+                    payload = path.read_bytes()
+                    if payload != row.payload:
+                        raise OSError(
+                            f"staged closure read-back differs for {row.key}")
+                    _validate_staged_document(row, path, payload)
 
-            staged_rows.append(StagedClosurePayload(
-                row, path, path.resolve(strict=True), payload))
+                staged_rows.append(StagedClosurePayload(
+                    row, path, path.resolve(strict=True), payload))
     except Exception:
         for path in reversed(created_files):
             try:
@@ -1013,6 +1033,9 @@ class _IncrementalClosureGuard:
         self.inventory = inventory
         self.key_by_identity = {
             str(row.planned.key): row.planned.key for row in self.rows}
+        self.row_by_key = {
+            row.planned.key: row.planned for row in self.rows}
+        self.directory_entries = {}
         self.directory_observations = self._capture_directories()
 
     def _prefetch_source_metadata(self):
@@ -1037,12 +1060,59 @@ class _IncrementalClosureGuard:
                 path_stat.st_size,
                 path_stat.st_mtime_ns,
             )
-            with os.scandir(directory) as entries:
-                pending.extend(
-                    Path(entry.path).resolve(strict=True)
-                    for entry in entries
-                    if entry.is_dir(follow_symlinks=False))
+            entries = self._scan_directory_entries(directory)
+            self.directory_entries[directory] = entries
+            pending.extend(
+                (directory / name).resolve(strict=True)
+                for name, is_directory, _is_file, _is_link in entries
+                if is_directory)
         return observations
+
+    @staticmethod
+    def _scan_directory_entries(directory):
+        with os.scandir(directory) as scanner:
+            return tuple(sorted(
+                (
+                    entry.name,
+                    entry.is_dir(follow_symlinks=False),
+                    entry.is_file(follow_symlinks=False),
+                    entry.is_symlink(),
+                )
+                for entry in scanner
+            ))
+
+    def _admit_current_temp(self, current_key):
+        """Discount exactly one publisher temp without hiding other changes."""
+
+        if current_key is None:
+            return
+        row = self.row_by_key[current_key]
+        parent = row.target.resolve(strict=False).parent
+        expected_entries = self.directory_entries.get(parent)
+        if expected_entries is None:
+            return
+        try:
+            current_entries = self._scan_directory_entries(parent)
+        except OSError:
+            return
+        prefix = f".{row.target.name}.mh-tmp-"
+        temp_names = tuple(
+            name for name, _is_dir, is_file, is_link in current_entries
+            if name.startswith(prefix) and is_file and not is_link)
+        if len(temp_names) != 1:
+            return
+        filtered = tuple(
+            entry for entry in current_entries if entry[0] != temp_names[0])
+        if filtered != expected_entries:
+            return
+        try:
+            path_stat = os.stat(parent, follow_symlinks=False)
+        except OSError:
+            return
+        self.directory_observations[parent] = (
+            path_stat.st_size,
+            path_stat.st_mtime_ns,
+        )
 
     def _directories_changed(self):
         for directory, expected in self.directory_observations.items():
@@ -1074,6 +1144,7 @@ class _IncrementalClosureGuard:
             path_stat.st_size,
             path_stat.st_mtime_ns,
         )
+        self.directory_entries[parent] = self._scan_directory_entries(parent)
 
     @staticmethod
     def _changed(subjects, message):
@@ -1140,17 +1211,19 @@ class _IncrementalClosureGuard:
         started = time.monotonic()
         inventory = self.inventory
         metrics["inventory_scan_ms"] = 0.0
+        metrics["inventory_scans"] = 0
+        self._admit_current_temp(current_key)
         source_changed = self._directories_changed()
         if source_changed:
             scan_started = time.monotonic()
             inventory = scan_source_inventory(self.plan.source_root)
+            metrics["inventory_scans"] = 1
             metrics["inventory_scan_ms"] = round(
                 (time.monotonic() - scan_started) * 1000.0, 3)
             self.inventory = inventory
             self.directory_observations = self._capture_directories()
         published = frozenset(published_keys)
-        prefetched = (
-            self._prefetch_source_metadata() if source_changed else {})
+        prefetched = self._prefetch_source_metadata()
 
         # Full admission already matched every staging file to the immutable
         # bytes carried by StagedClosurePayload. Atomic publication consumes
@@ -1158,8 +1231,6 @@ class _IncrementalClosureGuard:
         # staging-path changes cannot affect authority and need no N-per-edge
         # metadata polling.
         for key, snapshot in self.validated_only.items():
-            if not source_changed:
-                continue
             candidate = self._resolve(inventory, key)
             assert candidate is not None
             if candidate.path != snapshot.path:
@@ -1174,8 +1245,6 @@ class _IncrementalClosureGuard:
             row = staged_row.planned
             candidate = self._resolve(inventory, row.key, allow_missing=True)
             if row.key in published:
-                if not source_changed:
-                    continue
                 if candidate is None and row.source_snapshot is None:
                     candidate = SourceCandidate(
                         row.key,
@@ -1205,11 +1274,10 @@ class _IncrementalClosureGuard:
                 self._changed(
                     [row.key, row.source_snapshot.path],
                     "closure source identity changed after preflight")
-            if source_changed or row.key == current_key:
-                self._check_source(
-                    metrics, row.key, candidate,
-                    force_hash=(row.key == current_key),
-                    snapshot=row.source_snapshot, prefetched=prefetched)
+            self._check_source(
+                metrics, row.key, candidate,
+                force_hash=(row.key == current_key),
+                snapshot=row.source_snapshot, prefetched=prefetched)
 
         metrics["total_ms"] = round(
             (time.monotonic() - started) * 1000.0, 3)
