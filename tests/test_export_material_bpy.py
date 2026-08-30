@@ -271,22 +271,141 @@ def test_unrepresentable_dagormat_param_fails_closed(value):
     assert excinfo.value.path == "dagormat.optional.unsupported"
 
 
-def test_loaded_proxy_flag_does_not_hide_resolved_dagormat_content():
-    material = _dagor_material(params={"roughness": 0.25})
+def test_loaded_proxy_flag_still_reloads_authoritative_file(tmp_path):
+    _write_proxymat(tmp_path, "wall", '''\
+class:t="rendinst_tree_colored"
+script:t="roughness=0.25"
+''')
+    material = _dagor_material(params={"roughness": 999})
     material.dagormat.is_proxy = True
-    material.dagormat.proxy_path = r"D:\proxymats"
+    material.dagormat.proxy_path = str(tmp_path)
     resource = export_material_module._extract_resource(material)
-    assert resource.material_class == "rendinst_simple"
+    assert resource.material_class == "rendinst_tree_colored"
     assert resource.params == {"roughness": 0.25}
 
 
-def test_unresolved_proxy_shader_reference_fails_class_validation():
-    resource = export_material_module._extract_resource(
-        _dagor_material(shader_class="wall:proxymat"))
+def test_unresolved_proxy_shader_reference_fails_as_invalid_source(tmp_path):
+    material = _dagor_material(shader_class="wall:proxymat")
+    material.dagormat.proxy_path = str(tmp_path)
     with pytest.raises(MaterialValueError) as excinfo:
-        material_json_bytes(resource)
-    assert excinfo.value.code == "MH_E_MATERIAL_GRAMMAR"
-    assert excinfo.value.path == "class"
+        export_material_module._extract_resource(material)
+    assert excinfo.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+    assert excinfo.value.path == str(tmp_path / "wall.proxymat.blk")
+
+
+def _proxy_material(name, directory, *, shader_class=""):
+    material = _dagor_material(
+        name,
+        shader_class=shader_class,
+        textures={"tex0": r"Z:\stale\wrong_cache.tif"},
+        params={"is_pivoted": 999},
+    )
+    material.dagormat.is_proxy = shader_class == ""
+    material.dagormat.proxy_path = str(directory)
+    return material
+
+
+def _write_proxymat(directory, name, body):
+    path = directory / f"{name}.proxymat.blk"
+    path.write_text(body, encoding="utf-8", newline="")
+    return path
+
+
+def test_proxy_placeholder_reloads_file_and_duplicate_script_last_wins(
+        tmp_path):
+    (tmp_path / "tree_leaf_d.tif").write_bytes(b"texture")
+    proxy = _write_proxymat(tmp_path, "tree_leaf", '''\
+class:t="rendinst_tree_colored"
+twosided:b=yes
+power:r=8.0
+tex0:t="Q:\\foreign\\tree_leaf_d.tif"
+script:t="is_pivoted=0"
+script:t="wind_strength=1.25"
+script:t="is_pivoted=1"
+''')
+    material = _proxy_material("tree_leaf", tmp_path)
+    before = repr(material)
+
+    prepared = prepare_blender_material_export(
+        material, tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.material_class == "rendinst_tree_colored"
+    assert prepared.resource.twosided is True
+    assert prepared.resource.textures == {"tex0": "tree_leaf_d"}
+    assert prepared.resource.params == {
+        "is_pivoted": 1,
+        "wind_strength": 1.25,
+    }
+    assert prepared.target == tmp_path / "tree_leaf.material"
+    assert repr(material) == before
+    assert proxy.read_text(encoding="utf-8").startswith('class:t=')
+
+
+def test_proxy_shader_suffix_is_file_authority_and_not_a_class_token(tmp_path):
+    _write_proxymat(tmp_path, "tree_leaf", '''\
+class:t="rendinst_tree_colored"
+twosided:b=no
+script:t="wind_noise=0.5"
+''')
+    material = _proxy_material(
+        "tree_leaf", tmp_path, shader_class="tree_leaf:proxymat")
+
+    prepared = prepare_blender_material_export(
+        material, tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.material_class == "rendinst_tree_colored"
+    assert prepared.resource.params == {"wind_noise": 0.5}
+
+
+def test_proxy_missing_source_fails_with_full_path_and_remedy(tmp_path):
+    material = _proxy_material("missing_leaf", tmp_path)
+    expected = tmp_path / "missing_leaf.proxymat.blk"
+
+    with pytest.raises(MaterialValueError) as excinfo:
+        prepare_blender_material_export(
+            material, tmp_path, source_root=tmp_path)
+
+    assert excinfo.value.code == "MH_E_INVALID_RESOURCE_SOURCE"
+    assert str(expected) in str(excinfo.value)
+    assert "proxy_path" in str(excinfo.value)
+    assert "dag4blend" in str(excinfo.value)
+    assert not (tmp_path / "missing_leaf.material").exists()
+
+
+def test_two_proxy_claimants_of_one_file_have_identical_payload(tmp_path):
+    _write_proxymat(tmp_path, "tree_leaf", '''\
+class:t="rendinst_tree_colored"
+twosided:b=yes
+script:t="wind_strength=1.25"
+''')
+    first = _proxy_material("tree_leaf", tmp_path)
+    second = _proxy_material("tree_leaf", tmp_path)
+    second.dagormat.shader_class = "stale_cache"
+    second.dagormat.optional = {"wind_strength": 999}
+
+    left = prepare_blender_material_export(
+        first, tmp_path, source_root=tmp_path)
+    right = prepare_blender_material_export(
+        second, tmp_path, source_root=tmp_path)
+
+    assert left.resource.name == right.resource.name == "tree_leaf"
+    assert left.payload == right.payload
+
+
+def test_proxy_macro_texture_is_not_published_as_a_texture(tmp_path):
+    _write_proxymat(tmp_path, "tree_leaf", '''\
+class:t="rendinst_tree_colored"
+tex7:t="$(ASSET_NAME)_pivot_pos"
+''')
+    material = _proxy_material("tree_leaf", tmp_path)
+
+    with pytest.raises(MaterialValueError) as excinfo:
+        prepare_blender_material_export(
+            material, tmp_path, source_root=tmp_path)
+
+    assert excinfo.value.code == "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE"
+    assert "tex7='$(ASSET_NAME)_pivot_pos'" in str(excinfo.value)
+    assert not (tmp_path / "tree_leaf.material").exists()
 
 
 def test_class_material_extracts_texture_stem_and_publishes_canonical_bytes(
