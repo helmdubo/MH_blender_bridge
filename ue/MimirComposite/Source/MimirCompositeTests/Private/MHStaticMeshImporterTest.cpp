@@ -1,15 +1,22 @@
 #include "StaticMesh/MHStaticMeshImporter.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositeProtocol.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "EditorReimportHandler.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
+#include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "MHGoldenRoot.h"
 #include "Material/MHMaterialSourceData.h"
+#include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "Materials/MaterialInterface.h"
 #include "Interface_CollisionDataProviderCore.h"
 #include "MeshDescription.h"
 #include "Misc/AutomationTest.h"
@@ -1296,24 +1303,45 @@ struct FTargetedStaticMeshReimportFixture
     FGeneratedPackageCleanup Cleanup;
     FGeneratedPackageCleanup SecondCleanup;
     FDirectoryPath PreviousSourceRoot;
+    FString PreviousMasterRoot;
     FString LogicalName;
     FString MaterialName;
+    FString MaterialClassName;
     FString TemplateFbx;
     FString MaterialPath;
     FString MaterialHash;
     FString MeshPath;
     UStaticMesh* Mesh = nullptr;
+    UMaterialInstanceConstant* ManagedMaterial = nullptr;
+    UMaterial* MaterialParent = nullptr;
 
     explicit FTargetedStaticMeshReimportFixture(FAutomationTestBase& InTest)
         : Test(InTest)
     {
-        PreviousSourceRoot = GetMutableDefault<UMHCompositeSettings>()->SourceRoot;
+        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+        PreviousSourceRoot = Settings->SourceRoot;
+        PreviousMasterRoot = Settings->MasterRoot;
     }
 
     ~FTargetedStaticMeshReimportFixture()
     {
         MHSetGeneratedResourceChangedObserverForTests({});
-        GetMutableDefault<UMHCompositeSettings>()->SourceRoot = PreviousSourceRoot;
+        if (IsValid(ManagedMaterial))
+        {
+            ManagedMaterial->SetParentEditorOnly(nullptr);
+        }
+        if (IsValid(MaterialParent))
+        {
+            UPackage* ParentPackage = MaterialParent->GetOutermost();
+            ObjectTools::DeleteSingleObject(MaterialParent, false);
+            if (ParentPackage != nullptr)
+            {
+                ParentPackage->SetDirtyFlag(false);
+            }
+        }
+        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+        Settings->SourceRoot = PreviousSourceRoot;
+        Settings->MasterRoot = PreviousMasterRoot;
         MHShutdownProjectIndex();
     }
 
@@ -1322,22 +1350,35 @@ struct FTargetedStaticMeshReimportFixture
         const FString Token = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
         LogicalName = TEXT("targeted_mesh_") + Token;
         MaterialName = TEXT("targeted_mat_") + Token;
+        MaterialClassName = TEXT("targeted_parent_") + Token;
         if (!ResolveGoldenRoot(Test, TemplateFbx))
         {
             return false;
         }
         TemplateFbx = FPaths::Combine(TemplateFbx, TEXT("fixtures/axis/axis_probe.fbx"));
-        GetMutableDefault<UMHCompositeSettings>()->SourceRoot.Path = Source.SourceRoot;
+        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+        Settings->SourceRoot.Path = Source.SourceRoot;
+        Settings->MasterRoot = TEXT("/Game/Mimir/MasterMaterials");
+
+        const FString ParentPackageName = Settings->MasterRoot + TEXT("/") + MaterialClassName;
+        MaterialParent = NewObject<UMaterial>(
+            CreatePackage(*ParentPackageName),
+            FName(*MaterialClassName),
+            RF_Public | RF_Standalone);
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
+            .Get()
+            .AssetCreated(MaterialParent);
 
         const FString MaterialPackage = TEXT("/Game/MH/Generated/Materials/") + MaterialName;
         UPackage* MaterialOuter = CreatePackage(*MaterialPackage);
-        UMaterialInstanceConstant* Material = NewObject<UMaterialInstanceConstant>(
+        ManagedMaterial = NewObject<UMaterialInstanceConstant>(
             MaterialOuter,
             FName(*MaterialName),
             RF_Public | RF_Standalone | RF_Transactional);
+        ManagedMaterial->SetParentEditorOnly(MaterialParent);
         FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
             .Get()
-            .AssetCreated(Material);
+            .AssetCreated(ManagedMaterial);
         Cleanup.MaterialObjectPath = MaterialPackage + TEXT(".") + MaterialName;
 
         MaterialPath = FPaths::Combine(
@@ -1346,18 +1387,20 @@ struct FTargetedStaticMeshReimportFixture
             MaterialName + TEXT(".material"));
         bool bPassed = Test.TestTrue(
             TEXT("write targeted material source"),
-            WriteStaticMeshImporterUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n")));
+            WriteStaticMeshImporterUtf8(
+                MaterialPath,
+                FString::Printf(TEXT("{\n  \"class\": \"%s\"\n}\n"), *MaterialClassName)));
         bPassed &= Test.TestTrue(
             TEXT("hash targeted material source"),
             ReadSourceHash(MaterialPath, MaterialHash));
-        UMHMaterialSourceData* MaterialReceipt = NewObject<UMHMaterialSourceData>(Material);
+        UMHMaterialSourceData* MaterialReceipt = NewObject<UMHMaterialSourceData>(ManagedMaterial);
         MaterialReceipt->LogicalName = MaterialName;
         MaterialReceipt->SourceRelativePath =
             TEXT("materials/") + MaterialName + TEXT(".material");
         MaterialReceipt->SourceHash = MaterialHash;
         MaterialReceipt->AppliedHash = MaterialHash;
-        MaterialReceipt->AppliedParent = TEXT("class:simple");
-        Material->AddAssetUserData(MaterialReceipt);
+        MaterialReceipt->AppliedParent = TEXT("class:") + MaterialClassName;
+        ManagedMaterial->AddAssetUserData(MaterialReceipt);
 
         Mesh = ImportMesh(LogicalName, Cleanup, false);
         return bPassed && Mesh != nullptr;
@@ -1464,6 +1507,38 @@ TArray<FVector3f> CaptureLOD0Positions(const UStaticMesh& Mesh)
     return Result;
 }
 
+UMHCompositeAsset* BuildTargetedPlacementAsset(
+    FAutomationTestBase& Test,
+    const FString& CompositeName,
+    const FString& MeshName)
+{
+    FMHCompositeDocument Document;
+    FMHCompositeNode& Leaf = Document.Nodes.AddDefaulted_GetRef();
+    Leaf.Kind = EMHCompositeNodeKind::Mesh;
+    Leaf.Resource = MeshName;
+    TArray<uint8> CanonicalBytes;
+    FString Error;
+    if (!MHWriteCanonicalCompositeV5(Document, CanonicalBytes, Error))
+    {
+        Test.AddError(TEXT("cannot write targeted placement composite: ") + Error);
+        return nullptr;
+    }
+    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(
+        CreatePackage(*(TEXT("/Game/MH/Generated/Composites/") + CompositeName)),
+        FName(*CompositeName),
+        RF_Public | RF_Standalone);
+    if (!MHApplyCompositeV5(*Asset, Document, Error))
+    {
+        Test.AddError(TEXT("cannot apply targeted placement composite: ") + Error);
+        return nullptr;
+    }
+    Asset->LogicalName = CompositeName;
+    Asset->SourceRelativePath = CompositeName + TEXT(".composite");
+    Asset->SourceHash = MHRawPayloadHash(CanonicalBytes);
+    Asset->AppliedHash = Asset->SourceHash;
+    return Asset;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHTargetedStaticMeshReimportAdmissionTest,
     "Mimir.V4.StaticMesh.TargetedReimport.Admission",
@@ -1525,12 +1600,44 @@ bool FMHTargetedStaticMeshForceReimportTest::RunTest(const FString& Parameters)
         return false;
     }
     const FString InitialHash = Receipt->SourceHash;
+    const FString CompositeName = Fixture.LogicalName + TEXT("_placement");
+    UMHCompositeAsset* PlacementAsset = BuildTargetedPlacementAsset(
+        *this,
+        CompositeName,
+        Fixture.LogicalName);
+    if (!TestNotNull(TEXT("targeted placement composite"), PlacementAsset))
+    {
+        return false;
+    }
+    UWorld* PlacementWorld = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("targeted placement world"), PlacementWorld))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT
+    {
+        PlacementWorld->DestroyWorld(true);
+        PlacementAsset->ClearFlags(RF_Public | RF_Standalone);
+        PlacementAsset->MarkAsGarbage();
+    };
+    AMHCompositeActor* PlacementActor = PlacementWorld->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("targeted placed composite actor"), PlacementActor))
+    {
+        return false;
+    }
+    PlacementActor->SetAutoSeed(false);
+    PlacementActor->SetCompositeAsset(PlacementAsset);
+    const uint32 InitialPlacementRebuilds = PlacementActor->GetPlacementRebuildCount();
+    bool bPassed = TestEqual(
+        TEXT("targeted placement begins with one leaf"),
+        PlacementActor->GetLeafPlacementComponents().Num(),
+        1);
     FString ReplacementHash;
     if (!Fixture.WriteReplacementSource(ReplacementHash))
     {
         return false;
     }
-    bool bPassed = TestNotEqual(TEXT("replacement source hash changes"), ReplacementHash, InitialHash);
+    bPassed &= TestNotEqual(TEXT("replacement source hash changes"), ReplacementHash, InitialHash);
 
     TArray<FMHResourceKey> Notifications;
     MHSetGeneratedResourceChangedObserverForTests(
@@ -1569,6 +1676,23 @@ bool FMHTargetedStaticMeshForceReimportTest::RunTest(const FString& Parameters)
     if (Notifications.Num() == 1)
     {
         bPassed &= TestEqual(TEXT("placement notification carries mesh key"), Notifications[0].LogicalName, Fixture.LogicalName);
+    }
+    bPassed &= TestEqual(
+        TEXT("changed mesh reimport rebuilds the existing placed composite"),
+        PlacementActor->GetPlacementRebuildCount(),
+        InitialPlacementRebuilds + 1);
+    const TArray<TObjectPtr<USceneComponent>>& ChangedLeaves =
+        PlacementActor->GetLeafPlacementComponents();
+    UStaticMeshComponent* ChangedComponent = ChangedLeaves.Num() == 1
+        ? Cast<UStaticMeshComponent>(ChangedLeaves[0])
+        : nullptr;
+    bPassed &= TestNotNull(TEXT("rebuilt placement keeps a static-mesh leaf"), ChangedComponent);
+    if (ChangedComponent != nullptr)
+    {
+        bPassed &= TestEqual(
+            TEXT("rebuilt placement uses the force-reimported mesh"),
+            ChangedComponent->GetStaticMesh().Get(),
+            Fixture.Mesh);
     }
 
     const TArray<FVector3f> FirstPositions = CaptureLOD0Positions(*Fixture.Mesh);
@@ -1611,6 +1735,10 @@ bool FMHTargetedStaticMeshForceReimportTest::RunTest(const FString& Parameters)
         Metrics.Get(EMHSourceImportMetricResource::Batch, EMHSourceImportMetricStage::SavePackage).Calls,
         1ull);
     bPassed &= TestEqual(TEXT("unchanged force still notifies placements"), Notifications.Num(), 1);
+    bPassed &= TestEqual(
+        TEXT("unchanged force also refreshes the existing placed composite"),
+        PlacementActor->GetPlacementRebuildCount(),
+        InitialPlacementRebuilds + 2);
     return bPassed;
 }
 
