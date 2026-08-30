@@ -24,6 +24,7 @@
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
 #include "UI/MHCompositeOutliner.h"
+#include "UI/MHCompositeActorDetails.h"
 #include "UI/MHSourceToolMenus.h"
 #include "UObject/AssetRegistryTagsContext.h"
 
@@ -202,6 +203,7 @@ void FMimirCompositeEditorModule::StartupModule()
     LogOptions.bAllowClear = true;
     MessageLogModule.RegisterLogListing("Mimir", INVTEXT("Mimir"), LogOptions);
 
+    UE::MimirComposite::MHRegisterCompositeActorDetails();
     UE::MimirComposite::MHRegisterCompositeOutliner();
 
     UToolMenus::RegisterStartupCallback(
@@ -227,6 +229,7 @@ void FMimirCompositeEditorModule::ShutdownModule()
     }
     if (!IsRunningCommandlet())
     {
+        UE::MimirComposite::MHUnregisterCompositeActorDetails();
         // Dynamic plugin unload still needs cleanup, but engine exit must not
         // touch ToolMenus: its singleton can already be torn down even though
         // this editor module is only now receiving ShutdownModule(). Normal
