@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 
@@ -153,95 +154,86 @@ def material_content_fingerprint(material) -> tuple:
     )
 
 
-_FINGERPRINT_FIELDS = ("library", "class", "twosided", "textures", "params")
-
-
-def _fingerprint_difference(left: tuple, right: tuple) -> str:
-    """Name what actually diverges so the artist can fix the right field."""
-    differences = []
-    for field, first, second in zip(_FINGERPRINT_FIELDS, left, right):
-        if first == second:
+def _projected_claim_group(logical_name: str) -> list:
+    """Return every scene material whose external name projects to one token."""
+    claimants = []
+    for candidate in bpy.data.materials:
+        try:
+            candidate_name = _logical_material_name(candidate)
+        except (ReferenceError, TypeError, ValueError):
             continue
-        if field in ("textures", "params"):
-            keys = sorted(
-                set(dict(first)) | set(dict(second))
-                if isinstance(first, tuple) else ())
-            changed = [
-                f"{field}.{key} {dict(first).get(key)!r} vs "
-                f"{dict(second).get(key)!r}"
-                for key in keys
-                if dict(first).get(key) != dict(second).get(key)]
-            differences.extend(changed)
-        else:
-            differences.append(f"{field} {first!r} vs {second!r}")
-    return "; ".join(differences) or "content differs"
+        if candidate_name == logical_name:
+            claimants.append(candidate)
+    return sorted(claimants, key=lambda candidate: candidate.name)
 
 
-def _duplicate_group(authored_name: str) -> list:
-    """Every scene material claiming one logical name, in a stable order.
-
-    The group is deliberately file-wide rather than limited to the meshes being
-    exported. ``<name>.material`` is one file in the Source Root, so a second
-    datablock claiming that name is a conflict no matter which mesh transports
-    it, and a file-wide group is what makes one representative — and therefore
-    one binding identity — well defined for every mesh in a closure.
-    """
-    return sorted(
-        (material for material in bpy.data.materials
-         if strip_blender_duplicate_suffix(material.name) == authored_name),
-        key=lambda material: material.name)
+def _disambiguated_material_name(logical_name: str, representative) -> str:
+    digest = hashlib.sha256(
+        representative.name.encode("utf-8")).hexdigest()[:12]
+    projected = f"{logical_name}_{digest}"
+    validate_resource_name(projected)
+    return projected
 
 
 def resolve_material_binding(material) -> MaterialBinding:
-    """Merge Blender ``.NNN`` duplicates onto one representative datablock.
+    """Bind equivalent aliases together and preserve divergent claimants.
 
-    ``X.001`` is a Blender duplicate of ``X``, not a second resource: the pair
-    publishes one ``X.material`` and the FBX slot is written as ``X``. Owner
-    decision 2026-08-30: this holds even when the duplicate's v4 content
-    diverges - the representative (the base-named datablock when it exists) is
-    the published authority for every object, and the divergence is reported
-    as a warning naming the overridden fields, never refused. The dropped
-    parameters stay authored in the scene datablocks.
+    All scene materials projecting to one base token are compared by canonical
+    v4 content. Equivalent ``.NNN``/case/punctuation aliases share one binding.
+    Distinct content receives a deterministic suffix derived from the stable
+    Blender datablock name, so no material semantics are discarded.
     """
     if isinstance(material, MaterialBinding):
         return material
-    authored_name = _authored_material_name(material)
     logical_name = _logical_material_name(material)
-    group = _duplicate_group(authored_name)
-    if not group:  # pragma: no cover - a live datablock is always its own group
-        group = [material]
-    exact = [row for row in group if row.name == authored_name]
-    representative = exact[0] if exact else group[0]
-    divergence = None
-    if len(group) > 1:
-        reference = material_content_fingerprint(representative)
-        diverging = []
-        for other in group:
-            if other == representative:
-                continue
-            candidate = material_content_fingerprint(other)
-            if candidate != reference:
-                diverging.append(
-                    f"'{other.name}' "
-                    f"({_fingerprint_difference(candidate, reference)})")
-        if diverging:
-            divergence = (
-                "MH_W_DAGOR_CONSTRUCT_DROPPED",
-                (logical_name,
-                 *[row.name for row in group if row != representative]),
-                f"materials merged into '{logical_name}': "
-                f"'{representative.name}' is the published authority; "
-                "overridden: " + "; ".join(diverging))
-    cached = _BINDINGS.get(logical_name)
+    if not isinstance(material, bpy.types.ID):
+        return MaterialBinding(name=logical_name, material=material)
+    claimants = _projected_claim_group(logical_name)
+    if not claimants:  # pragma: no cover - a live datablock claims itself
+        claimants = [material]
+    if len(claimants) == 1:
+        representative = claimants[0]
+        cached = _BINDINGS.get(logical_name)
+        if cached is not None:
+            try:
+                if cached.material == representative and cached.divergence is None:
+                    return cached
+            except ReferenceError:
+                pass
+        binding = MaterialBinding(
+            name=logical_name, material=representative, divergence=None)
+        _BINDINGS[logical_name] = binding
+        return binding
+
+    fingerprints = {
+        candidate.as_pointer(): material_content_fingerprint(candidate)
+        for candidate in claimants
+    }
+    exact = [candidate for candidate in claimants
+             if candidate.name == logical_name]
+    authority = exact[0] if exact else claimants[0]
+    primary_fingerprint = fingerprints[authority.as_pointer()]
+    material_fingerprint = fingerprints[material.as_pointer()]
+    equivalent = [
+        candidate for candidate in claimants
+        if fingerprints[candidate.as_pointer()] == material_fingerprint]
+    representative = (
+        authority if material_fingerprint == primary_fingerprint
+        else equivalent[0])
+    binding_name = (
+        logical_name if material_fingerprint == primary_fingerprint
+        else _disambiguated_material_name(logical_name, representative))
+
+    cached = _BINDINGS.get(binding_name)
     if cached is not None:
         try:
-            if cached.material == representative and cached.divergence == divergence:
+            if cached.material == representative and cached.divergence is None:
                 return cached
         except ReferenceError:
             pass
     binding = MaterialBinding(
-        name=logical_name, material=representative, divergence=divergence)
-    _BINDINGS[logical_name] = binding
+        name=binding_name, material=representative, divergence=None)
+    _BINDINGS[binding_name] = binding
     return binding
 
 
@@ -486,10 +478,10 @@ def material_class_for_export(material) -> str:
 
 
 def _extract_resource(material) -> MaterialResource:
-    material = _material_datablock(material)
     # Preserve the canonical name diagnostic verbatim; identity is external to
     # the material grammar and must not be reclassified as a codec failure.
     logical_name = _logical_material_name(material)
+    material = _material_datablock(material)
     validate_resource_name(logical_name)
     proxy_dagormat = _proxy_dagormat(material)
     if proxy_dagormat is not None:
@@ -567,14 +559,15 @@ def prepare_blender_material_export(
     """Extract and fully validate one Blender material without writing files."""
     if material is None:
         raise ValueError("material is required")
-    material = _material_datablock(material)
+    binding = resolve_material_binding(material)
+    material = _material_datablock(binding)
     root = _resolved_root(source_root)
     output = Path(bpy.path.abspath(os.fspath(output_dir))).resolve(strict=False)
     if not _inside(root, output):
         raise ValueError("Material output folder must be inside Project Source Root")
 
     try:
-        resource = _extract_resource(material)
+        resource = _extract_resource(binding)
         payload = material_json_bytes(resource)
         for token in resource.textures.values():
             resolve_texture_reference(root, token)

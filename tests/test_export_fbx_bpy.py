@@ -399,26 +399,34 @@ def test_dagor_external_material_name_projects_in_fbx_without_scene_mutation(
     assert body.material_slots[0].material == material
 
 
-def test_dagor_name_projection_collision_fails_closed(
+def test_dagor_name_projection_collision_preserves_distinct_materials(
         tmp_path, registered_material_properties, monkeypatch):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("canonical_mesh")
     body = _mesh_object("body", collection)
-    punctuated = _material("13 - Default")
-    canonical = _material("13_default")
-    punctuated.mh4blend.material_class = "rendinst_simple"
-    canonical.mh4blend.material_class = "rendinst_simple"
-    _assign_material(body, punctuated)
-    _assign_material(body, canonical)
+    lowercase = _material("glass")
+    titlecase = _material("Glass")
+    lowercase.mh4blend.material_class = "rendinst_simple_glass"
+    titlecase.mh4blend.material_class = "rendinst_refraction"
+    _assign_material(body, lowercase)
+    _assign_material(body, titlecase)
     monkeypatch.setattr(
         export_material_module, "_uses_dagor_name_boundary",
-        lambda candidate: candidate == punctuated or candidate == canonical)
+        lambda candidate: candidate == lowercase or candidate == titlecase)
 
-    with pytest.raises(MHValidationError) as excinfo:
-        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+    first = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path)
+    second = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path)
+    plan = parse_mesh_fbx(second["filepath"])
 
-    assert excinfo.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
-    assert not (tmp_path / "canonical_mesh.mesh.fbx").exists()
+    assert first["materials"] == second["materials"]
+    assert len(first["materials"]) == 2
+    assert first["materials"][0] == "glass"
+    assert first["materials"][1].startswith("glass_")
+    assert plan.material_names == tuple(first["materials"])
+    assert lowercase.name == "glass"
+    assert titlecase.name == "Glass"
 
 
 def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):
@@ -977,17 +985,11 @@ def test_duplicate_material_without_base_uses_the_unsuffixed_name(
     assert duplicate.name == "gaz53_tiled_wood_b.001"
 
 
-def _divergence_warnings(report):
-    return [row for row in report["warnings"]
-            if row[0] == "MH_W_DAGOR_CONSTRUCT_DROPPED"
-            and "merged into" in row[2]]
-
-
-def test_divergent_duplicate_merges_into_the_base_authority(
+def test_divergent_duplicate_publishes_a_distinct_material_token(
         tmp_path, registered_material_properties):
-    # Owner decision 2026-08-30: a diverging .NNN claimant merges into the
-    # base logical name; the base datablock is the published authority for
-    # every object and the divergence is reported, never refused.
+    # Field correction 2026-08-31: real Dagor scenes contain materially
+    # different glass/glass.001/glass.002 datablocks. Divergent content must
+    # survive instead of being merged into the unsuffixed authority.
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("merged_material")
     base = _material("paint")
@@ -998,23 +1000,20 @@ def test_divergent_duplicate_merges_into_the_base_authority(
     _assign_material(body, duplicate)
 
     report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
-    assert report["materials"] == ["paint"]
+    assert len(report["materials"]) == 1
+    token = report["materials"][0]
+    assert token.startswith("paint_") and token != "paint"
     plan = parse_mesh_fbx(report["filepath"])
-    assert plan.material_names == ("paint",)
-    merged = _divergence_warnings(report)
-    assert len(merged) == 1
-    assert tuple(merged[0][1]) == ("paint", "paint.001")
-    # The warning has to name the field that actually diverges: real content
-    # hides the divergence in one Dagor parameter out of a dozen.
-    assert "class 'rendinst_mask_layered' vs 'rendinst_simple'" in merged[0][2]
-    assert "'paint' is the published authority" in merged[0][2]
-    # The scene stays authored: the diverging datablock is not modified.
+    assert plan.material_names == (token,)
+    prepared = export_material_module.prepare_blender_material_export(
+        duplicate, tmp_path, source_root=tmp_path)
+    assert prepared.resource.name == token
+    assert prepared.resource.material_class == "rendinst_mask_layered"
     assert duplicate.mh4blend.material_class == "rendinst_mask_layered"
 
 
-def test_divergent_duplicate_warns_even_when_only_the_base_is_transported(
+def test_divergent_untransported_duplicate_keeps_its_distinct_identity(
         tmp_path, registered_material_properties):
-    """`<name>.material` is one file, so the merge group is file-wide."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("base_only_mesh")
     base = _material("paint")
@@ -1025,12 +1024,13 @@ def test_divergent_duplicate_warns_even_when_only_the_base_is_transported(
 
     report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
     assert report["materials"] == ["paint"]
-    merged = _divergence_warnings(report)
-    assert len(merged) == 1
-    assert tuple(merged[0][1]) == ("paint", "paint.001")
+    prepared = export_material_module.prepare_blender_material_export(
+        elsewhere, tmp_path, source_root=tmp_path)
+    assert prepared.resource.name.startswith("paint_")
+    assert prepared.resource.name != "paint"
 
 
-def test_divergence_warning_names_the_diverging_dagor_parameter(
+def test_divergent_parameter_duplicate_preserves_its_authored_value(
         tmp_path, registered_material_properties):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("merged_parameter")
@@ -1049,9 +1049,13 @@ def test_divergence_warning_names_the_diverging_dagor_parameter(
     _assign_material(_mesh_object("body", collection), duplicate)
 
     report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
-    merged = _divergence_warnings(report)
-    assert len(merged) == 1
-    assert "params.paint_details" in merged[0][2]
+    token = report["materials"][0]
+    assert token.startswith("paint_") and token != "paint"
+    prepared = export_material_module.prepare_blender_material_export(
+        duplicate, tmp_path, source_root=tmp_path)
+    assert prepared.resource.name == token
+    assert prepared.resource.params["paint_details"] == pytest.approx(
+        [0.6, 0.0, 0.0, 94.0])
 
 
 def test_export_rejects_socket_with_child_outside_resource(tmp_path):
