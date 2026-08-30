@@ -401,3 +401,39 @@ MH_FIELD_OK glass_de3ff22636b9
 ```
 
 Pure suite остался **308 passed / 14 skipped**.
+
+### 10.6. Полевое дополнение — Blender ID-name limit
+
+Per-mesh proxymat specialization выявила лимит Blender material ID в 63 bytes:
+
+```text
+MH_E_AMBIGUOUS_RESOURCE_NAME:
+Blender could not assign the transport material name
+'ground_plant_causonis_japonica_bark__ground_plant_causonis_japonica_b'
+```
+
+Красный тест зафиксировал derived name длиной **69 bytes**. Теперь имя до 63
+bytes остаётся прежним, а длинное получает 50-байтовый читаемый prefix + `_` +
+12 hex SHA-256 полного имени. Разные полные имена не сливаются; повторный
+resolve детерминирован. Реальный read-only stage сохранённой сцены прошёл:
+
+```text
+ground_plant_causonis_japonica_bark__ground_plant__8a802214a69a  63 bytes
+ground_plant_causonis_japonica_branch__ground_plan_aa76cfa79d0b 63 bytes
+MH_STAGE_OK ground_plant_causonis_japonica_b 46668 bytes
+```
+
+Focused red -> green: **1 failed -> 1 passed**; полный
+`test_export_material_bpy.py`: **48 passed**; pure suite: **308 passed / 14
+skipped**; все 12 Blender-hosted модулей: **355 passed / 0 failed**.
+
+Prefab/collision diagnostics из того же полевого лога не маскируются:
+
+- collision nodes без однозначного `phys` либо `trace`, а также комбинация
+  `isPhysCollidable=True + isTraceable=True`, остаются warning и не входят в
+  payload до отдельного решения о UE-семантике;
+- prefab публикуется как mesh только при явном per-run
+  `Allow Prefab as Mesh (Lossy)`; default остаётся fail-closed;
+- warning «exported as mesh by explicit policy» и error «requires explicit»
+  не могут возникнуть в одном вызове: это строки разных запусков, оставшиеся
+  вместе в Blender report history.

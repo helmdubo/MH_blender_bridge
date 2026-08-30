@@ -547,6 +547,29 @@ tex8:t="$(ASSET_NAME)_pivot_dir.dds"
     assert b'"tex7": "bush_beech_medium_a_pivot_pos"' in prepared.payload
 
 
+def test_proxy_macro_material_name_fits_blender_transport_limit(tmp_path):
+    material_name = "ground_plant_causonis_japonica_bark"
+    asset_name = "ground_plant_causonis_japonica_b"
+    _write_proxymat(tmp_path, material_name, '''\
+class:t="rendinst_tree_colored"
+tex7:t="$(ASSET_NAME)_pivot_pos.dds"
+''')
+    material = _proxy_material(material_name, tmp_path)
+
+    binding = export_material_module.resolve_material_binding(
+        material, asset_name=asset_name)
+    repeated = export_material_module.resolve_material_binding(
+        material, asset_name=asset_name)
+    other = export_material_module.resolve_material_binding(
+        material, asset_name="ground_plant_causonis_japonica_c")
+
+    assert len(binding.name.encode("ascii")) <= 63
+    assert binding.name == repeated.name
+    assert binding.name.startswith("ground_plant_causonis_japonica_bark__")
+    assert len(other.name.encode("ascii")) <= 63
+    assert other.name != binding.name
+
+
 def test_mesh_export_specializes_proxy_macro_material(tmp_path, monkeypatch):
     output = tmp_path / "source"
     proxy_dir = output / "assets" / "gameproj" / "nature"

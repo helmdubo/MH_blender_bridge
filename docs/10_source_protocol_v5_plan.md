@@ -433,8 +433,10 @@ keys, node trees материалов (восстанавливается тол
   контексте конкретного mesh resource. Один proxymat, используемый разными
   mesh-ассетами, публикуется отдельными material resources
   `<material>__<mesh>` с соответствующими pivot-текстурами; догадка без
-  точного mesh-контекста запрещена. Blender UI предоставляет внутри общей
-  панели
+  точного mesh-контекста запрещена. Если derived binding длиннее 63 ASCII
+  bytes (лимит Blender ID name), adapter использует 50-байтовый читаемый
+  префикс и 12 hex SHA-256; FBX binding и `.material` получают одно и то же
+  сокращённое имя. Blender UI предоставляет внутри общей панели
   `MH Source Tools` блок `Misc` с двумя раздельными операциями: Copy All
   Textures копирует все непустые Dagor slots текущего blend по правилу
   `<external>/assets/<tail> -> <source_root>/assets/<tail>` (ровно один

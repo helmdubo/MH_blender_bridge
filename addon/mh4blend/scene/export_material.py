@@ -52,6 +52,8 @@ __all__ = [
 TECHNICAL_MATERIAL_NAMES = frozenset({"cls"})
 TECHNICAL_MATERIAL_SHADER_CLASSES = frozenset({"gi_black"})
 _DAGOR_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$", re.ASCII)
+_BLENDER_ID_NAME_MAX_BYTES = 63
+_TRANSPORT_NAME_HASH_CHARS = 12
 
 
 @dataclass(frozen=True)
@@ -187,9 +189,23 @@ def _projected_claim_group(logical_name: str) -> list:
 def _disambiguated_material_name(logical_name: str, representative) -> str:
     digest = hashlib.sha256(
         representative.name.encode("utf-8")).hexdigest()[:12]
-    projected = f"{logical_name}_{digest}"
+    projected = _fit_blender_transport_name(f"{logical_name}_{digest}")
     validate_resource_name(projected)
     return projected
+
+
+def _fit_blender_transport_name(name: str) -> str:
+    """Keep a canonical binding inside Blender's 63-byte ID-name limit."""
+    validate_resource_name(name)
+    encoded = name.encode("ascii")
+    if len(encoded) <= _BLENDER_ID_NAME_MAX_BYTES:
+        return name
+    digest = hashlib.sha256(encoded).hexdigest()[:_TRANSPORT_NAME_HASH_CHARS]
+    prefix_bytes = (
+        _BLENDER_ID_NAME_MAX_BYTES - 1 - _TRANSPORT_NAME_HASH_CHARS)
+    shortened = f"{name[:prefix_bytes]}_{digest}"
+    validate_resource_name(shortened)
+    return shortened
 
 
 def _binding_for_macro_asset(
@@ -204,7 +220,8 @@ def _binding_for_macro_asset(
         binding.material, _authored_material_name(binding.material), dagormat)
     if not proxy.macro_textures:
         return binding
-    name = f"{binding.name}__{asset_name}"
+    name = _fit_blender_transport_name(
+        f"{binding.name}__{asset_name}")
     validate_resource_name(name)
     cached = _BINDINGS.get(name)
     if cached is not None:
