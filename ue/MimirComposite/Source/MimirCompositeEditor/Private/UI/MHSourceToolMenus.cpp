@@ -24,6 +24,7 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
+#include "UI/MHSourceOverwritePolicy.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBox.h"
@@ -382,18 +383,34 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
     else
     {
         const FString LogicalName = Subsystem->GetEditingCompositeLogicalName();
+        FString SourceFile = Subsystem->GetEditingCompositeSourceRelativePath();
+        if (SourceFile.IsEmpty())
+        {
+            SourceFile = (LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName) + TEXT(".composite");
+        }
         const FText Confirmation = FText::Format(
             LOCTEXT(
                 "CommitCompositeIrreversiblePrompt",
                 "This will overwrite {0}.composite. Unreal Editor Undo cannot restore the previous source file; revert with a new edit or VCS. Continue?"),
             FText::FromString(LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName));
-        if (FMessageDialog::Open(EAppMsgType::YesNo, Confirmation) != EAppReturnType::Yes)
+        const FText Audit = FText::Format(
+            LOCTEXT("CommitCompositeOverwriteAudit", "{0} overwritten from edited transforms"),
+            FText::FromString(SourceFile));
+        const EMHSourceOverwriteExecution Execution = MHExecuteSourceOverwrite(
+            SourceFile,
+            Confirmation,
+            Audit,
+            [&Subsystem, &Warnings, &Error]()
+            {
+                if (!Subsystem->CommitEditComposite(Warnings, Error) && Error.IsEmpty())
+                {
+                    Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
+                }
+                return Error.IsEmpty();
+            });
+        if (Execution == EMHSourceOverwriteExecution::Cancelled)
         {
             return;
-        }
-        if (!Subsystem->CommitEditComposite(Warnings, Error) && Error.IsEmpty())
-        {
-            Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
         }
     }
     NotifyOperation(

@@ -769,6 +769,13 @@ FString UMHCompositeLevelSubsystem::GetEditingCompositeLogicalName() const
     return Asset != nullptr ? Asset->LogicalName : FString();
 }
 
+FString UMHCompositeLevelSubsystem::GetEditingCompositeSourceRelativePath() const
+{
+    const AMHCompositeActor* Actor = EditingActor.Get();
+    const UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
+    return Asset != nullptr ? Asset->SourceRelativePath : FString();
+}
+
 bool UMHCompositeLevelSubsystem::CancelEditComposite(FString& OutError)
 {
     OutError.Reset();

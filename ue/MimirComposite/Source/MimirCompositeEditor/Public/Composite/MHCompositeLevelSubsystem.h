@@ -48,6 +48,7 @@ public:
         return EditingActor.IsValid() && EditingActor.Get() == Actor;
     }
     FString GetEditingCompositeLogicalName() const;
+    FString GetEditingCompositeSourceRelativePath() const;
 
     bool RebuildComposites(
         const TArray<AMHCompositeActor*>& Actors,

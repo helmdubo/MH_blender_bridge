@@ -56,6 +56,10 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     EMHStartupScanMode StartupScanMode = EMHStartupScanMode::Silent;
 
+    /** Ask before an editor command overwrites an existing source document. */
+    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Source")
+    bool bConfirmSourceOverwrite = true;
+
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     FString StaticMeshPrefix;
 
