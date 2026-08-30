@@ -274,11 +274,12 @@ def test_dagor_texture_filename_whitespace_publishes_canonical_token(
     assert prepared.resource.textures == {"tex0": token}
 
 
-def test_dagormat_real_two_sided_fails_instead_of_losing_semantics():
-    with pytest.raises(MaterialValueError) as excinfo:
-        export_material_module._extract_resource(_dagor_material(sides=2))
-    assert excinfo.value.code == "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE"
-    assert excinfo.value.path == "dagormat.sides"
+def test_dagormat_real_two_sided_projects_to_ue_two_sided(tmp_path):
+    prepared = prepare_blender_material_export(
+        _dagor_material(sides=2), tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.twosided is True
+    assert json.loads(prepared.payload)["twosided"] is True
 
 
 @pytest.mark.parametrize("value", [False, 0.0, "0", None])

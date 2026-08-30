@@ -822,12 +822,16 @@ Publish.
 **Ревизия owner (полевое решение, PR #16).** Часть первоначального решения
 о dag4blend пересмотрена owner'ом в поле: для class-формы writer теперь
 АВТОМАТИЧЕСКИ извлекает семантику из заполненного `dagormat`
-(`shader_class`, `textures.tex0–tex15`, `optional`, `sides 0|1 → явный
-twosided`); mh4blend property group — приоритетные точечные overrides.
-Непредставимое (`sides=2`, типы вне number/vector4) — fail-closed
+(`shader_class`, `textures.tex0–tex15`, `optional`, `sides 0 → явный
+twosided=false`, `sides 1|2 → явный twosided=true`); mh4blend property group —
+приоритетные точечные overrides. По решению owner 2026-08-30 Dagor
+`real_two_sided` (`sides=2`) проецируется в UE material-instance TwoSided;
+отдельное геометрическое дублирование не вводится в material-грамматику v5.
+Непредставимые optional-типы вне number/vector4 остаются fail-closed
 `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`, без потери данных. НЕ пересмотрено:
 `is_proxy`/`proxy_path` не читаются, proxymat superseded library-формой,
-`tex16support` не существует. Нормативный текст — 08 §5 (правка PR #16).
+`tex16support` не существует. Для текущего протокола нормативный текст —
+10 §5; редакция 08 §5 остаётся исторической.
 
 **Прежний статус (первоначальное решение). РЕШЕНО OWNER — нормативно в 08
 §5 (этот docs-коммит).**

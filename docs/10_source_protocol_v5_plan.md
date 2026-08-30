@@ -408,10 +408,13 @@ keys, node trees материалов (восстанавливается тол
   authoring-overrides. Для class-формы writer автоматически читает уже
   заполненное семантическое содержимое `dagormat`: `shader_class`,
   `textures.tex0`–`tex15`, `optional` и `sides`; точечные значения mh4blend
-  имеют приоритет. `sides=0|1` выводится явным `twosided=false|true`, потому
-  что отсутствие поля означает default мастера; `sides=2` и любой optional
-  тип вне number/vector4 блокируются
-  `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` без потери данных. Из texture path
+  имеют приоритет. `sides=0` выводится явным `twosided=false`, а
+  `sides=1|2` — `twosided=true`, потому что отсутствие поля означает default
+  мастера. Режим Dagor `real_two_sided` (`sides=2`) проецируется в UE
+  material-instance TwoSided; геометрическое дублирование Dagor не является
+  отдельным состоянием material-грамматики v5. Любой optional-тип вне
+  number/vector4 блокируется `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` без потери
+  данных. Из texture path
   writer берёт только extensionless logical stem и
   резолвит его по общему texture ResourceKey. Синтетический
   `tex16support`, dag4blend `is_proxy`/`proxy_path`, legacy-поля и UI-state

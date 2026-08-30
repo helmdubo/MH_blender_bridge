@@ -454,9 +454,11 @@ def _dagor_twosided(dagormat) -> bool:
     if sides == 1:
         return True
     if sides == 2:
-        raise _not_roundtrippable(
-            "dagormat.sides",
-            "real_two_sided cannot be represented by Source Protocol v4")
+        # Dagor implements real_two_sided with duplicated, flipped geometry.
+        # Source Protocol v5 has one two-sided material flag, whose UE importer
+        # applies the material-instance TwoSided base-property override.  That
+        # is the approved projection for foliage and other thin surfaces.
+        return True
     raise _not_roundtrippable(
         "dagormat.sides",
         f"unsupported Dagor sides value {sides!r}")
