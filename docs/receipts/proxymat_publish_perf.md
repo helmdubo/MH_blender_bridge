@@ -1,12 +1,16 @@
 # Квитанция: proxymat-материалы и публикация include_all
 
-Статус: **STOP — ожидается одно решение Lead по строковому provenance**.  
+Статус: **READY — прежний STOP снят полевым дополнением 2026-08-31 (§10)**.
 Дата: 2026-08-30  
 Ветка: `feat/proxymat-and-publish-perf`  
 База: `3ee5a2cdbca5bcf94eb3d62cc978f4470cf9eb11`  
-Scope: `addon/mh4blend`, `tests`, эта квитанция.
+Scope исходного checkpoint: `addon/mh4blend`, `tests`, эта квитанция.
+Дополнение §10 включает совместимый reader/writer в `ue/MimirComposite`.
 
 ## 1. Итог на checkpoint
+
+Этот раздел фиксирует историческое состояние на 2026-08-30. Текущее green-
+закрытие macro textures и opaque provenance приведено в §10.
 
 Реализованы и проверены:
 
@@ -197,7 +201,8 @@ Blender-модули: `22 + 20 + 76 + 38 + 16 + 16 + 58 + 38 + 15 + 6 +
 12 + 11 = 328`.
 
 Полный реальный `trees_leaf -> include_all -> .material` и UE importer test
-для строковых provenance params: **NOT RUN / STOP**, причина в §1/§7.
+для строковых provenance params: **NOT RUN / STOP** на этом историческом
+checkpoint; текущее закрытие приведено в §10.
 
 ## 6. Frozen-инварианты
 
@@ -213,6 +218,10 @@ Blender-модули: `22 + 20 + 76 + 38 + 16 + 16 + 58 + 38 + 15 + 6 +
   мутирует сцену.
 
 ## 7. Вопросы
+
+Исторический вопрос ниже разрешён реализацией §10: macro slots стали
+конкретными per-mesh texture bindings, а остальные string/bool script values
+сохраняются как opaque provenance.
 
 1. **Контекст:** `.material.params` frozen v4 принимает только number/vector4;
    строка отклоняется. Все 37 реальных `trees_leaf` proxymat содержат macro
@@ -247,3 +256,120 @@ Blender-модули: `22 + 20 + 76 + 38 + 16 + 16 + 58 + 38 + 15 + 6 +
 - `3935682` — `Read proxymat materials from authoritative sources`;
 - `d72dc6d` — `Reuse batch inventory validation during publication`;
 - квитанция — отдельный documentation commit.
+
+## 10. Дополнение 2026-08-31 — macro textures и opaque provenance
+
+### 10.1. Разрешение `$(ASSET_NAME)`
+
+Полевой пример `bush_beech_bark.proxymat.blk` использует:
+
+```text
+tex7=$(ASSET_NAME)_pivot_pos.dds
+tex8=$(ASSET_NAME)_pivot_dir.dds
+```
+
+Один bark proxymat применяется к семи разным mesh resources
+(`bush_beech_medium_a/b/c`, `bush_beech_small_a/b/c/d`), и у каждого на диске
+своя пара pivot DDS. Поэтому material-level подстановка без mesh-контекста
+была бы неоднозначной. Реализовано точное разрешение на границе mesh export:
+
+- asset name берётся из managed mesh stamp либо из `.lodNN`/`.lods`
+  collection;
+- macro разворачивается в реальный `tex7/tex8` logical texture token;
+- общий proxymat специализируется как `<material>__<mesh>`, например
+  `bush_beech_bark__bush_beech_medium_a`;
+- FBX material binding и `.material` используют одно имя;
+- если точного mesh authority нет, операция остаётся fail-closed;
+- сцена, dagormat и `.proxymat.blk` не мутируются.
+
+`Copy All Textures to Project` теперь проходит тем же per-mesh разрешением и
+копирует сами pivot DDS. Повторный Copy All после Remap является проверенным
+no-op: внешний CDK path и уже project-local path объединяются только при
+равных size + SHA-256; разные байты по-прежнему дают
+`MH_E_AMBIGUOUS_RESOURCE_NAME`.
+
+### 10.2. Script provenance
+
+Реальный preflight после macro-разрешения обнаружил допустимые Dagor script
+values `lighting=vltmap` и `real_two_sided=no`. Чтобы выполнить требование
+«script params как есть», `.material.params` получил append-only поддержку
+string/bool:
+
+- Blender canonical reader/writer и UI сохраняют number/vector4/string/bool;
+- UE reader/writer принимает те же canonical values;
+- string/bool являются opaque provenance, не подделываются под scalar/vector
+  MI parameters;
+- `SourceHash` покрывает полный документ, `AppliedHash` — только реально
+  материализуемое подмножество;
+- UE Publish managed материала перечитывает существующий source и сохраняет
+  opaque provenance.
+
+Новых E/W-кодов, версии importer и изменений golden/reference нет.
+
+### 10.3. Red -> green
+
+Красный полевой отказ:
+
+```text
+MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: ...bush_beech_bark.proxymat.blk:
+proxymat macro texture provenance requires string params before publication
+(tex7='$(ASSET_NAME)_pivot_pos.dds',
+ tex8='$(ASSET_NAME)_pivot_dir.dds');
+macro slots were not added to textures
+```
+
+Green на сохранённой сцене
+`E:\portfolio\sovmod_cottage_i_cmp_source_lod00.blend`:
+
+```text
+materials=519
+referenced_slots=1254
+macro_slots=84
+macro_assets=21
+physical_sources=653
+```
+
+Фактический автоматический Copy All в настроенный source root
+`E:\blender_plugin`:
+
+```text
+unique_files=647
+copied=60
+skipped_identical=587
+```
+
+Разница `653 -> 647` — шесть одинаковых источников, сходящихся в один
+project destination и подтверждённых по bytes. Для
+`bush_beech_medium_a.lods` реальный `prepare_fbx_collection` прошёл и выдал:
+
+```text
+bush_beech_bark__bush_beech_medium_a:
+  tex0=ground_plant_beech_bark_tex_d
+  tex2=ground_plant_beech_bark_tex_n
+  tex7=bush_beech_medium_a_pivot_pos
+  tex8=bush_beech_medium_a_pivot_dir
+```
+
+### 10.4. Гейты дополнения
+
+| Гейт | Результат |
+|---|---|
+| Pure `python -m pytest tests/ -q` | **308 passed / 14 skipped / 0 failed** |
+| Blender 4.5.12, 12 отдельных factory-startup процессов | **352 passed / 0 failed** |
+| Guarded UE editor build (`-NoEngineChanges -ForceUnity -DisableAdaptiveUnity -NoPCH -NoSharedPCH`) | **Succeeded** |
+| `Mimir.V4.Material.StringProvenance` | **1/1 success** |
+| Полный NullRHI `Mimir` с `-MHGoldenRoot` | **161/161, 0 failed, 0 not run** |
+| `git diff --check` | **PASS** |
+
+NullRHI breakdown: **119 success + 42 success-with-warnings**. Первый общий
+Blender-запуск был отброшен как environmental: cp313 `xxhash` был ошибочно
+выше bundled cp311 wheel в `sys.path`; повтор с ABI Blender 4.5 прошёл 352/0.
+
+Frozen tree hashes остались:
+
+- `golden`: `71b30ebf65ca3cc8473f50305990c2bf2b332727`;
+- `reference`: `12e25b76b19aa824458221cf23f77236a17382cd`;
+- `canonical.py`: `bbe340ce0f7c46d50e097ac1b7f8ea0b831dd945`.
+
+Код дополнения: `0e8fccf` —
+`Resolve Dagor proxy textures per mesh asset`.

@@ -368,8 +368,12 @@ keys, node trees материалов (восстанавливается тол
   Class-форма: `class` (обязателен), опционально `twosided`, `textures`,
   `params`. Library-форма: РОВНО одно поле `library`. Ключи `textures` —
   только `tex0`–`tex15` (без ведущих нулей), ключи `params` — `[a-z0-9_]+`.
-  Значение `params`: число (UE scalar parameter) или массив РОВНО из 4
-  чисел (vector parameter); других форм нет. `twosided` (bool) —
+  Значение `params`: число (UE scalar parameter), массив РОВНО из 4
+  чисел (vector parameter), строка или bool. Строка и bool являются
+  **opaque source provenance**: входят в canonical source bytes и
+  `SourceHash`, сохраняются при UE Publish, но не создают вымышленных MI
+  parameter overrides и не влияют на materialization до появления явного
+  UE-потребителя. `twosided` (bool) —
   единственный top-level флаг: это НЕ static switch, а MI Base Property
   Override (TwoSided); writer пишет его только при override, отсутствие =
   значение мастера. Любое неизвестное поле, неверный тип или недопустимый
@@ -388,8 +392,10 @@ keys, node trees материалов (восстанавливается тол
   фиксируются ОБЩИМИ golden-векторами, которые читают и pytest, и UE
   Automation. `UMHMaterialSourceData` хранит два хэша (формат — §3):
   `SourceHash` — raw hash применённого `.material`; `AppliedHash` — hash
-  канонического JSON, извлечённого из MI сразу после apply тем же
-  extractor'ом, что использует Publish (одна канонизация — одна истина).
+  канонического JSON применимого MI-подмножества, извлечённого из MI сразу
+  после apply тем же extractor'ом, что использует Publish. Opaque string/bool
+  provenance исключается только из applied-подмножества, но сохраняется в
+  source (одна канонизация — одна истина для каждого из двух состояний).
   Детект локальной правки managed MI: extract сейчас → hash ≠
   `AppliedHash` → `MH_W_MANAGED_ASSET_LOCALLY_MODIFIED`; extract,
   падающий на non-roundtrippable локальном состоянии, тоже считается
@@ -413,17 +419,24 @@ keys, node trees материалов (восстанавливается тол
   мастера. Режим Dagor `real_two_sided` (`sides=2`) проецируется в UE
   material-instance TwoSided; геометрическое дублирование Dagor не является
   отдельным состоянием material-грамматики v5. Любой optional-тип вне
-  number/vector4 блокируется `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` без потери
-  данных. Из texture path
+  number/vector4/string/bool блокируется
+  `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` без потери данных. Из texture path
   writer берёт только extensionless logical stem и
   резолвит его по общему texture ResourceKey. Синтетический
   `tex16support`, dag4blend `is_proxy`/`proxy_path`, legacy-поля и UI-state
-  не являются содержимым v4 и не сериализуются; proxymat-концепция
-  superseded library-формой. Blender UI предоставляет внутри общей панели
+  не являются содержимым v4 и не сериализуются. Для proxy-материала
+  `.proxymat.blk` является read-only authority: обычные `texN` проецируются
+  в logical texture tokens, а `$(ASSET_NAME)` разворачивается только в
+  контексте конкретного mesh resource. Один proxymat, используемый разными
+  mesh-ассетами, публикуется отдельными material resources
+  `<material>__<mesh>` с соответствующими pivot-текстурами; догадка без
+  точного mesh-контекста запрещена. Blender UI предоставляет внутри общей
+  панели
   `MH Source Tools` блок `Misc` с двумя раздельными операциями: Copy All
   Textures копирует все непустые Dagor slots текущего blend по правилу
   `<external>/assets/<tail> -> <source_root>/assets/<tail>` (ровно один
-  сегмент `assets`, полный preflight, sibling staging/read-back, locks,
+  сегмент `assets`, включая развёрнутые per-mesh macro slots, полный
+  preflight, sibling staging/read-back, locks,
   rollback набора при обычной ошибке); Remap All Texture Paths ничего не
   копирует, требует существования всех project-targets и затем меняет пути
   с read-back/rollback. Copy не меняет Blender paths, Remap не читает внешний
