@@ -143,6 +143,21 @@ def test_quaternion_reader_tolerance_and_writer_canonicalization():
     assert excinfo.value.code == "MH_E_COMPOSITE_GRAMMAR"
 
 
+def test_quaternion_canonical_write_is_stable_after_read_back():
+    resource = Composite("real_dagor_rotation", [Node(
+        "group",
+        transform=CompositeTransform(rotation_quat=(
+            -0.12278767675161362,
+            -0.12278766930103302,
+            -0.696364164352417,
+            0.696364164352417,
+        )),
+    )])
+    canonical = composite_json_bytes(resource)
+
+    assert composite_json_bytes(parse_composite(canonical)) == canonical
+
+
 def test_dependency_diamond_is_not_a_cycle():
     graph = {
         "root": Composite("root", [
