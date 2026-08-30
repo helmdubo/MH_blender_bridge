@@ -1,6 +1,9 @@
 #include "StaticMesh/MHStaticMeshImporter.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Composite/MHCompositePlacementEvents.h"
+#include "Editor.h"
+#include "EditorReimportHandler.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "HAL/FileManager.h"
@@ -26,9 +29,12 @@
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImporter.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "StaticMeshAttributes.h"
+#include "StaticMesh/MHStaticMeshReimportHandler.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
 
@@ -1280,6 +1286,452 @@ bool FMHStaticMeshImporterCollisionCarrierTest::RunTest(const FString& Parameter
     {
         PhysMaterialPackage->SetDirtyFlag(false);
     }
+    return bPassed;
+}
+
+struct FTargetedStaticMeshReimportFixture
+{
+    FAutomationTestBase& Test;
+    FStaticMeshImporterFixture Source;
+    FGeneratedPackageCleanup Cleanup;
+    FGeneratedPackageCleanup SecondCleanup;
+    FDirectoryPath PreviousSourceRoot;
+    FString LogicalName;
+    FString MaterialName;
+    FString TemplateFbx;
+    FString MaterialPath;
+    FString MaterialHash;
+    FString MeshPath;
+    UStaticMesh* Mesh = nullptr;
+
+    explicit FTargetedStaticMeshReimportFixture(FAutomationTestBase& InTest)
+        : Test(InTest)
+    {
+        PreviousSourceRoot = GetMutableDefault<UMHCompositeSettings>()->SourceRoot;
+    }
+
+    ~FTargetedStaticMeshReimportFixture()
+    {
+        MHSetGeneratedResourceChangedObserverForTests({});
+        GetMutableDefault<UMHCompositeSettings>()->SourceRoot = PreviousSourceRoot;
+        MHShutdownProjectIndex();
+    }
+
+    bool Build()
+    {
+        const FString Token = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+        LogicalName = TEXT("targeted_mesh_") + Token;
+        MaterialName = TEXT("targeted_mat_") + Token;
+        if (!ResolveGoldenRoot(Test, TemplateFbx))
+        {
+            return false;
+        }
+        TemplateFbx = FPaths::Combine(TemplateFbx, TEXT("fixtures/axis/axis_probe.fbx"));
+        GetMutableDefault<UMHCompositeSettings>()->SourceRoot.Path = Source.SourceRoot;
+
+        const FString MaterialPackage = TEXT("/Game/MH/Generated/Materials/") + MaterialName;
+        UPackage* MaterialOuter = CreatePackage(*MaterialPackage);
+        UMaterialInstanceConstant* Material = NewObject<UMaterialInstanceConstant>(
+            MaterialOuter,
+            FName(*MaterialName),
+            RF_Public | RF_Standalone | RF_Transactional);
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"))
+            .Get()
+            .AssetCreated(Material);
+        Cleanup.MaterialObjectPath = MaterialPackage + TEXT(".") + MaterialName;
+
+        MaterialPath = FPaths::Combine(
+            Source.SourceRoot,
+            TEXT("materials"),
+            MaterialName + TEXT(".material"));
+        bool bPassed = Test.TestTrue(
+            TEXT("write targeted material source"),
+            WriteStaticMeshImporterUtf8(MaterialPath, TEXT("{\n  \"class\": \"simple\"\n}\n")));
+        bPassed &= Test.TestTrue(
+            TEXT("hash targeted material source"),
+            ReadSourceHash(MaterialPath, MaterialHash));
+        UMHMaterialSourceData* MaterialReceipt = NewObject<UMHMaterialSourceData>(Material);
+        MaterialReceipt->LogicalName = MaterialName;
+        MaterialReceipt->SourceRelativePath =
+            TEXT("materials/") + MaterialName + TEXT(".material");
+        MaterialReceipt->SourceHash = MaterialHash;
+        MaterialReceipt->AppliedHash = MaterialHash;
+        MaterialReceipt->AppliedParent = TEXT("class:simple");
+        Material->AddAssetUserData(MaterialReceipt);
+
+        Mesh = ImportMesh(LogicalName, Cleanup, false);
+        return bPassed && Mesh != nullptr;
+    }
+
+    UStaticMesh* AddSecondMesh()
+    {
+        return ImportMesh(LogicalName + TEXT("_second"), SecondCleanup, false);
+    }
+
+    bool WriteReplacementSource(FString& OutHash)
+    {
+        FString Error;
+        const bool bExported = ExportPlainStaticMeshFbx(
+            TemplateFbx,
+            MeshPath,
+            MaterialName,
+            true,
+            Error);
+        if (!Error.IsEmpty())
+        {
+            Test.AddError(Error);
+        }
+        return Test.TestTrue(TEXT("export targeted replacement FBX"), bExported) &&
+            Test.TestTrue(TEXT("hash targeted replacement FBX"), ReadSourceHash(MeshPath, OutHash));
+    }
+
+private:
+    UStaticMesh* ImportMesh(
+        const FString& MeshLogicalName,
+        FGeneratedPackageCleanup& MeshCleanup,
+        const bool bReplacement)
+    {
+        const FString PackageName = TEXT("/Game/MH/Generated/Meshes/") + MeshLogicalName;
+        MeshCleanup.MeshObjectPath = PackageName + TEXT(".") + MeshLogicalName;
+        const FString Path = FPaths::Combine(
+            Source.SourceRoot,
+            TEXT("meshes"),
+            MeshLogicalName + TEXT(".mesh.fbx"));
+        FString Error;
+        if (!Test.TestTrue(
+                TEXT("export targeted source FBX"),
+                ExportPlainStaticMeshFbx(
+                    TemplateFbx,
+                    Path,
+                    MaterialName,
+                    bReplacement,
+                    Error)))
+        {
+            if (!Error.IsEmpty())
+            {
+                Test.AddError(Error);
+            }
+            return nullptr;
+        }
+
+        FMHSourceAnalysisEntry Entry;
+        Entry.Key.Kind = EMHResourceKind::StaticMesh;
+        Entry.Key.LogicalName = MeshLogicalName;
+        Entry.PayloadPath = Path;
+        Entry.SourcePath = TEXT("meshes/") + MeshLogicalName + TEXT(".mesh.fbx");
+        Entry.Change = EMHSourceChange::Create;
+        if (!Test.TestTrue(TEXT("hash targeted source FBX"), ReadSourceHash(Path, Entry.RawHash)))
+        {
+            return nullptr;
+        }
+        FStaticMeshImporterTestResolver Resolver;
+        Resolver.MaterialName = MaterialName;
+        Resolver.MaterialPath = MaterialPath;
+        Resolver.MaterialHash = MaterialHash;
+        FMHStaticMeshOperationResult Result = MHImportStaticMeshV4(
+            Entry,
+            Resolver,
+            Source.SourceRoot);
+        if (!Result.Succeeded())
+        {
+            Test.AddError(FString::Printf(
+                TEXT("targeted fixture import failed: %s"),
+                *Result.Error));
+            return nullptr;
+        }
+        if (MeshLogicalName == LogicalName)
+        {
+            MeshPath = Path;
+        }
+        return Result.StaticMesh;
+    }
+};
+
+TArray<FVector3f> CaptureLOD0Positions(const UStaticMesh& Mesh)
+{
+    TArray<FVector3f> Result;
+    const FMeshDescription* Description = Mesh.GetMeshDescription(0);
+    if (Description == nullptr)
+    {
+        return Result;
+    }
+    const FStaticMeshConstAttributes Attributes(*Description);
+    const TVertexAttributesConstRef<FVector3f> Positions = Attributes.GetVertexPositions();
+    for (const FVertexID VertexId : Description->Vertices().GetElementIDs())
+    {
+        Result.Add(Positions[VertexId]);
+    }
+    return Result;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHTargetedStaticMeshReimportAdmissionTest,
+    "Mimir.V4.StaticMesh.TargetedReimport.Admission",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHTargetedStaticMeshReimportAdmissionTest::RunTest(const FString& Parameters)
+{
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build())
+    {
+        return false;
+    }
+    FReimportHandler* Handler = MHGetManagedStaticMeshReimportHandlerForTests();
+    bool bPassed = TestNotNull(TEXT("managed static-mesh handler is registered"), Handler);
+    TArray<FString> Filenames;
+    bPassed &= TestTrue(
+        TEXT("managed canonical static mesh is admitted"),
+        Handler != nullptr && Handler->CanReimport(Fixture.Mesh, Filenames));
+    bPassed &= TestEqual(TEXT("managed handler reports one source file"), Filenames.Num(), 1);
+    if (Filenames.Num() == 1)
+    {
+        bPassed &= TestTrue(
+            TEXT("reported source comes from receipt relative path"),
+            FPaths::IsSamePath(Filenames[0], Fixture.MeshPath));
+    }
+
+    UStaticMesh* Foreign = NewObject<UStaticMesh>(GetTransientPackage());
+    Filenames.Reset();
+    bPassed &= TestFalse(
+        TEXT("foreign static mesh without receipt is rejected"),
+        Handler != nullptr && Handler->CanReimport(Foreign, Filenames));
+    UMHStaticMeshImportData* CopiedReceipt = NewObject<UMHStaticMeshImportData>(Foreign);
+    CopiedReceipt->LogicalName = Fixture.LogicalName;
+    CopiedReceipt->SourceRelativePath =
+        TEXT("meshes/") + Fixture.LogicalName + TEXT(".mesh.fbx");
+    Foreign->SetAssetImportData(CopiedReceipt);
+    bPassed &= TestFalse(
+        TEXT("noncanonical copy with a managed receipt is rejected"),
+        Handler != nullptr && Handler->CanReimport(Foreign, Filenames));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHTargetedStaticMeshForceReimportTest,
+    "Mimir.V4.StaticMesh.TargetedReimport.ForceAndNotify",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHTargetedStaticMeshForceReimportTest::RunTest(const FString& Parameters)
+{
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build())
+    {
+        return false;
+    }
+    UMHStaticMeshImportData* Receipt =
+        Cast<UMHStaticMeshImportData>(Fixture.Mesh->GetAssetImportData());
+    if (!TestNotNull(TEXT("targeted fixture receipt"), Receipt))
+    {
+        return false;
+    }
+    const FString InitialHash = Receipt->SourceHash;
+    FString ReplacementHash;
+    if (!Fixture.WriteReplacementSource(ReplacementHash))
+    {
+        return false;
+    }
+    bool bPassed = TestNotEqual(TEXT("replacement source hash changes"), ReplacementHash, InitialHash);
+
+    TArray<FMHResourceKey> Notifications;
+    MHSetGeneratedResourceChangedObserverForTests(
+        [&Notifications](const FMHResourceKey& Key)
+        {
+            Notifications.Add(Key);
+        });
+    MHResetSourceImportMetrics();
+    const bool bChangedResult = FReimportManager::Instance()->Reimport(
+        Fixture.Mesh,
+        false,
+        false,
+        FString(),
+        nullptr,
+        INDEX_NONE,
+        false,
+        true);
+    bPassed &= TestTrue(TEXT("standard Reimport applies changed managed source"), bChangedResult);
+    Receipt = Cast<UMHStaticMeshImportData>(Fixture.Mesh->GetAssetImportData());
+    bPassed &= TestNotNull(TEXT("managed receipt survives standard Reimport"), Receipt);
+    if (Receipt != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("changed Reimport advances receipt hash"), Receipt->SourceHash, ReplacementHash);
+    }
+    bPassed &= VerifyReplacementMesh(*this, *Fixture.Mesh);
+    FMHSourceImportMetrics Metrics = MHGetSourceImportMetrics();
+    bPassed &= TestEqual(
+        TEXT("single force-reimport has one batch compilation wait"),
+        Metrics.Get(EMHSourceImportMetricResource::Batch, EMHSourceImportMetricStage::BuildWait).Calls,
+        1ull);
+    bPassed &= TestEqual(
+        TEXT("single force-reimport has one batch save"),
+        Metrics.Get(EMHSourceImportMetricResource::Batch, EMHSourceImportMetricStage::SavePackage).Calls,
+        1ull);
+    bPassed &= TestEqual(TEXT("changed Reimport emits one placement notification"), Notifications.Num(), 1);
+    if (Notifications.Num() == 1)
+    {
+        bPassed &= TestEqual(TEXT("placement notification carries mesh key"), Notifications[0].LogicalName, Fixture.LogicalName);
+    }
+
+    const TArray<FVector3f> FirstPositions = CaptureLOD0Positions(*Fixture.Mesh);
+    UStaticMeshSocket* LocalSocket = NewObject<UStaticMeshSocket>(Fixture.Mesh);
+    LocalSocket->SocketName = TEXT("local_only");
+    Fixture.Mesh->Sockets.Add(LocalSocket);
+    if (Receipt != nullptr)
+    {
+        Receipt->bLocallyModified = true;
+    }
+    Notifications.Reset();
+    MHResetSourceImportMetrics();
+    const bool bUnchangedResult = FReimportManager::Instance()->Reimport(
+        Fixture.Mesh,
+        false,
+        false,
+        FString(),
+        nullptr,
+        INDEX_NONE,
+        false,
+        true);
+    bPassed &= TestTrue(TEXT("unchanged source is force-reimported"), bUnchangedResult);
+    Receipt = Cast<UMHStaticMeshImportData>(Fixture.Mesh->GetAssetImportData());
+    if (Receipt != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("unchanged force keeps deterministic hash"), Receipt->SourceHash, ReplacementHash);
+        bPassed &= TestFalse(TEXT("unchanged force clears local-edit marker"), Receipt->bLocallyModified);
+    }
+    bPassed &= TestTrue(
+        TEXT("unchanged force reproduces geometry"),
+        CaptureLOD0Positions(*Fixture.Mesh) == FirstPositions);
+    bPassed &= VerifyReplacementMesh(*this, *Fixture.Mesh);
+    Metrics = MHGetSourceImportMetrics();
+    bPassed &= TestEqual(
+        TEXT("unchanged force still waits for one batch build"),
+        Metrics.Get(EMHSourceImportMetricResource::Batch, EMHSourceImportMetricStage::BuildWait).Calls,
+        1ull);
+    bPassed &= TestEqual(
+        TEXT("unchanged force still saves one batch"),
+        Metrics.Get(EMHSourceImportMetricResource::Batch, EMHSourceImportMetricStage::SavePackage).Calls,
+        1ull);
+    bPassed &= TestEqual(TEXT("unchanged force still notifies placements"), Notifications.Num(), 1);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHTargetedStaticMeshMissingSourceTest,
+    "Mimir.V4.StaticMesh.TargetedReimport.MissingSourceDoesNotMutate",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHTargetedStaticMeshMissingSourceTest::RunTest(const FString& Parameters)
+{
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build())
+    {
+        return false;
+    }
+    const FString PackageName = FPackageName::ObjectPathToPackageName(Fixture.Mesh->GetPathName());
+    const FString PackageFilename = FPackageName::LongPackageNameToFilename(
+        PackageName,
+        FPackageName::GetAssetPackageExtension());
+    TArray<uint8> PackageBefore;
+    bool bPassed = TestTrue(
+        TEXT("read package before missing-source reimport"),
+        FFileHelper::LoadFileToArray(PackageBefore, *PackageFilename));
+    const TArray<FVector3f> PositionsBefore = CaptureLOD0Positions(*Fixture.Mesh);
+    const UMHStaticMeshImportData* ReceiptBefore =
+        Cast<UMHStaticMeshImportData>(Fixture.Mesh->GetAssetImportData());
+    const FString HashBefore = ReceiptBefore != nullptr ? ReceiptBefore->SourceHash : FString();
+
+    const FString BackupPath = Fixture.MeshPath + TEXT(".missing-test-backup");
+    bPassed &= TestTrue(
+        TEXT("move source aside"),
+        IFileManager::Get().Move(*BackupPath, *Fixture.MeshPath, true, true, false, true));
+    ON_SCOPE_EXIT
+    {
+        IFileManager::Get().Move(*Fixture.MeshPath, *BackupPath, true, true, false, true);
+    };
+
+    UMHSourceImporter* Importer = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHSourceImporter>()
+        : nullptr;
+    bPassed &= TestNotNull(TEXT("source importer subsystem exists"), Importer);
+    TArray<FString> Warnings;
+    FString Error;
+    const bool bResult = Importer != nullptr &&
+        Importer->ReimportStaticMesh(Fixture.Mesh, Warnings, Error);
+    bPassed &= TestFalse(TEXT("missing source fails reimport"), bResult);
+    bPassed &= TestTrue(TEXT("missing-source error reports exact path"), Error.Contains(Fixture.MeshPath));
+
+    TArray<uint8> PackageAfter;
+    bPassed &= TestTrue(
+        TEXT("read package after missing-source refusal"),
+        FFileHelper::LoadFileToArray(PackageAfter, *PackageFilename));
+    bPassed &= TestTrue(TEXT("missing source leaves package byte-identical"), PackageAfter == PackageBefore);
+    bPassed &= TestTrue(
+        TEXT("missing source leaves live geometry unchanged"),
+        CaptureLOD0Positions(*Fixture.Mesh) == PositionsBefore);
+    const UMHStaticMeshImportData* ReceiptAfter =
+        Cast<UMHStaticMeshImportData>(Fixture.Mesh->GetAssetImportData());
+    bPassed &= TestNotNull(TEXT("missing-source refusal preserves receipt"), ReceiptAfter);
+    if (ReceiptAfter != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("missing-source refusal preserves hash"), ReceiptAfter->SourceHash, HashBefore);
+    }
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHTargetedStaticMeshMultiSelectionTest,
+    "Mimir.V4.StaticMesh.TargetedReimport.SequentialMultiSelection",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHTargetedStaticMeshMultiSelectionTest::RunTest(const FString& Parameters)
+{
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build())
+    {
+        return false;
+    }
+    UStaticMesh* Second = Fixture.AddSecondMesh();
+    if (!TestNotNull(TEXT("second managed mesh"), Second))
+    {
+        return false;
+    }
+    FReimportHandler* Handler = MHGetManagedStaticMeshReimportHandlerForTests();
+    if (!TestNotNull(TEXT("managed handler for multi-selection"), Handler))
+    {
+        return false;
+    }
+    TArray<UObject*> Meshes{Fixture.Mesh, Second};
+    TArray<FMHResourceKey> Notifications;
+    MHSetGeneratedResourceChangedObserverForTests(
+        [&Notifications](const FMHResourceKey& Key)
+        {
+            Notifications.Add(Key);
+        });
+    MHResetSourceImportMetrics();
+    const double Start = FPlatformTime::Seconds();
+    const bool bResult = FReimportManager::Instance()->ReimportMultiple(
+        Meshes,
+        false,
+        false,
+        FString(),
+        Handler,
+        INDEX_NONE,
+        false,
+        true);
+    const double WallMilliseconds = (FPlatformTime::Seconds() - Start) * 1000.0;
+    AddInfo(FString::Printf(
+        TEXT("TARGETED_REIMPORT_MULTI resources=2 wall_ms=%.6f policy=sequential_single_batches"),
+        WallMilliseconds));
+    const FMHSourceImportMetrics Metrics = MHGetSourceImportMetrics();
+    bool bPassed = TestTrue(TEXT("two selected managed meshes reimport"), bResult);
+    bPassed &= TestEqual(
+        TEXT("two sequential single batches perform two waits"),
+        Metrics.Get(EMHSourceImportMetricResource::Batch, EMHSourceImportMetricStage::BuildWait).Calls,
+        2ull);
+    bPassed &= TestEqual(
+        TEXT("two sequential single batches perform two saves"),
+        Metrics.Get(EMHSourceImportMetricResource::Batch, EMHSourceImportMetricStage::SavePackage).Calls,
+        2ull);
+    bPassed &= TestEqual(TEXT("two successful resources notify twice"), Notifications.Num(), 2);
     return bPassed;
 }
 
