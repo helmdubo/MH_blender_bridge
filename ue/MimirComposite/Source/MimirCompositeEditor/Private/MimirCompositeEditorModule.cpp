@@ -16,6 +16,7 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "Source/MHSourceComposition.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
+#include "StaticMesh/MHStaticMeshReimportHandler.h"
 #include "Engine/StaticMeshSocket.h"
 #include "Source/MHSourceImporter.h"
 #include "Texture/MHTextureSourceData.h"
@@ -183,6 +184,7 @@ void ExecuteReimportManagedMaterials(const FToolMenuContext& MenuContext)
 void FMimirCompositeEditorModule::StartupModule()
 {
     UE::MimirComposite::MHStartupRuntimeCompositeBridge();
+    UE::MimirComposite::MHStartupManagedStaticMeshReimportHandler();
     AssetRegistryTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(
         &AddMimirAssetRegistryTags);
     if (IsRunningCommandlet())
@@ -212,6 +214,7 @@ void FMimirCompositeEditorModule::StartupModule()
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
+    UE::MimirComposite::MHShutdownManagedStaticMeshReimportHandler();
     UE::MimirComposite::MHShutdownRuntimeCompositeBridge();
     UE::MimirComposite::MHShutdownProjectIndex();
     if (EnginePreExitHandle.IsValid())

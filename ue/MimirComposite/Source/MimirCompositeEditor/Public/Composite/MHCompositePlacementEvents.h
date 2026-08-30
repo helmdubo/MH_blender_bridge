@@ -17,4 +17,10 @@ MIMIRCOMPOSITEEDITOR_API int32 MHRebuildAllLoadedCompositeActors();
 /** Compatibility helper for callers which already hold the committed composite asset. */
 MIMIRCOMPOSITEEDITOR_API void MHNotifyCompositeAssetChanged(UMHCompositeAsset& Asset);
 
+#if WITH_DEV_AUTOMATION_TESTS
+/** Test-only observation of the existing generated-resource notification funnel. */
+MIMIRCOMPOSITEEDITOR_API void MHSetGeneratedResourceChangedObserverForTests(
+    TFunction<void(const FMHResourceKey&)> Observer);
+#endif
+
 } // namespace UE::MimirComposite

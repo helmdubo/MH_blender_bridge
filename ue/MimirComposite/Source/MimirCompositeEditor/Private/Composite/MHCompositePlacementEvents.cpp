@@ -10,6 +10,13 @@
 namespace UE::MimirComposite
 {
 
+#if WITH_DEV_AUTOMATION_TESTS
+namespace
+{
+TFunction<void(const FMHResourceKey&)> GGeneratedResourceChangedObserverForTests;
+}
+#endif
+
 int32 MHRebuildAllLoadedCompositeActors()
 {
     if (GEditor != nullptr)
@@ -44,6 +51,13 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         return;
     }
 
+#if WITH_DEV_AUTOMATION_TESTS
+    if (GGeneratedResourceChangedObserverForTests)
+    {
+        GGeneratedResourceChangedObserverForTests(Key);
+    }
+#endif
+
     if (GEditor != nullptr)
     {
         if (UMHCompositeDefinitionSubsystem* Definitions =
@@ -74,5 +88,13 @@ void MHNotifyCompositeAssetChanged(UMHCompositeAsset& Asset)
     Key.LogicalName = Asset.LogicalName;
     MHNotifyGeneratedResourceChanged(Key);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+void MHSetGeneratedResourceChangedObserverForTests(
+    TFunction<void(const FMHResourceKey&)> Observer)
+{
+    GGeneratedResourceChangedObserverForTests = MoveTemp(Observer);
+}
+#endif
 
 } // namespace UE::MimirComposite
