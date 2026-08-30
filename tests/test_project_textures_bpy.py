@@ -211,6 +211,59 @@ def test_basename_slot_with_multiple_loaded_sources_fails_before_copy(
     assert not (project / "assets").exists()
 
 
+def test_dead_authored_path_uses_loaded_image_for_copy_and_remap(tmp_path):
+    source = _external_texture(tmp_path, "metal_painted_b_tex_d.tif")
+    dead = (
+        r"D:\dagor2\active_matter\develop\assets\manmade_common\textures"
+        r"\tile_textures\metal_painted_b_tex_d.tif")
+    image = bpy.data.images.new("metal_painted_b_tex_d", width=1, height=1)
+    image.filepath = str(source)
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("metal_painted", {"tex0": dead})
+
+    copy_report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "metal_painted_b_tex_d.tif")
+
+    assert copy_report["copied"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+
+    remap_report = remap_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    assert remap_report["remapped"] == 1
+    assert material.dagormat.textures.tex0 == str(destination)
+
+
+def test_existing_authored_path_wins_over_loaded_image_with_same_stem(
+        tmp_path):
+    authored = _external_texture(
+        tmp_path, "explicit_path_wins_tex_d.tif")
+    alternate = (
+        tmp_path / "alternate" / "develop" / "assets" / "gameproj"
+        / "manmade_common" / "textures" / "tile_textures"
+        / "explicit_path_wins_tex_d.tif")
+    alternate.parent.mkdir(parents=True)
+    alternate.write_bytes(b"alternate image bytes")
+    image = bpy.data.images.new(
+        "explicit_path_wins_tex_d", width=1, height=1)
+    image.filepath = str(alternate)
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("explicit_path_wins", {"tex0": str(authored)})
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "explicit_path_wins_tex_d.tif")
+
+    assert report["copied"] == 1
+    assert destination.read_bytes() == authored.read_bytes()
+
+
 def test_remap_all_materials_preserves_transport_suffix(tmp_path):
     source = _external_texture(tmp_path)
     project = tmp_path / "project"

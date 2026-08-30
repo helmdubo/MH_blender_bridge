@@ -55,13 +55,6 @@ def _split_transport_suffix(path: str) -> tuple[str, str]:
     return source_path, marker + suffix if marker else ""
 
 
-def _has_assets_segment(path: str) -> bool:
-    return any(
-        part.casefold() == "assets"
-        for part in Path(path.replace("\\", "/")).parts
-    )
-
-
 def _loaded_image_texture_source_index() -> dict[str, list[Path]]:
     """Index dag4blend's loaded image carriers once for the whole batch."""
     matches: dict[str, dict[str, Path]] = {}
@@ -84,8 +77,9 @@ def _loaded_image_texture_source_index() -> dict[str, list[Path]]:
 
 def _resolve_dagor_texture_source(
         source_path: str, image_sources: dict[str, list[Path]]) -> str:
-    if _has_assets_segment(source_path):
-        return bpy.path.abspath(source_path)
+    authored = Path(bpy.path.abspath(source_path)).resolve(strict=False)
+    if authored.is_file():
+        return str(authored)
     filename = source_path.replace("\\", "/").rsplit("/", 1)[-1]
     parsed = Path(filename)
     token = parsed.stem if parsed.suffix else parsed.name
@@ -99,8 +93,9 @@ def _resolve_dagor_texture_source(
             + ", ".join(str(path) for path in candidates))
     raise ProjectTextureError(
         "MH_E_INVALID_RESOURCE_SOURCE", source_path,
-        "Dagor texture basename has no resolved loaded image; run dag4blend "
-        "Find missing textures for all materials")
+        "authored Dagor texture path does not exist and its basename has no "
+        "resolved loaded image; run dag4blend Find missing textures for all "
+        "materials")
 
 
 def _is_proxy_dagormat(dagormat) -> bool:
