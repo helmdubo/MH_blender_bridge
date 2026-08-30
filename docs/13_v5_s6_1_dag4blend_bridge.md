@@ -443,7 +443,10 @@ CDK. Поэтому носитель вводится — но в докумен
 2026-08-30: direct-export генерирует внешний placement-v1 с именем
 `dagor_p2_<xxh3-64 canonical bytes>`, дополняет отсутствующие оси нейтральными
 `[0, 0]`, дедуплицирует одинаковые байты и публикует профиль перед composite в
-том же batch. Сценовый `matrix_local` для такого узла является preview base и
+том же batch. Signed второй компонент Dagor (`base + random[-1,1] * second`)
+нормализуется в `abs(second)`: диапазон и равномерное распределение идентичны,
+а placement-v1 остаётся строгим и хранит неотрицательную deviation. Сценовый
+`matrix_local` для такого узла является preview base и
 не входит в authored transform: узел публикуется с identity, а полный
 `[base, deviation]` живёт в профиле, исключая double-base. Materialize-only
 маршрут без явной папки публикации и сценовый `include` без typed profile

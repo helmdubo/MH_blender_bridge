@@ -17,6 +17,10 @@ dag4blend inline-параметры `*:p2` разрешено автоматич
 
 - полный `[base, deviation]` каждого `p2` записывается в существующий
   placement-v1;
+- signed второй компонент Dagor нормализуется в `abs(second)`. В Dagor он
+  умножается на симметричный random `[-1, 1]`, поэтому знак меняет только
+  направление draw, но не диапазон и не распределение. Грамматика placement-v1
+  остаётся строгой и принимает только неотрицательную deviation;
 - отсутствующая ось внутри частичной offset/rotation-группы дополняется
   нейтральным `[0, 0]`;
 - имя равно `dagor_p2_<xxh3-64 canonical placement bytes>`;
@@ -82,7 +86,7 @@ composite:direct_root
 | Гейт | Результат |
 |---|---:|
 | Pure `python -m pytest tests/ -q` | **305 passed / 14 skipped / 0 failed** |
-| Focus: direct/bridge/publication/import | **156 passed / 0 failed** |
+| Focus: direct/bridge/publication/import | **157 passed / 0 failed** |
 | `test_dag4blend_direct_export_bpy.py` | **83 passed / 0 failed** |
 | Blender 4.5.12, 12 отдельных factory-startup процессов | **344 passed / 0 failed / 0 skipped** |
 | `git diff --check` | **PASS** |
@@ -91,7 +95,7 @@ composite:direct_root
 Пакет:
 `dist/mh4blend-0.8.0-windows-x64.zip`  
 SHA256:
-`f7fcbfbe1f6a0e4b2c674fd2b3f121c5eeeb9adfb38723a21ab7986123cb0f10`.
+`d0b8374d261bc82c5de71dac0ec6f9694293fe5ce4e5ab5a0ed127a4257ee188`.
 
 Открытое GUI-окно Blender owner не перехватывалось и установленное расширение
 во время его работы не перезаписывалось. Для полевого теста нужен install/reload
@@ -126,3 +130,43 @@ SHA256:
 Новых вопросов нет. Сценовый `include` без typed `mh4blend.profile` намеренно
 не резолвится: сохранённый произвольный путь не является authority. Это
 fail-closed граница, а не потеря inline p2.
+
+## 8. Полевой follow-up: signed p2
+
+Сохранённая owner-сцена выявила реальный CDK-случай:
+
+```text
+sovmod_writing_table_items_c.composit.blk:35
+offset_x:p2=0, -0.01
+```
+
+До исправления:
+
+```text
+MH_E_PLACEMENT_PROFILE_GRAMMAR: $.offset_cm[0][1]:
+deviation must be greater than or equal to zero
+```
+
+Исходник Dagor `compositMgrService.cpp::getRandom` подтверждает вычисление
+`base + (frnd * 2 - 1) * second`. Добавлен red-first тест: отрицательный и
+положительный второй компонент одного модуля обязаны дать один canonical
+profile и одну публикацию. До фикса тест красный, после `abs(second)` — зелёный.
+
+Write-free preflight на реальном
+`E:\portfolio\sovmod_cottage_i_cmp_source_lod00.blend`:
+
+```text
+sovmod_writing_table_items_c:
+  documents=12, overrides=39, profiles=14, nodes=5 — PASS
+
+sovmod_cottage_i_cmp (Allow Prefab as Mesh (Lossy)):
+  documents=239, overrides=732, profiles=73, nodes=420,
+  warnings=1, elapsed=0.638 s — PASS
+```
+
+Полевой preflight не создавал и не заменял source-файлы.
+
+Полный Blender gate при первом follow-up запуске получил единственный
+wall-clock флейк в неизменённом publish-perf тесте: `max_payload_ms=109` при
+пороге `100`. Изолированный повтор модуля: **16/16**, `max_payload_ms=78`;
+повтор всей линии: **344/344**. Функциональных отказов не было.

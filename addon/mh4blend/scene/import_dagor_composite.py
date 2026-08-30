@@ -686,7 +686,12 @@ def _dag4blend_p2_range(key, value, provenance):
         _raise(
             "MH_E_PLACEMENT_PROFILE_GRAMMAR", [provenance, key],
             f"dag4blend {key} base and deviation must be numbers")
-    return PlacementRange(float(raw[0]), float(raw[1]))
+    # Dagor evaluates p2 as base + symmetric_unit_random * second. A negative
+    # second component only reverses the draw direction; it defines the same
+    # range and uniform distribution. Source Protocol stores that component as
+    # a non-negative deviation magnitude, so normalize at this adapter boundary
+    # without weakening the placement-v1 grammar.
+    return PlacementRange(float(raw[0]), abs(float(raw[1])))
 
 
 def _dag4blend_generated_profile(claims, provenance):

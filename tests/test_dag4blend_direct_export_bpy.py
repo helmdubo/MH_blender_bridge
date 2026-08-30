@@ -223,9 +223,32 @@ def test_inline_p2_preserves_all_ranges_and_fills_only_missing_axes(tmp_path):
     assert profile.vertical_scale.deviation == pytest.approx(0.05)
 
 
+def test_inline_p2_signed_spread_normalizes_to_the_same_symmetric_range(
+        tmp_path):
+    root = legacy("direct_root")
+    first = empty("negative_spread", root)
+    second = empty("positive_spread", root)
+    first["dagorprops"] = {"offset_x:p2": [0.0, -0.01]}
+    second["dagorprops"] = {"offset_x:p2": [0.0, 0.01]}
+    before = snapshot()
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+    assert snapshot() == before
+
+    document = read_composite_file(tmp_path / "direct_root.composite")
+    assert document.nodes[0].profile == document.nodes[1].profile
+    profile = read_placement_file(
+        tmp_path / f"{document.nodes[0].profile}.placement")
+    assert profile.offset_cm[0].base == 0.0
+    assert profile.offset_cm[0].deviation == pytest.approx(0.01)
+    assert sum(
+        item.startswith("placement_profile:")
+        for item in report["published"]
+    ) == 1
+
+
 @pytest.mark.parametrize("properties", [
     {"rot_y:p2": [0.0]},
-    {"rot_y:p2": [0.0, -1.0]},
     {"scale:p2": [0.5, 0.5]},
     {"rot_y:p2": [0.0, float("inf")]},
 ])
