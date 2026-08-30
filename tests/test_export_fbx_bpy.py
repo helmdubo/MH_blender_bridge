@@ -372,12 +372,17 @@ def test_noncanonical_material_slot_preserves_resource_name_code(tmp_path):
     assert not (tmp_path / "canonical_mesh.mesh.fbx").exists()
 
 
-def test_dagor_default_material_name_projects_in_fbx_without_scene_mutation(
-        tmp_path, registered_material_properties, monkeypatch):
+@pytest.mark.parametrize(("authored", "logical"), [
+    ("Material #2644", "material_2644"),
+    ("13 - Default", "13_default"),
+])
+def test_dagor_external_material_name_projects_in_fbx_without_scene_mutation(
+        tmp_path, registered_material_properties, monkeypatch,
+        authored, logical):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("canonical_mesh")
     body = _mesh_object("body", collection)
-    material = _material("Material #2644")
+    material = _material(authored)
     material.mh4blend.material_class = "rendinst_simple"
     _assign_material(body, material)
     monkeypatch.setattr(
@@ -388,10 +393,32 @@ def test_dagor_default_material_name_projects_in_fbx_without_scene_mutation(
         collection, tmp_path, source_root=tmp_path)
     plan = parse_mesh_fbx(report["filepath"])
 
-    assert report["materials"] == ["material_2644"]
-    assert plan.material_names == ("material_2644",)
-    assert material.name == "Material #2644"
+    assert report["materials"] == [logical]
+    assert plan.material_names == (logical,)
+    assert material.name == authored
     assert body.material_slots[0].material == material
+
+
+def test_dagor_name_projection_collision_fails_closed(
+        tmp_path, registered_material_properties, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("canonical_mesh")
+    body = _mesh_object("body", collection)
+    punctuated = _material("13 - Default")
+    canonical = _material("13_default")
+    punctuated.mh4blend.material_class = "rendinst_simple"
+    canonical.mh4blend.material_class = "rendinst_simple"
+    _assign_material(body, punctuated)
+    _assign_material(body, canonical)
+    monkeypatch.setattr(
+        export_material_module, "_uses_dagor_name_boundary",
+        lambda candidate: candidate == punctuated or candidate == canonical)
+
+    with pytest.raises(MHValidationError) as excinfo:
+        export_fbx_collection(collection, tmp_path, source_root=tmp_path)
+
+    assert excinfo.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert not (tmp_path / "canonical_mesh.mesh.fbx").exists()
 
 
 def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):

@@ -10,7 +10,10 @@ import bpy
 
 from ..core.canonical import validate_resource_name
 from ..core.canonical_json import narrow_float32
-from ..core.dagor_names import project_dagor_resource_name
+from ..core.dagor_names import (
+    project_dagor_material_name,
+    project_dagor_resource_name,
+)
 from ..core.materials import (
     MATERIAL_TEXTURE_EXTENSIONS,
     MaterialValueError,
@@ -107,7 +110,7 @@ def _logical_material_name(material) -> str:
         return material.name
     authored_name = _authored_material_name(material)
     if _uses_dagor_name_boundary(material):
-        return project_dagor_resource_name(authored_name)
+        return project_dagor_material_name(authored_name)
     return authored_name
 
 

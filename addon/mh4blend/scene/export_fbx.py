@@ -1231,13 +1231,21 @@ def prepare_fbx_collection(
     # first appearance in this walk is the frozen contract order, and a slot
     # owned only by non-render nodes never enters the closure.
     materials = []
-    seen_materials = set()
+    seen_materials = {}
     for obj in objects:
         for index, slot in enumerate(obj.material_slots):
             binding = _transport_material_binding(obj, index, slot)
-            if binding.name in seen_materials:
+            previous = seen_materials.get(binding.name)
+            if previous is not None:
+                if previous is not binding:
+                    raise MHValidationError(
+                        "MH_E_AMBIGUOUS_RESOURCE_NAME",
+                        [binding.name, previous.material.name,
+                         binding.material.name],
+                        "different Blender materials project to one material "
+                        "token")
                 continue
-            seen_materials.add(binding.name)
+            seen_materials[binding.name] = binding
             materials.append(binding)
 
     scene = _find_export_scene(collection)

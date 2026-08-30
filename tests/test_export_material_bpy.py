@@ -255,12 +255,17 @@ def test_dagor_material_and_texture_ascii_case_publish_lowercase(tmp_path):
     assert prepared.target == tmp_path / "sovmod_bag_leather.material"
 
 
-def test_dagor_default_material_name_publishes_canonical_token(tmp_path):
+@pytest.mark.parametrize(("authored", "logical"), [
+    ("Material #2644", "material_2644"),
+    ("13 - Default", "13_default"),
+])
+def test_dagor_external_material_name_publishes_canonical_token(
+        tmp_path, authored, logical):
     prepared = prepare_blender_material_export(
-        _dagor_material("Material #2644"), tmp_path, source_root=tmp_path)
+        _dagor_material(authored), tmp_path, source_root=tmp_path)
 
-    assert prepared.resource.name == "material_2644"
-    assert prepared.target == tmp_path / "material_2644.material"
+    assert prepared.resource.name == logical
+    assert prepared.target == tmp_path / f"{logical}.material"
 
 
 def test_dagor_texture_filename_whitespace_publishes_canonical_token(
