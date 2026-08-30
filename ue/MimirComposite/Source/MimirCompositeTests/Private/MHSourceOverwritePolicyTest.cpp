@@ -169,6 +169,25 @@ bool FMHSourceOverwriteConfirmDisabledTest::RunTest(const FString& Parameters)
     {
         bPassed &= TestEqual(TEXT("Message Log text identifies overwritten file"), MessageLogLines[0], Audit);
     }
+
+    Notifications.Reset();
+    MessageLogLines.Reset();
+    const EMHSourceOverwriteExecution FailedWrite = MHExecuteSourceOverwrite(
+        Target,
+        INVTEXT("This confirmation must also be suppressed"),
+        FText::FromString(Audit),
+        [&WriteCalls]()
+        {
+            ++WriteCalls;
+            return false;
+        });
+    bPassed &= TestEqual(
+        TEXT("disabled policy reports a failed write as attempted"),
+        FailedWrite,
+        EMHSourceOverwriteExecution::Attempted);
+    bPassed &= TestEqual(TEXT("failed write still bypasses confirmation UI"), ConfirmationCalls, 0);
+    bPassed &= TestEqual(TEXT("failed write does not emit success notification"), Notifications.Num(), 0);
+    bPassed &= TestEqual(TEXT("failed write does not emit success Message Log"), MessageLogLines.Num(), 0);
     return bPassed;
 }
 
