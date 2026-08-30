@@ -255,6 +255,25 @@ def test_dagor_material_and_texture_ascii_case_publish_lowercase(tmp_path):
     assert prepared.target == tmp_path / "sovmod_bag_leather.material"
 
 
+def test_dagor_texture_filename_whitespace_publishes_canonical_token(
+        tmp_path):
+    token = "sovmod_building_school_robe_a_tex_d"
+    (tmp_path / f"{token}.tga").write_bytes(b"texture")
+    material = _dagor_material(
+        "sovmod_building_school_robe_a_lod00",
+        textures={
+            "tex0": (
+                r"H:\foreign\assets\gameproj\sovmod_building_school_robe_a "
+                r"_tex_d.tga"),
+        },
+    )
+
+    prepared = prepare_blender_material_export(
+        material, tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.textures == {"tex0": token}
+
+
 def test_dagormat_real_two_sided_fails_instead_of_losing_semantics():
     with pytest.raises(MaterialValueError) as excinfo:
         export_material_module._extract_resource(_dagor_material(sides=2))

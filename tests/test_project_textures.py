@@ -300,6 +300,19 @@ def test_plan_projects_external_dagor_ascii_case_to_lowercase(tmp_path):
     assert plan.destination.name == "sovmod_bag_tex_d.tga"
 
 
+def test_plan_projects_dagor_filename_whitespace_to_separator(tmp_path):
+    source = _external_texture(
+        tmp_path, name="sovmod_building_school_robe_a _tex_d.tga")
+    project = tmp_path / "project"
+    project.mkdir()
+
+    plan = plan_project_texture(source, project)
+
+    assert plan.source == source
+    assert plan.destination.name == (
+        "sovmod_building_school_robe_a_tex_d.tga")
+
+
 def test_case_projection_collision_is_rejected_before_copy(tmp_path):
     first = _external_texture(
         tmp_path, branch="first", name="Sovmod_bag_tex_d.TGA")

@@ -317,7 +317,7 @@ def _texture_token_from_path(
             raise MaterialValueError(
                 "MH_E_NONCANONICAL_TEXTURE_REFERENCE", path,
                 "Dagor texture filename stem must contain only ASCII "
-                "letters, digits and underscore") from exc
+                "letters, digits, underscore and projectable whitespace") from exc
     # The codec performs the exact fail-closed token validation.
     try:
         parse_material({"class": "probe", "textures": {"tex0": token}})

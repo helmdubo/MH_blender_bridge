@@ -84,8 +84,8 @@ def plan_project_texture(authored_path, project_root) -> TextureCopyPlan:
     except ValueError as exc:
         raise ProjectTextureError(
             "MH_E_NONCANONICAL_RESOURCE_NAME", str(source),
-            "texture filename stem must contain only ASCII letters, digits "
-            "and underscore") from exc
+            "texture filename stem must contain only ASCII letters, digits, "
+            "underscore and projectable whitespace") from exc
 
     assets_indices = [
         index for index, part in enumerate(source.parts)
