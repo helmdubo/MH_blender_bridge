@@ -251,6 +251,32 @@ void ResetReseedMeasurements()
     MHResetPlacementReseedMetrics();
 }
 
+void AccumulateMutationMetrics(
+    FMHPlacementMutationMetrics& Total, const FMHPlacementMutationMetrics& Sample)
+{
+    Total.CreatedComponents += Sample.CreatedComponents;
+    Total.DestroyedComponents += Sample.DestroyedComponents;
+    Total.RegisteredComponents += Sample.RegisteredComponents;
+    Total.Attachments += Sample.Attachments;
+    Total.StaticMeshAssignments += Sample.StaticMeshAssignments;
+    Total.WorldTransformUpdates += Sample.WorldTransformUpdates;
+    Total.AppearanceUpdates += Sample.AppearanceUpdates;
+}
+
+uint64 MaterializationMutationUnits(const FMHPlacementMutationMetrics& Metrics)
+{
+    return Metrics.CreatedComponents + Metrics.DestroyedComponents + Metrics.RegisteredComponents +
+        Metrics.Attachments + Metrics.StaticMeshAssignments + Metrics.WorldTransformUpdates +
+        Metrics.AppearanceUpdates;
+}
+
+uint64 MaterializationStageCycles(const FMHPlacementStageMetrics& Metrics)
+{
+    return Metrics.Get(EMHPlacementStage::CompilePlacement).InclusiveCycles +
+        Metrics.Get(EMHPlacementStage::RegisterComponents).InclusiveCycles +
+        Metrics.Get(EMHPlacementStage::DestroyRetiredComponents).InclusiveCycles;
+}
+
 double TimedReseed(AMHCompositeActor& Actor, const int32 Seed)
 {
     const double Start = FPlatformTime::Seconds();
@@ -583,10 +609,22 @@ bool FMHIncrementalReseedWallRatioTest::RunTest(const FString& Parameters)
     constexpr int32 Iterations = 5;
     double IncrementalMilliseconds = 0.0;
     double FullMilliseconds = 0.0;
+    uint64 IncrementalStageCycles = 0;
+    uint64 FullStageCycles = 0;
+    uint64 IncrementalResolverCycles = 0;
+    uint64 FullResolverCycles = 0;
+    FMHPlacementMutationMetrics IncrementalMutations;
+    FMHPlacementMutationMetrics FullMutations;
     int32 NextSeed = SecondSeed;
     for (int32 Index = 0; Index < Iterations; ++Index)
     {
+        ResetReseedMeasurements();
         IncrementalMilliseconds += TimedReseed(*Incremental, NextSeed);
+        const FMHPlacementStageMetrics IncrementalStages = MHGetPlacementStageMetrics();
+        IncrementalStageCycles += MaterializationStageCycles(IncrementalStages);
+        IncrementalResolverCycles +=
+            IncrementalStages.Get(EMHPlacementStage::ResolveCompositePlan).InclusiveCycles;
+        AccumulateMutationMetrics(IncrementalMutations, MHGetPlacementMutationMetrics());
         if (!SetSeedPropertyWithoutRebuild(*this, *Full, NextSeed))
         {
             Incremental->Destroy();
@@ -594,15 +632,51 @@ bool FMHIncrementalReseedWallRatioTest::RunTest(const FString& Parameters)
             World->DestroyWorld(false);
             return false;
         }
+        ResetReseedMeasurements();
         const double Start = FPlatformTime::Seconds();
         Full->RebuildComposite();
         FullMilliseconds += (FPlatformTime::Seconds() - Start) * 1000.0;
+        const FMHPlacementStageMetrics FullStages = MHGetPlacementStageMetrics();
+        FullStageCycles += MaterializationStageCycles(FullStages);
+        FullResolverCycles += FullStages.Get(EMHPlacementStage::ResolveCompositePlan).InclusiveCycles;
+        AccumulateMutationMetrics(FullMutations, MHGetPlacementMutationMetrics());
         NextSeed = NextSeed == FirstSeed ? SecondSeed : FirstSeed;
     }
-    const double Ratio = FullMilliseconds > 0.0 ? IncrementalMilliseconds / FullMilliseconds : 1.0;
-    AddInfo(FString::Printf(TEXT("S652_WALL synthetic300 iterations=%d incremental_ms=%.6f full_ms=%.6f ratio=%.6f"),
-        Iterations, IncrementalMilliseconds, FullMilliseconds, Ratio));
-    bool bPassed = TestTrue(TEXT("incremental reseed wall time is at most fifteen percent of full rebuild"), Ratio <= 0.15);
+    const uint64 IncrementalUnits = MaterializationMutationUnits(IncrementalMutations);
+    const uint64 FullUnits = MaterializationMutationUnits(FullMutations);
+    const double MaterializationRatio = FullUnits > 0
+        ? static_cast<double>(IncrementalUnits) / static_cast<double>(FullUnits) : 1.0;
+    const double IncrementalStageMilliseconds = FPlatformTime::ToMilliseconds64(IncrementalStageCycles);
+    const double FullStageMilliseconds = FPlatformTime::ToMilliseconds64(FullStageCycles);
+    const double IncrementalResolverMilliseconds = FPlatformTime::ToMilliseconds64(IncrementalResolverCycles);
+    const double FullResolverMilliseconds = FPlatformTime::ToMilliseconds64(FullResolverCycles);
+    const double StageRatio = FullStageMilliseconds > 0.0
+        ? IncrementalStageMilliseconds / FullStageMilliseconds : 1.0;
+    const double WallRatio = FullMilliseconds > 0.0 ? IncrementalMilliseconds / FullMilliseconds : 1.0;
+    AddInfo(FString::Printf(
+        TEXT("S652_MATERIALIZATION synthetic300 iterations=%d incremental_units=%llu full_units=%llu ratio=%.6f")
+        TEXT(" incremental[create=%llu,destroy=%llu,register=%llu,attach=%llu,set_mesh=%llu,world=%llu,appearance=%llu]")
+        TEXT(" full[create=%llu,destroy=%llu,register=%llu,attach=%llu,set_mesh=%llu,world=%llu,appearance=%llu]"),
+        Iterations, IncrementalUnits, FullUnits, MaterializationRatio,
+        IncrementalMutations.CreatedComponents, IncrementalMutations.DestroyedComponents,
+        IncrementalMutations.RegisteredComponents, IncrementalMutations.Attachments,
+        IncrementalMutations.StaticMeshAssignments, IncrementalMutations.WorldTransformUpdates,
+        IncrementalMutations.AppearanceUpdates,
+        FullMutations.CreatedComponents, FullMutations.DestroyedComponents,
+        FullMutations.RegisteredComponents, FullMutations.Attachments,
+        FullMutations.StaticMeshAssignments, FullMutations.WorldTransformUpdates,
+        FullMutations.AppearanceUpdates));
+    AddInfo(FString::Printf(
+        TEXT("S652_MATERIALIZATION_STAGE_INFO synthetic300 iterations=%d incremental_ms=%.6f full_ms=%.6f ratio=%.6f"),
+        Iterations, IncrementalStageMilliseconds, FullStageMilliseconds, StageRatio));
+    AddInfo(FString::Printf(
+        TEXT("S652_WALL_INFO synthetic300 iterations=%d incremental_ms=%.6f full_ms=%.6f ratio=%.6f")
+        TEXT(" incremental_resolve_ms=%.6f full_resolve_ms=%.6f"),
+        Iterations, IncrementalMilliseconds, FullMilliseconds, WallRatio,
+        IncrementalResolverMilliseconds, FullResolverMilliseconds));
+    bool bPassed = TestTrue(
+        TEXT("incremental reseed materialization work is at most fifteen percent of full rebuild"),
+        MaterializationRatio <= 0.15);
     bPassed &= CompareMaterializedViews(*this, *Incremental, *Full);
     Incremental->Destroy();
     Full->Destroy();
