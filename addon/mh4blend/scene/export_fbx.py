@@ -756,7 +756,7 @@ def _assert_output_under_root(output_dir, source_root):
             "FBX output folder must be inside Project Source Root")
 
 
-def _transport_material_binding(obj, index, slot):
+def _transport_material_binding(obj, index, slot, resource_name):
     """Return the binding one transported slot publishes, or fail closed."""
     material = slot.material
     if material is None:
@@ -766,7 +766,7 @@ def _transport_material_binding(obj, index, slot):
     slot_name = str(slot.name or material.name)
     authored_slot = strip_blender_duplicate_suffix(slot_name)
     authored_material = strip_blender_duplicate_suffix(material.name)
-    binding = resolve_material_binding(material)
+    binding = resolve_material_binding(material, asset_name=resource_name)
     # A normal Blender slot carries the authored material name. At the Dagor
     # adapter boundary that name may project to a canonical transport token;
     # compare the projected binding while retaining fail-closed handling for
@@ -798,12 +798,13 @@ def _transport_material_binding(obj, index, slot):
     return binding
 
 
-def _material_slot_names(objects):
+def _material_slot_names(objects, resource_name):
     """Validate and return the logical material names transported by FBX."""
     names = set()
     for obj in sorted(objects, key=lambda item: item.name):
         for index, slot in enumerate(obj.material_slots):
-            names.add(_transport_material_binding(obj, index, slot).name)
+            names.add(_transport_material_binding(
+                obj, index, slot, resource_name).name)
     return names
 
 
@@ -992,7 +993,7 @@ def _temporary_collision_transport(export_objects, collision_transport):
 
 
 @contextlib.contextmanager
-def _temporary_transport_material_names(export_objects):
+def _temporary_transport_material_names(export_objects, resource_name):
     """Expose logical material names to the FBX writer and always restore them.
 
     Blender stamps the datablock name into the FBX, so a ``.NNN`` duplicate
@@ -1014,7 +1015,8 @@ def _temporary_transport_material_names(export_objects):
                 material = slot.material
                 if material is None:
                     continue
-                binding = resolve_material_binding(material)
+                binding = resolve_material_binding(
+                    material, asset_name=resource_name)
                 if binding.name not in seen:
                     seen.add(binding.name)
                     representatives.append(binding)
@@ -1225,7 +1227,7 @@ def prepare_fbx_collection(
     transport_meshes = [
         obj for obj in export_objects
         if obj.type == "MESH" and obj.as_pointer() not in collision_ids]
-    _material_slot_names(transport_meshes)
+    _material_slot_names(transport_meshes, resource_name)
     # The material list is the render-only ordered union of every LOD
     # (docs/15 §1.1 and §3.4 last bullet): `objects` is already LOD-major, so
     # first appearance in this walk is the frozen contract order, and a slot
@@ -1234,7 +1236,8 @@ def prepare_fbx_collection(
     seen_materials = {}
     for obj in objects:
         for index, slot in enumerate(obj.material_slots):
-            binding = _transport_material_binding(obj, index, slot)
+            binding = _transport_material_binding(
+                obj, index, slot, resource_name)
             previous = seen_materials.get(binding.name)
             if previous is not None:
                 if previous is not binding:
@@ -1413,7 +1416,7 @@ def stage_prepared_fbx(prepared, staged_filepath):
             with _temporary_collision_transport(
                     prepared.export_objects, prepared.collision_transport):
                 with _temporary_transport_material_names(
-                        prepared.export_objects):
+                        prepared.export_objects, prepared.resource_name):
                     with _temporary_selection_context(
                             prepared.scene, prepared.export_objects):
                         with _temporary_ue_centimeter_export_state(

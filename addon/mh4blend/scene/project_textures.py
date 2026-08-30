@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 
 import bpy
 
 from ..core.mesh_nodes import strip_blender_duplicate_suffix
+from ..core.dagor_names import project_dagor_resource_name
 from ..core.project_textures import (
     ProjectTextureError,
     TextureCopyPlan,
@@ -17,6 +19,7 @@ from ..core.project_textures import (
     validate_texture_plans,
 )
 from ..core.proxymat import read_proxymat
+from .resource_markers import COLLECTION_KIND_KEY, COLLECTION_RESOURCE_KEY
 
 __all__ = [
     "DagorTextureBinding",
@@ -35,6 +38,11 @@ class DagorTextureBinding:
     transport_suffix: str
     plan: TextureCopyPlan
     writable_textures: object = None
+    macro_asset_name: str | None = None
+
+
+_LOD_RESOURCE_RE = re.compile(
+    r"^(?P<base>.+)\.lod(?:s|\d{2})(?:\.\d{3})?$")
 
 
 def _project_root(source_root) -> Path:
@@ -107,18 +115,84 @@ def _is_proxy_dagormat(dagormat) -> bool:
     return shader_class.endswith(":proxymat")
 
 
-def _proxy_texture_paths(material, dagormat) -> dict[str, str]:
+def _proxy_source(material, dagormat):
     directory = str(getattr(dagormat, "proxy_path", "") or "")
     source = Path(bpy.path.abspath(directory)).resolve(strict=False)
     source = source / (
         strip_blender_duplicate_suffix(str(material.name)) + ".proxymat.blk")
     try:
-        return read_proxymat(source).textures
+        return source, read_proxymat(source)
     except (OSError, UnicodeError) as exc:
         raise ProjectTextureError(
             "MH_E_INVALID_RESOURCE_SOURCE", str(source),
             "proxymat source cannot be read; check proxy_path or run the "
             "dag4blend proxymat search") from exc
+
+
+def _collection_asset_name(collection) -> str | None:
+    if collection.get(COLLECTION_KIND_KEY) == "mesh":
+        stamped = collection.get(COLLECTION_RESOURCE_KEY)
+        if isinstance(stamped, str) and stamped:
+            return stamped
+    match = _LOD_RESOURCE_RE.fullmatch(
+        strip_blender_duplicate_suffix(str(collection.name)))
+    if match is None:
+        return None
+    return project_dagor_resource_name(match.group("base"))
+
+
+def _object_asset_name(obj) -> str | None:
+    candidates = {
+        name
+        for collection in obj.users_collection
+        for name in (_collection_asset_name(collection),)
+        if name is not None
+    }
+    if not candidates:
+        match = _LOD_RESOURCE_RE.fullmatch(
+            strip_blender_duplicate_suffix(str(obj.name)))
+        if match is not None:
+            candidates.add(project_dagor_resource_name(match.group("base")))
+    if len(candidates) > 1:
+        raise ProjectTextureError(
+            "MH_E_AMBIGUOUS_RESOURCE_NAME", obj.name,
+            "mesh object belongs to multiple Dagor asset definitions: "
+            + ", ".join(sorted(candidates)))
+    return next(iter(candidates), None)
+
+
+def _material_macro_asset_names(material) -> tuple[str, ...]:
+    names = set()
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        if not any(slot.material == material for slot in obj.material_slots):
+            continue
+        asset_name = _object_asset_name(obj)
+        if asset_name is None:
+            raise ProjectTextureError(
+                "MH_E_INVALID_RESOURCE_SOURCE", obj.name,
+                f"cannot derive $(ASSET_NAME) for proxymat material "
+                f"{material.name!r}; put the object in a .lodNN mesh "
+                "collection or use a managed MH mesh collection")
+        names.add(asset_name)
+    if not names:
+        raise ProjectTextureError(
+            "MH_E_INVALID_RESOURCE_SOURCE", material.name,
+            "proxymat uses $(ASSET_NAME) but no mesh object using this "
+            "material was found")
+    return tuple(sorted(names))
+
+
+def _proxymat_texture_path(source: Path, value: str) -> str:
+    authored = Path(value)
+    if value.startswith("//"):
+        path = Path(bpy.path.abspath(value)).resolve(strict=False)
+    elif authored.is_absolute():
+        path = authored.resolve(strict=False)
+    else:
+        path = (source.parent / authored).resolve(strict=False)
+    return str(path)
 
 
 def collect_dagor_texture_bindings(
@@ -132,17 +206,37 @@ def collect_dagor_texture_bindings(
         textures = getattr(dagormat, "textures", None)
         is_proxy = _is_proxy_dagormat(dagormat)
         if is_proxy:
-            authored_rows = _proxy_texture_paths(material, dagormat)
+            proxy_source, proxy = _proxy_source(material, dagormat)
+            authored_rows = [
+                (slot, _proxymat_texture_path(proxy_source, authored), None)
+                for slot, authored in sorted(proxy.textures.items())
+            ]
+            if proxy.macro_textures:
+                for asset_name in _material_macro_asset_names(material):
+                    for slot, authored in sorted(proxy.macro_textures.items()):
+                        expanded = authored.replace(
+                            "$(ASSET_NAME)", asset_name)
+                        if "$(" in expanded:
+                            raise ProjectTextureError(
+                                "MH_E_INVALID_RESOURCE_SOURCE",
+                                f"material {material.name!r} / {slot}",
+                                f"unsupported proxymat texture macro: "
+                                f"{authored!r}")
+                        authored_rows.append((
+                            slot,
+                            _proxymat_texture_path(proxy_source, expanded),
+                            asset_name,
+                        ))
             writable_textures = None
         elif textures is not None:
-            authored_rows = {
-                f"tex{index}": getattr(textures, f"tex{index}", "")
+            authored_rows = [
+                (f"tex{index}", getattr(textures, f"tex{index}", ""), None)
                 for index in range(16)
-            }
+            ]
             writable_textures = textures
         else:
             continue
-        for slot, authored in sorted(authored_rows.items()):
+        for slot, authored, macro_asset_name in authored_rows:
             if authored in (None, ""):
                 continue
             if not isinstance(authored, str):
@@ -170,6 +264,7 @@ def collect_dagor_texture_bindings(
                 transport_suffix=transport_suffix,
                 plan=plan,
                 writable_textures=writable_textures,
+                macro_asset_name=macro_asset_name,
             ))
     return bindings
 
@@ -185,6 +280,8 @@ def copy_all_dagor_textures_to_project(
     report.update({
         "materials": len({binding.material_name for binding in bindings}),
         "referenced_slots": len(bindings),
+        "macro_slots": sum(
+            binding.macro_asset_name is not None for binding in bindings),
         "unique_files": report["copied"] + report["skipped"],
     })
     return report
@@ -261,6 +358,8 @@ def remap_all_dagor_textures_to_project(
         "ok": True,
         "materials": len({binding.material_name for binding in bindings}),
         "referenced_slots": len(bindings),
+        "macro_slots": sum(
+            binding.macro_asset_name is not None for binding in bindings),
         "read_only_proxy_slots": len(bindings) - len(writable_bindings),
         "remapped": changed,
         "paths": sorted({

@@ -552,6 +552,7 @@ def prepare_composite_closure_export(
     validated_only: dict[ResourceKey, SourceSnapshot] = {}
     material_names: set[str] = set()
     material_owners: dict[str, dict[ResourceKey, None]] = {}
+    material_inputs = {}
     for key in sorted(closure.static_meshes):
         owners = closure.referrers_for(key)
         source_candidate = (
@@ -588,6 +589,12 @@ def prepare_composite_closure_export(
             prepared = replace(prepared, target=target)
             material_names.update(material.name for material in prepared.materials)
             for material in prepared.materials:
+                previous = material_inputs.get(material.name)
+                if previous is not None and previous is not material:
+                    _raise(
+                        "MH_E_AMBIGUOUS_RESOURCE_NAME", [material.name],
+                        "different Blender materials claim one material token")
+                material_inputs[material.name] = material
                 owner_set = material_owners.setdefault(material.name, {})
                 for owner in owners:
                     owner_set.setdefault(owner, None)
@@ -633,7 +640,9 @@ def prepare_composite_closure_export(
             key = ResourceKey("material", name)
             owners = tuple(material_owners.get(name, ()))
             source_candidate = inventory.resolve(key, allow_missing=True)
-            material = bpy.data.materials.get(name)
+            material = material_inputs.get(name)
+            if material is None:
+                material = bpy.data.materials.get(name)
             if material is not None:
                 if material.library is not None:
                     _raise(

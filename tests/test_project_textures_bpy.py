@@ -16,6 +16,7 @@ from mh4blend.scene.project_textures import (  # noqa: E402
     copy_all_dagor_textures_to_project,
     remap_all_dagor_textures_to_project,
 )
+import mh4blend.scene.project_textures as project_textures_module  # noqa: E402
 
 
 def _material(name, slots):
@@ -156,6 +157,44 @@ def test_copy_all_reads_proxy_file_instead_of_stale_scene_slots(tmp_path):
         source_root=project, materials=[material])
     assert remap_report["remapped"] == 0
     assert remap_report["read_only_proxy_slots"] == 1
+
+
+def test_copy_all_expands_proxy_macro_textures_for_mesh_users(
+        tmp_path, monkeypatch):
+    external = (
+        tmp_path / "external" / "develop" / "assets" / "gameproj"
+        / "nature" / "ground_plants")
+    external.mkdir(parents=True)
+    pos = external / "bush_beech_medium_a_pivot_pos.dds"
+    direction = external / "bush_beech_medium_a_pivot_dir.dds"
+    pos.write_bytes(b"pivot pos")
+    direction.write_bytes(b"pivot dir")
+    (external / "bush_beech_bark.proxymat.blk").write_text(
+        'class:t="rendinst_tree_colored"\n'
+        'tex7:t="$(ASSET_NAME)_pivot_pos.dds"\n'
+        'tex8:t="$(ASSET_NAME)_pivot_dir.dds"\n',
+        encoding="utf-8",
+    )
+    material = _material("bush_beech_bark", {})
+    material.dagormat.is_proxy = True
+    material.dagormat.proxy_path = str(external)
+    monkeypatch.setattr(
+        project_textures_module,
+        "_material_macro_asset_names",
+        lambda _material: ("bush_beech_medium_a",),
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+
+    destination = (
+        project / "assets" / "gameproj" / "nature" / "ground_plants")
+    assert report["macro_slots"] == 2
+    assert report["copied"] == 2
+    assert (destination / pos.name).read_bytes() == b"pivot pos"
+    assert (destination / direction.name).read_bytes() == b"pivot dir"
 
 
 def test_basename_slot_resolves_loaded_dagor_image_path(tmp_path):

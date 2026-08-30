@@ -124,10 +124,23 @@ def validate_texture_plans(
         previous = unique.get(destination_key)
         if previous is not None:
             if _path_key(previous.source) != _path_key(plan.source):
-                raise ProjectTextureError(
-                    "MH_E_AMBIGUOUS_RESOURCE_NAME", str(plan.destination),
-                    "different external textures project to the same path: "
-                    f"{previous.source}, {plan.source}")
+                same_payload = (
+                    previous.source.is_file()
+                    and plan.source.is_file()
+                    and previous.source.stat().st_size == plan.source.stat().st_size
+                    and _sha256_file(previous.source) == _sha256_file(plan.source)
+                )
+                if not same_payload:
+                    raise ProjectTextureError(
+                        "MH_E_AMBIGUOUS_RESOURCE_NAME", str(plan.destination),
+                        "different external textures project to the same "
+                        f"path: {previous.source}, {plan.source}")
+                # After Remap, one carrier already points at the project
+                # destination while another may still name the original CDK
+                # file.  Equal bytes are one resource; retain the self-plan so
+                # a repeated Copy All is a verified no-op rather than a write.
+                if _path_key(plan.source) == destination_key:
+                    unique[destination_key] = plan
             continue
         unique[destination_key] = plan
 

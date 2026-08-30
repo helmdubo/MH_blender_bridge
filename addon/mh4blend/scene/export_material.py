@@ -71,10 +71,11 @@ class MaterialBinding:
 
     name: str
     material: object
-    # Owner decision 2026-08-30: diverging ``.NNN`` claimants merge into the
-    # base logical name; this carries the one warning row describing what the
-    # representative overrode, or ``None`` when the group agrees.
     divergence: tuple = None
+    # Dagor proxymats may use ``$(ASSET_NAME)`` texture templates.  The macro
+    # is expanded only at a concrete mesh-resource boundary; a standalone
+    # material has no authority to guess this value.
+    macro_asset_name: str | None = None
 
     @property
     def library(self):
@@ -130,6 +131,8 @@ def is_technical_material(material) -> bool:
 
 
 def _fingerprint_value(value):
+    if isinstance(value, (str, bool)):
+        return value
     if isinstance(value, list):
         return tuple(narrow_float32(component) for component in value)
     return narrow_float32(value)
@@ -142,7 +145,19 @@ def material_content_fingerprint(material) -> tuple:
     authored spellings of the same value (``7.1`` and ``7.0999999``) compare
     equal, while any real divergence stays visible.
     """
-    resource = _extract_resource(_material_datablock(material))
+    datablock = _material_datablock(material)
+    # Macro proxymats are templates.  A fixed synthetic asset token makes
+    # their identity-free content comparable without choosing a real owner.
+    proxy = _proxy_dagormat(datablock)
+    comparable = (
+        MaterialBinding(
+            name=_logical_material_name(datablock),
+            material=datablock,
+            macro_asset_name="asset",
+        )
+        if proxy is not None else datablock
+    )
+    resource = _extract_resource(comparable)
     return (
         resource.library,
         resource.material_class,
@@ -175,7 +190,40 @@ def _disambiguated_material_name(logical_name: str, representative) -> str:
     return projected
 
 
-def resolve_material_binding(material) -> MaterialBinding:
+def _binding_for_macro_asset(
+        binding: MaterialBinding, asset_name: str | None) -> MaterialBinding:
+    if asset_name is None:
+        return binding
+    validate_resource_name(asset_name)
+    dagormat = _proxy_dagormat(binding.material)
+    if dagormat is None:
+        return binding
+    _source, proxy = _read_proxy_source(
+        binding.material, _authored_material_name(binding.material), dagormat)
+    if not proxy.macro_textures:
+        return binding
+    name = f"{binding.name}__{asset_name}"
+    validate_resource_name(name)
+    cached = _BINDINGS.get(name)
+    if cached is not None:
+        try:
+            if (cached.material == binding.material
+                    and cached.macro_asset_name == asset_name):
+                return cached
+        except ReferenceError:
+            pass
+    specialized = MaterialBinding(
+        name=name,
+        material=binding.material,
+        divergence=binding.divergence,
+        macro_asset_name=asset_name,
+    )
+    _BINDINGS[name] = specialized
+    return specialized
+
+
+def resolve_material_binding(
+        material, *, asset_name: str | None = None) -> MaterialBinding:
     """Bind equivalent aliases together and preserve divergent claimants.
 
     All scene materials projecting to one base token are compared by canonical
@@ -184,10 +232,11 @@ def resolve_material_binding(material) -> MaterialBinding:
     Blender datablock name, so no material semantics are discarded.
     """
     if isinstance(material, MaterialBinding):
-        return material
+        return _binding_for_macro_asset(material, asset_name)
     logical_name = _logical_material_name(material)
     if not isinstance(material, bpy.types.ID):
-        return MaterialBinding(name=logical_name, material=material)
+        return _binding_for_macro_asset(
+            MaterialBinding(name=logical_name, material=material), asset_name)
     claimants = _projected_claim_group(logical_name)
     if not claimants:  # pragma: no cover - a live datablock claims itself
         claimants = [material]
@@ -197,13 +246,13 @@ def resolve_material_binding(material) -> MaterialBinding:
         if cached is not None:
             try:
                 if cached.material == representative and cached.divergence is None:
-                    return cached
+                    return _binding_for_macro_asset(cached, asset_name)
             except ReferenceError:
                 pass
         binding = MaterialBinding(
             name=logical_name, material=representative, divergence=None)
         _BINDINGS[logical_name] = binding
-        return binding
+        return _binding_for_macro_asset(binding, asset_name)
 
     fingerprints = {
         candidate.as_pointer(): material_content_fingerprint(candidate)
@@ -228,13 +277,13 @@ def resolve_material_binding(material) -> MaterialBinding:
     if cached is not None:
         try:
             if cached.material == representative and cached.divergence is None:
-                return cached
+                return _binding_for_macro_asset(cached, asset_name)
         except ReferenceError:
             pass
     binding = MaterialBinding(
         name=binding_name, material=representative, divergence=None)
     _BINDINGS[binding_name] = binding
-    return binding
+    return _binding_for_macro_asset(binding, asset_name)
 
 
 def _resolved_root(source_root) -> Path:
@@ -340,9 +389,7 @@ def _proxy_dagormat(material):
     return dagormat if shader_class.endswith(":proxymat") else None
 
 
-def _proxy_resource(
-        material, logical_name: str, authored_name: str,
-        dagormat) -> MaterialResource:
+def _read_proxy_source(material, authored_name: str, dagormat):
     directory = str(getattr(dagormat, "proxy_path", "") or "")
     source = Path(bpy.path.abspath(directory)).resolve(strict=False)
     source = source / f"{authored_name}.proxymat.blk"
@@ -353,20 +400,38 @@ def _proxy_resource(
             "MH_E_INVALID_RESOURCE_SOURCE", str(source),
             "proxymat source cannot be read; check proxy_path or run the "
             "dag4blend proxymat search") from exc
+    return source, proxy
+
+
+def _proxy_resource(
+        material, logical_name: str, authored_name: str,
+        dagormat, *, macro_asset_name: str | None = None) -> MaterialResource:
+    source, proxy = _read_proxy_source(material, authored_name, dagormat)
 
     if proxy.macro_textures:
-        details = ", ".join(
-            f"{slot}={value!r}"
-            for slot, value in sorted(proxy.macro_textures.items()))
-        raise _not_roundtrippable(
-            str(source),
-            "proxymat macro texture provenance requires string params before "
-            f"publication ({details}); macro slots were not added to textures")
+        if macro_asset_name is None:
+            details = ", ".join(
+                f"{slot}={value!r}"
+                for slot, value in sorted(proxy.macro_textures.items()))
+            raise _not_roundtrippable(
+                str(source),
+                "proxymat macro textures require a concrete mesh asset "
+                f"context before publication ({details})")
+        validate_resource_name(macro_asset_name)
 
+    authored_textures = dict(proxy.textures)
+    for slot, value in proxy.macro_textures.items():
+        expanded = value.replace("$(ASSET_NAME)", macro_asset_name)
+        if "$(" in expanded:
+            raise _not_roundtrippable(
+                str(source),
+                f"proxymat texture {slot} contains an unsupported macro: "
+                f"{value!r}")
+        authored_textures[slot] = expanded
     textures = {
         slot: _texture_token_from_path(
             value, f"proxymat.{slot}", project_dagor_case=True)
-        for slot, value in proxy.textures.items()
+        for slot, value in authored_textures.items()
     }
     params = {
         name: _dagor_parameter_value(value, f"proxymat.script.{name}")
@@ -408,9 +473,10 @@ def _dagor_parameter_value(value, path: str):
         value = list(value)
 
     if isinstance(value, bool):
-        raise _not_roundtrippable(
-            path, "Dagor bool parameters are not Source Protocol v4 scalars")
+        return value
     if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
         return value
     if not isinstance(value, list):
         raise _not_roundtrippable(
@@ -481,13 +547,16 @@ def _extract_resource(material) -> MaterialResource:
     # Preserve the canonical name diagnostic verbatim; identity is external to
     # the material grammar and must not be reclassified as a codec failure.
     logical_name = _logical_material_name(material)
+    macro_asset_name = (
+        material.macro_asset_name
+        if isinstance(material, MaterialBinding) else None)
     material = _material_datablock(material)
     validate_resource_name(logical_name)
     proxy_dagormat = _proxy_dagormat(material)
     if proxy_dagormat is not None:
         return _proxy_resource(
             material, logical_name, _authored_material_name(material),
-            proxy_dagormat)
+            proxy_dagormat, macro_asset_name=macro_asset_name)
     if not hasattr(type(material) if isinstance(material, bpy.types.ID) else material,
                    "mh4blend"):
         raise MaterialValueError(
@@ -534,7 +603,10 @@ def _extract_resource(material) -> MaterialResource:
                 "duplicate parameter")
         explicit_param_names.add(row.name)
         params[row.name] = (
-            row.scalar if row.kind == "SCALAR" else list(row.vector))
+            row.scalar if row.kind == "SCALAR"
+            else row.string if row.kind == "STRING"
+            else row.boolean if row.kind == "BOOLEAN"
+            else list(row.vector))
     for name in params.keys() - explicit_param_names:
         params[name] = _dagor_parameter_value(
             params[name], f"dagormat.optional.{name}")
@@ -666,7 +738,13 @@ def apply_material_resource(material, resource: MaterialResource, *, source_root
     for name, value in resource.params.items():
         row = settings.params.add()
         row.name = name
-        if isinstance(value, list):
+        if isinstance(value, bool):
+            row.kind = "BOOLEAN"
+            row.boolean = value
+        elif isinstance(value, str):
+            row.kind = "STRING"
+            row.string = value
+        elif isinstance(value, list):
             row.kind = "VECTOR"
             row.vector = value
         else:

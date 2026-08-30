@@ -78,6 +78,19 @@ FString AppliedParentReceipt(const FMHMaterialDocument& Document)
     return FString(Document.Mode == EMHMaterialMode::Class ? TEXT("class:") : TEXT("library:")) + Document.Parent;
 }
 
+FMHMaterialDocument AppliedMaterialDocument(const FMHMaterialDocument& Source)
+{
+    FMHMaterialDocument Applied = Source;
+    for (auto It = Applied.Params.CreateIterator(); It; ++It)
+    {
+        if (It.Value().bString || It.Value().bBool)
+        {
+            It.RemoveCurrent();
+        }
+    }
+    return Applied;
+}
+
 UMaterialInterface* LoadParent(const FString& Root, const FString& Token, FString& OutError)
 {
     const FString PackageName = ParentPackageName(Root, Token);
@@ -521,6 +534,10 @@ bool MHApplyMaterialV4(
         {
             const FMHMaterialParameter& Parameter = Document.Params.FindChecked(Name);
             const FMaterialParameterInfo Info{FName(*Name)};
+            if (Parameter.bString || Parameter.bBool)
+            {
+                continue;
+            }
             if (Parameter.bVector)
             {
                 Material.SetVectorParameterValueEditorOnly(
@@ -607,6 +624,12 @@ FMHMaterialOperationResult MHImportMaterialV4(
     {
         return Result;
     }
+    const FMHMaterialDocument AppliedSource = AppliedMaterialDocument(Document);
+    TArray<uint8> CanonicalAppliedSource;
+    if (!MHWriteCanonicalMaterialV4(AppliedSource, CanonicalAppliedSource, Result.Error))
+    {
+        return Result;
+    }
     UMaterialInterface* Parent = LoadParent(
         Document.Mode == EMHMaterialMode::Class ? Settings.MasterRoot : Settings.LibraryRoot,
         Document.Parent,
@@ -635,7 +658,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
     FMHMaterialDocument ProbeExtract;
     TArray<uint8> ProbeBytes;
     if (!MHExtractMaterialV4(*Probe, Settings, ProbeExtract, Result.Error) ||
-        !MHWriteCanonicalMaterialV4(ProbeExtract, ProbeBytes, Result.Error) || ProbeBytes != CanonicalSource)
+        !MHWriteCanonicalMaterialV4(ProbeExtract, ProbeBytes, Result.Error) || ProbeBytes != CanonicalAppliedSource)
     {
         Result.Error = FString::Printf(
             TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: source cannot survive MI apply/extract: %s"),
@@ -709,7 +732,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
     TArray<uint8> AppliedBytes;
     if (!MHExtractMaterialV4(*Material, Settings, AppliedExtract, Result.Error) ||
         !MHWriteCanonicalMaterialV4(AppliedExtract, AppliedBytes, Result.Error) ||
-        AppliedBytes != CanonicalSource)
+        AppliedBytes != CanonicalAppliedSource)
     {
         Result.Error = FString::Printf(
             TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: actual MI does not match canonical source after compilation: %s"),
@@ -769,8 +792,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     FPaths::NormalizeDirectoryName(AbsoluteSourceRoot);
     FMHMaterialDocument Document;
     TArray<uint8> Bytes;
-    if (!MHExtractMaterialV4(Material, Settings, Document, Result.Error) ||
-        !MHWriteCanonicalMaterialV4(Document, Bytes, Result.Error))
+    if (!MHExtractMaterialV4(Material, Settings, Document, Result.Error))
     {
         return Result;
     }
@@ -807,6 +829,36 @@ FMHMaterialOperationResult MHPublishMaterialV4(
         !RelativeToRoot(AbsoluteSourceRoot, TargetPath, RelativePath))
     {
         Result.Error = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: publish target must be <source_root>/.../<canonical>.material");
+        return Result;
+    }
+    if (ExistingData != nullptr && IFileManager::Get().FileExists(*TargetPath))
+    {
+        TArray<uint8> ExistingBytes;
+        FMHMaterialDocument ExistingDocument;
+        if (!LoadBytes(TargetPath, ExistingBytes, Result.Error) ||
+            !MHParseMaterialV4(ExistingBytes, ExistingDocument, Result.Error))
+        {
+            Result.Error = FString::Printf(
+                TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: existing source provenance cannot be preserved: %s"),
+                *Result.Error);
+            return Result;
+        }
+        for (const TPair<FString, FMHMaterialParameter>& Pair : ExistingDocument.Params)
+        {
+            if (Pair.Value.bString || Pair.Value.bBool)
+            {
+                Document.Params.Add(Pair.Key, Pair.Value);
+            }
+        }
+    }
+    if (!MHWriteCanonicalMaterialV4(Document, Bytes, Result.Error))
+    {
+        return Result;
+    }
+    TArray<uint8> AppliedBytes;
+    if (!MHWriteCanonicalMaterialV4(
+            AppliedMaterialDocument(Document), AppliedBytes, Result.Error))
+    {
         return Result;
     }
     if (!AtomicWriteMaterial(TargetPath, Bytes, Result.Error))
@@ -853,7 +905,7 @@ FMHMaterialOperationResult MHPublishMaterialV4(
     Data->LogicalName = LogicalName;
     Data->SourceRelativePath = RelativePath;
     Data->SourceHash = PublishedHash;
-    Data->AppliedHash = PublishedHash;
+    Data->AppliedHash = MHRawPayloadHash(AppliedBytes);
     Data->AppliedParent = AppliedParentReceipt(Document);
     Material.PostEditChange();
     if (!SaveMaterialPackage(Material, Result.Error))

@@ -186,10 +186,14 @@ class MHMaterialParamProperty(bpy.types.PropertyGroup):
     kind: bpy.props.EnumProperty(
         name="Kind",
         items=(("SCALAR", "Scalar", "UE scalar parameter"),
-               ("VECTOR", "Vector", "UE vector4 parameter")),
+               ("VECTOR", "Vector", "UE vector4 parameter"),
+               ("STRING", "String", "Opaque source provenance"),
+               ("BOOLEAN", "Boolean", "Opaque source provenance")),
         default="SCALAR")
     scalar: bpy.props.FloatProperty(name="Scalar", default=0.0)
     vector: bpy.props.FloatVectorProperty(name="Vector", size=4)
+    string: bpy.props.StringProperty(name="String", default="")
+    boolean: bpy.props.BoolProperty(name="Boolean", default=False)
 
 
 class MHMaterialProperties(bpy.types.PropertyGroup):

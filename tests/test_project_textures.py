@@ -332,6 +332,38 @@ def test_case_projection_collision_is_rejected_before_copy(tmp_path):
     assert not (project / "assets").exists()
 
 
+def test_repeat_copy_merges_identical_external_and_project_sources(tmp_path):
+    external = _external_texture(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    external_plan = plan_project_texture(external, project)
+    external_plan.destination.parent.mkdir(parents=True)
+    external_plan.destination.write_bytes(external.read_bytes())
+    project_plan = plan_project_texture(external_plan.destination, project)
+
+    report = atomic_copy_texture_plans([external_plan, project_plan])
+
+    assert report["copied"] == 0
+    assert report["skipped"] == 1
+    assert external_plan.destination.read_bytes() == external.read_bytes()
+
+
+def test_repeat_copy_still_rejects_divergent_project_source(tmp_path):
+    external = _external_texture(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    external_plan = plan_project_texture(external, project)
+    external_plan.destination.parent.mkdir(parents=True)
+    external_plan.destination.write_bytes(b"locally changed")
+    project_plan = plan_project_texture(external_plan.destination, project)
+
+    with pytest.raises(ProjectTextureError) as excinfo:
+        atomic_copy_texture_plans([external_plan, project_plan])
+
+    assert excinfo.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert external_plan.destination.read_bytes() == b"locally changed"
+
+
 @pytest.mark.parametrize("name", ["wall.d.tif", "wall-d.tif", "wall_д.tif"])
 def test_plan_rejects_files_that_project_index_cannot_canonicalize(
         tmp_path, name):

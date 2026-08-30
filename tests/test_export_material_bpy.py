@@ -17,6 +17,7 @@ from mh4blend.core.materials import (  # noqa: E402
     material_json_bytes,
 )
 from mh4blend.scene.export_material import (  # noqa: E402
+    MaterialBinding,
     apply_material_resource,
     material_class_for_export,
     prepare_blender_material_export,
@@ -312,13 +313,35 @@ def test_dagormat_texture_rejects_non_image_extension_with_exact_slot_path():
     assert excinfo.value.path == "dagormat.textures.tex2"
 
 
-@pytest.mark.parametrize("value", [True, "opaque", [1, 2, 3]])
+@pytest.mark.parametrize("value", [[1, 2, 3]])
 def test_unrepresentable_dagormat_param_fails_closed(value):
     with pytest.raises(MaterialValueError) as excinfo:
         export_material_module._extract_resource(
             _dagor_material(params={"unsupported": value}))
     assert excinfo.value.code == "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE"
     assert excinfo.value.path == "dagormat.optional.unsupported"
+
+
+def test_dagor_string_param_is_preserved_as_provenance(tmp_path):
+    prepared = prepare_blender_material_export(
+        _dagor_material(params={"lighting": "vltmap"}),
+        tmp_path,
+        source_root=tmp_path,
+    )
+
+    assert prepared.resource.params["lighting"] == "vltmap"
+    assert b'"lighting": "vltmap"' in prepared.payload
+
+
+def test_dagor_bool_param_is_preserved_as_provenance(tmp_path):
+    prepared = prepare_blender_material_export(
+        _dagor_material(params={"real_two_sided": False}),
+        tmp_path,
+        source_root=tmp_path,
+    )
+
+    assert prepared.resource.params["real_two_sided"] is False
+    assert b'"real_two_sided": false' in prepared.payload
 
 
 def test_loaded_proxy_flag_still_reloads_authoritative_file(tmp_path):
@@ -458,7 +481,7 @@ script:t="wind_strength=1.25"
     assert left.payload == right.payload
 
 
-def test_proxy_macro_texture_is_not_published_as_a_texture(tmp_path):
+def test_proxy_macro_texture_requires_mesh_asset_context(tmp_path):
     _write_proxymat(tmp_path, "tree_leaf", '''\
 class:t="rendinst_tree_colored"
 tex7:t="$(ASSET_NAME)_pivot_pos"
@@ -472,6 +495,76 @@ tex7:t="$(ASSET_NAME)_pivot_pos"
     assert excinfo.value.code == "MH_E_MATERIAL_NOT_ROUNDTRIPPABLE"
     assert "tex7='$(ASSET_NAME)_pivot_pos'" in str(excinfo.value)
     assert not (tmp_path / "tree_leaf.material").exists()
+
+
+def test_proxy_macro_texture_expands_for_mesh_asset(tmp_path):
+    texture_dir = tmp_path / "assets" / "gameproj" / "nature"
+    texture_dir.mkdir(parents=True)
+    (texture_dir / "bush_beech_medium_a_pivot_pos.dds").write_bytes(b"pos")
+    (texture_dir / "bush_beech_medium_a_pivot_dir.dds").write_bytes(b"dir")
+    _write_proxymat(tmp_path, "bush_beech_bark", '''\
+class:t="rendinst_tree_colored"
+tex7:t="$(ASSET_NAME)_pivot_pos.dds"
+tex8:t="$(ASSET_NAME)_pivot_dir.dds"
+''')
+    material = _proxy_material("bush_beech_bark", tmp_path)
+    binding = MaterialBinding(
+        name="bush_beech_bark__bush_beech_medium_a",
+        material=material,
+        macro_asset_name="bush_beech_medium_a",
+    )
+
+    prepared = prepare_blender_material_export(
+        binding, tmp_path, source_root=tmp_path)
+
+    assert prepared.resource.name == (
+        "bush_beech_bark__bush_beech_medium_a")
+    assert prepared.resource.textures == {
+        "tex7": "bush_beech_medium_a_pivot_pos",
+        "tex8": "bush_beech_medium_a_pivot_dir",
+    }
+    assert b'"tex7": "bush_beech_medium_a_pivot_pos"' in prepared.payload
+
+
+def test_mesh_export_specializes_proxy_macro_material(tmp_path, monkeypatch):
+    output = tmp_path / "source"
+    proxy_dir = output / "assets" / "gameproj" / "nature"
+    proxy_dir.mkdir(parents=True)
+    (proxy_dir / "bush_beech_medium_a_pivot_pos.dds").write_bytes(b"pos")
+    (proxy_dir / "bush_beech_medium_a_pivot_dir.dds").write_bytes(b"dir")
+    _write_proxymat(proxy_dir, "bush_beech_bark", '''\
+class:t="rendinst_tree_colored"
+tex7:t="$(ASSET_NAME)_pivot_pos.dds"
+tex8:t="$(ASSET_NAME)_pivot_dir.dds"
+''')
+    dagormat = SimpleNamespace(
+        is_proxy=True,
+        shader_class="",
+        proxy_path=str(proxy_dir),
+    )
+    material = _class_material("bush_beech_bark")
+    monkeypatch.setattr(
+        export_material_module,
+        "_proxy_dagormat",
+        lambda candidate: dagormat if candidate == material else None,
+    )
+    collection = bpy.data.collections.new("bush_beech_medium_a")
+    bpy.context.scene.collection.children.link(collection)
+    _mesh("bush_beech_medium_a", collection, material)
+
+    prepared = export_fbx_module.prepare_fbx_collection(
+        collection,
+        output,
+        source_root=output,
+        export_materials=True,
+    )
+
+    assert [binding.name for binding in prepared.materials] == [
+        "bush_beech_bark__bush_beech_medium_a"]
+    assert prepared.prepared_materials[0].resource.textures == {
+        "tex7": "bush_beech_medium_a_pivot_pos",
+        "tex8": "bush_beech_medium_a_pivot_dir",
+    }
 
 
 def test_class_material_extracts_texture_stem_and_publishes_canonical_bytes(
