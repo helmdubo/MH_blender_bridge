@@ -11,7 +11,9 @@ from mh4blend.scene.export_closure import export_composite_closure_collection
 from mh4blend.scene.export_composite import export_composite_collection
 from mh4blend.core.batch_publish import BatchPartialPublishError
 from mh4blend.core.composites import composite_json_bytes
-from mh4blend.core.model import Composite, Node
+from mh4blend.core.composites import read_composite_file
+from mh4blend.core.model import Composite, IDENTITY_TRANSFORM, Node, PlacementRange
+from mh4blend.core.placements import read_placement_file
 from mh4blend.core.validate import MHValidationError
 from mh4blend.scene.import_dagor_composite import convert_dag4blend_collection
 from mh4blend.scene.import_composite import materialize_composite_documents
@@ -141,17 +143,132 @@ def test_nested_dagor_collection_cannot_bypass_mixed_authority_gate(
     assert not list(tmp_path.iterdir())
 
 
-def test_saved_dagorprops_without_registered_rna_cannot_hide_p2(tmp_path):
+def test_saved_dagorprops_inline_p2_publishes_one_shared_profile_without_double_base(
+        tmp_path):
     assert not hasattr(bpy.types.Object, "dagorprops")
+    root = legacy("direct_root")
+    first = empty("frame_a", root)
+    second = empty("frame_b", root)
+    for obj in (first, second):
+        obj["dagorprops"] = {
+            "rot_y:p2": [15.0, 1.0],
+            "rot_z:p2": [-5.0, 2.0],
+        }
+        # dag4blend's matrix is a preview of p2 base values. It must never be
+        # added to the generated profile a second time.
+        obj.location = (91.0, 92.0, 93.0)
+    before = snapshot()
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+    assert snapshot() == before
+
+    document = read_composite_file(tmp_path / "direct_root.composite")
+    assert document.nodes[0].profile == document.nodes[1].profile
+    profile_name = document.nodes[0].profile
+    assert profile_name.startswith("dagor_p2_")
+    assert document.nodes[0].transform == IDENTITY_TRANSFORM
+    assert document.nodes[1].transform == IDENTITY_TRANSFORM
+
+    profile = read_placement_file(tmp_path / f"{profile_name}.placement")
+    assert profile.rotation_deg == (
+        PlacementRange(0.0, 0.0),
+        PlacementRange(15.0, 1.0),
+        PlacementRange(-5.0, 2.0),
+    )
+    assert report["published"] == [
+        f"placement_profile:{profile_name}",
+        "composite:direct_root",
+    ]
+
+    repeated = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+    assert repeated["published"] == []
+    assert repeated["reused"] == [
+        f"placement_profile:{profile_name}",
+        "composite:direct_root",
+    ]
+    assert snapshot() == before
+
+
+def test_inline_p2_preserves_all_ranges_and_fills_only_missing_axes(tmp_path):
+    root = legacy("direct_root")
+    node = empty("frame", root)
+    node["dagorprops"] = {
+        "offset_x:p2": [10.0, 2.0],
+        "rot_z:p2": [-30.0, 5.0],
+        "scale:p2": [1.25, 0.1],
+        "yScale:p2": [0.75, 0.05],
+    }
+    before = snapshot()
+    export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="root_only")
+    assert snapshot() == before
+
+    document = read_composite_file(tmp_path / "direct_root.composite")
+    profile = read_placement_file(
+        tmp_path / f"{document.nodes[0].profile}.placement")
+    assert profile.offset_cm == (
+        PlacementRange(10.0, 2.0),
+        PlacementRange(0.0, 0.0),
+        PlacementRange(0.0, 0.0),
+    )
+    assert profile.rotation_deg == (
+        PlacementRange(0.0, 0.0),
+        PlacementRange(0.0, 0.0),
+        PlacementRange(-30.0, 5.0),
+    )
+    assert profile.uniform_scale.base == 1.25
+    assert profile.uniform_scale.deviation == pytest.approx(0.1)
+    assert profile.vertical_scale.base == 0.75
+    assert profile.vertical_scale.deviation == pytest.approx(0.05)
+
+
+@pytest.mark.parametrize("properties", [
+    {"rot_y:p2": [0.0]},
+    {"rot_y:p2": [0.0, -1.0]},
+    {"scale:p2": [0.5, 0.5]},
+    {"rot_y:p2": [0.0, float("inf")]},
+])
+def test_invalid_inline_p2_fails_before_any_publication(tmp_path, properties):
+    root = legacy("direct_root")
+    empty("frame", root)["dagorprops"] = properties
+    before = snapshot()
+    with pytest.raises(ValueError, match="MH_E_(PLACEMENT_PROFILE_GRAMMAR|NAN_INF_VALUE)"):
+        export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode="include_all")
+    assert snapshot() == before
+    assert not list(tmp_path.iterdir())
+
+
+def test_scene_include_without_typed_profile_remains_fail_closed(tmp_path):
+    root = legacy("direct_root")
+    empty("frame", root)["dagorprops"] = {"include:t": "scatter.blk"}
+    before = snapshot()
+    with pytest.raises(ValueError, match="include placement data"):
+        export_composite_closure_collection(
+            root, tmp_path, source_root=tmp_path, mode="include_all")
+    assert snapshot() == before
+    assert not list(tmp_path.iterdir())
+
+
+def test_generated_p2_hash_collision_never_overwrites_existing_profile(tmp_path):
     root = legacy("direct_root")
     empty("frame", root)["dagorprops"] = {"rot_y:p2": [0.0, 1.0]}
     before = snapshot()
-    with pytest.raises(ValueError, match="rot_y:p2") as caught:
+    export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+    document_path = tmp_path / "direct_root.composite"
+    original_document = document_path.read_bytes()
+    profile_name = read_composite_file(document_path).nodes[0].profile
+    profile_path = tmp_path / f"{profile_name}.placement"
+    profile_path.write_bytes(b"foreign collision\n")
+
+    with pytest.raises(ValueError, match="MH_E_AMBIGUOUS_RESOURCE_NAME"):
         export_composite_closure_collection(
             root, tmp_path, source_root=tmp_path, mode="include_all")
-    assert "direct_root:nodes[0]" in str(caught.value)
+    assert profile_path.read_bytes() == b"foreign collision\n"
+    assert document_path.read_bytes() == original_document
     assert snapshot() == before
-    assert not list(tmp_path.iterdir())
 
 
 def test_saved_dagorprops_without_rna_keeps_weight_priority():

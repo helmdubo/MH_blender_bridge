@@ -85,9 +85,25 @@ def _json_row(inventory, output, key, extension, payload, prepared=None):
         existing.snapshot() if existing is not None else None, prepared)
 
 
+def _generated_profile_row(inventory, output, key, payload):
+    """Admit content-addressed p2 output without overwriting a collision."""
+
+    if not isinstance(payload, bytes):
+        _fail("MH_E_INVALID_RESOURCE_SOURCE", [key],
+              "generated placement profile payload must be canonical bytes")
+    target, existing = _target_for(inventory, output, key, ".placement")
+    if existing is not None and existing.read_bytes() != payload:
+        _fail(
+            "MH_E_AMBIGUOUS_RESOURCE_NAME", [key, existing.path],
+            "content-addressed dag4blend p2 profile collides with different "
+            "existing source bytes")
+    return _json_row(inventory, output, key, ".placement", payload)
+
+
 def prepare_dag4blend_publication(
         documents, mesh_inputs, *, root_name, source_root, output_dir,
-        mode=CLOSURE_MODE_INCLUDE_ALL) -> ClosureExportPlan:
+        mode=CLOSURE_MODE_INCLUDE_ALL,
+        generated_profiles=None) -> ClosureExportPlan:
     """Prepare requested writes and validate the complete source closure.
 
     Root-only reads excluded composites from Source Root, as the MH adapter
@@ -133,14 +149,28 @@ def prepare_dag4blend_publication(
             _fail("MH_E_INVALID_RESOURCE_SOURCE", [resource_key],
                   "mesh input is outside the root source closure")
 
-    # No Blender value carrier exists for profiles. Reuse their exact sources
-    # in all modes, following the existing source-closure planner.
+    generated = dict(generated_profiles or {})
+    generated_keys = {
+        ResourceKey("placement_profile", name) for name in generated}
+    unknown_generated = generated_keys.difference(closure.placement_profiles)
+    if unknown_generated:
+        _fail(
+            "MH_E_INVALID_RESOURCE_SOURCE", sorted(unknown_generated),
+            "generated placement profile is outside the composite closure")
+
+    # Typed profiles reuse their exact sources. Inline dag4blend p2 profiles
+    # are immutable canonical bytes and enter this same dependency-first batch.
     profiles = []
     for key in sorted(closure.placement_profiles):
-        candidate = (_resolve_excluded_source(
-            inventory, key, closure.referrers_for(key))
-            if mode != CLOSURE_MODE_INCLUDE_ALL else inventory.resolve(key))
-        profiles.append(_source_profile(candidate))
+        payload = generated.get(key.name)
+        if payload is not None:
+            profiles.append(_generated_profile_row(
+                inventory, output, key, payload))
+        else:
+            candidate = (_resolve_excluded_source(
+                inventory, key, closure.referrers_for(key))
+                if mode != CLOSURE_MODE_INCLUDE_ALL else inventory.resolve(key))
+            profiles.append(_source_profile(candidate))
 
     meshes = []
     material_inputs = {}
