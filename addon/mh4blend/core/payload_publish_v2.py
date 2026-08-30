@@ -171,6 +171,7 @@ def atomic_publish_bytes(
         read_back_validator=None,
         pre_replace_guard=None,
         replace_observer=None,
+        fsync_parent: bool = True,
         _crash_at: str | None = None,
         _hold_lock_seconds: float = 0.0) -> dict:
     """Publish complete bytes via sibling temp, fsync and atomic replace.
@@ -187,6 +188,8 @@ def atomic_publish_bytes(
         raise TypeError("pre_replace_guard must be callable")
     if replace_observer is not None and not callable(replace_observer):
         raise TypeError("replace_observer must be callable")
+    if type(fsync_parent) is not bool:
+        raise TypeError("fsync_parent must be a bool")
     if _crash_at not in {None, "before_replace", "after_replace"}:
         raise ValueError("_crash_at must be before_replace or after_replace")
     if _hold_lock_seconds < 0.0:
@@ -252,12 +255,13 @@ def atomic_publish_bytes(
             stage_started = time.monotonic()
             os.replace(temp, destination)
             replaced = True
-            timings_ms["replace"] = _elapsed_ms(stage_started)
             if replace_observer is not None:
                 replace_observer()
-            stage_started = time.monotonic()
-            parent_fsynced = _fsync_parent_directory(destination.parent)
-            timings_ms["parent_fsync"] = _elapsed_ms(stage_started)
+            timings_ms["replace"] = _elapsed_ms(stage_started)
+            if fsync_parent:
+                stage_started = time.monotonic()
+                parent_fsynced = _fsync_parent_directory(destination.parent)
+                timings_ms["parent_fsync"] = _elapsed_ms(stage_started)
             if _crash_at == "after_replace":
                 os._exit(92)
         finally:
