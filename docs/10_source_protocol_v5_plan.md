@@ -373,7 +373,10 @@ keys, node trees материалов (восстанавливается тол
   **opaque source provenance**: входят в canonical source bytes и
   `SourceHash`, сохраняются при UE Publish, но не создают вымышленных MI
   parameter overrides и не влияют на materialization до появления явного
-  UE-потребителя. `twosided` (bool) —
+  UE-потребителя. Внешние Dagor parameter keys `[A-Za-z0-9_]+` проецируются
+  в lowercase только на adapter boundary; два разных authored key, сходящихся
+  после lowercasing, блокируют публикацию как неоднозначные. `twosided`
+  (bool) —
   единственный top-level флаг: это НЕ static switch, а MI Base Property
   Override (TwoSided); writer пишет его только при override, отсутствие =
   значение мастера. Любое неизвестное поле, неверный тип или недопустимый

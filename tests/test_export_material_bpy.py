@@ -344,6 +344,27 @@ def test_dagor_bool_param_is_preserved_as_provenance(tmp_path):
     assert b'"real_two_sided": false' in prepared.payload
 
 
+def test_dagor_param_ascii_case_publishes_canonical_lowercase(tmp_path):
+    prepared = prepare_blender_material_export(
+        _dagor_material(params={"isShell": 1}),
+        tmp_path,
+        source_root=tmp_path,
+    )
+
+    assert prepared.resource.params == {"isshell": 1.0}
+    assert b'"isshell": 1' in prepared.payload
+
+
+def test_dagor_param_case_collision_fails_before_publication():
+    with pytest.raises(MaterialValueError) as excinfo:
+        export_material_module._extract_resource(
+            _dagor_material(params={"isShell": 1, "isshell": 0}))
+
+    assert excinfo.value.code == "MH_E_MATERIAL_GRAMMAR"
+    assert excinfo.value.path == "dagormat.optional"
+    assert "both project to canonical key 'isshell'" in excinfo.value.message
+
+
 def test_loaded_proxy_flag_still_reloads_authoritative_file(tmp_path):
     _write_proxymat(tmp_path, "wall", '''\
 class:t="rendinst_tree_colored"

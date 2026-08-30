@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
+import re
 
 import bpy
 
@@ -50,6 +51,7 @@ __all__ = [
 # neither an FBX material slot nor the `.material` closure.
 TECHNICAL_MATERIAL_NAMES = frozenset({"cls"})
 TECHNICAL_MATERIAL_SHADER_CLASSES = frozenset({"gi_black"})
+_DAGOR_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$", re.ASCII)
 
 
 @dataclass(frozen=True)
@@ -433,9 +435,11 @@ def _proxy_resource(
             value, f"proxymat.{slot}", project_dagor_case=True)
         for slot, value in authored_textures.items()
     }
+    projected_params = _project_dagor_parameter_names(
+        proxy.params, "proxymat.script")
     params = {
         name: _dagor_parameter_value(value, f"proxymat.script.{name}")
-        for name, value in proxy.params.items()
+        for name, value in projected_params.items()
     }
     return MaterialResource(
         name=logical_name,
@@ -491,6 +495,37 @@ def _dagor_parameter_value(value, path: str):
     return value
 
 
+def _project_dagor_parameter_names(values, path: str) -> dict:
+    """Project external Dagor parameter case at the adapter boundary.
+
+    Source Protocol remains strict lowercase.  Dagor identifiers may contain
+    ASCII uppercase letters, which are lowered without changing separators or
+    inventing word boundaries.  Distinct authored keys that converge after
+    lowering are ambiguous and therefore fail before publication.
+    """
+    names = list(values.keys())
+    for name in names:
+        if (not isinstance(name, str)
+                or _DAGOR_PARAMETER_NAME_RE.fullmatch(name) is None):
+            raise MaterialValueError(
+                "MH_E_MATERIAL_GRAMMAR", f"{path}.{name}",
+                "Dagor parameter name must contain only ASCII letters, "
+                "digits and underscore")
+    projected = {}
+    authored = {}
+    for name in sorted(names):
+        canonical = name.lower()
+        previous = authored.get(canonical)
+        if previous is not None and previous != name:
+            raise MaterialValueError(
+                "MH_E_MATERIAL_GRAMMAR", path,
+                f"Dagor parameters {previous!r} and {name!r} both project "
+                f"to canonical key {canonical!r}")
+        authored[canonical] = name
+        projected[canonical] = values[name]
+    return projected
+
+
 def _dagor_params(dagormat) -> dict:
     optional = existing_property_group(dagormat, "optional")
     if optional is None:
@@ -501,7 +536,8 @@ def _dagor_params(dagormat) -> dict:
         raise MaterialValueError(
             "MH_E_MATERIAL_GRAMMAR", "dagormat.optional",
             "optional parameters must be a named property mapping") from exc
-    return {name: optional[name] for name in names}
+    return _project_dagor_parameter_names(
+        {name: optional[name] for name in names}, "dagormat.optional")
 
 
 def _dagor_twosided(dagormat) -> bool:

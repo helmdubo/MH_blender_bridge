@@ -373,3 +373,31 @@ Frozen tree hashes остались:
 
 Код дополнения: `0e8fccf` —
 `Resolve Dagor proxy textures per mesh asset`.
+
+### 10.5. Полевое дополнение — Dagor parameter case
+
+Следующий реальный blocker был внешним camelCase key:
+
+```text
+MH_E_MATERIAL_GRAMMAR: material 'glass.001' / params key:
+value 'isShell' must match [a-z0-9_]+ exactly
+```
+
+Строгая MH-грамматика не расширена. На Dagor adapter boundary ключи
+`[A-Za-z0-9_]+` детерминированно переводятся в lowercase (`isShell` ->
+`isshell`). Пунктуация/Unicode не ремонтируются. Пара `isShell` + `isshell`
+fail-closed блокируется до публикации, а не перетирает одно значение другим.
+
+Red-first: новый Blender-тест воспроизвёл исходный
+`MH_E_MATERIAL_GRAMMAR`; после проекции focused gate дал **2 passed**, полный
+`test_export_material_bpy.py` — **47 passed**, все 12 Blender-hosted модулей —
+**354 passed / 0 failed**. Read-only проверка сохранённой сцены дала:
+
+```text
+MH_FIELD_OK glass_de3ff22636b9
+  isshell=1
+  max_thickness=0.01
+  min_thickness=0.001
+```
+
+Pure suite остался **308 passed / 14 skipped**.
