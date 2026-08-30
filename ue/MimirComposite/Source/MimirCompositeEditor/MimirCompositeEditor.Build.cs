@@ -34,6 +34,7 @@ public class MimirCompositeEditor : ModuleRules
                 "LevelEditor",
                 "MessageLog",
                 "Projects",
+                "PropertyEditor",
                 "Slate",
                 "SlateCore",
                 "SQLiteCore",
