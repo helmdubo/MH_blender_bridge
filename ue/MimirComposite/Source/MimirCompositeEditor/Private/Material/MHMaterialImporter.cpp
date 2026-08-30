@@ -15,6 +15,8 @@
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportBatch.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticParameterSet.h"
 #include "Texture/MHTextureImporter.h"
@@ -224,6 +226,13 @@ bool ResolveTextures(
 
 bool SaveMaterialPackage(UMaterialInstanceConstant& Material, FString& OutError)
 {
+    if (MHDeferSourceImportPersistence(Material))
+    {
+        return true;
+    }
+    FMHSourceImportMetricScope MetricScope(
+        EMHSourceImportMetricResource::Material,
+        EMHSourceImportMetricStage::SavePackage);
     UPackage* Package = Material.GetOutermost();
     const FString PackageName = Package->GetName();
     if (!FPackageName::IsValidLongPackageName(PackageName))
@@ -569,6 +578,9 @@ FMHMaterialOperationResult MHImportMaterialV4(
     const FString& SourceRoot,
     const UMHCompositeSettings& Settings)
 {
+    FMHSourceImportMetricScope CreateScope(
+        EMHSourceImportMetricResource::Material,
+        EMHSourceImportMetricStage::Create);
     FMHMaterialOperationResult Result;
     if (Entry.Key.Kind != EMHResourceKind::Material || !Entry.Key.IsCanonical() ||
         Entry.PayloadPath.IsEmpty() || Entry.SourcePath.IsEmpty())
@@ -681,7 +693,17 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
     Material->PostEditChange();
-    FAssetCompilingManager::Get().FinishAllCompilation();
+    if (MHIsSourceImportBatchActive())
+    {
+        MHQueueSourceImportCompilation();
+    }
+    if (!MHIsSourceImportBatchActive())
+    {
+        FMHSourceImportMetricScope WaitScope(
+            EMHSourceImportMetricResource::Material,
+            EMHSourceImportMetricStage::BuildWait);
+        FAssetCompilingManager::Get().FinishAllCompilation();
+    }
 
     FMHMaterialDocument AppliedExtract;
     TArray<uint8> AppliedBytes;
@@ -722,7 +744,13 @@ FMHMaterialOperationResult MHImportMaterialV4(
         Result.Warnings.Add(RebindEvent);
         UE_LOG(LogMHMaterialImport, Warning, TEXT("%s"), *RebindEvent);
     }
-    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    if (MHIsSourceImportBatchActive())
+    {
+        MHQueueSourceImportSourceGuard(Entry.Key, Entry.PayloadPath, InitialSourceHash);
+        MHQueueSourceImportPackage(*Material, Entry.Key);
+        MHQueueSourceImportCompletion(Entry.Key, false);
+    }
+    else if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
     {
         return Result;
     }

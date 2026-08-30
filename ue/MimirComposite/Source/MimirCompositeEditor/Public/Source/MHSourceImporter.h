@@ -53,6 +53,12 @@ MIMIRCOMPOSITEEDITOR_API bool MHShouldPresentWatcherAnalysis(
     const FMHSourceAnalysis& Analysis);
 
 #if WITH_DEV_AUTOMATION_TESTS
+enum class EMHSourceBulkImportPhase : uint8
+{
+    AssetsPrepared,
+    CompilationFinished
+};
+
 /** Observes the coordinator's fixed texture -> material -> mesh -> composite stages. */
 MIMIRCOMPOSITEEDITOR_API void MHSetImportStageObserverForTests(
     TFunction<void(EMHResourceKind)> Observer);
@@ -60,6 +66,10 @@ MIMIRCOMPOSITEEDITOR_API void MHSetImportStageObserverForTests(
 /** Observes the exact composite keys whose inline profile receipts require UObject loading. */
 MIMIRCOMPOSITEEDITOR_API void MHSetProfileFreshnessAssetLoadObserverForTests(
     TFunction<void(const FMHResourceKey&)> Observer);
+
+/** Returns false to simulate an interrupted process at a pass boundary. */
+MIMIRCOMPOSITEEDITOR_API void MHSetBulkImportPhaseTestHook(
+    TFunction<bool(EMHSourceBulkImportPhase)> Hook);
 #endif
 
 } // namespace UE::MimirComposite

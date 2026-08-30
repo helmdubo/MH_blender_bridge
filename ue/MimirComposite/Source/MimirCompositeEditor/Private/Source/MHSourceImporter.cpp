@@ -22,9 +22,12 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopedSlowTask.h"
 #include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportBatch.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "StaticMesh/MHStaticMeshImporter.h"
@@ -43,6 +46,7 @@ constexpr double StartupImportDelaySeconds = 1.0;
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<void(EMHResourceKind)> GImportStageObserverForTests;
 TFunction<void(const FMHResourceKey&)> GProfileFreshnessAssetLoadObserverForTests;
+TFunction<bool(EMHSourceBulkImportPhase)> GBulkImportPhaseTestHook;
 #endif
 
 void ObserveImportStage(const EMHResourceKind Kind)
@@ -64,6 +68,13 @@ bool ShouldExecuteEntry(const FMHSourceAnalysisEntry& Entry)
          Entry.Change == EMHSourceChange::Reimport ||
          Entry.Change == EMHSourceChange::Move);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+bool ContinueAfterBulkImportPhase(const EMHSourceBulkImportPhase Phase)
+{
+    return !GBulkImportPhaseTestHook || GBulkImportPhaseTestHook(Phase);
+}
+#endif
 
 bool MaterialReferencesFailedTexture(
     const FMHSourceAnalysisEntry& Entry,
@@ -222,6 +233,28 @@ bool ExecutePreparedSourceImports(
     // needed to compare durable inlined-profile receipts.
     PromoteStaleInlinedProfileReceipts(Services, OutAnalysis);
 
+    FMHSourceImportBatchContext Batch;
+    TUniquePtr<FScopedSlowTask> Progress;
+    if (!OutAnalysis.Entries.IsEmpty())
+    {
+        Progress = MakeUnique<FScopedSlowTask>(
+            static_cast<float>(OutAnalysis.Entries.Num()),
+            NSLOCTEXT("MimirComposite", "BulkImportProgress", "Importing changed Mimir resources"));
+        MHRecordSourceImportProgressScope();
+        if (!IsRunningCommandlet())
+        {
+            Progress->MakeDialog(false);
+        }
+    }
+    const auto TickProgress = [&Progress](const FMHSourceAnalysisEntry& Entry)
+    {
+        if (Progress)
+        {
+            Progress->EnterProgressFrame(1.0f, FText::FromString(Entry.Key.ToString()));
+            MHRecordSourceImportProgressResourceTick();
+        }
+    };
+
     // placement_profile is a source-only leaf. It has no generated path or
     // UObject; the dependent composite importer parses and inlines its typed
     // value into UMHCompositeAsset.
@@ -229,6 +262,8 @@ bool ExecutePreparedSourceImports(
 
     TSet<FString> FailedTextures;
     ObserveImportStage(EMHResourceKind::Texture);
+    TArray<FMHSourceAnalysisEntry*> TextureEntries;
+    TArray<FMHTextureBulkImportRequest> TextureRequests;
     for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
     {
         const bool bNoChangePolicyCheck =
@@ -238,10 +273,21 @@ bool ExecutePreparedSourceImports(
         {
             continue;
         }
-        FMHTextureOperationResult TextureResult = MHEnsureTextureV4(
-            Entry,
-            SourceRoot,
-            !bNoChangePolicyCheck);
+        TickProgress(Entry);
+        TextureEntries.Add(&Entry);
+        FMHTextureBulkImportRequest& Request = TextureRequests.AddDefaulted_GetRef();
+        Request.Entry = &Entry;
+        Request.bForceReimport = !bNoChangePolicyCheck;
+    }
+    TArray<FMHTextureOperationResult> TextureResults;
+    MHEnsureTextureBatchV4(TextureRequests, SourceRoot, TextureResults);
+    check(TextureEntries.Num() == TextureResults.Num());
+    for (int32 Index = 0; Index < TextureEntries.Num(); ++Index)
+    {
+        FMHSourceAnalysisEntry& Entry = *TextureEntries[Index];
+        const bool bNoChangePolicyCheck =
+            Entry.Change == EMHSourceChange::NoChange && Entry.Errors.IsEmpty();
+        FMHTextureOperationResult& TextureResult = TextureResults[Index];
         Entry.Warnings.Append(TextureResult.Warnings);
         if (!TextureResult.Succeeded())
         {
@@ -280,6 +326,7 @@ bool ExecutePreparedSourceImports(
         {
             continue;
         }
+        TickProgress(Entry);
         FMHMaterialOperationResult MaterialResult = MHImportMaterialV4(
             Entry,
             *Services.Resolver,
@@ -323,6 +370,7 @@ bool ExecutePreparedSourceImports(
         {
             continue;
         }
+        TickProgress(Entry);
         FMHStaticMeshOperationResult MeshResult = MHImportStaticMeshV4(
             Entry,
             *Services.Resolver,
@@ -346,6 +394,7 @@ bool ExecutePreparedSourceImports(
         {
             continue;
         }
+        TickProgress(Entry);
         FMHCompositeOperationResult CompositeResult = MHImportCompositeV5(
             Entry,
             *Services.Resolver,
@@ -360,6 +409,43 @@ bool ExecutePreparedSourceImports(
         else
         {
             bOutExecuted = true;
+        }
+    }
+    if (Batch.HasPreparedResources())
+    {
+#if WITH_DEV_AUTOMATION_TESTS
+        if (!ContinueAfterBulkImportPhase(EMHSourceBulkImportPhase::AssetsPrepared))
+        {
+            return false;
+        }
+#endif
+        TMap<FMHResourceKey, FString> CompilationErrors;
+        Batch.FinishCompilation(CompilationErrors);
+        for (const TPair<FMHResourceKey, FString>& Pair : CompilationErrors)
+        {
+            for (FMHSourceAnalysisEntry& Entry : OutAnalysis.Entries)
+            {
+                if (Entry.Key == Pair.Key)
+                {
+                    Entry.Change = EMHSourceChange::Blocked;
+                    Entry.Errors.Add(Pair.Value);
+                    break;
+                }
+            }
+        }
+#if WITH_DEV_AUTOMATION_TESTS
+        if (!ContinueAfterBulkImportPhase(EMHSourceBulkImportPhase::CompilationFinished))
+        {
+            return false;
+        }
+#endif
+        FString BatchError;
+        if (!Batch.SavePackages(BatchError) ||
+            !Batch.CommitProjectionAndNotifications(SourceRoot, BatchError))
+        {
+            OutAnalysis.Errors.Add(BatchError.IsEmpty()
+                ? TEXT("MH_E_IMPORT_FAILED: bulk import commit failed")
+                : MoveTemp(BatchError));
         }
     }
     return !OutAnalysis.HasErrors();
@@ -531,6 +617,12 @@ void MHSetProfileFreshnessAssetLoadObserverForTests(
     TFunction<void(const FMHResourceKey&)> Observer)
 {
     GProfileFreshnessAssetLoadObserverForTests = MoveTemp(Observer);
+}
+
+void MHSetBulkImportPhaseTestHook(
+    TFunction<bool(EMHSourceBulkImportPhase)> Hook)
+{
+    GBulkImportPhaseTestHook = MoveTemp(Hook);
 }
 #endif
 

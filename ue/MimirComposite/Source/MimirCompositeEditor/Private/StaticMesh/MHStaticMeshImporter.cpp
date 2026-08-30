@@ -19,6 +19,8 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
+#include "Source/MHSourceImportBatch.h"
+#include "Source/MHSourceImportMetrics.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "StaticMeshAttributes.h"
@@ -61,6 +63,13 @@ bool LoadSourceBytes(const FString& Filename, TArray<uint8>& OutBytes, FString& 
 
 bool SaveStaticMeshPackage(UStaticMesh& StaticMesh, FString& OutError)
 {
+    if (MHDeferSourceImportPersistence(StaticMesh))
+    {
+        return true;
+    }
+    FMHSourceImportMetricScope MetricScope(
+        EMHSourceImportMetricResource::StaticMesh,
+        EMHSourceImportMetricStage::SavePackage);
     UPackage* Package = StaticMesh.GetOutermost();
     if (Package == nullptr)
     {
@@ -708,19 +717,48 @@ bool BuildTraceCollisionMesh(
         TraceBodySetup->InvalidatePhysicsData();
     }
 
-    TArray<FText> BuildErrors;
-    TraceMesh->Build(true, &BuildErrors);
-    TArray<UStaticMesh*> MeshesToFinish{TraceMesh};
-    FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
-    if (!BuildErrors.IsEmpty())
+    TSharedRef<TArray<FText>> BuildErrors = MakeShared<TArray<FText>>();
+    TraceMesh->Build(true, &BuildErrors.Get());
+    if (MHIsSourceImportBatchActive())
     {
-        return FailStaticMeshImport(
-            OutError,
-            TEXT("MH_E_IMPORT_FAILED"),
-            FString::Printf(
-                TEXT("companion trace mesh build failed: %s"), *BuildErrors[0].ToString()));
+        FMHResourceKey Key;
+        Key.Kind = EMHResourceKind::StaticMesh;
+        Key.LogicalName = Scene.ResourceName;
+        MHQueueSourceImportPostCompilation(
+            Key,
+            [TraceMesh, BuildErrors](FString& Error)
+            {
+                if (!BuildErrors->IsEmpty())
+                {
+                    return FailStaticMeshImport(
+                        Error,
+                        TEXT("MH_E_IMPORT_FAILED"),
+                        FString::Printf(
+                            TEXT("companion trace mesh build failed: %s"),
+                            *(*BuildErrors)[0].ToString()));
+                }
+                TraceMesh->PostEditChange();
+                return true;
+            });
     }
-    TraceMesh->PostEditChange();
+    else
+    {
+        TArray<UStaticMesh*> MeshesToFinish{TraceMesh};
+        FMHSourceImportMetricScope WaitScope(
+            EMHSourceImportMetricResource::StaticMesh,
+            EMHSourceImportMetricStage::BuildWait);
+        FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
+        if (!BuildErrors->IsEmpty())
+        {
+            return FailStaticMeshImport(
+                OutError,
+                TEXT("MH_E_IMPORT_FAILED"),
+                FString::Printf(
+                    TEXT("companion trace mesh build failed: %s"),
+                    *(*BuildErrors)[0].ToString()));
+        }
+        TraceMesh->PostEditChange();
+    }
     OutTraceMesh = TraceMesh;
     return true;
 }
@@ -1060,19 +1098,50 @@ bool FMHStaticMeshBuilder::Rebuild(
 #endif
     BodySetup->InvalidatePhysicsData();
 
-    TArray<FText> BuildErrors;
-    StaticMesh.Build(true, &BuildErrors);
-    TArray<UStaticMesh*> MeshesToFinish{&StaticMesh};
-    FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
-    if (!BuildErrors.IsEmpty())
+    TSharedRef<TArray<FText>> BuildErrors = MakeShared<TArray<FText>>();
+    StaticMesh.Build(true, &BuildErrors.Get());
+    if (MHIsSourceImportBatchActive())
     {
-        return FailStaticMeshImport(
-            OutError,
-            TEXT("MH_E_IMPORT_FAILED"),
-            FString::Printf(TEXT("UStaticMesh build failed: %s"), *BuildErrors[0].ToString()));
+        FMHResourceKey Key;
+        Key.Kind = EMHResourceKind::StaticMesh;
+        Key.LogicalName = Scene.ResourceName;
+        MHQueueSourceImportPostCompilation(
+            Key,
+            [&StaticMesh, BodySetup, BuildErrors](FString& Error)
+            {
+                if (!BuildErrors->IsEmpty())
+                {
+                    return FailStaticMeshImport(
+                        Error,
+                        TEXT("MH_E_IMPORT_FAILED"),
+                        FString::Printf(
+                            TEXT("UStaticMesh build failed: %s"),
+                            *(*BuildErrors)[0].ToString()));
+                }
+                BodySetup->CreatePhysicsMeshes();
+                StaticMesh.PostEditChange();
+                return true;
+            });
     }
-    BodySetup->CreatePhysicsMeshes();
-    StaticMesh.PostEditChange();
+    else
+    {
+        TArray<UStaticMesh*> MeshesToFinish{&StaticMesh};
+        FMHSourceImportMetricScope WaitScope(
+            EMHSourceImportMetricResource::StaticMesh,
+            EMHSourceImportMetricStage::BuildWait);
+        FStaticMeshCompilingManager::Get().FinishCompilation(MeshesToFinish);
+        if (!BuildErrors->IsEmpty())
+        {
+            return FailStaticMeshImport(
+                OutError,
+                TEXT("MH_E_IMPORT_FAILED"),
+                FString::Printf(
+                    TEXT("UStaticMesh build failed: %s"),
+                    *(*BuildErrors)[0].ToString()));
+        }
+        BodySetup->CreatePhysicsMeshes();
+        StaticMesh.PostEditChange();
+    }
     return true;
 }
 
@@ -1082,6 +1151,9 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
     const FString& SourceRoot,
     const bool bForceReimport)
 {
+    FMHSourceImportMetricScope CreateScope(
+        EMHSourceImportMetricResource::StaticMesh,
+        EMHSourceImportMetricStage::Create);
     FMHStaticMeshOperationResult Result;
     if (Entry.Key.Kind != EMHResourceKind::StaticMesh || !Entry.Key.IsCanonical() ||
         Entry.PayloadPath.IsEmpty() || Entry.SourcePath.IsEmpty())
@@ -1173,13 +1245,22 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
             StaticMesh->PostEditChange();
             return Result;
         }
+        if (MHIsSourceImportBatchActive())
+        {
+            MHQueueSourceImportSourceGuard(Entry.Key, Entry.PayloadPath, SourceHash);
+            MHQueueSourceImportPackage(*StaticMesh, Entry.Key);
+        }
         FString RebindEvent;
         if (MHConsumeOrphanRebindEvent(SourceRoot, Entry.Key, RebindEvent))
         {
             Result.Warnings.Add(RebindEvent);
             UE_LOG(LogMHStaticMeshImport, Warning, TEXT("%s"), *RebindEvent);
         }
-        if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+        if (MHIsSourceImportBatchActive())
+        {
+            MHQueueSourceImportCompletion(Entry.Key, false);
+        }
+        else if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
         {
             return Result;
         }
@@ -1239,6 +1320,10 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
         }
         return Result;
     }
+    if (MHIsSourceImportBatchActive() && RebuildOutputs.TraceCollisionMesh != nullptr)
+    {
+        MHQueueSourceImportPackage(*RebuildOutputs.TraceCollisionMesh, Entry.Key);
+    }
 
     UAssetImportData* PreviousImportData = StaticMesh->GetAssetImportData();
     UMHStaticMeshImportData* Data = Cast<UMHStaticMeshImportData>(StaticMesh->GetAssetImportData());
@@ -1270,7 +1355,10 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
     Data->ImporterVersion = MHStaticMeshImporterVersion;
     Data->bLocallyModified = false;
     Data->Update(Entry.PayloadPath);
-    StaticMesh->PostEditChange();
+    if (!MHIsSourceImportBatchActive())
+    {
+        StaticMesh->PostEditChange();
+    }
     if (!SaveStaticMeshPackage(*StaticMesh, Result.Error))
     {
         if (bCreatedReceipt)
@@ -1293,12 +1381,28 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
         }
         return Result;
     }
+    if (MHIsSourceImportBatchActive())
+    {
+        MHQueueSourceImportSourceGuard(Entry.Key, Entry.PayloadPath, SourceHash);
+        MHQueueSourceImportPackage(*StaticMesh, Entry.Key);
+    }
 
     // Only now that the mesh no longer references it is a companion left over
     // from an earlier apply safe to remove.
     if (RebuildOutputs.StaleTraceCollisionMesh != nullptr)
     {
-        DiscardCreatedStaticMesh(*RebuildOutputs.StaleTraceCollisionMesh);
+        if (MHIsSourceImportBatchActive())
+        {
+            UStaticMesh* StaleTrace = RebuildOutputs.StaleTraceCollisionMesh;
+            MHQueueSourceImportPostSave(Entry.Key, [StaleTrace]()
+            {
+                DiscardCreatedStaticMesh(*StaleTrace);
+            });
+        }
+        else
+        {
+            DiscardCreatedStaticMesh(*RebuildOutputs.StaleTraceCollisionMesh);
+        }
     }
 
     FString RebindEvent;
@@ -1307,13 +1411,20 @@ FMHStaticMeshOperationResult MHImportStaticMeshV4(
         Result.Warnings.Add(RebindEvent);
         UE_LOG(LogMHStaticMeshImport, Warning, TEXT("%s"), *RebindEvent);
     }
-    if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
+    if (MHIsSourceImportBatchActive())
+    {
+        MHQueueSourceImportCompletion(Entry.Key, true);
+    }
+    else if (!MHRefreshGeneratedAssetProjection(SourceRoot, Result.Error))
     {
         return Result;
     }
     Result.StaticMesh = StaticMesh;
     Result.bRebuilt = true;
-    MHNotifyGeneratedResourceChanged(Entry.Key);
+    if (!MHIsSourceImportBatchActive())
+    {
+        MHNotifyGeneratedResourceChanged(Entry.Key);
+    }
     return Result;
 }
 
