@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import time
 from typing import Any
 
 import bpy
@@ -255,6 +256,16 @@ def _snapshot_matches(snapshot: SourceSnapshot, payload: bytes) -> bool:
         snapshot.size == len(payload)
         and snapshot.sha256 == hashlib.sha256(payload).hexdigest()
     )
+
+
+def _record_validation_read(metrics: dict, category: str, payload: bytes, *,
+                            hashed: bool = False) -> None:
+    metrics[f"{category}_files"] = metrics.get(f"{category}_files", 0) + 1
+    metrics[f"{category}_bytes"] = (
+        metrics.get(f"{category}_bytes", 0) + len(payload))
+    if hashed:
+        metrics["hashed_files"] = metrics.get("hashed_files", 0) + 1
+        metrics["hashed_bytes"] = metrics.get("hashed_bytes", 0) + len(payload)
 
 
 def _exact_source_payload(
@@ -787,9 +798,11 @@ def stage_composite_closure_export(
 def revalidate_composite_closure_export(
         plan: ClosureExportPlan,
         staged: tuple[StagedClosurePayload, ...], *,
-        published=()) -> None:
+        published=(), _metrics=None) -> None:
     """Recheck all identities and bytes at the edge before first replace."""
 
+    metrics = {} if _metrics is None else _metrics
+    validation_started = time.monotonic()
     if not isinstance(plan, ClosureExportPlan):
         raise TypeError("plan must be ClosureExportPlan")
     rows = tuple(staged)
@@ -804,7 +817,10 @@ def revalidate_composite_closure_export(
     if not published_keys.issubset(publishable_keys):
         raise ValueError("published contains a non-publishable closure member")
 
+    scan_started = time.monotonic()
     inventory = scan_source_inventory(plan.source_root)
+    metrics["inventory_scan_ms"] = round(
+        (time.monotonic() - scan_started) * 1000.0, 3)
     for key, snapshot in plan.validated_only:
         current = inventory.resolve(key)
         if current.path != snapshot.path:
@@ -812,7 +828,9 @@ def revalidate_composite_closure_export(
                 "MH_E_AMBIGUOUS_RESOURCE_NAME",
                 [key, snapshot.path, current.path],
                 "validated-only closure identity changed after preflight")
-        if not _snapshot_matches(snapshot, current.read_bytes()):
+        raw = current.read_bytes()
+        _record_validation_read(metrics, "source_read", raw, hashed=True)
+        if not _snapshot_matches(snapshot, raw):
             _raise(
                 "MH_E_INVALID_RESOURCE_SOURCE", [key, current.path],
                 "validated-only closure bytes changed after preflight")
@@ -824,20 +842,28 @@ def revalidate_composite_closure_export(
         except OSError:
             path_stat = None
             physical = None
-        if (path_stat is None
-                or not stat.S_ISREG(path_stat.st_mode)
-                or os.path.islink(staged_row.staged_path)
-                or physical != staged_row.physical_path
-                or _physical_inside(plan.source_root, physical)
-                or staged_row.staged_path.read_bytes() != staged_row.payload):
+        staged_valid = not (
+            path_stat is None
+            or not stat.S_ISREG(path_stat.st_mode)
+            or os.path.islink(staged_row.staged_path)
+            or physical != staged_row.physical_path
+            or _physical_inside(plan.source_root, physical)
+        )
+        staged_raw = staged_row.staged_path.read_bytes() if staged_valid else b""
+        if staged_valid:
+            _record_validation_read(metrics, "staged_read", staged_raw)
+        if not staged_valid or staged_raw != staged_row.payload:
             _raise(
                 "MH_E_INVALID_RESOURCE_SOURCE", [row.key, staged_row.staged_path],
                 "staged closure payload changed before publication")
         current = inventory.resolve(row.key, allow_missing=True)
         if row.key in published_keys:
+            current_raw = current.read_bytes() if current is not None else b""
+            if current is not None:
+                _record_validation_read(metrics, "source_read", current_raw)
             if (current is None
                     or current.path != row.target.resolve(strict=True)
-                    or current.read_bytes() != staged_row.payload):
+                    or current_raw != staged_row.payload):
                 subjects = [row.key, row.target]
                 if current is not None:
                     subjects.append(current.path)
@@ -864,10 +890,13 @@ def revalidate_composite_closure_export(
                 subjects,
                 "closure source identity changed after preflight")
         raw = current.read_bytes()
+        _record_validation_read(metrics, "source_read", raw, hashed=True)
         if not _snapshot_matches(row.source_snapshot, raw):
             _raise(
                 "MH_E_INVALID_RESOURCE_SOURCE", [row.key, current.path],
                 "closure source bytes changed after preflight")
+    metrics["total_ms"] = round(
+        (time.monotonic() - validation_started) * 1000.0, 3)
 
 
 def publish_composite_closure_export(
@@ -880,7 +909,9 @@ def publish_composite_closure_export(
     """Publish the irreversible dependency-closed prefix in plan order."""
 
     rows = tuple(staged)
-    revalidate_composite_closure_export(plan, rows)
+    preflight_validation = {}
+    revalidate_composite_closure_export(
+        plan, rows, _metrics=preflight_validation)
     staged_by_key = {row.planned.key: row for row in rows}
     if len(staged_by_key) != len(rows):
         raise ValueError("staged closure contains duplicate ResourceKeys")
@@ -897,14 +928,17 @@ def publish_composite_closure_export(
     identity_to_key = {
         str(row.planned.key): row.planned.key for row in publish_rows}
 
-    def guard(published_identities: tuple[str, ...]) -> None:
+    def guard(published_identities: tuple[str, ...]) -> dict:
+        guard_metrics = {}
         revalidate_composite_closure_export(
             plan,
             rows,
             published=tuple(
                 identity_to_key[identity]
                 for identity in published_identities),
+            _metrics=guard_metrics,
         )
+        return guard_metrics
 
     items = tuple(BatchPublishItem(
         identity=str(row.planned.key),
@@ -926,6 +960,7 @@ def publish_composite_closure_export(
         "unpublished": [],
         "reused": [str(row.key) for row in plan.reused],
         "receipts": list(receipts),
+        "preflight_validation": preflight_validation,
     }
 
 
