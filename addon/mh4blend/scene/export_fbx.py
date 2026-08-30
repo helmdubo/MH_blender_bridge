@@ -8,6 +8,7 @@ No scene names, bundle directories or texture roots participate in this API.
 
 import contextlib
 from dataclasses import dataclass, replace
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -859,6 +860,39 @@ def _export_selected_fbx(filepath):
 
 
 _LOD_NODE_SUFFIX_RE = re.compile(r"_lod(?P<level>\d{2})$")
+_BLENDER_ID_NAME_MAX_BYTES = 63
+_LOD_TRANSPORT_NAME_HASH_CHARS = 12
+
+
+def _utf8_prefix(value: str, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")[:max_bytes]
+    while encoded:
+        try:
+            return encoded.decode("utf-8")
+        except UnicodeDecodeError:
+            encoded = encoded[:-1]
+    return ""
+
+
+def _bounded_lod_node_name(name: str, suffix: str) -> str:
+    """Fit a temporary node name while retaining the classifying suffix."""
+    desired = f"{name}{suffix}"
+    encoded = desired.encode("utf-8")
+    if len(encoded) <= _BLENDER_ID_NAME_MAX_BYTES:
+        return desired
+    digest = hashlib.sha256(encoded).hexdigest()[:_LOD_TRANSPORT_NAME_HASH_CHARS]
+    prefix_budget = (
+        _BLENDER_ID_NAME_MAX_BYTES
+        - len(suffix.encode("ascii"))
+        - 1
+        - _LOD_TRANSPORT_NAME_HASH_CHARS
+    )
+    prefix = _utf8_prefix(name, prefix_budget)
+    if not prefix:
+        raise MHValidationError(
+            "MH_E_INVALID_LOD_HIERARCHY", [name],
+            "LOD node name cannot retain a non-empty transport prefix")
+    return f"{prefix}_{digest}{suffix}"
 
 
 @contextlib.contextmanager
@@ -877,7 +911,7 @@ def _temporary_lod_node_names(levels):
                         f"mesh object '{obj.name}' is in LOD {level} but "
                         f"carries {match.group(0)}")
                 continue
-            desired = f"{obj.name}{suffix}"
+            desired = _bounded_lod_node_name(obj.name, suffix)
             previous = desired_owners.get(desired)
             if previous is not None and previous != obj:
                 raise MHValidationError(

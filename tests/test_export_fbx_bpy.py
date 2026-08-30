@@ -449,6 +449,24 @@ def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):
     assert [obj.name for obj in built["render"]] == original_names
 
 
+def test_long_lod_mesh_name_is_bounded_and_classifiable(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    built = _build_lods("long_lod_name")
+    authored = (
+        "sovmod_tropospheric_station_building_gate_a_jamb_origin001")
+    built["render"][0].name = authored
+
+    report = export_fbx_collection(
+        built["root"], tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    transported = [name for name in models if name.endswith("_lod00")]
+
+    assert len(transported) == 1
+    assert len(transported[0].encode("utf-8")) <= 63
+    assert transported[0].startswith("sovmod_tropospheric_station_")
+    assert built["render"][0].name == authored
+
+
 def test_mismatched_existing_lod_suffix_fails_closed(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     built = _build_lods("mismatch")

@@ -437,3 +437,28 @@ Prefab/collision diagnostics из того же полевого лога не �
 - warning «exported as mesh by explicit policy» и error «requires explicit»
   не могут возникнуть в одном вызове: это строки разных запусков, оставшиеся
   вместе в Blender report history.
+
+### 10.7. Полевое дополнение — длинный LOD node
+
+Следующий blocker возник при временном добавлении обязательного `_lod00`:
+
+```text
+MH_E_INVALID_LOD_HIERARCHY:
+Blender could not assign temporary LOD node name
+'sovmod_tropospheric_station_building_gate_a_jamb_origin001_lod00'
+```
+
+Красный тест воспроизвёл обрезание Blender. Для derived LOD transport name
+теперь используется UTF-8-safe prefix + `_` + 12 hex SHA-256 + неизменный
+terminal `_lodNN`, всё имя не длиннее 63 bytes. Авторское Blender-имя после
+FBX writer восстанавливается. Реальный stage проблемного ресурса прошёл:
+
+```text
+MH_STAGE_OK sovmod_cottage_i_garage_gate_jamb_a 52684 bytes
+sovmod_tropospheric_station_building_gate_a__5347490fdc85_lod00 63 bytes
+```
+
+Парсер классифицировал узел как LOD0. Red -> green: **1 failed -> 1 passed**;
+полный `test_export_fbx_bpy.py`: **62 passed**; pure suite:
+**308 passed / 14 skipped**; все 12 Blender-hosted модулей:
+**356 passed / 0 failed**.
