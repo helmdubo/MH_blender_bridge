@@ -42,7 +42,50 @@ void DestroyMHRetiredComponents(const TArray<TObjectPtr<UActorComponent>>& Previ
     // Retirement order and the set of destroyed components are unchanged.
     const TSet<TObjectPtr<UActorComponent>> Kept(Current);
     for (int32 Index = Previous.Num() - 1; Index >= 0; --Index)
-        if (IsValid(Previous[Index]) && !Kept.Contains(Previous[Index])) Previous[Index]->DestroyComponent();
+    {
+        if (IsValid(Previous[Index]) && !Kept.Contains(Previous[Index]))
+        {
+            UE::MimirComposite::MHRecordPlacementComponentDestroyed();
+            Previous[Index]->DestroyComponent();
+        }
+    }
+}
+
+void RecordMHPlacementReseedComparison(
+    const UE::MimirComposite::FMHResolvedCompositePlan& Previous,
+    const UE::MimirComposite::FMHResolvedCompositePlan& Candidate)
+{
+    using namespace UE::MimirComposite;
+    TMap<FString, const FMHResolvedCompositeLeaf*> PreviousByPath;
+    PreviousByPath.Reserve(Previous.Leaves.Num());
+    for (const FMHResolvedCompositeLeaf& Leaf : Previous.Leaves) PreviousByPath.Add(Leaf.Origin, &Leaf);
+    TSet<FString> CandidatePaths;
+    CandidatePaths.Reserve(Candidate.Leaves.Num());
+    uint64 Stable = 0;
+    uint64 Changed = 0;
+    uint64 Added = 0;
+    for (const FMHResolvedCompositeLeaf& Leaf : Candidate.Leaves)
+    {
+        CandidatePaths.Add(Leaf.Origin);
+        const FMHResolvedCompositeLeaf* const* Found = PreviousByPath.Find(Leaf.Origin);
+        if (Found == nullptr)
+        {
+            ++Added;
+        }
+        else if ((*Found)->Kind == Leaf.Kind && (*Found)->Resource == Leaf.Resource)
+        {
+            ++Stable;
+        }
+        else
+        {
+            ++Changed;
+        }
+    }
+    uint64 Removed = 0;
+    for (const TPair<FString, const FMHResolvedCompositeLeaf*>& Pair : PreviousByPath)
+        if (!CandidatePaths.Contains(Pair.Key)) ++Removed;
+    MHRecordPlacementReseedComparison(
+        Previous.Leaves.Num(), Candidate.Leaves.Num(), Stable, Changed, Added, Removed);
 }
 }
 
@@ -399,6 +442,9 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     if (!CandidateGraph.IsValid()) return;
     const FMHRandomComposite* Root = CandidateGraph->Composites.Find(Name);
     if (Root == nullptr) return;
+    const bool bLayoutReseed = bSeedOnly && bPlanAvailable && ResolvedPlan.IsValid() &&
+        ResolvedPlan->Seed != CandidatePlan->Seed;
+    if (bLayoutReseed) RecordMHPlacementReseedComparison(*ResolvedPlan, *CandidatePlan);
     SeedAffectsResult = MHClassifyCompositeGraph(*CandidateGraph);
     // None means visual invariance, not absence of random draws. Resolve above
     // still refreshes decision traces for single-option and zero-deviation nodes.
@@ -423,14 +469,46 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
         return true;
     };
-    if (!(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
+    bool bViewCompiled = false;
+    if (bLayoutReseed && SeedAffectsResult != EMHCompositeSeedEffect::None)
+    {
+        const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
+        FMHCompositePlacementCompileResult View;
+        if (MHTryCompileCompositePlacementReseedV5(
+                *this, *ResolvedPlan, *CandidatePlan, *Root, *Settings, Previous,
+                TopLevelPlacementComponents, LeafPlacementComponents,
+                CandidateDefinition.Get(), View))
+        {
+            if (!View.Succeeded())
+            {
+                LastPlacementError = View.Error;
+                bPlanAvailable = false;
+                ResolvedSignature.Reset();
+                ReportPlacementError();
+                return;
+            }
+            DerivedComponents = MoveTemp(View.Components);
+            TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
+            LeafPlacementComponents = MoveTemp(View.LeafComponents);
+            LastPlacementWarnings = MoveTemp(View.Warnings);
+            DestroyMHRetiredComponents(Previous, DerivedComponents);
+            if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
+            MHRecordPlacementReseedIncrementalApplied();
+            bViewCompiled = true;
+        }
+        else
+        {
+            MHRecordPlacementReseedFullFallback();
+        }
+    }
+    if (!bViewCompiled && !(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
     {
         if (!CompileFullView()) return;
     }
     // S6.3.1: a skipped recompile still refreshes the appearance Custom
     // Primitive Data - the channels depend on AppearanceSeed alone. A leaf
     // view that no longer matches the plan is repaired by the full path.
-    else if (MHApplyCompositeAppearanceCustomData(LeafPlacementComponents,
+    else if (!bViewCompiled && MHApplyCompositeAppearanceCustomData(LeafPlacementComponents,
                  *CandidatePlan, Settings->AppearanceCustomDataBaseIndex) == INDEX_NONE)
     {
         if (!CompileFullView()) return;

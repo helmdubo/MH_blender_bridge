@@ -32,7 +32,10 @@ void PlanViewSetWorld(USceneComponent& Component, const FMatrix& Matrix)
 {
     const FTransform Transform(Matrix);
     if (!Component.GetComponentTransform().Equals(Transform, 0.0))
+    {
+        MHRecordPlacementWorldTransformUpdate();
         Component.SetWorldTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
+    }
 }
 
 /**
@@ -46,6 +49,7 @@ USceneComponent* PlanViewNew(AActor& Target, UClass* Class, const FString& Label
 {
     USceneComponent* Component = NewObject<USceneComponent>(&Target, Class,
         MakeUniqueObjectName(&Target, Class, FName(*Label)), PlanViewFlags);
+    MHRecordPlacementComponentCreated();
     Target.AddInstanceComponent(Component);
     Component->ComponentTags.Add(Key);
     Component->SetupAttachment(Parent != nullptr ? Parent : Target.GetRootComponent());
@@ -56,6 +60,7 @@ USceneComponent* PlanViewNew(AActor& Target, UClass* Class, const FString& Label
     {
         FMHPlacementStageScope Stage(EMHPlacementStage::RegisterComponents);
         Component->RegisterComponent();
+        MHRecordPlacementComponentRegistered();
     }
     Result.Components.Add(Component);
     return Component;
@@ -192,6 +197,276 @@ bool MHUpdateCompositePlacementBasis(AActor& Target, const FMHResolvedCompositeP
     return true;
 }
 
+bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
+    const FMHResolvedCompositePlan& PreviousPlan, const FMHResolvedCompositePlan& CandidatePlan,
+    const FMHRandomComposite& RootDefinition, const UMHCompositeSettings& Settings,
+    TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
+    TConstArrayView<TObjectPtr<USceneComponent>> PreviousHandles,
+    TConstArrayView<TObjectPtr<USceneComponent>> PreviousLeaves,
+    FMHCompositeDefinitionEntry* Definition, FMHCompositePlacementCompileResult& OutResult)
+{
+    FMHPlacementStageScope CompileStage(EMHPlacementStage::CompilePlacement);
+    OutResult = FMHCompositePlacementCompileResult();
+    if (!PlanViewPreflight(CandidatePlan, RootDefinition, Target.GetActorTransform(), OutResult.Error)) return true;
+
+    // This is an optimization admission boundary. Reject every structural
+    // mismatch before endpoint lookup or component mutation; the actor will run
+    // the existing full compiler over its orphan-union previous view.
+    if (PreviousHandles.Num() != RootDefinition.Nodes.Num() ||
+        PreviousLeaves.Num() != PreviousPlan.Leaves.Num() ||
+        PreviousComponents.Num() != PreviousHandles.Num() + PreviousLeaves.Num()) return false;
+
+    const auto BuildRootPaths = [&RootDefinition](
+        const FMHResolvedCompositePlan& Plan, TArray<FString>& OutPaths) -> bool
+    {
+        OutPaths.SetNum(RootDefinition.Nodes.Num());
+        TBitArray<> Seen(false, RootDefinition.Nodes.Num());
+        for (const FMHResolvedCompositeNode& Node : Plan.Nodes)
+        {
+            if (Node.ParentResolvedNodeIndex != INDEX_NONE) continue;
+            if (!Seen.IsValidIndex(Node.RootNodeIndex) || Seen[Node.RootNodeIndex]) return false;
+            Seen[Node.RootNodeIndex] = true;
+            OutPaths[Node.RootNodeIndex] = Node.NodePath;
+        }
+        return !Seen.Contains(false);
+    };
+    TArray<FString> PreviousRootPaths;
+    TArray<FString> CandidateRootPaths;
+    if (!BuildRootPaths(PreviousPlan, PreviousRootPaths) ||
+        !BuildRootPaths(CandidatePlan, CandidateRootPaths) ||
+        PreviousRootPaths != CandidateRootPaths) return false;
+
+    for (int32 Index = 0; Index < PreviousHandles.Num(); ++Index)
+    {
+        USceneComponent* Handle = PreviousHandles[Index];
+        const FName ExpectedTag(*FString::Printf(TEXT("MH.Handle:%d"), Index));
+        if (!IsValid(Handle) || Handle->GetOwner() != &Target ||
+            Handle->GetClass() != USceneComponent::StaticClass() || !Handle->IsRegistered() ||
+            Handle->ComponentTags.Num() != 1 || !Handle->ComponentTags.Contains(ExpectedTag) ||
+            Handle->GetAttachParent() != Target.GetRootComponent() ||
+            !Handle->IsUsingAbsoluteLocation() || !Handle->IsUsingAbsoluteRotation() ||
+            !Handle->IsUsingAbsoluteScale() || PreviousComponents[Index] != Handle) return false;
+    }
+
+    for (int32 Index = 0; Index < PreviousPlan.Leaves.Num(); ++Index)
+    {
+        const FMHResolvedCompositeLeaf& Leaf = PreviousPlan.Leaves[Index];
+        if (!PreviousHandles.IsValidIndex(Leaf.RootNodeIndex)) return false;
+        USceneComponent* Component = PreviousLeaves[Index];
+        UClass* ExpectedClass = Leaf.Kind == EMHRandomSemanticKind::Mesh
+            ? UStaticMeshComponent::StaticClass()
+            : (Leaf.Kind == EMHRandomSemanticKind::Actor ? UChildActorComponent::StaticClass() : nullptr);
+        const FName ExpectedTag(*FString::Printf(
+            TEXT("MH.Leaf:%s:%d:%s"), *Leaf.Origin, static_cast<int32>(Leaf.Kind), *Leaf.Resource));
+        if (ExpectedClass == nullptr || !IsValid(Component) || Component->GetOwner() != &Target ||
+            Component->GetClass() != ExpectedClass || !Component->IsRegistered() ||
+            Component->ComponentTags.Num() != 1 || !Component->ComponentTags.Contains(ExpectedTag) ||
+            Component->GetAttachParent() != PreviousHandles[Leaf.RootNodeIndex] ||
+            !Component->IsUsingAbsoluteLocation() || !Component->IsUsingAbsoluteRotation() ||
+            !Component->IsUsingAbsoluteScale() ||
+            PreviousComponents[PreviousHandles.Num() + Index] != Component) return false;
+        if (const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component))
+        {
+            const UStaticMesh* BoundMesh = Mesh->GetStaticMesh();
+            const FString ExpectedPath = FString::Printf(
+                TEXT("/Game/MH/Generated/Meshes/%s.%s"), *Leaf.Resource, *Leaf.Resource);
+            if (!IsValid(BoundMesh) || BoundMesh->GetPathName() != ExpectedPath) return false;
+            if (!MHIsAdmissibleAppearanceCustomDataBaseIndex(Settings.AppearanceCustomDataBaseIndex)) return false;
+            const TArray<float>& Data = Mesh->GetCustomPrimitiveData().Data;
+            for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+            {
+                const int32 DataIndex = Settings.AppearanceCustomDataBaseIndex + Channel;
+                if (!Data.IsValidIndex(DataIndex) ||
+                    Data[DataIndex] != Leaf.AppearanceChannels[Channel]) return false;
+            }
+        }
+        else if (const UChildActorComponent* Child = Cast<UChildActorComponent>(Component))
+        {
+            const FSoftClassPath* ExpectedPath = Settings.ActorClassRegistry.Find(Leaf.Resource);
+            UClass* ExpectedActorClass = ExpectedPath != nullptr ? ExpectedPath->ResolveClass() : nullptr;
+            if (!MHIsSpawnableCompositeActorClass(ExpectedActorClass) ||
+                Child->GetChildActorClass() != ExpectedActorClass) return false;
+        }
+    }
+    TArray<int32> PreviousIndexForCandidate;
+    PreviousIndexForCandidate.Init(INDEX_NONE, CandidatePlan.Leaves.Num());
+    TArray<bool> NeedsReplacement;
+    NeedsReplacement.Init(true, CandidatePlan.Leaves.Num());
+    int32 PositionalPathMismatches = 0;
+    if (PreviousPlan.Leaves.Num() == CandidatePlan.Leaves.Num())
+    {
+        for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
+            if (PreviousPlan.Leaves[Index].Origin != CandidatePlan.Leaves[Index].Origin)
+                ++PositionalPathMismatches;
+    }
+    const bool bUsePositionalDiff = PreviousPlan.Leaves.Num() == CandidatePlan.Leaves.Num() &&
+        PositionalPathMismatches <= 1;
+    TMap<FString, int32> PreviousLeafByPath;
+    if (!bUsePositionalDiff)
+    {
+        PreviousLeafByPath.Reserve(PreviousPlan.Leaves.Num());
+        for (int32 Index = 0; Index < PreviousPlan.Leaves.Num(); ++Index)
+        {
+            const FString& Path = PreviousPlan.Leaves[Index].Origin;
+            if (PreviousLeafByPath.Contains(Path)) return false;
+            PreviousLeafByPath.Add(Path, Index);
+        }
+    }
+    TSet<FString> CandidatePaths;
+    if (!bUsePositionalDiff) CandidatePaths.Reserve(CandidatePlan.Leaves.Num());
+    for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
+    {
+        const FMHResolvedCompositeLeaf& Leaf = CandidatePlan.Leaves[Index];
+        int32 PreviousIndex = INDEX_NONE;
+        if (bUsePositionalDiff)
+        {
+            PreviousIndex = Index;
+        }
+        else
+        {
+            if (CandidatePaths.Contains(Leaf.Origin)) return false;
+            CandidatePaths.Add(Leaf.Origin);
+            if (const int32* Found = PreviousLeafByPath.Find(Leaf.Origin)) PreviousIndex = *Found;
+        }
+        if (PreviousIndex == INDEX_NONE) continue;
+        const FMHResolvedCompositeLeaf& OldLeaf = PreviousPlan.Leaves[PreviousIndex];
+        if (OldLeaf.Origin != Leaf.Origin) continue;
+        PreviousIndexForCandidate[Index] = PreviousIndex;
+        if (OldLeaf.Kind != Leaf.Kind || OldLeaf.Resource != Leaf.Resource) continue;
+        // A stable leaf may not silently move under another authored handle;
+        // doing so would require the reattach forbidden by the fast path.
+        if (OldLeaf.RootNodeIndex != Leaf.RootNodeIndex) return false;
+        NeedsReplacement[Index] = false;
+    }
+
+    struct FReseedEndpoint
+    {
+        UStaticMesh* Mesh = nullptr;
+        UClass* ActorClass = nullptr;
+    };
+    TArray<FReseedEndpoint> Endpoints;
+    Endpoints.SetNum(CandidatePlan.Leaves.Num());
+    {
+        FMHPlacementStageScope LoadStage(EMHPlacementStage::LoadEndpoints);
+        for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
+        {
+            if (!NeedsReplacement[Index]) continue;
+            const FMHResolvedCompositeLeaf& Leaf = CandidatePlan.Leaves[Index];
+            FReseedEndpoint& Endpoint = Endpoints[Index];
+            if (Leaf.Kind == EMHRandomSemanticKind::Mesh)
+            {
+                FMHResourceKey Key;
+                Key.Kind = EMHResourceKind::StaticMesh;
+                Key.LogicalName = Leaf.Resource;
+                if (Definition != nullptr)
+                {
+                    Endpoint.Mesh = Cast<UStaticMesh>(
+                        MHResolveCompositeDefinitionEndpoint(*Definition, Key, OutResult.Error));
+                }
+                else
+                {
+                    MHRecordDefinitionEndpointResolve();
+                    Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, OutResult.Error));
+                }
+                if (!OutResult.Error.IsEmpty()) return true;
+            }
+            else if (Leaf.Kind == EMHRandomSemanticKind::Actor)
+            {
+                const FSoftClassPath* Path = Settings.ActorClassRegistry.Find(Leaf.Resource);
+                Endpoint.ActorClass = Path != nullptr ? Path->TryLoadClass<AActor>() : nullptr;
+                if (!MHIsSpawnableCompositeActorClass(Endpoint.ActorClass)) Endpoint.ActorClass = nullptr;
+            }
+            else
+            {
+                OutResult.Error = TEXT("MH_E_COMPOSITE_GRAMMAR: resolved leaf is neither mesh nor actor");
+                return true;
+            }
+        }
+    }
+
+    const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
+    for (int32 Index = 0; Index < PreviousHandles.Num(); ++Index)
+    {
+        USceneComponent* Handle = PreviousHandles[Index];
+        OutResult.Components.Add(Handle);
+        OutResult.TopLevelComponents.Add(Handle);
+        PlanViewSetWorld(*Handle, PlanViewTrsMatrix(RootDefinition.Nodes[Index].Transform) * Basis);
+    }
+    for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
+    {
+        const FMHResolvedCompositeLeaf& Leaf = CandidatePlan.Leaves[Index];
+        const FString Label = Leaf.DisplayName.IsEmpty() ? Leaf.Resource : Leaf.DisplayName;
+        USceneComponent* Component = nullptr;
+        if (!NeedsReplacement[Index])
+        {
+            Component = PreviousLeaves[PreviousIndexForCandidate[Index]];
+            OutResult.Components.Add(Component);
+        }
+        else
+        {
+            const FReseedEndpoint& Endpoint = Endpoints[Index];
+            const FName Key(*FString::Printf(
+                TEXT("MH.Leaf:%s:%d:%s"), *Leaf.Origin, static_cast<int32>(Leaf.Kind), *Leaf.Resource));
+            UClass* Class = Endpoint.Mesh != nullptr ? UStaticMeshComponent::StaticClass() :
+                (Endpoint.ActorClass != nullptr ? UChildActorComponent::StaticClass() : nullptr);
+            if (Class == nullptr)
+            {
+                Component = PlanViewPlaceholder(Target, Label, Key, OutResult);
+                OutResult.Warnings.Add(TEXT("MH_W_UNRESOLVED_PLACEMENT: ") + Leaf.Origin + TEXT(" -> ") + Leaf.Resource);
+            }
+            else
+            {
+                Component = PlanViewNew(Target, Class, TEXT("MH_Leaf_") + Leaf.Resource, Key, OutResult, nullptr,
+                    [&Endpoint](USceneComponent& New)
+                    {
+                        if (UStaticMeshComponent* NewMesh = Cast<UStaticMeshComponent>(&New))
+                        {
+                            MHRecordPlacementStaticMeshAssignment();
+                            NewMesh->SetStaticMesh(Endpoint.Mesh);
+                        }
+                        else if (UChildActorComponent* NewChild = Cast<UChildActorComponent>(&New))
+                        {
+                            NewChild->SetEditorTreeViewVisualizationMode(
+                                EChildActorComponentTreeViewVisualizationMode::Hidden);
+                            NewChild->SetChildActorClass(Endpoint.ActorClass);
+                        }
+                    });
+            }
+            Component->SetAbsolute(true, true, true);
+            MHRecordPlacementAttachment();
+            Component->AttachToComponent(OutResult.TopLevelComponents[Leaf.RootNodeIndex],
+                FAttachmentTransformRules::KeepWorldTransform);
+            if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component))
+            {
+                MHRecordPlacementStaticMeshAssignment();
+                Mesh->SetStaticMesh(Endpoint.Mesh);
+            }
+        }
+        PlanViewSetWorld(*Component, Leaf.WorldMatrix * Basis);
+        bool bAppearanceChanged = NeedsReplacement[Index];
+        if (!bAppearanceChanged)
+        {
+            const FMHResolvedCompositeLeaf& OldLeaf =
+                PreviousPlan.Leaves[PreviousIndexForCandidate[Index]];
+            bAppearanceChanged = FMemory::Memcmp(
+                OldLeaf.AppearanceChannels, Leaf.AppearanceChannels,
+                sizeof(Leaf.AppearanceChannels)) != 0;
+        }
+        if (bAppearanceChanged)
+        {
+            MHRecordPlacementAppearanceUpdate();
+            MHApplyLeafAppearanceCustomData(Component, Leaf, Settings.AppearanceCustomDataBaseIndex);
+        }
+        if (UChildActorComponent* Child = Cast<UChildActorComponent>(Component))
+        {
+            Child->SetEditorTreeViewVisualizationMode(EChildActorComponentTreeViewVisualizationMode::Hidden);
+            if (AActor* Actor = Child->GetChildActor()) Actor->SetActorLabel(Label, false);
+        }
+        OutResult.LeafComponents.Add(Component);
+    }
+    return true;
+}
+
 FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
     const FMHResolvedCompositePlan& Plan, const FMHRandomComposite& RootDefinition,
     const UMHCompositeSettings& Settings, TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
@@ -272,7 +547,11 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
             Component = PlanViewNew(Target, Class, TEXT("MH_Leaf_") + Leaf.Resource, Key, Result, nullptr,
                 [&Endpoint](USceneComponent& New)
                 {
-                    if (UStaticMeshComponent* NewMesh = Cast<UStaticMeshComponent>(&New)) NewMesh->SetStaticMesh(Endpoint.Mesh);
+                    if (UStaticMeshComponent* NewMesh = Cast<UStaticMeshComponent>(&New))
+                    {
+                        MHRecordPlacementStaticMeshAssignment();
+                        NewMesh->SetStaticMesh(Endpoint.Mesh);
+                    }
                     else if (UChildActorComponent* NewChild = Cast<UChildActorComponent>(&New))
                     {
                         NewChild->SetEditorTreeViewVisualizationMode(EChildActorComponentTreeViewVisualizationMode::Hidden);
@@ -285,11 +564,17 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         // never recompose it through the author's handle using FTransform.
         // Apply this to reused leaves and placeholder roots as well.
         Component->SetAbsolute(true, true, true);
+        MHRecordPlacementAttachment();
         Component->AttachToComponent(Result.TopLevelComponents[Leaf.RootNodeIndex], FAttachmentTransformRules::KeepWorldTransform);
         PlanViewSetWorld(*Component, Leaf.WorldMatrix * Basis);
-        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) Mesh->SetStaticMesh(Endpoint.Mesh);
+        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component))
+        {
+            MHRecordPlacementStaticMeshAssignment();
+            Mesh->SetStaticMesh(Endpoint.Mesh);
+        }
         // S6.3.1: the resolved appearance channels reach the material as Custom
         // Primitive Data. Materialization side only - never part of a preimage.
+        MHRecordPlacementAppearanceUpdate();
         MHApplyLeafAppearanceCustomData(Component, Leaf, Settings.AppearanceCustomDataBaseIndex);
         if (UChildActorComponent* Child = Cast<UChildActorComponent>(Component))
         {
