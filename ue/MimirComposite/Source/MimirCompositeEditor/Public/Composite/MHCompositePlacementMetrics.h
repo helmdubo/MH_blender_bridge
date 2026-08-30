@@ -46,6 +46,32 @@ struct MIMIRCOMPOSITEEDITOR_API FMHDefinitionCacheMetrics
     uint64 DeadEndpointReloads = 0;
 };
 
+/** Non-serialized component work performed while materializing a placement. */
+struct MIMIRCOMPOSITEEDITOR_API FMHPlacementMutationMetrics
+{
+    uint64 CreatedComponents = 0;
+    uint64 DestroyedComponents = 0;
+    uint64 RegisteredComponents = 0;
+    uint64 Attachments = 0;
+    uint64 StaticMeshAssignments = 0;
+    uint64 WorldTransformUpdates = 0;
+    uint64 AppearanceUpdates = 0;
+};
+
+/** Non-serialized layout-reseed comparison and path-selection counters. */
+struct MIMIRCOMPOSITEEDITOR_API FMHPlacementReseedMetrics
+{
+    uint64 Attempts = 0;
+    uint64 IncrementalApplied = 0;
+    uint64 FullFallbacks = 0;
+    uint64 PreviousLeaves = 0;
+    uint64 CandidateLeaves = 0;
+    uint64 StableLeafIdentities = 0;
+    uint64 ChangedLeafIdentities = 0;
+    uint64 AddedLeafIdentities = 0;
+    uint64 RemovedLeafIdentities = 0;
+};
+
 /**
  * Inclusive/exclusive game-thread timing scope. Instrumentation is observable
  * only through the test API below and is never serialized or read by placement
@@ -77,4 +103,20 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointResolve();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointHit();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointStore();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionDeadEndpointReload();
+MIMIRCOMPOSITEEDITOR_API void MHResetPlacementMutationMetrics();
+MIMIRCOMPOSITEEDITOR_API FMHPlacementMutationMetrics MHGetPlacementMutationMetrics();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementComponentCreated();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementComponentDestroyed();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementComponentRegistered();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementAttachment();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementStaticMeshAssignment();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementWorldTransformUpdate();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementAppearanceUpdate();
+MIMIRCOMPOSITEEDITOR_API void MHResetPlacementReseedMetrics();
+MIMIRCOMPOSITEEDITOR_API FMHPlacementReseedMetrics MHGetPlacementReseedMetrics();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementReseedComparison(
+    uint64 PreviousLeaves, uint64 CandidateLeaves, uint64 StableLeafIdentities,
+    uint64 ChangedLeafIdentities, uint64 AddedLeafIdentities, uint64 RemovedLeafIdentities);
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementReseedIncrementalApplied();
+MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementReseedFullFallback();
 } // namespace UE::MimirComposite

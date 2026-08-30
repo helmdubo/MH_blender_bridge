@@ -32,7 +32,10 @@ void PlanViewSetWorld(USceneComponent& Component, const FMatrix& Matrix)
 {
     const FTransform Transform(Matrix);
     if (!Component.GetComponentTransform().Equals(Transform, 0.0))
+    {
+        MHRecordPlacementWorldTransformUpdate();
         Component.SetWorldTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
+    }
 }
 
 /**
@@ -46,6 +49,7 @@ USceneComponent* PlanViewNew(AActor& Target, UClass* Class, const FString& Label
 {
     USceneComponent* Component = NewObject<USceneComponent>(&Target, Class,
         MakeUniqueObjectName(&Target, Class, FName(*Label)), PlanViewFlags);
+    MHRecordPlacementComponentCreated();
     Target.AddInstanceComponent(Component);
     Component->ComponentTags.Add(Key);
     Component->SetupAttachment(Parent != nullptr ? Parent : Target.GetRootComponent());
@@ -56,6 +60,7 @@ USceneComponent* PlanViewNew(AActor& Target, UClass* Class, const FString& Label
     {
         FMHPlacementStageScope Stage(EMHPlacementStage::RegisterComponents);
         Component->RegisterComponent();
+        MHRecordPlacementComponentRegistered();
     }
     Result.Components.Add(Component);
     return Component;
@@ -272,7 +277,11 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
             Component = PlanViewNew(Target, Class, TEXT("MH_Leaf_") + Leaf.Resource, Key, Result, nullptr,
                 [&Endpoint](USceneComponent& New)
                 {
-                    if (UStaticMeshComponent* NewMesh = Cast<UStaticMeshComponent>(&New)) NewMesh->SetStaticMesh(Endpoint.Mesh);
+                    if (UStaticMeshComponent* NewMesh = Cast<UStaticMeshComponent>(&New))
+                    {
+                        MHRecordPlacementStaticMeshAssignment();
+                        NewMesh->SetStaticMesh(Endpoint.Mesh);
+                    }
                     else if (UChildActorComponent* NewChild = Cast<UChildActorComponent>(&New))
                     {
                         NewChild->SetEditorTreeViewVisualizationMode(EChildActorComponentTreeViewVisualizationMode::Hidden);
@@ -285,11 +294,17 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         // never recompose it through the author's handle using FTransform.
         // Apply this to reused leaves and placeholder roots as well.
         Component->SetAbsolute(true, true, true);
+        MHRecordPlacementAttachment();
         Component->AttachToComponent(Result.TopLevelComponents[Leaf.RootNodeIndex], FAttachmentTransformRules::KeepWorldTransform);
         PlanViewSetWorld(*Component, Leaf.WorldMatrix * Basis);
-        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) Mesh->SetStaticMesh(Endpoint.Mesh);
+        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component))
+        {
+            MHRecordPlacementStaticMeshAssignment();
+            Mesh->SetStaticMesh(Endpoint.Mesh);
+        }
         // S6.3.1: the resolved appearance channels reach the material as Custom
         // Primitive Data. Materialization side only - never part of a preimage.
+        MHRecordPlacementAppearanceUpdate();
         MHApplyLeafAppearanceCustomData(Component, Leaf, Settings.AppearanceCustomDataBaseIndex);
         if (UChildActorComponent* Child = Cast<UChildActorComponent>(Component))
         {

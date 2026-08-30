@@ -42,7 +42,50 @@ void DestroyMHRetiredComponents(const TArray<TObjectPtr<UActorComponent>>& Previ
     // Retirement order and the set of destroyed components are unchanged.
     const TSet<TObjectPtr<UActorComponent>> Kept(Current);
     for (int32 Index = Previous.Num() - 1; Index >= 0; --Index)
-        if (IsValid(Previous[Index]) && !Kept.Contains(Previous[Index])) Previous[Index]->DestroyComponent();
+    {
+        if (IsValid(Previous[Index]) && !Kept.Contains(Previous[Index]))
+        {
+            UE::MimirComposite::MHRecordPlacementComponentDestroyed();
+            Previous[Index]->DestroyComponent();
+        }
+    }
+}
+
+void RecordMHPlacementReseedComparison(
+    const UE::MimirComposite::FMHResolvedCompositePlan& Previous,
+    const UE::MimirComposite::FMHResolvedCompositePlan& Candidate)
+{
+    using namespace UE::MimirComposite;
+    TMap<FString, const FMHResolvedCompositeLeaf*> PreviousByPath;
+    PreviousByPath.Reserve(Previous.Leaves.Num());
+    for (const FMHResolvedCompositeLeaf& Leaf : Previous.Leaves) PreviousByPath.Add(Leaf.Origin, &Leaf);
+    TSet<FString> CandidatePaths;
+    CandidatePaths.Reserve(Candidate.Leaves.Num());
+    uint64 Stable = 0;
+    uint64 Changed = 0;
+    uint64 Added = 0;
+    for (const FMHResolvedCompositeLeaf& Leaf : Candidate.Leaves)
+    {
+        CandidatePaths.Add(Leaf.Origin);
+        const FMHResolvedCompositeLeaf* const* Found = PreviousByPath.Find(Leaf.Origin);
+        if (Found == nullptr)
+        {
+            ++Added;
+        }
+        else if ((*Found)->Kind == Leaf.Kind && (*Found)->Resource == Leaf.Resource)
+        {
+            ++Stable;
+        }
+        else
+        {
+            ++Changed;
+        }
+    }
+    uint64 Removed = 0;
+    for (const TPair<FString, const FMHResolvedCompositeLeaf*>& Pair : PreviousByPath)
+        if (!CandidatePaths.Contains(Pair.Key)) ++Removed;
+    MHRecordPlacementReseedComparison(
+        Previous.Leaves.Num(), Candidate.Leaves.Num(), Stable, Changed, Added, Removed);
 }
 }
 
@@ -399,6 +442,9 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     if (!CandidateGraph.IsValid()) return;
     const FMHRandomComposite* Root = CandidateGraph->Composites.Find(Name);
     if (Root == nullptr) return;
+    const bool bLayoutReseed = bSeedOnly && bPlanAvailable && ResolvedPlan.IsValid() &&
+        ResolvedPlan->Seed != CandidatePlan->Seed;
+    if (bLayoutReseed) RecordMHPlacementReseedComparison(*ResolvedPlan, *CandidatePlan);
     SeedAffectsResult = MHClassifyCompositeGraph(*CandidateGraph);
     // None means visual invariance, not absence of random draws. Resolve above
     // still refreshes decision traces for single-option and zero-deviation nodes.
