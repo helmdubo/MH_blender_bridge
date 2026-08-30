@@ -448,6 +448,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     SeedAffectsResult = MHClassifyCompositeGraph(*CandidateGraph);
     // None means visual invariance, not absence of random draws. Resolve above
     // still refreshes decision traces for single-option and zero-deviation nodes.
+    bool bComponentsEditedBroadcast = false;
     const auto CompileFullView = [&]() -> bool
     {
         const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
@@ -466,7 +467,11 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         LeafPlacementComponents = MoveTemp(View.LeafComponents);
         LastPlacementWarnings = MoveTemp(View.Warnings);
         DestroyMHRetiredComponents(Previous, DerivedComponents);
-        if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
+        if (Previous != DerivedComponents)
+        {
+            BroadcastMHCompositeComponentsEdited();
+            bComponentsEditedBroadcast = true;
+        }
         return true;
     };
     bool bViewCompiled = false;
@@ -492,7 +497,11 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             LeafPlacementComponents = MoveTemp(View.LeafComponents);
             LastPlacementWarnings = MoveTemp(View.Warnings);
             DestroyMHRetiredComponents(Previous, DerivedComponents);
-            if (Previous != DerivedComponents) BroadcastMHCompositeComponentsEdited();
+            if (Previous != DerivedComponents)
+            {
+                BroadcastMHCompositeComponentsEdited();
+                bComponentsEditedBroadcast = true;
+            }
             MHRecordPlacementReseedIncrementalApplied();
             bViewCompiled = true;
         }
@@ -518,6 +527,11 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     ResolvedPlan = CandidatePlan;
     ResolvedSignature = CandidatePlan->ResolvedSignature;
     bPlanAvailable = true;
+    // The existing Level Editor component-edited event is also the read-only
+    // semantic-overlay invalidation signal. A reseed can preserve every
+    // component pointer, so component-array inequality alone is insufficient.
+    // Outliner listeners defer their tree work to the next Slate tick.
+    if (!bComponentsEditedBroadcast) BroadcastMHCompositeComponentsEdited();
 }
 
 void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformFlags, ETeleportType)

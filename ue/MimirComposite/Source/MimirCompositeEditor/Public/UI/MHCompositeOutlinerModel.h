@@ -92,8 +92,8 @@ public:
 
     const TArray<TSharedPtr<FMHCompositeOutlinerItem>>& GetRoots() const { return Roots; }
     const FString& GetOverlayStatus() const { return OverlayStatus; }
-    TSharedPtr<FMHCompositeOutlinerItem> FindByNodePath(const FString& NodePath) const;
-    TSharedPtr<FMHCompositeOutlinerItem> FindForComponent(const USceneComponent* Component) const;
+    TSharedPtr<FMHCompositeOutlinerItem> FindByNodePath(const FString& NodePath);
+    TSharedPtr<FMHCompositeOutlinerItem> FindForComponent(const USceneComponent* Component);
 
     FString GetCopyName(const FMHCompositeOutlinerItem& Item) const;
     bool GetNavigation(
@@ -102,10 +102,29 @@ public:
         FMHCompositeOutlinerNavigation& OutNavigation) const;
 
 private:
+    bool BuildAssetRows(
+        const UMHCompositeAsset& Asset,
+        const FString& Prefix,
+        const TSharedPtr<FMHCompositeOutlinerItem>& NestedParent,
+        const TArray<FString>& CompositeAncestry,
+        TArray<TSharedPtr<FMHCompositeOutlinerItem>>& OutRoots,
+        FString& OutError);
+    UObject* ResolveAsset(
+        EMHRandomSemanticKind Kind,
+        const FString& Resource,
+        FString& OutError) const;
+    void ApplyOverlayToItem(const TSharedPtr<FMHCompositeOutlinerItem>& Item);
+    void BindComponentToItem(const TSharedPtr<FMHCompositeOutlinerItem>& Item);
+
     FAssetResolver AssetResolver;
     TArray<TSharedPtr<FMHCompositeOutlinerItem>> Roots;
     TMap<FString, TSharedPtr<FMHCompositeOutlinerItem>> ItemsByPath;
     TMap<TWeakObjectPtr<const USceneComponent>, TWeakPtr<FMHCompositeOutlinerItem>> ItemsByComponent;
+    TMap<FString, FMHRandomTrs> ResolvedLocalTrsByPath;
+    TMap<FString, int32> SelectedOptionsByPath;
+    TSet<FString> ResolvedLeafPaths;
+    TMap<FString, TWeakObjectPtr<USceneComponent>> ComponentsByPath;
+    TSet<FString> MissingEndpointPaths;
     TWeakObjectPtr<UMHCompositeAsset> RootAsset;
     FString OverlayStatus;
 };

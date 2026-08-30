@@ -29,6 +29,7 @@ public class MimirCompositeEditor : ModuleRules
                 "AssetRegistry",
                 "ContentBrowser",
                 "DirectoryWatcher",
+                "InputCore",
                 "Json",
                 "LevelEditor",
                 "MessageLog",
@@ -38,7 +39,8 @@ public class MimirCompositeEditor : ModuleRules
                 "SQLiteCore",
                 "ToolMenus",
                 "TypedElementRuntime",
-                "UnrealEd"
+                "UnrealEd",
+                "WorkspaceMenuStructure"
             });
 
         // Retained direct Autodesk FBX SDK -> IMHGeometryTranslator seam.

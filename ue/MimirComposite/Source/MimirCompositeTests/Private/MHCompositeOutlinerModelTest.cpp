@@ -5,11 +5,13 @@
 #include "Containers/StringConv.h"
 #include "CoreMinimal.h"
 #include "IO/IoHash.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Random/MHRandomStream.h"
 #include "UI/MHCompositeOutlinerModel.h"
+#include "UObject/Package.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -347,6 +349,46 @@ bool FMHCompositeOutlinerReseedRefreshTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("new option mirrors new Decisions"),
         FindOption(Random, Second.Decisions[0].OptionIndex)->bSelectedOption);
     return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHCompositeOutlinerOverlayCostTest,
+    "Mimir.V5.Composite.OutlinerModel.OverlayRefreshCost300",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositeOutlinerOverlayCostTest::RunTest(const FString& Parameters)
+{
+    FOutlinerFixture Fixture(*this);
+    const FString RootName = TEXT("outliner_cost_root");
+    Fixture.Graph.RootComposite = RootName;
+    FMHCompositeDocument Document;
+    for (int32 Index = 0; Index < 300; ++Index)
+    {
+        FMHCompositeNode& Leaf = Document.Nodes.AddDefaulted_GetRef();
+        Leaf.Kind = EMHCompositeNodeKind::Mesh;
+        Leaf.Resource = TEXT("outliner_cost_mesh");
+        Leaf.Name = FString::Printf(TEXT("leaf_%d"), Index);
+    }
+    UMHCompositeAsset* Root = Fixture.AddComposite(RootName, Document);
+    OutlinerAddRawHash(Fixture.Graph, TEXT("static_mesh:outliner_cost_mesh"));
+    if (Root == nullptr) return false;
+    FMHResolvedCompositePlan Plan;
+    if (!Fixture.Resolve(123, Plan)) return false;
+    FMHCompositeOutlinerModel Model = Fixture.MakeModel();
+    if (!Model.Build(*Root, &Plan)) return false;
+
+    constexpr int32 Iterations = 200;
+    const double Start = FPlatformTime::Seconds();
+    for (int32 Index = 0; Index < Iterations; ++Index)
+        if (!Model.RefreshOverlay(&Plan)) return false;
+    const double AverageMs = (FPlatformTime::Seconds() - Start) * 1000.0 / Iterations;
+    AddInfo(FString::Printf(
+        TEXT("MH_OUTLINER_PROFILE nodes=300 iterations=%d average_overlay_refresh_ms=%.6f deferred_from_reseed=1"),
+        Iterations,
+        AverageMs));
+    return TestTrue(
+        *FString::Printf(TEXT("300-node overlay refresh %.6f ms stays below 1 ms"), AverageMs),
+        AverageMs < 1.0);
 }
 
 } // namespace UE::MimirComposite::Tests
