@@ -45,6 +45,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerItem final :
 
     TWeakObjectPtr<UMHCompositeAsset> SourceAsset;
     TWeakObjectPtr<USceneComponent> PlacementComponent;
+    int32 PlacementInstanceIndex = INDEX_NONE;
+    int32 ResolvedNodeIndex = INDEX_NONE;
     TWeakPtr<FMHCompositeOutlinerItem> Parent;
     TArray<TSharedPtr<FMHCompositeOutlinerItem>> Children;
 
@@ -94,6 +96,8 @@ public:
     const FString& GetOverlayStatus() const { return OverlayStatus; }
     TSharedPtr<FMHCompositeOutlinerItem> FindByNodePath(const FString& NodePath);
     TSharedPtr<FMHCompositeOutlinerItem> FindForComponent(const USceneComponent* Component);
+    TSharedPtr<FMHCompositeOutlinerItem> FindForInstance(
+        const USceneComponent* Component, int32 InstanceIndex);
 
     FString GetCopyName(const FMHCompositeOutlinerItem& Item) const;
     bool GetNavigation(
@@ -120,10 +124,18 @@ private:
     TArray<TSharedPtr<FMHCompositeOutlinerItem>> Roots;
     TMap<FString, TSharedPtr<FMHCompositeOutlinerItem>> ItemsByPath;
     TMap<TWeakObjectPtr<const USceneComponent>, TWeakPtr<FMHCompositeOutlinerItem>> ItemsByComponent;
+    TMap<TWeakObjectPtr<const USceneComponent>, TMap<int32, TWeakPtr<FMHCompositeOutlinerItem>>>
+        ItemsByInstance;
     TMap<FString, FMHRandomTrs> ResolvedLocalTrsByPath;
     TMap<FString, int32> SelectedOptionsByPath;
     TSet<FString> ResolvedLeafPaths;
-    TMap<FString, TWeakObjectPtr<USceneComponent>> ComponentsByPath;
+    struct FPlacementRow
+    {
+        TWeakObjectPtr<USceneComponent> Component;
+        int32 InstanceIndex = INDEX_NONE;
+        int32 ResolvedNodeIndex = INDEX_NONE;
+    };
+    TMap<FString, FPlacementRow> ComponentsByPath;
     TSet<FString> MissingEndpointPaths;
     TWeakObjectPtr<UMHCompositeAsset> RootAsset;
     FString OverlayStatus;

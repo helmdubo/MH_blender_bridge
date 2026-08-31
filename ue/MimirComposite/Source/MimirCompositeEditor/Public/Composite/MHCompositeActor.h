@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Components/SceneComponent.h"
@@ -100,6 +101,21 @@ public:
         return LeafPlacementComponents;
     }
 
+    /** Plan-aligned component/instance rows used by viewport and Outliner navigation. */
+    const TArray<UE::MimirComposite::FMHCompositeLeafMaterialization>&
+        GetLeafMaterializations() const
+    {
+        return LeafMaterializations;
+    }
+
+    const UE::MimirComposite::FMHCompositeLeafMaterialization* FindLeafMaterialization(
+        const USceneComponent* Component, int32 InstanceIndex = INDEX_NONE) const;
+
+    /** Navigation selection only; source and resolved-plan authority are untouched. */
+    bool SelectPlacementLeaf(const USceneComponent* Component, int32 InstanceIndex = INDEX_NONE);
+    bool SelectPlacementLeafByNodePath(const FString& NodePath);
+    const FString& GetSelectedPlacementLeafPath() const { return SelectedPlacementLeafPath; }
+
     const TArray<FString>& GetLastPlacementWarnings() const
     {
         return LastPlacementWarnings;
@@ -183,6 +199,9 @@ private:
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> LeafPlacementComponents;
 
+    /** Derived navigation rows; Components are retained by DerivedComponents. */
+    TArray<UE::MimirComposite::FMHCompositeLeafMaterialization> LeafMaterializations;
+
     TSet<UE::MimirComposite::FMHResourceKey> PlacementDependencies;
     TArray<FString> LastPlacementWarnings;
     FString LastPlacementError;
@@ -201,6 +220,8 @@ private:
 
     bool bRebuildInProgress = false;
     bool bPlacementEditMode = false;
+    bool bExtractSelectedLeafForEdit = false;
+    FString SelectedPlacementLeafPath;
     /** Set by PostLoad; consumed by the single admitted first-build point. */
     bool bNeedsInitialPlacementBuild = false;
     /**

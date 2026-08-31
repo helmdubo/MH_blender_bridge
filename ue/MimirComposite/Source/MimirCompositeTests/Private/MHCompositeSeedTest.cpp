@@ -7,6 +7,7 @@
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/SceneComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Containers/StringConv.h"
 #include "CoreMinimal.h"
@@ -68,9 +69,21 @@ FString SeedTestSignature(const AMHCompositeActor& Actor)
 
 USceneComponent* SeedTestLeafComponent(const AMHCompositeActor& Actor, const int32 Index)
 {
-    const int32 ComponentIndex = Actor.GetTopLevelPlacementComponents().Num() + Index;
-    return Actor.GetDerivedComponents().IsValidIndex(ComponentIndex)
-        ? Cast<USceneComponent>(Actor.GetDerivedComponents()[ComponentIndex]) : nullptr;
+    return Actor.GetLeafMaterializations().IsValidIndex(Index)
+        ? Actor.GetLeafMaterializations()[Index].Component.Get() : nullptr;
+}
+
+bool SeedTestLeafTransform(
+    const AMHCompositeActor& Actor, const int32 Index, FTransform& OutTransform)
+{
+    if (!Actor.GetLeafMaterializations().IsValidIndex(Index)) return false;
+    const FMHCompositeLeafMaterialization& Row = Actor.GetLeafMaterializations()[Index];
+    if (!IsValid(Row.Component)) return false;
+    if (const UInstancedStaticMeshComponent* Bucket =
+            Cast<UInstancedStaticMeshComponent>(Row.Component))
+        return Bucket->GetInstanceTransform(Row.InstanceIndex, OutTransform, true);
+    OutTransform = Row.Component->GetComponentTransform();
+    return true;
 }
 
 bool SeedTestTraceEqual(const FMHResolvedCompositePlan& A, const FMHResolvedCompositePlan& B)
@@ -485,8 +498,12 @@ bool FMHCompositeSeedDeterminismTest::RunTest(const FString& Parameters)
     {
         const USceneComponent* Component = SeedTestLeafComponent(*First, Index);
         if (!TestNotNull(TEXT("moved resolved leaf component exists"), Component)) return false;
+        FTransform LeafTransform;
+        if (!TestTrue(TEXT("moved resolved leaf transform exists"),
+                SeedTestLeafTransform(*First, Index, LeafTransform))) return false;
         TestTrue(TEXT("leaf uses plan matrix and actor basis exactly once"), MHMatrixElementsWithinTrsTolerance(
-            Component->GetComponentTransform().ToMatrixWithScale(), Before.Leaves[Index].WorldMatrix * First->GetActorTransform().ToMatrixWithScale()));
+            LeafTransform.ToMatrixWithScale(),
+            Before.Leaves[Index].WorldMatrix * First->GetActorTransform().ToMatrixWithScale()));
     }
 
     const FString RootRawHash = Root->SourceHash;
@@ -635,13 +652,19 @@ bool FMHCompositeSeedMinimalUpdatesTest::RunTest(const FString& Parameters)
     USceneComponent* MovingLeaf = SeedTestLeafComponent(*TransformActor, 0);
     USceneComponent* FixedLeaf = SeedTestLeafComponent(*TransformActor, 1);
     if (!TestNotNull(TEXT("profile leaf exists"), MovingLeaf) || !TestNotNull(TEXT("fixed leaf exists"), FixedLeaf)) return false;
-    const FTransform MovingBefore = MovingLeaf->GetComponentTransform();
-    const FTransform FixedBefore = FixedLeaf->GetComponentTransform();
+    FTransform MovingBefore;
+    FTransform FixedBefore;
+    if (!SeedTestLeafTransform(*TransformActor, 0, MovingBefore) ||
+        !SeedTestLeafTransform(*TransformActor, 1, FixedBefore)) return false;
     TransformActor->SetSeed(200);
     TestEqual(TEXT("varying profile classifies Transform"), TransformActor->GetSeedAffectsResult(), EMHCompositeSeedEffect::Transform);
     TransformSnapshot.Check(*this, *TransformActor, false);
-    TestFalse(TEXT("profile-dependent leaf gets its new transform"), MovingLeaf->GetComponentTransform().Equals(MovingBefore, 0.0));
-    TestTrue(TEXT("unaffected leaf transform is untouched"), FixedLeaf->GetComponentTransform().Equals(FixedBefore, 0.0));
+    FTransform MovingAfter;
+    FTransform FixedAfter;
+    if (!SeedTestLeafTransform(*TransformActor, 0, MovingAfter) ||
+        !SeedTestLeafTransform(*TransformActor, 1, FixedAfter)) return false;
+    TestFalse(TEXT("profile-dependent leaf gets its new transform"), MovingAfter.Equals(MovingBefore, 0.0));
+    TestTrue(TEXT("unaffected leaf transform is untouched"), FixedAfter.Equals(FixedBefore, 0.0));
 
     FMHCompositeDocument TopologyDocument;
     FMHCompositeNode Random;
@@ -660,7 +683,8 @@ bool FMHCompositeSeedMinimalUpdatesTest::RunTest(const FString& Parameters)
     USceneComponent* PriorChoice = SeedTestLeafComponent(*TopologyActor, 0);
     USceneComponent* UnaffectedLeaf = SeedTestLeafComponent(*TopologyActor, 1);
     if (!TestNotNull(TEXT("initial choice leaf exists"), PriorChoice) || !TestNotNull(TEXT("topology fixed leaf exists"), UnaffectedLeaf)) return false;
-    const FTransform UnaffectedTransform = UnaffectedLeaf->GetComponentTransform();
+    FTransform UnaffectedTransform;
+    if (!SeedTestLeafTransform(*TopologyActor, 1, UnaffectedTransform)) return false;
     TestEqual(TEXT("seed 100 fixture selects mesh A"), TopologyActor->GetResolvedPlan()->Decisions[0].OptionIndex, 0);
     TopologyActor->SetSeed(200);
     if (!TestNotNull(TEXT("topology update produces new plan"), TopologyActor->GetResolvedPlan())) return false;
@@ -669,7 +693,10 @@ bool FMHCompositeSeedMinimalUpdatesTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("topology update preserves authored handles"), TopologyActor->GetTopLevelPlacementComponents() == Handles);
     TestNotEqual(TEXT("changed resource replaces only its selected leaf"), SeedTestLeafComponent(*TopologyActor, 0), PriorChoice);
     TestEqual(TEXT("unaffected leaf object survives topology change"), SeedTestLeafComponent(*TopologyActor, 1), UnaffectedLeaf);
-    TestTrue(TEXT("unaffected leaf transform survives topology change"), UnaffectedLeaf->GetComponentTransform().Equals(UnaffectedTransform, 0.0));
+    FTransform UnaffectedAfter;
+    if (!SeedTestLeafTransform(*TopologyActor, 1, UnaffectedAfter)) return false;
+    TestTrue(TEXT("unaffected leaf transform survives topology change"),
+        UnaffectedAfter.Equals(UnaffectedTransform, 0.0));
 
     UMHCompositeAsset* Nested = Fixture.Composite(Fixture.Name(TEXT("s5_child_variation")), TransformDocument, {VaryingProfile}, true);
     if (Nested == nullptr) return false;
@@ -686,11 +713,15 @@ bool FMHCompositeSeedMinimalUpdatesTest::RunTest(const FString& Parameters)
     const FSeedTestComponentSnapshot ChildSnapshot(*ChildActor);
     USceneComponent* ChildFixed = SeedTestLeafComponent(*ChildActor, 2);
     if (!TestNotNull(TEXT("root sibling of nested variation exists"), ChildFixed)) return false;
-    const FTransform ChildFixedTransform = ChildFixed->GetComponentTransform();
+    FTransform ChildFixedTransform;
+    if (!SeedTestLeafTransform(*ChildActor, 2, ChildFixedTransform)) return false;
     ChildActor->SetSeed(200);
     TestEqual(TEXT("nested-only variation classifies ChildSeedsOnly"), ChildActor->GetSeedAffectsResult(), EMHCompositeSeedEffect::ChildSeedsOnly);
     ChildSnapshot.Check(*this, *ChildActor, false);
-    TestTrue(TEXT("root sibling remains untouched by child-only variation"), ChildFixed->GetComponentTransform().Equals(ChildFixedTransform, 0.0));
+    FTransform ChildFixedAfter;
+    if (!SeedTestLeafTransform(*ChildActor, 2, ChildFixedAfter)) return false;
+    TestTrue(TEXT("root sibling remains untouched by child-only variation"),
+        ChildFixedAfter.Equals(ChildFixedTransform, 0.0));
     return true;
 }
 
@@ -809,8 +840,11 @@ bool FMHCompositeSeedFrozenVectorTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("ratified leaf origin"), Plan.Leaves[Index].Origin, Leaf->GetStringField(TEXT("origin")));
         const USceneComponent* Component = SeedTestLeafComponent(*Actor, Index);
         if (!TestNotNull(TEXT("ratified leaf produces a preview component"), Component)) return false;
+        FTransform LeafTransform;
+        if (!TestTrue(TEXT("ratified leaf preview transform can be read"),
+                SeedTestLeafTransform(*Actor, Index, LeafTransform))) return false;
         TestTrue(TEXT("preview consumes the full plan matrix"), MHMatrixElementsWithinTrsTolerance(
-            Component->GetComponentTransform().ToMatrixWithScale(), Plan.Leaves[Index].WorldMatrix));
+            LeafTransform.ToMatrixWithScale(), Plan.Leaves[Index].WorldMatrix));
     }
     TestEqual(TEXT("root 100 plus child 25 reaches preview unchanged"), Plan.Leaves[0].WorldMatrix.M[3][0], 125.0);
     // 100/200 are placement acceptance seeds, not extra frozen vectors. Use

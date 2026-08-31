@@ -7,6 +7,7 @@
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/SceneComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "CoreMinimal.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
@@ -28,6 +29,19 @@ namespace UE::MimirComposite::Tests
 {
 namespace
 {
+bool AppliedAdmissionLeafTransform(
+    const AMHCompositeActor& Actor, const int32 LeafIndex, FTransform& OutTransform)
+{
+    const TArray<FMHCompositeLeafMaterialization>& Rows = Actor.GetLeafMaterializations();
+    if (!Rows.IsValidIndex(LeafIndex) || !IsValid(Rows[LeafIndex].Component)) return false;
+    if (const UInstancedStaticMeshComponent* Bucket =
+            Cast<UInstancedStaticMeshComponent>(Rows[LeafIndex].Component))
+        return Bucket->GetInstanceTransform(
+            Rows[LeafIndex].InstanceIndex, OutTransform, true);
+    OutTransform = Rows[LeafIndex].Component->GetComponentTransform();
+    return true;
+}
+
 
 FString AdmissionStoredSignature(const AMHCompositeActor& Actor)
 {
@@ -313,7 +327,7 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     TArray<uint8> AppliedBytes;
     if (!MHWriteCanonicalCompositeV5(Document, AppliedBytes, Error)) return false;
     USceneComponent* Handle = Actor->GetTopLevelPlacementComponents()[0];
-    USceneComponent* Leaf = Cast<USceneComponent>(Actor->GetDerivedComponents()[1]);
+    USceneComponent* Leaf = Actor->GetLeafMaterializations()[0].Component;
     if (!TestNotNull(TEXT("edit leaf is a scene component"), Leaf)) return false;
 
     Actor->SetPlacementEditMode(true);
@@ -330,8 +344,12 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("moving in Edit keeps leaf object"), Actor->GetDerivedComponents()[1].Get(), static_cast<UActorComponent*>(Leaf));
     TestTrue(TEXT("authored handle follows placement basis without baking profile"), MHMatrixElementsWithinTrsTolerance(
         Handle->GetComponentTransform().ToMatrixWithScale(), FTransform(FVector(100.0, 0.0, 0.0)).ToMatrixWithScale() * MovedBasis.ToMatrixWithScale()));
+    FTransform MovedLeafTransform;
+    TestTrue(TEXT("resolved leaf materialization can be read"),
+        AppliedAdmissionLeafTransform(*Actor, 0, MovedLeafTransform));
     TestTrue(TEXT("resolved leaf follows placement basis"), MHMatrixElementsWithinTrsTolerance(
-        Leaf->GetComponentTransform().ToMatrixWithScale(), AppliedPlan.Leaves[0].WorldMatrix * MovedBasis.ToMatrixWithScale()));
+        MovedLeafTransform.ToMatrixWithScale(),
+        AppliedPlan.Leaves[0].WorldMatrix * MovedBasis.ToMatrixWithScale()));
     TestEqual(TEXT("placement move preserves applied SourceHash"), Root->SourceHash, SourceHash);
 
     const FTransform EditedLocal(FVector(150.0, 0.0, 0.0));

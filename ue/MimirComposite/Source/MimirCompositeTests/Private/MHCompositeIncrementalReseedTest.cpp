@@ -6,6 +6,7 @@
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/SceneComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -302,7 +303,11 @@ bool CompareMaterializedViews(
     bPassed &= Test.TestEqual(TEXT("leaf plan count parity"), LeftPlan->Leaves.Num(), RightPlan->Leaves.Num());
     const TArray<TObjectPtr<USceneComponent>>& Left = Incremental.GetLeafPlacementComponents();
     const TArray<TObjectPtr<USceneComponent>>& Right = Full.GetLeafPlacementComponents();
+    const TArray<FMHCompositeLeafMaterialization>& LeftRows = Incremental.GetLeafMaterializations();
+    const TArray<FMHCompositeLeafMaterialization>& RightRows = Full.GetLeafMaterializations();
     bPassed &= Test.TestEqual(TEXT("materialized leaf count parity"), Left.Num(), Right.Num());
+    bPassed &= Test.TestEqual(TEXT("materialization mapping count parity"),
+        LeftRows.Num(), RightRows.Num());
     const int32 Count = FMath::Min(
         FMath::Min(LeftPlan->Leaves.Num(), RightPlan->Leaves.Num()),
         FMath::Min(Left.Num(), Right.Num()));
@@ -316,15 +321,40 @@ bool CompareMaterializedViews(
             LeftLeaf.Resource == RightLeaf.Resource);
         bPassed &= Test.TestTrue(TEXT("plan world matrix byte parity"),
             FMemory::Memcmp(&LeftLeaf.WorldMatrix, &RightLeaf.WorldMatrix, sizeof(FMatrix)) == 0);
-        if (!IsValid(Left[Index]) || !IsValid(Right[Index]))
+        if (!IsValid(Left[Index]) || !IsValid(Right[Index]) ||
+            !LeftRows.IsValidIndex(Index) || !RightRows.IsValidIndex(Index))
         {
             bPassed = false;
             continue;
         }
         bPassed &= Test.TestEqual(TEXT("component class parity"), Left[Index]->GetClass(), Right[Index]->GetClass());
         bPassed &= Test.TestTrue(TEXT("component tag parity"), Left[Index]->ComponentTags == Right[Index]->ComponentTags);
-        const FMatrix LeftWorld = Left[Index]->GetComponentTransform().ToMatrixWithScale();
-        const FMatrix RightWorld = Right[Index]->GetComponentTransform().ToMatrixWithScale();
+        FTransform LeftTransform;
+        FTransform RightTransform;
+        const UInstancedStaticMeshComponent* LeftBucket =
+            Cast<UInstancedStaticMeshComponent>(Left[Index]);
+        const UInstancedStaticMeshComponent* RightBucket =
+            Cast<UInstancedStaticMeshComponent>(Right[Index]);
+        if (LeftRows[Index].IsInstanced() || RightRows[Index].IsInstanced())
+        {
+            if (LeftBucket == nullptr || RightBucket == nullptr ||
+                !LeftRows[Index].IsInstanced() || !RightRows[Index].IsInstanced() ||
+                !LeftBucket->GetInstanceTransform(
+                    LeftRows[Index].InstanceIndex, LeftTransform, false) ||
+                !RightBucket->GetInstanceTransform(
+                    RightRows[Index].InstanceIndex, RightTransform, false))
+            {
+                bPassed = false;
+                continue;
+            }
+        }
+        else
+        {
+            LeftTransform = Left[Index]->GetComponentTransform();
+            RightTransform = Right[Index]->GetComponentTransform();
+        }
+        const FMatrix LeftWorld = LeftTransform.ToMatrixWithScale();
+        const FMatrix RightWorld = RightTransform.ToMatrixWithScale();
         bPassed &= Test.TestTrue(TEXT("materialized world matrix byte parity"),
             FMemory::Memcmp(&LeftWorld, &RightWorld, sizeof(FMatrix)) == 0);
         const UStaticMeshComponent* LeftMesh = Cast<UStaticMeshComponent>(Left[Index]);
@@ -338,14 +368,29 @@ bool CompareMaterializedViews(
             }
             bPassed &= Test.TestEqual(TEXT("mesh endpoint identity parity"),
                 LeftMesh->GetStaticMesh(), RightMesh->GetStaticMesh());
-            const TArray<float>& LeftData = LeftMesh->GetCustomPrimitiveData().Data;
-            const TArray<float>& RightData = RightMesh->GetCustomPrimitiveData().Data;
             for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
             {
-                const int32 DataIndex = Base + Channel;
-                bPassed &= Test.TestTrue(TEXT("appearance CPD parity"),
-                    LeftData.IsValidIndex(DataIndex) && RightData.IsValidIndex(DataIndex) &&
-                    LeftData[DataIndex] == RightData[DataIndex]);
+                if (LeftBucket != nullptr && RightBucket != nullptr)
+                {
+                    const int32 LeftDataIndex = LeftRows[Index].InstanceIndex *
+                        LeftBucket->NumCustomDataFloats + Base + Channel;
+                    const int32 RightDataIndex = RightRows[Index].InstanceIndex *
+                        RightBucket->NumCustomDataFloats + Base + Channel;
+                    bPassed &= Test.TestTrue(TEXT("appearance CPD parity"),
+                        LeftBucket->PerInstanceSMCustomData.IsValidIndex(LeftDataIndex) &&
+                        RightBucket->PerInstanceSMCustomData.IsValidIndex(RightDataIndex) &&
+                        LeftBucket->PerInstanceSMCustomData[LeftDataIndex] ==
+                            RightBucket->PerInstanceSMCustomData[RightDataIndex]);
+                }
+                else
+                {
+                    const TArray<float>& LeftData = LeftMesh->GetCustomPrimitiveData().Data;
+                    const TArray<float>& RightData = RightMesh->GetCustomPrimitiveData().Data;
+                    const int32 DataIndex = Base + Channel;
+                    bPassed &= Test.TestTrue(TEXT("appearance CPD parity"),
+                        LeftData.IsValidIndex(DataIndex) && RightData.IsValidIndex(DataIndex) &&
+                        LeftData[DataIndex] == RightData[DataIndex]);
+                }
             }
         }
     }
@@ -579,8 +624,12 @@ bool FMHIncrementalReseedDesyncFallbackTest::RunTest(const FString& Parameters)
         EndpointMetrics.IncrementalApplied, 0ull);
     bPassed &= TestEqual(TEXT("endpoint desync records one full fallback"),
         EndpointMetrics.FullFallbacks, 1ull);
-    bPassed &= TestEqual<UStaticMesh*>(TEXT("full fallback restores the endpoint"),
-        StableMesh->GetStaticMesh().Get(), ExpectedMesh);
+    UStaticMeshComponent* RepairedMesh = Actor->GetLeafPlacementComponents().Num() > 1
+        ? Cast<UStaticMeshComponent>(Actor->GetLeafPlacementComponents()[1]) : nullptr;
+    bPassed &= TestNotNull(TEXT("full fallback restores a mesh component"), RepairedMesh);
+    if (RepairedMesh != nullptr)
+        bPassed &= TestEqual<UStaticMesh*>(TEXT("full fallback restores the endpoint"),
+            RepairedMesh->GetStaticMesh().Get(), ExpectedMesh);
     Actor->Destroy();
     World->DestroyWorld(false);
     return bPassed;

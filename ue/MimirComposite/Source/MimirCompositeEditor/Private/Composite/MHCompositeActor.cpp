@@ -209,8 +209,66 @@ UMHCompositeAsset* AMHCompositeActor::GetCompositeAsset() const
     return CompositeAsset.LoadSynchronous();
 }
 
+const UE::MimirComposite::FMHCompositeLeafMaterialization*
+AMHCompositeActor::FindLeafMaterialization(
+    const USceneComponent* Component, const int32 InstanceIndex) const
+{
+    return LeafMaterializations.FindByPredicate(
+        [Component, InstanceIndex](const UE::MimirComposite::FMHCompositeLeafMaterialization& Row)
+        {
+            return Row.Component == Component && Row.InstanceIndex == InstanceIndex;
+        });
+}
+
+bool AMHCompositeActor::SelectPlacementLeaf(
+    const USceneComponent* Component, const int32 InstanceIndex)
+{
+    const UE::MimirComposite::FMHCompositeLeafMaterialization* Row =
+        FindLeafMaterialization(Component, InstanceIndex);
+    if (Row == nullptr) return false;
+    SelectedPlacementLeafPath = Row->NodePath;
+    return true;
+}
+
+bool AMHCompositeActor::SelectPlacementLeafByNodePath(const FString& NodePath)
+{
+    const bool bExists = LeafMaterializations.ContainsByPredicate(
+        [&NodePath](const UE::MimirComposite::FMHCompositeLeafMaterialization& Row)
+        {
+            return Row.NodePath == NodePath;
+        });
+    if (!bExists) return false;
+    SelectedPlacementLeafPath = NodePath;
+    return true;
+}
+
 void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)
 {
+    if (bPlacementEditMode == bEnabled) return;
+    TArray<FTransform> PendingHandleEdits;
+    if (bEnabled)
+    {
+        PendingHandleEdits.Reserve(TopLevelPlacementComponents.Num());
+        for (const USceneComponent* Handle : TopLevelPlacementComponents)
+            PendingHandleEdits.Add(IsValid(Handle)
+                ? Handle->GetComponentTransform() : FTransform::Identity);
+    }
+    // Reconcile the materialization while the regular rebuild gate is open.
+    // On entry only the selected static leaf is extracted; on exit it is
+    // admitted back into its immutable-policy bucket.
+    bPlacementEditMode = false;
+    bExtractSelectedLeafForEdit = bEnabled && !SelectedPlacementLeafPath.IsEmpty();
+    if (HasActorRegisteredAllComponents() && ResolvedPlan.IsValid()) RebuildPlacement(false);
+    // Beginning an edit session must not erase a handle transform the user
+    // changed immediately before invoking Edit. The subsequent editor tick
+    // turns these restored world transforms into the prospective signed plan.
+    if (bEnabled && PendingHandleEdits.Num() == TopLevelPlacementComponents.Num())
+    {
+        for (int32 Index = 0; Index < PendingHandleEdits.Num(); ++Index)
+            if (IsValid(TopLevelPlacementComponents[Index]))
+                TopLevelPlacementComponents[Index]->SetWorldTransform(
+                    PendingHandleEdits[Index], false, nullptr, ETeleportType::TeleportPhysics);
+    }
     bPlacementEditMode = bEnabled;
     EditingGraph.Reset();
     EditingDocument.Reset();
@@ -285,6 +343,7 @@ void AMHCompositeActor::ClearDerivedComponents()
     DestroyMHRetiredComponents(Previous, DerivedComponents);
     TopLevelPlacementComponents.Reset();
     LeafPlacementComponents.Reset();
+    LeafMaterializations.Reset();
     PlacementDependencies.Reset();
     LastPlacementWarnings.Reset();
     LastPlacementError.Reset();
@@ -425,7 +484,9 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             const FMHRandomComposite* PreviousRoot = AppliedGraph->Composites.Find(Name);
             if (PreviousRoot != nullptr)
                 View = MHCompileCompositePlacementV5(
-                    *this, *ResolvedPlan, *PreviousRoot, *Settings, Previous, AppliedDefinition.Get());
+                    *this, *ResolvedPlan, *PreviousRoot, *Settings, Previous,
+                    AppliedDefinition.Get(),
+                    bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
         }
         FMHCompositePlacementCompileResult Marker = MHBuildCompositeDiagnosticView(*this, TEXT("composite:") + Name, Error);
         View.Components.Append(Marker.Components);
@@ -433,6 +494,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         DerivedComponents = MoveTemp(View.Components);
         TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
         LeafPlacementComponents = MoveTemp(View.LeafComponents);
+        LeafMaterializations = MoveTemp(View.LeafMaterializations);
         LastPlacementWarnings = MoveTemp(View.Warnings);
         DestroyMHRetiredComponents(Previous, DerivedComponents);
         BroadcastMHCompositeComponentsEdited();
@@ -453,7 +515,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     {
         const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
         FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
-            *this, *CandidatePlan, *Root, *Settings, Previous, CandidateDefinition.Get());
+            *this, *CandidatePlan, *Root, *Settings, Previous, CandidateDefinition.Get(),
+            bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
         if (!View.Succeeded())
         {
             LastPlacementError = View.Error;
@@ -465,6 +528,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         DerivedComponents = MoveTemp(View.Components);
         TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
         LeafPlacementComponents = MoveTemp(View.LeafComponents);
+        LeafMaterializations = MoveTemp(View.LeafMaterializations);
         LastPlacementWarnings = MoveTemp(View.Warnings);
         DestroyMHRetiredComponents(Previous, DerivedComponents);
         if (Previous != DerivedComponents)
@@ -482,7 +546,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         if (MHTryCompileCompositePlacementReseedV5(
                 *this, *ResolvedPlan, *CandidatePlan, *Root, *Settings, Previous,
                 TopLevelPlacementComponents, LeafPlacementComponents,
-                CandidateDefinition.Get(), View))
+                LeafMaterializations, CandidateDefinition.Get(), View,
+                bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString()))
         {
             if (!View.Succeeded())
             {
@@ -495,6 +560,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             DerivedComponents = MoveTemp(View.Components);
             TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
             LeafPlacementComponents = MoveTemp(View.LeafComponents);
+            LeafMaterializations = MoveTemp(View.LeafMaterializations);
             LastPlacementWarnings = MoveTemp(View.Warnings);
             DestroyMHRetiredComponents(Previous, DerivedComponents);
             if (Previous != DerivedComponents)
@@ -517,7 +583,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     // S6.3.1: a skipped recompile still refreshes the appearance Custom
     // Primitive Data - the channels depend on AppearanceSeed alone. A leaf
     // view that no longer matches the plan is repaired by the full path.
-    else if (!bViewCompiled && MHApplyCompositeAppearanceCustomData(LeafPlacementComponents,
+    else if (!bViewCompiled && MHApplyCompositePlacementAppearance(LeafMaterializations,
                  *CandidatePlan, Settings->AppearanceCustomDataBaseIndex) == INDEX_NONE)
     {
         if (!CompileFullView()) return;
@@ -558,7 +624,9 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
     {
         TGuardValue<bool> Guard(bRebuildInProgress, true);
         FString Error;
-        if (!MHUpdateCompositePlacementBasis(*this, *ResolvedPlan, *Root, TopLevelPlacementComponents, LeafPlacementComponents, Error))
+        if (!MHUpdateCompositePlacementBasis(*this, *ResolvedPlan, *Root,
+                TopLevelPlacementComponents, LeafPlacementComponents,
+                LeafMaterializations, Error))
         {
             LastPlacementError = Error;
             ResolvedSignature.Reset();
@@ -738,7 +806,9 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
         bPlanAvailable = false;
         return;
     }
-    FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(*this, *Plan, *Root, *Settings, DerivedComponents);
+    FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
+        *this, *Plan, *Root, *Settings, DerivedComponents, nullptr,
+        bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
     if (!View.Succeeded())
     {
         LastPlacementError = View.Error;
@@ -750,6 +820,7 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     DerivedComponents = MoveTemp(View.Components);
     TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
     LeafPlacementComponents = MoveTemp(View.LeafComponents);
+    LeafMaterializations = MoveTemp(View.LeafMaterializations);
     DestroyMHRetiredComponents(Previous, DerivedComponents);
     LastEditHandleTransforms.Reset();
     for (const USceneComponent* Handle : TopLevelPlacementComponents) LastEditHandleTransforms.Add(Handle->GetComponentTransform());

@@ -8,6 +8,7 @@
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Components/SceneComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/StaticMesh.h"
@@ -149,11 +150,24 @@ UMHCompositeAsset* MakeCompositeProbeAsset(
 TArray<UStaticMeshComponent*> CompositeProbeMeshLeaves(const AMHCompositeActor& Actor)
 {
     TArray<UStaticMeshComponent*> Result;
-    for (UActorComponent* Component : Actor.GetDerivedComponents())
+    for (const FMHCompositeLeafMaterialization& Row : Actor.GetLeafMaterializations())
     {
-        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) Result.Add(Mesh);
+        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Row.Component)) Result.Add(Mesh);
     }
     return Result;
+}
+
+bool CompositeProbeLeafTransform(
+    const AMHCompositeActor& Actor, const int32 LeafIndex, FTransform& OutTransform)
+{
+    if (!Actor.GetLeafMaterializations().IsValidIndex(LeafIndex)) return false;
+    const FMHCompositeLeafMaterialization& Row = Actor.GetLeafMaterializations()[LeafIndex];
+    if (!IsValid(Row.Component)) return false;
+    if (const UInstancedStaticMeshComponent* Bucket =
+            Cast<UInstancedStaticMeshComponent>(Row.Component))
+        return Bucket->GetInstanceTransform(Row.InstanceIndex, OutTransform, true);
+    OutTransform = Row.Component->GetComponentTransform();
+    return true;
 }
 #endif
 
@@ -801,12 +815,15 @@ bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parame
         bPassed &= TestTrue(TEXT("child component"), Child != nullptr);
         if (Group != nullptr && Child != nullptr)
         {
+            FTransform ChildTransform;
+            bPassed &= TestTrue(TEXT("materialized child transform can be read"),
+                CompositeProbeLeafTransform(*Target, 0, ChildTransform));
             bPassed &= TestTrue(TEXT("parent local transform"),
                 Group->GetComponentLocation().Equals(FVector(100, 0, 0), UE_KINDA_SMALL_NUMBER));
             bPassed &= TestTrue(TEXT("parent 100 plus child local 25 equals world 125"),
-                Child->GetComponentLocation().Equals(FVector(125, 0, 0), UE_KINDA_SMALL_NUMBER));
-            bPassed &= TestTrue(TEXT("sealed leaf remains under its authored group with absolute T/R/S"),
-                Child->GetAttachParent() == Group && Child->IsUsingAbsoluteLocation() &&
+                ChildTransform.GetLocation().Equals(FVector(125, 0, 0), UE_KINDA_SMALL_NUMBER));
+            bPassed &= TestTrue(TEXT("ISM bucket remains absolute under the placement root"),
+                Child->GetAttachParent() == Target->GetRootComponent() && Child->IsUsingAbsoluteLocation() &&
                 Child->IsUsingAbsoluteRotation() && Child->IsUsingAbsoluteScale());
             const FMHResolvedCompositePlan* Plan = Target->GetResolvedPlan();
             bPassed &= TestTrue(TEXT("plan retains the accumulated parent-local leaf matrix"),
@@ -913,10 +930,16 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     {
         USceneComponent* First = MeshLeaves[0];
         USceneComponent* Second = MeshLeaves[1];
-        bPassed &= TestTrue(TEXT("first resolved leaf attached under its authored root"),
-            First != nullptr && First->GetAttachParent() == Target->GetTopLevelComponents()[0]);
-        bPassed &= TestTrue(TEXT("second resolved leaf attached under its authored root"),
-            Second != nullptr && Second->GetAttachParent() == Target->GetTopLevelComponents()[1]);
+        bPassed &= TestTrue(TEXT("both leaves share one ISM bucket under the placement root"),
+            First != nullptr && First == Second && First->GetAttachParent() == PlacementRoot);
+        const TArray<FMHCompositeLeafMaterialization>& Rows = Target->GetLeafMaterializations();
+        const FMHResolvedCompositePlan* MappedPlan = Target->GetResolvedPlan();
+        bPassed &= TestTrue(TEXT("each top-level leaf retains exact resolved-node mapping"),
+            Rows.Num() == 2 && MappedPlan != nullptr && MappedPlan->Leaves.Num() == 2 &&
+            Rows[0].ResolvedNodeIndex == MappedPlan->Leaves[0].OwningResolvedNodeIndex &&
+            Rows[1].ResolvedNodeIndex == MappedPlan->Leaves[1].OwningResolvedNodeIndex &&
+            Rows[0].NodePath == MappedPlan->Leaves[0].Origin &&
+            Rows[1].NodePath == MappedPlan->Leaves[1].Origin);
         for (const USceneComponent* Handle : Target->GetTopLevelComponents())
         {
             bPassed &= TestTrue(TEXT("authored edit handle remains attached to placement root"),
@@ -927,10 +950,16 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
         Target->SetActorLocation(FVector(100.0, 0.0, 0.0), false, nullptr, ETeleportType::TeleportPhysics);
         if (First != nullptr && Second != nullptr)
         {
+            FTransform FirstTransform;
+            FTransform SecondTransform;
+            bPassed &= TestTrue(TEXT("first moved instance transform can be read"),
+                CompositeProbeLeafTransform(*Target, 0, FirstTransform));
+            bPassed &= TestTrue(TEXT("second moved instance transform can be read"),
+                CompositeProbeLeafTransform(*Target, 1, SecondTransform));
             bPassed &= TestTrue(TEXT("first top-level follows actor movement"),
-                First->GetComponentLocation().Equals(FVector(110.0, 0.0, 0.0), UE_KINDA_SMALL_NUMBER));
+                FirstTransform.GetLocation().Equals(FVector(110.0, 0.0, 0.0), UE_KINDA_SMALL_NUMBER));
             bPassed &= TestTrue(TEXT("second top-level follows actor movement"),
-                Second->GetComponentLocation().Equals(FVector(120.0, 0.0, 0.0), UE_KINDA_SMALL_NUMBER));
+                SecondTransform.GetLocation().Equals(FVector(120.0, 0.0, 0.0), UE_KINDA_SMALL_NUMBER));
         }
         bPassed &= TestEqual(TEXT("moving actor leaves placement Seed unchanged"), Target->GetSeed(), BeforeMoveSeed);
         bPassed &= TestTrue(TEXT("moving actor reuses the exact cached resolved plan"), Target->GetResolvedPlan() == BeforeMovePlan);
@@ -1040,7 +1069,10 @@ bool FMHCompositeFbxPlacementParityTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(TEXT("compiled node is a scene component"), Component != nullptr);
         if (Component != nullptr)
         {
-            const FVector CompositeWorld = Component->GetComponentTransform().TransformPosition(Local);
+            FTransform LeafTransform;
+            bPassed &= TestTrue(TEXT("FBX materialized instance transform can be read"),
+                CompositeProbeLeafTransform(*Target, 0, LeafTransform));
+            const FVector CompositeWorld = LeafTransform.TransformPosition(Local);
             const FVector ExpectedWorld(223.3146, 219.4280, 242.7456);
             const double Distance = FVector::Distance(CompositeWorld, ExpectedWorld);
             bPassed &= TestTrue(
