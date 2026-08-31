@@ -18,8 +18,13 @@ namespace UE::MimirComposite
  *     classified as collision, build shaped simple elements (mesh/convex/box/
  *     capsule) and, for trace carriers, a companion ComplexCollisionMesh.
  *     Meshes applied by version 3 must be rebuilt once to pick these up.
+ * 5 - R1 axis parity: the production translator unwinds the exporter's
+ *     canonical RotZ(-90) axis conversion before baking node transforms, so
+ *     geometry lands in the same space as composite node TRS (the ratified
+ *     axis_probe expectation). Every mesh applied by version 4 is rotated 90
+ *     degrees around Z and must be rebuilt once.
  */
-inline constexpr int32 MHStaticMeshImporterVersion = 4;
+inline constexpr int32 MHStaticMeshImporterVersion = 5;
 
 /**
  * Suppresses managed-mesh local-edit tracking for importer-owned mutations.

@@ -317,6 +317,35 @@ FbxNode* AddMeshNode(FbxScene& Scene, const char* Name, FbxMesh& Mesh)
     return Node;
 }
 
+/**
+ * Mirror the canonical Blender exporter transport: axis_forward='X' composes
+ * a RotZ(-90) axis conversion into every root node's local transform while
+ * control points stay raw. Fixtures must carry that conversion too, so the
+ * production translator's unwind (importer version 5) reads them exactly like
+ * a real exported mesh.
+ */
+void ApplyCanonicalExportConversion(FbxScene& Scene)
+{
+    FbxAMatrix Conversion;
+    Conversion.SetR(FbxVector4(0.0, 0.0, -90.0));
+    FbxNode* Root = Scene.GetRootNode();
+    for (int32 Index = 0; Index < Root->GetChildCount(); ++Index)
+    {
+        FbxNode* Node = Root->GetChild(Index);
+        FbxAMatrix Local;
+        Local.SetT(FbxVector4(Node->LclTranslation.Get()));
+        Local.SetR(FbxVector4(Node->LclRotation.Get()));
+        Local.SetS(FbxVector4(Node->LclScaling.Get()));
+        const FbxAMatrix Converted = Conversion * Local;
+        const FbxVector4 T = Converted.GetT();
+        const FbxVector4 R = Converted.GetR();
+        const FbxVector4 S = Converted.GetS();
+        Node->LclTranslation.Set(FbxDouble3(T[0], T[1], T[2]));
+        Node->LclRotation.Set(FbxDouble3(R[0], R[1], R[2]));
+        Node->LclScaling.Set(FbxDouble3(S[0], S[1], S[2]));
+    }
+}
+
 void BindMaterial(FbxMesh& Mesh, FbxNode& Node, FbxSurfaceMaterial& Material)
 {
     Node.AddMaterial(&Material);
@@ -403,6 +432,7 @@ bool ExportPlainStaticMeshFbx(
         Scene->GetRootNode()->AddChild(Socket);
     }
 
+    ApplyCanonicalExportConversion(*Scene);
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
     const int32 WriterId = Manager->GetIOPluginRegistry()->GetNativeWriterFormat();
@@ -465,6 +495,7 @@ bool ExportLodUnionStaticMeshFbx(
     FbxNode* LOD1 = AddMeshNode(*Scene, "union_lod01", *LOD1Mesh);
     BindMaterial(*LOD1Mesh, *LOD1, *FarMaterial);
 
+    ApplyCanonicalExportConversion(*Scene);
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
     const int32 WriterId = Manager->GetIOPluginRegistry()->GetNativeWriterFormat();
@@ -582,6 +613,7 @@ bool ExportCollisionCarrierFbx(
     SetNodeStringProperty(*TraceB, "mh_collision_shape", TEXT("mesh"));
     SetNodeStringProperty(*TraceB, "mh_phmat", Tokens.TracePhmat);
 
+    ApplyCanonicalExportConversion(*Scene);
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
     FbxExporter* Exporter = FbxExporter::Create(Manager, "Exporter");
     const int32 WriterId = Manager->GetIOPluginRegistry()->GetNativeWriterFormat();
@@ -1268,7 +1300,7 @@ bool FMHStaticMeshImporterCollisionCarrierTest::RunTest(const FString& Parameter
     bPassed &= TestNotNull(TEXT("carrier receipt exists"), Receipt);
     if (Receipt != nullptr)
     {
-        bPassed &= TestEqual(TEXT("receipt records importer version 4"), Receipt->ImporterVersion, 4);
+        bPassed &= TestEqual(TEXT("receipt records importer version 5"), Receipt->ImporterVersion, 5);
         Receipt->ImporterVersion = 3;
         const FMHStaticMeshOperationResult Upgrade =
             MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);
