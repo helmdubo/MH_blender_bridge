@@ -1,4 +1,4 @@
-"""Standalone FBX export for one explicitly selected Blender collection.
+﻿"""Standalone FBX export for one explicitly selected Blender collection.
 
 The collection is treated like dag4blend's ``Col.Joined`` mode: direct mesh
 objects and mesh objects in recursive child collections form one static-mesh
@@ -8,6 +8,7 @@ No scene names, bundle directories or texture roots participate in this API.
 
 import contextlib
 from dataclasses import dataclass, replace
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -27,9 +28,12 @@ from ..core.mesh_nodes import (
     validate_node_markers,
 )
 from ..core.payload_publish_v2 import atomic_publish_bytes
+from ..core.source_inventory import scan_source_inventory
 from ..core.validate import MHValidationError
 from .export_material import (
+    _active_material_export_session,
     is_technical_material,
+    material_export_session,
     resolve_material_binding,
 )
 from .resource_markers import (
@@ -658,6 +662,70 @@ def _temporary_ue_centimeter_export_state(objects):
         unit_settings.length_unit = saved_unit_state[2]
 
 
+def _exit_local_view_isolation():
+    """Leave every 3D viewport Local View (isolate mode) before staging.
+
+    A Local View session makes everything outside the isolated set invisible
+    to the artist, so a full-package export started in that state silently
+    disagrees with what the scene authors.  Publication must always see the
+    complete scene; any viewport still in Local View is switched back.
+    Windowless sessions and viewports without Local View are no-ops.
+    """
+    window_manager = getattr(bpy.context, "window_manager", None)
+    if window_manager is None:
+        return
+    for window in window_manager.windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type != "VIEW_3D":
+                continue
+            space = area.spaces.active
+            if space is None or space.local_view is None:
+                continue
+            region = next(
+                (region for region in area.regions if region.type == "WINDOW"),
+                None)
+            if region is None:
+                continue
+            with contextlib.suppress(RuntimeError):
+                with bpy.context.temp_override(
+                        window=window, area=area, region=region):
+                    bpy.ops.view3d.localview(frame_selected=False)
+
+
+@contextlib.contextmanager
+def _temporary_fbx_batch_scene(scene):
+    """Keep one shared export scene active across a closure mesh batch."""
+
+    window = bpy.context.window
+    if window is None:
+        raise RuntimeError("FBX export requires an active Blender window")
+    original_scene = window.scene
+    if scene == original_scene:
+        yield
+        return
+
+    original_view_layer = window.view_layer
+    original_active = original_view_layer.objects.active
+    original_mode = getattr(original_active, "mode", "OBJECT")
+    if original_mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    window.scene = scene
+    try:
+        yield
+    finally:
+        window.scene = original_scene
+        if (original_active is not None
+                and original_active.name in original_view_layer.objects):
+            original_view_layer.objects.active = original_active
+        if (original_mode != "OBJECT" and original_active is not None
+                and original_active.name in original_view_layer.objects):
+            with contextlib.suppress(RuntimeError):
+                bpy.ops.object.mode_set(mode=original_mode)
+
+
 @contextlib.contextmanager
 def _temporary_selection_context(scene, objects):
     """Select only ``objects`` for FBX and restore host interaction state."""
@@ -675,7 +743,9 @@ def _temporary_selection_context(scene, objects):
     if original_mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
 
-    window.scene = scene
+    switches_scene = scene != original_scene
+    if switches_scene:
+        window.scene = scene
     export_view_layer = window.view_layer
     same_view_layer = export_view_layer == original_view_layer
     export_active = export_view_layer.objects.active
@@ -686,7 +756,7 @@ def _temporary_selection_context(scene, objects):
     selectability = [(obj, obj.hide_select) for obj in objects]
 
     try:
-        for obj in export_view_layer.objects:
+        for obj in export_selected:
             obj.select_set(False)
         for obj in objects:
             if obj.name not in export_view_layer.objects:
@@ -694,13 +764,25 @@ def _temporary_selection_context(scene, objects):
                     f"object '{obj.name}' is excluded from the active view layer")
             obj.hide_select = False
             obj.select_set(True)
+        # Blender turns select_set(True) into a silent no-op for objects the
+        # artist hid (H / isolate around another mesh).  The FBX writer runs
+        # with use_selection, so an unverified selection becomes a published
+        # mesh file without its geometry.  Field defect 2026-08-31: 731 empty
+        # transports out of 732.
+        unselected = [obj.name for obj in objects if not obj.select_get()]
+        if unselected:
+            raise MHValidationError(
+                "MH_E_INVALID_RESOURCE_SOURCE", unselected,
+                "export objects are hidden in the active view layer and "
+                "cannot be selected for FBX transport; unhide them (Alt+H) "
+                "or leave local view before exporting")
         export_view_layer.objects.active = objects[0]
         yield
     finally:
         for obj, hide_select in selectability:
             if obj and obj.name in bpy.data.objects:
                 obj.hide_select = hide_select
-        for obj in export_view_layer.objects:
+        for obj in tuple(bpy.context.selected_objects):
             obj.select_set(False)
         for obj in export_selected:
             if obj and obj.name in export_view_layer.objects:
@@ -710,15 +792,8 @@ def _temporary_selection_context(scene, objects):
         else:
             export_view_layer.objects.active = None
 
-        window.scene = original_scene
-        if not same_view_layer:
-            for obj in original_view_layer.objects:
-                obj.select_set(False)
-            for obj in original_selected:
-                if obj and obj.name in original_view_layer.objects:
-                    obj.select_set(True)
-            if original_active and original_active.name in original_view_layer.objects:
-                original_view_layer.objects.active = original_active
+        if switches_scene:
+            window.scene = original_scene
         if original_mode != "OBJECT" and original_active \
                 and original_active.name in original_view_layer.objects:
             with contextlib.suppress(RuntimeError):
@@ -756,7 +831,7 @@ def _assert_output_under_root(output_dir, source_root):
             "FBX output folder must be inside Project Source Root")
 
 
-def _transport_material_binding(obj, index, slot):
+def _transport_material_binding(obj, index, slot, resource_name):
     """Return the binding one transported slot publishes, or fail closed."""
     material = slot.material
     if material is None:
@@ -764,8 +839,16 @@ def _transport_material_binding(obj, index, slot):
             "MH_E_EMPTY_MATERIAL_SLOT", [obj.name],
             f"'{obj.name}' material slot {index} is empty")
     slot_name = str(slot.name or material.name)
-    logical_slot = strip_blender_duplicate_suffix(slot_name)
-    logical_material = strip_blender_duplicate_suffix(material.name)
+    authored_slot = strip_blender_duplicate_suffix(slot_name)
+    authored_material = strip_blender_duplicate_suffix(material.name)
+    binding = resolve_material_binding(material, asset_name=resource_name)
+    # A normal Blender slot carries the authored material name. At the Dagor
+    # adapter boundary that name may project to a canonical transport token;
+    # compare the projected binding while retaining fail-closed handling for
+    # a genuinely mismatched/custom slot name.
+    logical_slot = (
+        binding.name if authored_slot == authored_material else authored_slot)
+    logical_material = binding.name
     try:
         validate_resource_name(logical_slot)
         validate_resource_name(logical_material)
@@ -787,15 +870,16 @@ def _transport_material_binding(obj, index, slot):
             f"'{obj.name}' mixes the technical material "
             f"'{material.name}' with render materials; technical paint "
             "belongs to collision-only meshes")
-    return resolve_material_binding(material)
+    return binding
 
 
-def _material_slot_names(objects):
+def _material_slot_names(objects, resource_name):
     """Validate and return the logical material names transported by FBX."""
     names = set()
     for obj in sorted(objects, key=lambda item: item.name):
         for index, slot in enumerate(obj.material_slots):
-            names.add(_transport_material_binding(obj, index, slot).name)
+            names.add(_transport_material_binding(
+                obj, index, slot, resource_name).name)
     return names
 
 
@@ -850,6 +934,39 @@ def _export_selected_fbx(filepath):
 
 
 _LOD_NODE_SUFFIX_RE = re.compile(r"_lod(?P<level>\d{2})$")
+_BLENDER_ID_NAME_MAX_BYTES = 63
+_LOD_TRANSPORT_NAME_HASH_CHARS = 12
+
+
+def _utf8_prefix(value: str, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")[:max_bytes]
+    while encoded:
+        try:
+            return encoded.decode("utf-8")
+        except UnicodeDecodeError:
+            encoded = encoded[:-1]
+    return ""
+
+
+def _bounded_lod_node_name(name: str, suffix: str) -> str:
+    """Fit a temporary node name while retaining the classifying suffix."""
+    desired = f"{name}{suffix}"
+    encoded = desired.encode("utf-8")
+    if len(encoded) <= _BLENDER_ID_NAME_MAX_BYTES:
+        return desired
+    digest = hashlib.sha256(encoded).hexdigest()[:_LOD_TRANSPORT_NAME_HASH_CHARS]
+    prefix_budget = (
+        _BLENDER_ID_NAME_MAX_BYTES
+        - len(suffix.encode("ascii"))
+        - 1
+        - _LOD_TRANSPORT_NAME_HASH_CHARS
+    )
+    prefix = _utf8_prefix(name, prefix_budget)
+    if not prefix:
+        raise MHValidationError(
+            "MH_E_INVALID_LOD_HIERARCHY", [name],
+            "LOD node name cannot retain a non-empty transport prefix")
+    return f"{prefix}_{digest}{suffix}"
 
 
 @contextlib.contextmanager
@@ -868,7 +985,7 @@ def _temporary_lod_node_names(levels):
                         f"mesh object '{obj.name}' is in LOD {level} but "
                         f"carries {match.group(0)}")
                 continue
-            desired = f"{obj.name}{suffix}"
+            desired = _bounded_lod_node_name(obj.name, suffix)
             previous = desired_owners.get(desired)
             if previous is not None and previous != obj:
                 raise MHValidationError(
@@ -984,7 +1101,7 @@ def _temporary_collision_transport(export_objects, collision_transport):
 
 
 @contextlib.contextmanager
-def _temporary_transport_material_names(export_objects):
+def _temporary_transport_material_names(export_objects, resource_name):
     """Expose logical material names to the FBX writer and always restore them.
 
     Blender stamps the datablock name into the FBX, so a ``.NNN`` duplicate
@@ -1006,7 +1123,8 @@ def _temporary_transport_material_names(export_objects):
                 material = slot.material
                 if material is None:
                     continue
-                binding = resolve_material_binding(material)
+                binding = resolve_material_binding(
+                    material, asset_name=resource_name)
                 if binding.name not in seen:
                     seen.add(binding.name)
                     representatives.append(binding)
@@ -1112,6 +1230,11 @@ def prepare_fbx_collection(
     incomplete-import guard and every FBX dialect check happen here, before a
     staging directory or source payload can be created.
     """
+    if _active_material_export_session() is None:
+        with material_export_session():
+            return prepare_fbx_collection(
+                collection, output_dir, source_root=source_root,
+                export_materials=export_materials)
     if collection is None:
         raise ValueError("collection is required")
     linked = []
@@ -1194,6 +1317,10 @@ def prepare_fbx_collection(
     if isinstance(source_root, (str, os.PathLike)) and str(source_root).strip():
         resolved_source_root = _resolved_source_root(source_root)
         _assert_output_under_root(resolved_output_dir, resolved_source_root)
+        session = _active_material_export_session()
+        if (export_materials and session is not None
+                and session.inventory is None):
+            session.bind_inventory(scan_source_inventory(resolved_source_root))
     _assert_existing_target(filepath)
 
     # AMENDMENT_node_hierarchy: Blender silently re-roots children of
@@ -1217,19 +1344,28 @@ def prepare_fbx_collection(
     transport_meshes = [
         obj for obj in export_objects
         if obj.type == "MESH" and obj.as_pointer() not in collision_ids]
-    _material_slot_names(transport_meshes)
+    _material_slot_names(transport_meshes, resource_name)
     # The material list is the render-only ordered union of every LOD
     # (docs/15 §1.1 and §3.4 last bullet): `objects` is already LOD-major, so
     # first appearance in this walk is the frozen contract order, and a slot
     # owned only by non-render nodes never enters the closure.
     materials = []
-    seen_materials = set()
+    seen_materials = {}
     for obj in objects:
         for index, slot in enumerate(obj.material_slots):
-            binding = _transport_material_binding(obj, index, slot)
-            if binding.name in seen_materials:
+            binding = _transport_material_binding(
+                obj, index, slot, resource_name)
+            previous = seen_materials.get(binding.name)
+            if previous is not None:
+                if previous is not binding:
+                    raise MHValidationError(
+                        "MH_E_AMBIGUOUS_RESOURCE_NAME",
+                        [binding.name, previous.material.name,
+                         binding.material.name],
+                        "different Blender materials project to one material "
+                        "token")
                 continue
-            seen_materials.add(binding.name)
+            seen_materials[binding.name] = binding
             materials.append(binding)
 
     scene = _find_export_scene(collection)
@@ -1334,6 +1470,12 @@ def stage_prepared_fbx(prepared, staged_filepath):
     that will be published, while returned bytes are the exact file read-back.
     Existing paths are never overwritten, and a failed stage is removed.
     """
+    session = _active_material_export_session()
+    if session is None:
+        with material_export_session():
+            return stage_prepared_fbx(prepared, staged_filepath)
+    session.validate_sources()
+    _exit_local_view_isolation()
     if not isinstance(prepared, PreparedFBXExport):
         raise TypeError("prepared must be PreparedFBXExport")
     if not isinstance(staged_filepath, (str, os.PathLike)) \
@@ -1397,7 +1539,7 @@ def stage_prepared_fbx(prepared, staged_filepath):
             with _temporary_collision_transport(
                     prepared.export_objects, prepared.collision_transport):
                 with _temporary_transport_material_names(
-                        prepared.export_objects):
+                        prepared.export_objects, prepared.resource_name):
                     with _temporary_selection_context(
                             prepared.scene, prepared.export_objects):
                         with _temporary_ue_centimeter_export_state(
@@ -1424,6 +1566,20 @@ def stage_prepared_fbx(prepared, staged_filepath):
                 section_ids):
             raise RuntimeError(
                 "staged FBX failed structural read-back validation")
+        # Every transported object must survive as one FBX Model node.  A
+        # structurally valid file with fewer Models is a silently truncated
+        # export (empty selection, hidden geometry) and must never publish.
+        model_count = sum(
+            1
+            for item in root.elems
+            if item.id == b"Objects"
+            for child in item.elems
+            if child.id == b"Model")
+        expected_models = len(prepared.export_objects)
+        if model_count != expected_models:
+            raise RuntimeError(
+                f"staged FBX transports {model_count} Model nodes, expected "
+                f"{expected_models} for '{prepared.resource_name}'")
         succeeded = True
         return StagedFBXExport(filepath=staged, payload=payload)
     finally:
@@ -1452,6 +1608,13 @@ def export_fbx_collection(
     names temporarily carry their ``_lodNN`` suffix; the only MH properties
     written to the FBX are the collision carrier of docs/15 §3.4.
     """
+    if _active_material_export_session() is None:
+        with material_export_session() as session:
+            report = export_fbx_collection(
+                collection, output_dir, dry_run=dry_run,
+                source_root=source_root, export_materials=export_materials)
+        report["material_export_metrics"] = session.metrics_snapshot()
+        return report
     prepared = prepare_fbx_collection(
         collection,
         output_dir,

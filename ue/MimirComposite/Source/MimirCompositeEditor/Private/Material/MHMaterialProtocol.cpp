@@ -70,6 +70,35 @@ void AppendUtf8(const FString& Text, TArray<uint8>& OutBytes)
     OutBytes.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
 }
 
+void AppendJsonString(const FString& Value, FString& Out)
+{
+    Out.AppendChar(TEXT('"'));
+    for (const TCHAR Character : Value)
+    {
+        switch (Character)
+        {
+        case TEXT('"'): Out += TEXT("\\\""); break;
+        case TEXT('\\'): Out += TEXT("\\\\"); break;
+        case TEXT('\b'): Out += TEXT("\\b"); break;
+        case TEXT('\f'): Out += TEXT("\\f"); break;
+        case TEXT('\n'): Out += TEXT("\\n"); break;
+        case TEXT('\r'): Out += TEXT("\\r"); break;
+        case TEXT('\t'): Out += TEXT("\\t"); break;
+        default:
+            if (Character < TEXT(' '))
+            {
+                Out += FString::Printf(TEXT("\\u%04x"), static_cast<uint32>(Character));
+            }
+            else
+            {
+                Out.AppendChar(Character);
+            }
+            break;
+        }
+    }
+    Out.AppendChar(TEXT('"'));
+}
+
 } // namespace
 
 bool MHIsCanonicalMaterialToken(const FString& Value)
@@ -191,7 +220,17 @@ bool MHParseMaterialV4(
                 return GrammarError(OutError, FString::Printf(TEXT("invalid parameter key '%s'"), *Pair.Key));
             }
             FMHMaterialParameter Parameter;
-            if (ReadFloat(Pair.Value, Parameter.Scalar))
+            if (Pair.Value.IsValid() && Pair.Value->Type == EJson::String)
+            {
+                Parameter.bString = true;
+                Parameter.String = Pair.Value->AsString();
+            }
+            else if (Pair.Value.IsValid() && Pair.Value->Type == EJson::Boolean)
+            {
+                Parameter.bBool = true;
+                Parameter.Bool = Pair.Value->AsBool();
+            }
+            else if (ReadFloat(Pair.Value, Parameter.Scalar))
             {
                 Parameter.bVector = false;
             }
@@ -208,7 +247,7 @@ bool MHParseMaterialV4(
             }
             else
             {
-                return GrammarError(OutError, FString::Printf(TEXT("parameter '%s' must be a number or four-number array"), *Pair.Key));
+                return GrammarError(OutError, FString::Printf(TEXT("parameter '%s' must be a string, boolean, number, or four-number array"), *Pair.Key));
             }
             OutDocument.Params.Add(Pair.Key, Parameter);
         }
@@ -277,7 +316,23 @@ bool MHWriteCanonicalMaterialV4(
                 return GrammarError(OutError, TEXT("writer received an invalid parameter name"));
             }
             Text += FString::Printf(TEXT("    \"%s\": "), *Name);
-            if (Parameter->bVector)
+            if (Parameter->bString)
+            {
+                if (Parameter->bBool || Parameter->bVector)
+                {
+                    return GrammarError(OutError, TEXT("writer received a cross-typed provenance parameter"));
+                }
+                AppendJsonString(Parameter->String, Text);
+            }
+            else if (Parameter->bBool)
+            {
+                if (Parameter->bVector)
+                {
+                    return GrammarError(OutError, TEXT("writer received a cross-typed boolean/vector parameter"));
+                }
+                Text += Parameter->Bool ? TEXT("true") : TEXT("false");
+            }
+            else if (Parameter->bVector)
             {
                 Text += TEXT("[\n");
                 for (int32 Component = 0; Component < 4; ++Component)

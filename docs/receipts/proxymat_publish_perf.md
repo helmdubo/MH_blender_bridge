@@ -1,12 +1,16 @@
 # Квитанция: proxymat-материалы и публикация include_all
 
-Статус: **STOP — ожидается одно решение Lead по строковому provenance**.  
+Статус: **READY — прежний STOP снят полевым дополнением 2026-08-31 (§10)**.
 Дата: 2026-08-30  
 Ветка: `feat/proxymat-and-publish-perf`  
 База: `3ee5a2cdbca5bcf94eb3d62cc978f4470cf9eb11`  
-Scope: `addon/mh4blend`, `tests`, эта квитанция.
+Scope исходного checkpoint: `addon/mh4blend`, `tests`, эта квитанция.
+Дополнение §10 включает совместимый reader/writer в `ue/MimirComposite`.
 
 ## 1. Итог на checkpoint
+
+Этот раздел фиксирует историческое состояние на 2026-08-30. Текущее green-
+закрытие macro textures и opaque provenance приведено в §10.
 
 Реализованы и проверены:
 
@@ -197,7 +201,8 @@ Blender-модули: `22 + 20 + 76 + 38 + 16 + 16 + 58 + 38 + 15 + 6 +
 12 + 11 = 328`.
 
 Полный реальный `trees_leaf -> include_all -> .material` и UE importer test
-для строковых provenance params: **NOT RUN / STOP**, причина в §1/§7.
+для строковых provenance params: **NOT RUN / STOP** на этом историческом
+checkpoint; текущее закрытие приведено в §10.
 
 ## 6. Frozen-инварианты
 
@@ -213,6 +218,10 @@ Blender-модули: `22 + 20 + 76 + 38 + 16 + 16 + 58 + 38 + 15 + 6 +
   мутирует сцену.
 
 ## 7. Вопросы
+
+Исторический вопрос ниже разрешён реализацией §10: macro slots стали
+конкретными per-mesh texture bindings, а остальные string/bool script values
+сохраняются как opaque provenance.
 
 1. **Контекст:** `.material.params` frozen v4 принимает только number/vector4;
    строка отклоняется. Все 37 реальных `trees_leaf` proxymat содержат macro
@@ -247,3 +256,364 @@ Blender-модули: `22 + 20 + 76 + 38 + 16 + 16 + 58 + 38 + 15 + 6 +
 - `3935682` — `Read proxymat materials from authoritative sources`;
 - `d72dc6d` — `Reuse batch inventory validation during publication`;
 - квитанция — отдельный documentation commit.
+
+## 10. Дополнение 2026-08-31 — macro textures и opaque provenance
+
+### 10.1. Разрешение `$(ASSET_NAME)`
+
+Полевой пример `bush_beech_bark.proxymat.blk` использует:
+
+```text
+tex7=$(ASSET_NAME)_pivot_pos.dds
+tex8=$(ASSET_NAME)_pivot_dir.dds
+```
+
+Один bark proxymat применяется к семи разным mesh resources
+(`bush_beech_medium_a/b/c`, `bush_beech_small_a/b/c/d`), и у каждого на диске
+своя пара pivot DDS. Поэтому material-level подстановка без mesh-контекста
+была бы неоднозначной. Реализовано точное разрешение на границе mesh export:
+
+- asset name берётся из managed mesh stamp либо из `.lodNN`/`.lods`
+  collection;
+- macro разворачивается в реальный `tex7/tex8` logical texture token;
+- общий proxymat специализируется как `<material>__<mesh>`, например
+  `bush_beech_bark__bush_beech_medium_a`;
+- FBX material binding и `.material` используют одно имя;
+- если точного mesh authority нет, операция остаётся fail-closed;
+- сцена, dagormat и `.proxymat.blk` не мутируются.
+
+`Copy All Textures to Project` теперь проходит тем же per-mesh разрешением и
+копирует сами pivot DDS. Повторный Copy All после Remap является проверенным
+no-op: внешний CDK path и уже project-local path объединяются только при
+равных size + SHA-256; разные байты по-прежнему дают
+`MH_E_AMBIGUOUS_RESOURCE_NAME`.
+
+### 10.2. Script provenance
+
+Реальный preflight после macro-разрешения обнаружил допустимые Dagor script
+values `lighting=vltmap` и `real_two_sided=no`. Чтобы выполнить требование
+«script params как есть», `.material.params` получил append-only поддержку
+string/bool:
+
+- Blender canonical reader/writer и UI сохраняют number/vector4/string/bool;
+- UE reader/writer принимает те же canonical values;
+- string/bool являются opaque provenance, не подделываются под scalar/vector
+  MI parameters;
+- `SourceHash` покрывает полный документ, `AppliedHash` — только реально
+  материализуемое подмножество;
+- UE Publish managed материала перечитывает существующий source и сохраняет
+  opaque provenance.
+
+Новых E/W-кодов, версии importer и изменений golden/reference нет.
+
+### 10.3. Red -> green
+
+Красный полевой отказ:
+
+```text
+MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: ...bush_beech_bark.proxymat.blk:
+proxymat macro texture provenance requires string params before publication
+(tex7='$(ASSET_NAME)_pivot_pos.dds',
+ tex8='$(ASSET_NAME)_pivot_dir.dds');
+macro slots were not added to textures
+```
+
+Green на сохранённой сцене
+`E:\portfolio\sovmod_cottage_i_cmp_source_lod00.blend`:
+
+```text
+materials=519
+referenced_slots=1254
+macro_slots=84
+macro_assets=21
+physical_sources=653
+```
+
+Фактический автоматический Copy All в настроенный source root
+`E:\blender_plugin`:
+
+```text
+unique_files=647
+copied=60
+skipped_identical=587
+```
+
+Разница `653 -> 647` — шесть одинаковых источников, сходящихся в один
+project destination и подтверждённых по bytes. Для
+`bush_beech_medium_a.lods` реальный `prepare_fbx_collection` прошёл и выдал:
+
+```text
+bush_beech_bark__bush_beech_medium_a:
+  tex0=ground_plant_beech_bark_tex_d
+  tex2=ground_plant_beech_bark_tex_n
+  tex7=bush_beech_medium_a_pivot_pos
+  tex8=bush_beech_medium_a_pivot_dir
+```
+
+### 10.4. Гейты дополнения
+
+| Гейт | Результат |
+|---|---|
+| Pure `python -m pytest tests/ -q` | **308 passed / 14 skipped / 0 failed** |
+| Blender 4.5.12, 12 отдельных factory-startup процессов | **352 passed / 0 failed** |
+| Guarded UE editor build (`-NoEngineChanges -ForceUnity -DisableAdaptiveUnity -NoPCH -NoSharedPCH`) | **Succeeded** |
+| `Mimir.V4.Material.StringProvenance` | **1/1 success** |
+| Полный NullRHI `Mimir` с `-MHGoldenRoot` | **161/161, 0 failed, 0 not run** |
+| `git diff --check` | **PASS** |
+
+NullRHI breakdown: **119 success + 42 success-with-warnings**. Первый общий
+Blender-запуск был отброшен как environmental: cp313 `xxhash` был ошибочно
+выше bundled cp311 wheel в `sys.path`; повтор с ABI Blender 4.5 прошёл 352/0.
+
+Frozen tree hashes остались:
+
+- `golden`: `71b30ebf65ca3cc8473f50305990c2bf2b332727`;
+- `reference`: `12e25b76b19aa824458221cf23f77236a17382cd`;
+- `canonical.py`: `bbe340ce0f7c46d50e097ac1b7f8ea0b831dd945`.
+
+Код дополнения: `0e8fccf` —
+`Resolve Dagor proxy textures per mesh asset`.
+
+### 10.5. Полевое дополнение — Dagor parameter case
+
+Следующий реальный blocker был внешним camelCase key:
+
+```text
+MH_E_MATERIAL_GRAMMAR: material 'glass.001' / params key:
+value 'isShell' must match [a-z0-9_]+ exactly
+```
+
+Строгая MH-грамматика не расширена. На Dagor adapter boundary ключи
+`[A-Za-z0-9_]+` детерминированно переводятся в lowercase (`isShell` ->
+`isshell`). Пунктуация/Unicode не ремонтируются. Пара `isShell` + `isshell`
+fail-closed блокируется до публикации, а не перетирает одно значение другим.
+
+Red-first: новый Blender-тест воспроизвёл исходный
+`MH_E_MATERIAL_GRAMMAR`; после проекции focused gate дал **2 passed**, полный
+`test_export_material_bpy.py` — **47 passed**, все 12 Blender-hosted модулей —
+**354 passed / 0 failed**. Read-only проверка сохранённой сцены дала:
+
+```text
+MH_FIELD_OK glass_de3ff22636b9
+  isshell=1
+  max_thickness=0.01
+  min_thickness=0.001
+```
+
+Pure suite остался **308 passed / 14 skipped**.
+
+### 10.6. Полевое дополнение — Blender ID-name limit
+
+Per-mesh proxymat specialization выявила лимит Blender material ID в 63 bytes:
+
+```text
+MH_E_AMBIGUOUS_RESOURCE_NAME:
+Blender could not assign the transport material name
+'ground_plant_causonis_japonica_bark__ground_plant_causonis_japonica_b'
+```
+
+Красный тест зафиксировал derived name длиной **69 bytes**. Теперь имя до 63
+bytes остаётся прежним, а длинное получает 50-байтовый читаемый prefix + `_` +
+12 hex SHA-256 полного имени. Разные полные имена не сливаются; повторный
+resolve детерминирован. Реальный read-only stage сохранённой сцены прошёл:
+
+```text
+ground_plant_causonis_japonica_bark__ground_plant__8a802214a69a  63 bytes
+ground_plant_causonis_japonica_branch__ground_plan_aa76cfa79d0b 63 bytes
+MH_STAGE_OK ground_plant_causonis_japonica_b 46668 bytes
+```
+
+Focused red -> green: **1 failed -> 1 passed**; полный
+`test_export_material_bpy.py`: **48 passed**; pure suite: **308 passed / 14
+skipped**; все 12 Blender-hosted модулей: **355 passed / 0 failed**.
+
+Prefab/collision diagnostics из того же полевого лога не маскируются:
+
+- collision nodes без однозначного `phys` либо `trace`, а также комбинация
+  `isPhysCollidable=True + isTraceable=True`, остаются warning и не входят в
+  payload до отдельного решения о UE-семантике;
+- prefab публикуется как mesh только при явном per-run
+  `Allow Prefab as Mesh (Lossy)`; default остаётся fail-closed;
+- warning «exported as mesh by explicit policy» и error «requires explicit»
+  не могут возникнуть в одном вызове: это строки разных запусков, оставшиеся
+  вместе в Blender report history.
+
+### 10.7. Полевое дополнение — длинный LOD node
+
+Следующий blocker возник при временном добавлении обязательного `_lod00`:
+
+```text
+MH_E_INVALID_LOD_HIERARCHY:
+Blender could not assign temporary LOD node name
+'sovmod_tropospheric_station_building_gate_a_jamb_origin001_lod00'
+```
+
+Красный тест воспроизвёл обрезание Blender. Для derived LOD transport name
+теперь используется UTF-8-safe prefix + `_` + 12 hex SHA-256 + неизменный
+terminal `_lodNN`, всё имя не длиннее 63 bytes. Авторское Blender-имя после
+FBX writer восстанавливается. Реальный stage проблемного ресурса прошёл:
+
+```text
+MH_STAGE_OK sovmod_cottage_i_garage_gate_jamb_a 52684 bytes
+sovmod_tropospheric_station_building_gate_a__5347490fdc85_lod00 63 bytes
+```
+
+Парсер классифицировал узел как LOD0. Red -> green: **1 failed -> 1 passed**;
+полный `test_export_fbx_bpy.py`: **62 passed**; pure suite:
+**308 passed / 14 skipped**; все 12 Blender-hosted модулей:
+**356 passed / 0 failed**.
+
+### 10.8. Полевое дополнение — operation-scoped material preflight
+
+Независимый аудит верно указал на повторные обходы Source Root, повторное
+сканирование `bpy.data.materials` и повторное чтение proxymat в
+`include_all`. Исправление ограничено одной синхронной операцией экспорта:
+
+- один immutable `SourceInventory` обслуживает разрешение material/texture;
+- один индекс Blender material claims обслуживает все mesh bindings;
+- один proxymat читается и парсится один раз, а перед staging его bytes
+  повторно подтверждаются SHA-256 (одинаковые size/mtime не обходят guard);
+- один texture `ResourceKey`, встречающийся в нескольких материалах,
+  хэшируется для batch snapshot ровно один раз.
+
+Глобального кэша между операциями нет. Blender datablocks не мутируются.
+Публикационный guard, canonical bytes, FBX writer, формат, `golden/` и
+`reference/` не менялись.
+
+Red-first доказательства:
+
+```text
+ImportError: cannot import name 'material_export_session'
+```
+
+После введения session отдельный тест общей текстуры воспроизвёл второй
+повторный SHA-256:
+
+```text
+assert texture_snapshots == 1
+E assert 2 == 1
+```
+
+После дедупликации: **1 passed / 39 deselected**. Дополнительно покрыты:
+запрет per-material `Path.rglob`, один material claim index, инвалидирование
+при изменении Blender material catalog, повторный parse proxymat после его
+изменения и fail-closed SHA-256 guard при подмене proxymat с сохранёнными
+size/mtime.
+
+Read-only A/B выполнен в Blender 4.5.12 на одной сохранённой сцене
+`E:\portfolio\sovmod_cottage_i_cmp_source_lod00.blend`, source root
+`E:\blender_plugin`. Замер охватывает DTO bundle и полный
+`prepare_dag4blend_publication`, но не staging/publish и ничего не пишет:
+
+| Вариант | Documents | Mesh inputs | Payloads | Prepare |
+|---|---:|---:|---:|---:|
+| baseline `aed20b6` | 239 | 732 | 1595 | **336353.33 ms** |
+| общий inventory/index/proxymat cache | 239 | 732 | 1595 | **106852.59 ms** |
+| плюс unique texture snapshot | 239 | 732 | 1595 | **46200.27 ms** |
+
+Итог preflight: **7.28x быстрее**, либо **13.74% baseline wall**. В финальном
+прогоне было 1316 texture references и 647 уникальных texture dependencies.
+До дедупликации профиль относил **98.51 s из 109.32 s** к 2120 вызовам
+SHA-256; после неё каждый из 647 уникальных texture payload всё ещё проходит
+обязательное полное хэш-подтверждение. Параллельное чтение не вводилось:
+его польза зависит от накопителя и требует отдельного полевого профиля, а
+последовательный exact-hash остаётся безопасным fail-closed допущением.
+
+Гейты дополнения:
+
+| Гейт | Результат |
+|---|---|
+| Pure `python -m pytest tests/ -q` | **309 passed / 14 skipped / 0 failed** |
+| Blender 4.5.12, 12 отдельных factory-startup процессов | **361 passed / 0 failed** |
+| Focus: session/root-scan/shared-hash | **5 passed / 0 failed** |
+
+Следующий gate — owner field test полного `Export Composite All Stuff`:
+нужно сравнить полный wall (включая 732 FBX stage и publication) и приложить
+`material_export_metrics`. До этих данных parallel hashing и Changed Only FBX
+остаются отдельными кандидатами, не частью этого исправления.
+
+### 10.9. Автономное продолжение — parallel hash, batch scene и temp-aware guard
+
+Owner не мог выполнить полевой тест и ратифицировал дальнейшую оптимизацию по
+локальному профилю. Пункт про parallel hashing из §10.8 проверен на том же
+host и той же сохранённой сцене. Потоки выполняют только `Path.read_bytes` и
+SHA-256 immutable `SourceCandidate`; Blender RNA остаётся строго main-thread.
+Результаты worker sweep для 647 уникальных texture payload:
+
+| Workers | Prepare |
+|---:|---:|
+| 1 | **46176.06 ms** |
+| 2 | **25357.19 ms** |
+| 4 | **15122.29 ms** |
+| 8 | **10284.07 ms** |
+| 1, контроль после sweep | **46222.36 ms** |
+
+Принят ограниченный предел **8 workers**. Red-first concurrency-тест до
+изменения видел `maximum=1`, после — одновременно не менее двух независимых
+snapshot. Порядок результата остаётся сортированным по `ResourceKey`, ошибка
+любого worker отменяет prepare до staging.
+
+Полный temp-only staging реальной сцены выявил второй bottleneck: каждый из
+732 FBX-вызовов переключал `Window Scene` на export scene и обратно. Это
+давало 8.20 s из 11.96 s в профиле 20 мешей; сам штатный FBX operator занимал
+3.04 s. Теперь общий export scene удерживается один раз на весь mesh batch,
+но только если все prepared mesh принадлежат одной сцене. Для нескольких сцен
+остаётся прежний per-mesh fail-closed путь. Низкоуровневый
+`io_scene_fbx.save_single` не используется: остаётся штатный
+`bpy.ops.export_scene.fbx` с его view-layer synchronization.
+
+Red-first batch-scene тест до изменения наблюдал host `Scene` перед каждым
+`stage_prepared_fbx`, а ожидал `shared_export_scene`. Green покрывает success
+и injected failure: Window Scene, active object, selection, mode и временные
+файлы восстанавливаются.
+
+Реальный полный staging (без publication, temp удалён после замера):
+
+| Метрика | До hoist | После hoist |
+|---|---:|---:|
+| Payloads | 1595 | 1595 |
+| FBX | 732 | 732 |
+| Staged bytes | 40728658 | 40728658 |
+| FBX median | ~579 ms | **164.65 ms** |
+| Stage wall | **444740.90 ms** | **141007.72 ms** |
+
+Prepare + stage относительно установленного §10.8 снизился с примерно
+**490.92 s до 151.25 s (3.25x)**. От исходного `aed20b6` prepare + прежнего
+stage — с примерно **781.09 s до 151.25 s (5.16x)**. Это не объявляется
+полным UI wall: ordered publication измеряется отдельно.
+
+Последний профиль publication показал, что sibling `.mh-tmp` самого publisher
+менял mtime Source Root и заставлял incremental guard повторно строить полный
+`SourceInventory` перед каждой заменой. Новый temp-aware admission исключает
+ровно один ожидаемый regular temp по точному prefix и только если полный набор
+остальных directory entries совпадает со snapshot. Любое другое появление,
+исчезновение или смена типа entry оставляет прежний full-rescan путь.
+Size/mtime всех известных source payload проверяются между заменами; текущий
+target и любой изменившийся payload по-прежнему проходят полный hash.
+
+Red -> green на 100 payload:
+
+```text
+before: inventory_scans=100, wall_ms=3062, guard_ms=2160
+after:  inventory_scans=0,   wall_ms=1328, guard_ms=364
+```
+
+Injected изменение уже опубликованного prefix по-прежнему даёт
+`MH_E_EXTERNAL_MODIFICATION_CONFIRMATION_REQUIRED` до следующего replace.
+Stress 1000 payload: **37.531 s**, `inventory_scans=0`,
+`metadata_checks=499500`, `guard_ms=22.153 s`. Квадратичное число дешёвых
+metadata comparisons остаётся сознательной ценой требования «поймать подмену
+prefix до следующей замены»; ослаблять его без отдельного контракта нельзя.
+
+Гейты дополнения:
+
+| Гейт | Результат |
+|---|---|
+| Focus: closure + dag4blend publication | **58 passed / 0 failed** |
+| Pure `python -m pytest tests/ -q` | **309 passed / 14 skipped / 0 failed** |
+| Blender 4.5.12, 12 отдельных factory-startup процессов | **363 passed / 0 failed** |
+
+`golden/`, `reference/`, canonical registry, Source Protocol bytes и Engine не
+изменялись. Changed Only FBX не реализован: текущий authority fingerprint не
+покрывает vertex/topology bytes, поэтому использовать его для пропуска writer
+было бы семантическим ослаблением.

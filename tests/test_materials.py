@@ -64,7 +64,6 @@ def test_library_form_is_exactly_one_field():
     {"class": "simple", "textures": {"tex16": "a"}},
     {"class": "simple", "params": {"A": 1}},
     {"class": "simple", "params": {"v": [1, 2, 3]}},
-    {"class": "simple", "params": {"v": True}},
 ])
 def test_closed_grammar_rejects_unknown_fields_and_shapes(document):
     with pytest.raises(MaterialValueError) as excinfo:
@@ -159,6 +158,27 @@ def test_numeric_edges_narrow_to_float32_before_shortest_spelling():
     assert b'"non_float32_exact": 0.1' in payload
     assert b'"small_exponent": 1e-07' in payload
     assert material_json_bytes(parse_material(payload)) == payload
+
+
+def test_string_param_is_canonical_opaque_provenance():
+    payload = material_json_bytes(MaterialResource(
+        "tree", material_class="rendinst_tree_colored", params={
+            "lighting": "vltmap",
+        }))
+
+    assert b'"lighting": "vltmap"' in payload
+    assert parse_material(payload).params == {"lighting": "vltmap"}
+    assert material_json_bytes(parse_material(payload)) == payload
+
+
+def test_boolean_param_is_canonical_opaque_provenance():
+    payload = material_json_bytes(MaterialResource(
+        "tree", material_class="rendinst_tree_colored", params={
+            "real_two_sided": False,
+        }))
+
+    assert b'"real_two_sided": false' in payload
+    assert parse_material(payload).params == {"real_two_sided": False}
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])

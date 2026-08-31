@@ -13,9 +13,13 @@ enum class EMHMaterialMode : uint8
 
 struct MIMIRCOMPOSITEEDITOR_API FMHMaterialParameter
 {
+    bool bString = false;
+    bool bBool = false;
     bool bVector = false;
     float Scalar = 0.0f;
     FVector4f Vector = FVector4f::Zero();
+    FString String;
+    bool Bool = false;
 };
 
 /** Strict, lossless-in-domain representation of a Source Protocol v4 material. */

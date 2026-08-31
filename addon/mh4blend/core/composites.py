@@ -49,6 +49,11 @@ _IDENTITY_TRANSLATION = (0.0, 0.0, 0.0)
 _IDENTITY_ROTATION = (0.0, 0.0, 0.0, 1.0)
 _IDENTITY_SCALE = (1.0, 1.0, 1.0)
 _QUATERNION_NORM_TOLERANCE = 1.0e-3
+# One float64 normalization narrowed to four float32 components can leave the
+# represented norm a few e-8 away from one.  Treat that output band as the
+# canonical fixed point so canonical read-back never normalizes it by another
+# ULP.  Values outside the band still take the existing normalization path.
+_QUATERNION_CANONICAL_NORM_TOLERANCE = 1.0e-7
 _LEGACY_MESSAGE = "файл прежнего поколения: удалите и переэкспортируйте"
 
 
@@ -112,7 +117,11 @@ def _canonical_quaternion(
         require_unit and abs(norm - 1.0) > _QUATERNION_NORM_TOLERANCE
     ):
         raise _error(path, "quaternion norm must be within 1e-3 of one")
-    normalized = tuple(narrow_float32(component / norm) for component in components)
+    normalized = (
+        components
+        if abs(norm - 1.0) <= _QUATERNION_CANONICAL_NORM_TOLERANCE
+        else tuple(narrow_float32(component / norm) for component in components)
+    )
     narrowed_norm = math.sqrt(sum(component * component for component in normalized))
     if narrowed_norm == 0.0:
         raise _error(path, "quaternion must be nonzero")

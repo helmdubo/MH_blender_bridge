@@ -106,9 +106,10 @@ transformation matrix» = переключатель фиксированной 
 p2-трансформов; Add/Remove/Copy/Paste сырых параметров), Composit
 (Save changes / Reset to file), Delete node. Маппинг на нашу
 грамматику: options/веса/empty, children, delete, фиксированный TRS,
-change asset — 1:1 через канонический писатель; режим random
-p2-трансформов = OPEN-V5-15 (заблокирован — переключатель до решения
-не реализуем); сырые script-параметры вне грамматики (у нас только
+change asset — 1:1 через канонический писатель; `OPEN-V5-15` закрыт для
+direct-export из dag4blend-сцены производным content-addressed `.placement`,
+но сам редактирующий переключатель p2 остаётся вне S6.4a и требует отдельной
+реализации S6.4b; сырые script-параметры вне грамматики (у нас только
 place_type/appearance_seed_boundary). **Ратифицировано owner
 2026-08-30: модель редактирования — сессионная, без автосохранения;
 запись в источник только явным «Save changes» (существующий

@@ -16,6 +16,7 @@ from mh4blend.scene.project_textures import (  # noqa: E402
     copy_all_dagor_textures_to_project,
     remap_all_dagor_textures_to_project,
 )
+import mh4blend.scene.project_textures as project_textures_module  # noqa: E402
 
 
 def _material(name, slots):
@@ -103,6 +104,203 @@ def test_copy_all_materials_preserves_assets_tree_and_deduplicates(tmp_path):
     assert destination.read_bytes() == source.read_bytes()
     assert materials[0].dagormat.textures.tex0 == str(source)
     assert materials[1].dagormat.textures.tex2 == str(source)
+
+
+def test_copy_and_remap_project_external_dagor_case_to_lowercase(tmp_path):
+    source = _external_texture(tmp_path, "Sovmod_bag_tex_d.TGA")
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("Sovmod_bag_leather", {"tex0": str(source)})
+
+    copy_report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "sovmod_bag_tex_d.tga")
+
+    assert copy_report["copied"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+
+    remap_report = remap_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    assert remap_report["remapped"] == 1
+    assert material.dagormat.textures.tex0 == str(destination)
+
+
+def test_copy_all_reads_proxy_file_instead_of_stale_scene_slots(tmp_path):
+    source = _external_texture(tmp_path, "Tree_Leaf_D.TGA")
+    project = tmp_path / "project"
+    project.mkdir()
+    proxy_dir = tmp_path / "proxymats"
+    proxy_dir.mkdir()
+    (proxy_dir / "Tree_Leaf.proxymat.blk").write_text(
+        'class:t="rendinst_tree_colored"\n'
+        f'tex0:t="{source}"\n',
+        encoding="utf-8",
+    )
+    material = _material("Tree_Leaf", {"tex0": "stale_cache.tif"})
+    material.dagormat.is_proxy = True
+    material.dagormat.proxy_path = str(proxy_dir)
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "tree_leaf_d.tga")
+
+    assert report["copied"] == 1
+    assert report["referenced_slots"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+    assert material.dagormat.textures.tex0 == "stale_cache.tif"
+
+    remap_report = remap_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    assert remap_report["remapped"] == 0
+    assert remap_report["read_only_proxy_slots"] == 1
+
+
+def test_copy_all_expands_proxy_macro_textures_for_mesh_users(
+        tmp_path, monkeypatch):
+    external = (
+        tmp_path / "external" / "develop" / "assets" / "gameproj"
+        / "nature" / "ground_plants")
+    external.mkdir(parents=True)
+    pos = external / "bush_beech_medium_a_pivot_pos.dds"
+    direction = external / "bush_beech_medium_a_pivot_dir.dds"
+    pos.write_bytes(b"pivot pos")
+    direction.write_bytes(b"pivot dir")
+    (external / "bush_beech_bark.proxymat.blk").write_text(
+        'class:t="rendinst_tree_colored"\n'
+        'tex7:t="$(ASSET_NAME)_pivot_pos.dds"\n'
+        'tex8:t="$(ASSET_NAME)_pivot_dir.dds"\n',
+        encoding="utf-8",
+    )
+    material = _material("bush_beech_bark", {})
+    material.dagormat.is_proxy = True
+    material.dagormat.proxy_path = str(external)
+    monkeypatch.setattr(
+        project_textures_module,
+        "_material_macro_asset_names",
+        lambda _material: ("bush_beech_medium_a",),
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+
+    destination = (
+        project / "assets" / "gameproj" / "nature" / "ground_plants")
+    assert report["macro_slots"] == 2
+    assert report["copied"] == 2
+    assert (destination / pos.name).read_bytes() == b"pivot pos"
+    assert (destination / direction.name).read_bytes() == b"pivot dir"
+
+
+def test_basename_slot_resolves_loaded_dagor_image_path(tmp_path):
+    source = _external_texture(tmp_path, "bush_tree_cotton_branch_a_tex_d.tif")
+    project = tmp_path / "project"
+    project.mkdir()
+    image = bpy.data.images.new(
+        "bush_tree_cotton_branch_a_tex_d", width=1, height=1)
+    image.filepath = str(source)
+    material = _material("bush_tree_cotton_branch", {
+        "tex0": "bush_tree_cotton_branch_a_tex_d.tif",
+    })
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "bush_tree_cotton_branch_a_tex_d.tif")
+
+    assert report["copied"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+    assert material.dagormat.textures.tex0 == (
+        "bush_tree_cotton_branch_a_tex_d.tif")
+
+
+def test_basename_slot_with_multiple_loaded_sources_fails_before_copy(
+        tmp_path):
+    first = _external_texture(
+        tmp_path, "ambiguous_branch_tex_d.tif")
+    second = (
+        tmp_path / "other" / "develop" / "assets" / "gameproj"
+        / "manmade_common" / "textures" / "tile_textures"
+        / "ambiguous_branch_tex_d.tif")
+    second.parent.mkdir(parents=True)
+    second.write_bytes(b"different texture")
+    for source in (first, second):
+        image = bpy.data.images.new(
+            "ambiguous_branch_tex_d", width=1, height=1)
+        image.filepath = str(source)
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("ambiguous_branch", {
+        "tex0": "ambiguous_branch_tex_d.tif",
+    })
+
+    with pytest.raises(ProjectTextureError) as excinfo:
+        copy_all_dagor_textures_to_project(
+            source_root=project, materials=[material])
+
+    assert excinfo.value.code == "MH_E_AMBIGUOUS_RESOURCE_NAME"
+    assert str(first) in str(excinfo.value)
+    assert str(second) in str(excinfo.value)
+    assert not (project / "assets").exists()
+
+
+def test_dead_authored_path_uses_loaded_image_for_copy_and_remap(tmp_path):
+    source = _external_texture(tmp_path, "metal_painted_b_tex_d.tif")
+    dead = (
+        r"D:\dagor2\active_matter\develop\assets\manmade_common\textures"
+        r"\tile_textures\metal_painted_b_tex_d.tif")
+    image = bpy.data.images.new("metal_painted_b_tex_d", width=1, height=1)
+    image.filepath = str(source)
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("metal_painted", {"tex0": dead})
+
+    copy_report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "metal_painted_b_tex_d.tif")
+
+    assert copy_report["copied"] == 1
+    assert destination.read_bytes() == source.read_bytes()
+
+    remap_report = remap_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    assert remap_report["remapped"] == 1
+    assert material.dagormat.textures.tex0 == str(destination)
+
+
+def test_existing_authored_path_wins_over_loaded_image_with_same_stem(
+        tmp_path):
+    authored = _external_texture(
+        tmp_path, "explicit_path_wins_tex_d.tif")
+    alternate = (
+        tmp_path / "alternate" / "develop" / "assets" / "gameproj"
+        / "manmade_common" / "textures" / "tile_textures"
+        / "explicit_path_wins_tex_d.tif")
+    alternate.parent.mkdir(parents=True)
+    alternate.write_bytes(b"alternate image bytes")
+    image = bpy.data.images.new(
+        "explicit_path_wins_tex_d", width=1, height=1)
+    image.filepath = str(alternate)
+    project = tmp_path / "project"
+    project.mkdir()
+    material = _material("explicit_path_wins", {"tex0": str(authored)})
+
+    report = copy_all_dagor_textures_to_project(
+        source_root=project, materials=[material])
+    destination = (
+        project / "assets" / "gameproj" / "manmade_common" / "textures"
+        / "tile_textures" / "explicit_path_wins_tex_d.tif")
+
+    assert report["copied"] == 1
+    assert destination.read_bytes() == authored.read_bytes()
 
 
 def test_remap_all_materials_preserves_transport_suffix(tmp_path):

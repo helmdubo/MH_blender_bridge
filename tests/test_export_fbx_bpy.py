@@ -24,6 +24,7 @@ from mh4blend.scene.resource_markers import (  # noqa: E402
 )
 
 export_fbx_module = importlib.import_module("mh4blend.scene.export_fbx")
+export_material_module = importlib.import_module("mh4blend.scene.export_material")
 
 
 def _mesh_object(name, collection):
@@ -240,6 +241,101 @@ def test_non_fbx_stage_readback_is_rejected_and_removed(tmp_path, monkeypatch):
     assert not stage_path.exists()
 
 
+def test_hidden_export_object_fails_closed_before_any_write(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, _direct, nested = _build_joined("hidden_member")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "hidden_member.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+
+    # A field session hides geometry with H (or isolates around it); Blender
+    # then turns select_set(True) into a silent no-op, which must never
+    # become a published FBX without the object's geometry.
+    nested.hide_set(True)
+    with pytest.raises(
+            MHValidationError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+        stage_prepared_fbx(prepared, stage_dir / target.name)
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert list(stage_dir.iterdir()) == []
+    assert nested.hide_get() is True
+
+    nested.hide_set(False)
+    staged = stage_prepared_fbx(prepared, stage_dir / target.name)
+    assert len(staged.payload) > 0
+
+
+def test_stage_leaves_local_view_isolation(tmp_path):
+    # Local View needs a real VIEW_3D area, so keep the factory screen.
+    bpy.ops.wm.read_factory_settings()
+    for obj in tuple(bpy.data.objects):
+        bpy.data.objects.remove(obj)
+    collection, direct, _nested = _build_joined("isolated_member")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+
+    window = bpy.context.window_manager.windows[0]
+    area = next(
+        (area for area in window.screen.areas if area.type == "VIEW_3D"),
+        None)
+    if area is None:
+        pytest.skip("no VIEW_3D area in this Blender session")
+    region = next(
+        region for region in area.regions if region.type == "WINDOW")
+    direct.select_set(True)
+    bpy.context.view_layer.objects.active = direct
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        bpy.ops.view3d.localview(frame_selected=False)
+    if area.spaces.active.local_view is None:
+        pytest.skip("Local View cannot be entered in this Blender session")
+
+    staged = stage_prepared_fbx(
+        prepared, stage_dir / "isolated_member.mesh.fbx")
+
+    assert area.spaces.active.local_view is None
+    assert len(staged.payload) > 0
+
+
+def test_staged_fbx_must_transport_every_export_object(tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, _direct, _nested = _build_joined("silent_empty")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "silent_empty.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    stage_path = stage_dir / target.name
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+
+    # Simulate the field failure shape: the exporter runs with an empty
+    # selection and writes a structurally valid FBX with zero Model nodes.
+    original_export = export_fbx_module._export_selected_fbx
+
+    def empty_selection_export(filepath):
+        for obj in tuple(bpy.context.selected_objects):
+            obj.select_set(False)
+        original_export(filepath)
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", empty_selection_export)
+    with pytest.raises(RuntimeError, match="Model"):
+        stage_prepared_fbx(prepared, stage_path)
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert not stage_path.exists()
+
+
 def test_stage_rejects_dependency_change_after_prepare(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection, direct, _nested = _build_joined("changed_after_preflight")
@@ -371,6 +467,63 @@ def test_noncanonical_material_slot_preserves_resource_name_code(tmp_path):
     assert not (tmp_path / "canonical_mesh.mesh.fbx").exists()
 
 
+@pytest.mark.parametrize(("authored", "logical"), [
+    ("Material #2644", "material_2644"),
+    ("13 - Default", "13_default"),
+])
+def test_dagor_external_material_name_projects_in_fbx_without_scene_mutation(
+        tmp_path, registered_material_properties, monkeypatch,
+        authored, logical):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("canonical_mesh")
+    body = _mesh_object("body", collection)
+    material = _material(authored)
+    material.mh4blend.material_class = "rendinst_simple"
+    _assign_material(body, material)
+    monkeypatch.setattr(
+        export_material_module, "_uses_dagor_name_boundary",
+        lambda candidate: candidate == material)
+
+    report = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path)
+    plan = parse_mesh_fbx(report["filepath"])
+
+    assert report["materials"] == [logical]
+    assert plan.material_names == (logical,)
+    assert material.name == authored
+    assert body.material_slots[0].material == material
+
+
+def test_dagor_name_projection_collision_preserves_distinct_materials(
+        tmp_path, registered_material_properties, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("canonical_mesh")
+    body = _mesh_object("body", collection)
+    lowercase = _material("glass")
+    titlecase = _material("Glass")
+    lowercase.mh4blend.material_class = "rendinst_simple_glass"
+    titlecase.mh4blend.material_class = "rendinst_refraction"
+    _assign_material(body, lowercase)
+    _assign_material(body, titlecase)
+    monkeypatch.setattr(
+        export_material_module, "_uses_dagor_name_boundary",
+        lambda candidate: candidate == lowercase or candidate == titlecase)
+
+    first = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path)
+    second = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path)
+    plan = parse_mesh_fbx(second["filepath"])
+
+    assert first["materials"] == second["materials"]
+    assert len(first["materials"]) == 2
+    assert first["materials"][0] == "glass"
+    assert first["materials"][1].startswith("glass_")
+    assert plan.material_names == tuple(first["materials"])
+    assert lowercase.name == "glass"
+    assert titlecase.name == "Glass"
+
+
 def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     built = _build_lods()
@@ -389,6 +542,24 @@ def test_lod_mesh_names_are_temporary_and_classifiable(tmp_path):
     assert "UCX_Body_High" not in models
     assert "SOCKET_High" not in models
     assert [obj.name for obj in built["render"]] == original_names
+
+
+def test_long_lod_mesh_name_is_bounded_and_classifiable(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    built = _build_lods("long_lod_name")
+    authored = (
+        "sovmod_tropospheric_station_building_gate_a_jamb_origin001")
+    built["render"][0].name = authored
+
+    report = export_fbx_collection(
+        built["root"], tmp_path, source_root=tmp_path)
+    models = _fbx_models(report["filepath"])
+    transported = [name for name in models if name.endswith("_lod00")]
+
+    assert len(transported) == 1
+    assert len(transported[0].encode("utf-8")) <= 63
+    assert transported[0].startswith("sovmod_tropospheric_station_")
+    assert built["render"][0].name == authored
 
 
 def test_mismatched_existing_lod_suffix_fails_closed(tmp_path):
@@ -927,17 +1098,11 @@ def test_duplicate_material_without_base_uses_the_unsuffixed_name(
     assert duplicate.name == "gaz53_tiled_wood_b.001"
 
 
-def _divergence_warnings(report):
-    return [row for row in report["warnings"]
-            if row[0] == "MH_W_DAGOR_CONSTRUCT_DROPPED"
-            and "merged into" in row[2]]
-
-
-def test_divergent_duplicate_merges_into_the_base_authority(
+def test_divergent_duplicate_publishes_a_distinct_material_token(
         tmp_path, registered_material_properties):
-    # Owner decision 2026-08-30: a diverging .NNN claimant merges into the
-    # base logical name; the base datablock is the published authority for
-    # every object and the divergence is reported, never refused.
+    # Field correction 2026-08-31: real Dagor scenes contain materially
+    # different glass/glass.001/glass.002 datablocks. Divergent content must
+    # survive instead of being merged into the unsuffixed authority.
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("merged_material")
     base = _material("paint")
@@ -948,23 +1113,20 @@ def test_divergent_duplicate_merges_into_the_base_authority(
     _assign_material(body, duplicate)
 
     report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
-    assert report["materials"] == ["paint"]
+    assert len(report["materials"]) == 1
+    token = report["materials"][0]
+    assert token.startswith("paint_") and token != "paint"
     plan = parse_mesh_fbx(report["filepath"])
-    assert plan.material_names == ("paint",)
-    merged = _divergence_warnings(report)
-    assert len(merged) == 1
-    assert tuple(merged[0][1]) == ("paint", "paint.001")
-    # The warning has to name the field that actually diverges: real content
-    # hides the divergence in one Dagor parameter out of a dozen.
-    assert "class 'rendinst_mask_layered' vs 'rendinst_simple'" in merged[0][2]
-    assert "'paint' is the published authority" in merged[0][2]
-    # The scene stays authored: the diverging datablock is not modified.
+    assert plan.material_names == (token,)
+    prepared = export_material_module.prepare_blender_material_export(
+        duplicate, tmp_path, source_root=tmp_path)
+    assert prepared.resource.name == token
+    assert prepared.resource.material_class == "rendinst_mask_layered"
     assert duplicate.mh4blend.material_class == "rendinst_mask_layered"
 
 
-def test_divergent_duplicate_warns_even_when_only_the_base_is_transported(
+def test_divergent_untransported_duplicate_keeps_its_distinct_identity(
         tmp_path, registered_material_properties):
-    """`<name>.material` is one file, so the merge group is file-wide."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("base_only_mesh")
     base = _material("paint")
@@ -975,12 +1137,13 @@ def test_divergent_duplicate_warns_even_when_only_the_base_is_transported(
 
     report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
     assert report["materials"] == ["paint"]
-    merged = _divergence_warnings(report)
-    assert len(merged) == 1
-    assert tuple(merged[0][1]) == ("paint", "paint.001")
+    prepared = export_material_module.prepare_blender_material_export(
+        elsewhere, tmp_path, source_root=tmp_path)
+    assert prepared.resource.name.startswith("paint_")
+    assert prepared.resource.name != "paint"
 
 
-def test_divergence_warning_names_the_diverging_dagor_parameter(
+def test_divergent_parameter_duplicate_preserves_its_authored_value(
         tmp_path, registered_material_properties):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = _collection("merged_parameter")
@@ -999,9 +1162,13 @@ def test_divergence_warning_names_the_diverging_dagor_parameter(
     _assign_material(_mesh_object("body", collection), duplicate)
 
     report = export_fbx_collection(collection, tmp_path, source_root=tmp_path)
-    merged = _divergence_warnings(report)
-    assert len(merged) == 1
-    assert "params.paint_details" in merged[0][2]
+    token = report["materials"][0]
+    assert token.startswith("paint_") and token != "paint"
+    prepared = export_material_module.prepare_blender_material_export(
+        duplicate, tmp_path, source_root=tmp_path)
+    assert prepared.resource.name == token
+    assert prepared.resource.params["paint_details"] == pytest.approx(
+        [0.6, 0.0, 0.0, 94.0])
 
 
 def test_export_rejects_socket_with_child_outside_resource(tmp_path):

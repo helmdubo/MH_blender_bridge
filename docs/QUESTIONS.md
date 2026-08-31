@@ -9,7 +9,8 @@ STOP до owner-решения.
 13. Вопросы `OPEN-V5-15`…`OPEN-V5-18` перенесены из owner freeze
 `12_v5_s6_1_s6_2_slices.md` §9 до реализации затронутых частей S6.3
 (новая нумерация — `13_v5_s6_1_dag4blend_bridge.md`). OPEN-V5-17/18 закрыты
-owner'ом в документе 13 §8; OPEN-V5-15/16 остаются открытыми.
+owner'ом в документе 13 §8; OPEN-V5-15 закрыт owner'ом 2026-08-30,
+OPEN-V5-16 остаётся открытым.
 Их временные правила не блокируют S6.1 и не разрешают начинать следующий
 production-срез до приёмки/merge предыдущего.
 Решённые V4-вопросы — история; `OPEN-V4-1` перенесён в `OPEN-V5-7`, а
@@ -186,16 +187,37 @@ default `false`, опускается при false). Неавторитетны�
 
 **Контекст.** Owner freeze 12 §9 отмечает inline-параметры в даговском
 примере иерархии (стол + кружка). Действующий MH-контракт связывает узел с
-именованным `.placement`; решения для inline `p2` owner ещё не выбрал.
+именованным `.placement`.
 
 **Вопрос.** Генерировать производный `.placement` с детерминированным именем,
 разрешить inline-профиль в `.composite` или сохранить блокировку?
 
-**Временное fail-closed правило.** Вариант (c) из 12 §9: текущий
-`_lossless_stop` сохраняется; ни новое имя ресурса, ни inline-грамматика
-исполнителем не изобретаются.
+**Решение owner 2026-08-30.** Для direct-export из сцены dag4blend выбран
+производный внешний `.placement`, без расширения wire-грамматики `.composite`:
 
-**Статус. ОТКРЫТ — owner freeze 12 §9 и 13 §8; затронутая часть S6.3.**
+- все сохранённые `[base, deviation]` переходят в существующий placement-v1;
+  в неполной группе отсутствующие оси означают `[0, 0]`;
+- Dagor допускает signed второй компонент и вычисляет симметричный диапазон
+  как `base + random[-1, 1] * second`; знак только зеркалит направление draw.
+  На границе адаптера он нормализуется в `abs(second)`, потому что
+  placement-v1 хранит неотрицательную величину deviation. Wire-грамматика не
+  ослабляется;
+- имя content-addressed:
+  `dagor_p2_<xxh3-64 canonical placement bytes>`; одинаковые профили
+  дедуплицируются;
+- `matrix_local` такого узла — только preview уже применённого base и в
+  authored transform не входит; узел пишет identity, поэтому base применяется
+  resolver'ом ровно один раз;
+- профиль публикуется тем же dependency-first атомарным batch перед
+  ссылающимся `.composite`; совпадение имени с иными существующими байтами —
+  fail-closed;
+- правило действует только в direct publication, где есть явные Source Root и
+  output folder. Команда materialize-only без authority для записи остаётся
+  заблокированной. Сценовый `include` без typed `mh4blend.profile` также
+  остаётся заблокированным: произвольный путь из сохранённой сцены не является
+  разрешённым source authority.
+
+**Статус. РЕШЕНО OWNER 2026-08-30.**
 
 ## OPEN-V5-16 — значение `MH_APPEARANCE_CHANNELS`
 
@@ -800,12 +822,16 @@ Publish.
 **Ревизия owner (полевое решение, PR #16).** Часть первоначального решения
 о dag4blend пересмотрена owner'ом в поле: для class-формы writer теперь
 АВТОМАТИЧЕСКИ извлекает семантику из заполненного `dagormat`
-(`shader_class`, `textures.tex0–tex15`, `optional`, `sides 0|1 → явный
-twosided`); mh4blend property group — приоритетные точечные overrides.
-Непредставимое (`sides=2`, типы вне number/vector4) — fail-closed
+(`shader_class`, `textures.tex0–tex15`, `optional`, `sides 0 → явный
+twosided=false`, `sides 1|2 → явный twosided=true`); mh4blend property group —
+приоритетные точечные overrides. По решению owner 2026-08-30 Dagor
+`real_two_sided` (`sides=2`) проецируется в UE material-instance TwoSided;
+отдельное геометрическое дублирование не вводится в material-грамматику v5.
+Непредставимые optional-типы вне number/vector4 остаются fail-closed
 `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE`, без потери данных. НЕ пересмотрено:
 `is_proxy`/`proxy_path` не читаются, proxymat superseded library-формой,
-`tex16support` не существует. Нормативный текст — 08 §5 (правка PR #16).
+`tex16support` не существует. Для текущего протокола нормативный текст —
+10 §5; редакция 08 §5 остаётся исторической.
 
 **Прежний статус (первоначальное решение). РЕШЕНО OWNER — нормативно в 08
 §5 (этот docs-коммит).**

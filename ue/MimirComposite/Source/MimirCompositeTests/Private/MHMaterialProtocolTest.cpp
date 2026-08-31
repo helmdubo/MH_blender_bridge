@@ -306,6 +306,61 @@ bool FMHMaterialClosedGrammarTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHMaterialStringProvenanceTest,
+    "Mimir.V4.Material.StringProvenance",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHMaterialStringProvenanceTest::RunTest(const FString& Parameters)
+{
+    const TArray<uint8> SourceBytes = Utf8(
+        TEXT("{\n  \"class\": \"rendinst_tree_colored\",\n  \"params\": {\n    \"lighting\": \"vltmap\",\n    \"real_two_sided\": false\n  }\n}\n"));
+    FMHMaterialDocument Source;
+    FString Error;
+    bool bPassed = TestTrue(
+        TEXT("string provenance parses"),
+        MHParseMaterialV4(SourceBytes, Source, Error));
+    const FMHMaterialParameter* Lighting = Source.Params.Find(TEXT("lighting"));
+    bPassed &= TestNotNull(TEXT("lighting provenance exists"), Lighting);
+    if (Lighting != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("lighting is string provenance"), Lighting->bString);
+        bPassed &= TestEqual(TEXT("lighting value"), Lighting->String, FString(TEXT("vltmap")));
+    }
+    const FMHMaterialParameter* RealTwoSided = Source.Params.Find(TEXT("real_two_sided"));
+    bPassed &= TestNotNull(TEXT("boolean provenance exists"), RealTwoSided);
+    if (RealTwoSided != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("boolean provenance type"), RealTwoSided->bBool);
+        bPassed &= TestFalse(TEXT("boolean provenance value"), RealTwoSided->Bool);
+    }
+    TArray<uint8> Canonical;
+    bPassed &= TestTrue(
+        TEXT("string provenance writes"),
+        MHWriteCanonicalMaterialV4(Source, Canonical, Error));
+    bPassed &= TestTrue(TEXT("string provenance canonical bytes"), Canonical == SourceBytes);
+
+    UMHCompositeSettings* Settings = NewObject<UMHCompositeSettings>();
+    Settings->MasterRoot = TEXT("/Game/Mimir/MasterMaterials");
+    Settings->LibraryRoot = TEXT("/Game/Mimir/MaterialLibrary");
+    UMaterial* Parent = MakeParent(Settings->MasterRoot, TEXT("rendinst_tree_colored"));
+    UMaterialInstanceConstant* Material = NewObject<UMaterialInstanceConstant>(GetTransientPackage());
+    bPassed &= TestTrue(
+        TEXT("string provenance is tolerated by apply"),
+        MHApplyMaterialV4(*Material, *Parent, Source, {}, Error));
+    FMHMaterialDocument Extracted;
+    bPassed &= TestTrue(
+        TEXT("applied material extracts"),
+        MHExtractMaterialV4(*Material, *Settings, Extracted, Error));
+    bPassed &= TestFalse(
+        TEXT("opaque provenance is not forged as an MI parameter"),
+        Extracted.Params.Contains(TEXT("lighting")));
+    bPassed &= TestFalse(
+        TEXT("opaque boolean is not forged as an MI parameter"),
+        Extracted.Params.Contains(TEXT("real_two_sided")));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHMaterialApplyExtractTest,
     "Mimir.V4.Material.ApplyExtractAndLocalChange",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

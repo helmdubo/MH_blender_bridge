@@ -99,14 +99,16 @@ def _textures(value: Any) -> dict[str, str]:
     return dict(sorted(out.items(), key=lambda item: int(item[0][3:])))
 
 
-def _params(value: Any) -> dict[str, float | list[float]]:
+def _params(value: Any) -> dict[str, float | list[float] | str | bool]:
     if not isinstance(value, dict):
         raise _error("params", "must be an object")
-    out: dict[str, float | list[float]] = {}
+    out: dict[str, float | list[float] | str | bool] = {}
     for key, parameter in value.items():
         _token(key, "params key")
         path = f"params.{key}"
-        if isinstance(parameter, (list, tuple)):
+        if isinstance(parameter, (str, bool)):
+            out[key] = parameter
+        elif isinstance(parameter, (list, tuple)):
             if len(parameter) != 4:
                 raise _error(path, "vector parameters must contain exactly 4 numbers")
             out[key] = [

@@ -135,6 +135,10 @@ class MH_PT_source_tools(bpy.types.Panel):
                     row.prop(parameter, "kind", text="")
                     if parameter.kind == "VECTOR":
                         row.prop(parameter, "vector", text="")
+                    elif parameter.kind == "STRING":
+                        row.prop(parameter, "string", text="")
+                    elif parameter.kind == "BOOLEAN":
+                        row.prop(parameter, "boolean", text="")
                     else:
                         row.prop(parameter, "scalar", text="")
                     remove = row.operator(

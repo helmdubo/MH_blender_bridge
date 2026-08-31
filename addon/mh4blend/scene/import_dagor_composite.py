@@ -20,7 +20,7 @@ import tempfile
 import bpy
 from mathutils import Matrix, Quaternion
 
-from ..core.canonical import validate_resource_name
+from ..core.canonical import hash_hex, validate_resource_name
 from ..core.composites import read_composite_file
 from ..core.dagor_composites import (
     DagorComposite,
@@ -30,14 +30,20 @@ from ..core.dagor_composites import (
     parse_dagor_placement_include,
     read_dagor_composite,
 )
-from ..core.model import Composite, Node, PlacementProfile, RandomOption
+from ..core.model import (
+    Composite,
+    Node,
+    PlacementProfile,
+    PlacementRange,
+    RandomOption,
+)
 from ..core.placement_publication import (
     PlacementPublicationRequest,
     plan_placement_publications,
     publish_placement_publications,
     stage_placement_publications,
 )
-from ..core.placements import placement_json_bytes
+from ..core.placements import parse_placement_profile, placement_json_bytes
 from ..core.source_closure import ResourceKey
 from ..core.source_inventory import scan_source_inventory
 from ..core.transforms import (
@@ -584,6 +590,21 @@ def _dag4blend_metadata_claims(obj):
     return claims
 
 
+def _dag4blend_placement_claims(obj):
+    """Collect p2/include declarations with saved dagorprops taking priority."""
+
+    claims = {}
+    for mapping in (obj, _dagor_settings(obj)):
+        for key in _mapping_keys(mapping):
+            folded = key.casefold()
+            if folded not in _DAG4BLEND_PLACEMENT_KEYS:
+                continue
+            value = _mapping_value(mapping, key)
+            if value is not _MISSING:
+                claims[folded] = (key, value)
+    return claims
+
+
 def _dagor_flag(key, value, subjects):
     if isinstance(value, bool):
         return value
@@ -649,15 +670,75 @@ def _dag4blend_source_metadata(obj, provenance, node_path, *, option=False):
     return place_type, next(iter(boundaries), False)
 
 
-def _dag4blend_profile(obj, provenance, *, option=False):
-    """Admit only the normative typed carrier; never approximate p2 as tm."""
+def _dag4blend_p2_range(key, value, provenance):
+    try:
+        raw = value.to_list() if hasattr(value, "to_list") else tuple(value)
+    except (TypeError, ValueError) as exc:
+        _raise(
+            "MH_E_PLACEMENT_PROFILE_GRAMMAR", [provenance, key],
+            f"dag4blend {key} must be exactly [base, deviation]: {exc}")
+    if len(raw) != 2:
+        _raise(
+            "MH_E_PLACEMENT_PROFILE_GRAMMAR", [provenance, key],
+            f"dag4blend {key} must be exactly [base, deviation]")
+    if any(isinstance(item, bool) or not isinstance(item, (int, float))
+           for item in raw):
+        _raise(
+            "MH_E_PLACEMENT_PROFILE_GRAMMAR", [provenance, key],
+            f"dag4blend {key} base and deviation must be numbers")
+    # Dagor evaluates p2 as base + symmetric_unit_random * second. A negative
+    # second component only reverses the draw direction; it defines the same
+    # range and uniform distribution. Source Protocol stores that component as
+    # a non-negative deviation magnitude, so normalize at this adapter boundary
+    # without weakening the placement-v1 grammar.
+    return PlacementRange(float(raw[0]), abs(float(raw[1])))
 
-    carrier_keys = sorted({
-        key
-        for mapping in (_dagor_settings(obj), obj)
-        for key in _mapping_keys(mapping)
-        if key.casefold() in _DAG4BLEND_PLACEMENT_KEYS
-    })
+
+def _dag4blend_generated_profile(claims, provenance):
+    """Build one canonical content-addressed profile from inline Dagor p2."""
+
+    zero = PlacementRange(0.0, 0.0)
+
+    def triple(prefix):
+        keys = tuple(f"{prefix}_{axis}:p2" for axis in "xyz")
+        if not any(key in claims for key in keys):
+            return None
+        return tuple(
+            (_dag4blend_p2_range(*claims[key], provenance)
+             if key in claims else zero)
+            for key in keys
+        )
+
+    def scalar(key):
+        return (_dag4blend_p2_range(*claims[key], provenance)
+                if key in claims else None)
+
+    provisional = PlacementProfile(
+        "dagor_inline_p2",
+        offset_cm=triple("offset"),
+        rotation_deg=triple("rot"),
+        uniform_scale=scalar("scale:p2"),
+        vertical_scale=scalar("yscale:p2"),
+    )
+    try:
+        canonical = placement_json_bytes(provisional)
+        suffix = hash_hex(canonical).removeprefix("xxh3:")
+        name = f"dagor_p2_{suffix}"
+        parse_placement_profile(canonical, name=name)
+    except (RuntimeError, TypeError, ValueError) as exc:
+        code = getattr(exc, "code", None) or "MH_E_PLACEMENT_PROFILE_GRAMMAR"
+        _raise(
+            code, [provenance, *(key for key, _value in claims.values())],
+            f"inline dag4blend p2 cannot become a placement profile: {exc}")
+    return name, canonical
+
+
+def _dag4blend_profile(
+        obj, provenance, *, option=False, generated_profiles=None):
+    """Resolve typed authority or derive a profile for direct publication."""
+
+    claims = _dag4blend_placement_claims(obj)
+    carrier_keys = sorted(key for key, _value in claims.values())
     settings = _existing_settings(obj, "mh4blend")
     profile = "" if settings is None else settings.profile
     if profile:
@@ -673,15 +754,47 @@ def _dag4blend_profile(obj, provenance, *, option=False):
             "MH_E_COMPOSITE_GRAMMAR",
             [provenance, profile, *carrier_keys],
             "dag4blend random options cannot carry placement profiles")
-    if carrier_keys and not profile:
+    if profile:
+        return profile, False
+
+    include_keys = [
+        key for folded, (key, _value) in claims.items()
+        if folded in {"include", "include:t"}
+    ]
+    if include_keys:
         _raise(
             "MH_E_COMPOSITE_GRAMMAR",
-            [provenance, *carrier_keys],
-            "dag4blend scene adapter refuses p2/include placement data "
-            "without the exact typed mh4blend.profile authority; matrix_local "
-            "is only a preview/base and cannot replace deviation semantics; "
-            f"parameters: {', '.join(carrier_keys)}")
-    return profile or None
+            [provenance, *include_keys],
+            "dag4blend scene include placement data requires the exact typed "
+            "mh4blend.profile authority; resolving arbitrary include paths "
+            "from a saved scene is forbidden")
+
+    p2_claims = {
+        folded: claim for folded, claim in claims.items()
+        if folded.endswith(":p2")
+    }
+    if not p2_claims:
+        return None, False
+    if generated_profiles is None:
+        _raise(
+            "MH_E_COMPOSITE_GRAMMAR",
+            [provenance, *(key for key, _value in p2_claims.values())],
+            "dag4blend scene adapter refuses inline p2 outside direct "
+            "composite publication; the derived .placement must be committed "
+            "in the same batch; parameters: "
+            + ", ".join(sorted(
+                key for key, _value in p2_claims.values())))
+
+    name, canonical = _dag4blend_generated_profile(
+        p2_claims, provenance)
+    existing = generated_profiles.get(name)
+    if existing is not None and existing != canonical:
+        _raise(
+            "MH_E_AMBIGUOUS_RESOURCE_NAME", [provenance, name],
+            "content-addressed dag4blend p2 profile collision has different "
+            "canonical bytes")
+    generated_profiles[name] = canonical
+    return name, True
 
 
 def _resource_identity(collection, owner, provenance):
@@ -772,7 +885,8 @@ def _dag4blend_local(obj, subjects):
 
 
 def convert_dag4blend_collection(
-        collection, *, allow_prefab_as_mesh_lossy=False, warnings=None):
+        collection, *, allow_prefab_as_mesh_lossy=False, warnings=None,
+        generated_profiles=None):
     """Return ``(Composite, resource_overrides)`` from imported dag4blend data."""
 
     if collection is None or bpy.data.collections.get(collection.name) is not collection:
@@ -864,8 +978,17 @@ def convert_dag4blend_collection(
         subjects = [*ancestor_subjects, subject]
         place_type, appearance_seed_boundary = inspect_properties(
             obj, subject, node_path)
-        profile = _dag4blend_profile(obj, subject)
-        transform, local = _dag4blend_local(obj, subjects)
+        profile, inline_profile = _dag4blend_profile(
+            obj, subject, generated_profiles=generated_profiles)
+        if inline_profile:
+            # Dagor p2 and tm are mutually exclusive. dag4blend materializes
+            # p2 base values into matrix_local only as a viewport preview; the
+            # generated profile is the complete authority, so admitting that
+            # matrix here would apply every base twice.
+            local = Matrix.Identity(4)
+            transform, local = _canonical_local_transform(local, subjects)
+        else:
+            transform, local = _dag4blend_local(obj, subjects)
         world = parent_world @ local
         _validate_trs(world, subjects, "composed world")
 
@@ -890,7 +1013,9 @@ def convert_dag4blend_collection(
                 option_path = f"{node_path}/options[{option_index}]"
                 inspect_properties(
                     option_obj, option_subject, option_path, option=True)
-                _dag4blend_profile(option_obj, option_subject, option=True)
+                _dag4blend_profile(
+                    option_obj, option_subject, option=True,
+                    generated_profiles=generated_profiles)
                 if option_obj.type != "EMPTY":
                     _raise(
                         "MH_E_UNREPRESENTABLE_SCENE_OBJECT", [option_subject],
@@ -988,7 +1113,7 @@ def _nonempty_source_composite(inventory, name) -> bool:
 
 def _dag4blend_collection_bundle(
         collection, *, allow_prefab_as_mesh_lossy=False, warnings=None,
-        mode=None, source_root=None):
+        mode=None, source_root=None, generated_profiles=None):
     """Recursively convert all explicit composite definitions and options.
 
     Composite resource collections become documents, never overrides.  Only
@@ -1047,7 +1172,7 @@ def _dag4blend_collection_bundle(
     def load(source_collection):
         document, discovered = convert_dag4blend_collection(
             source_collection, allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
-            warnings=warnings)
+            warnings=warnings, generated_profiles=generated_profiles)
         previous = composite_sources.get(document.name)
         if previous is not None:
             if previous is not source_collection:
@@ -1215,11 +1340,13 @@ def _dag4blend_compatibility_report():
         "route": "dag4blend_scene_partial_compatibility",
         "preserved": ["hierarchy", "parent-local transforms", "random options and weights",
                       "nested composites", "mesh LODs", "materials", "gameObj tokens",
-                      "node place_type", "ignoreParentInstSeed"],
+                      "node place_type", "ignoreParentInstSeed",
+                      "inline p2 as generated placement profiles"],
         "unrecoverable": ["document-root properties", "aboveHt", "useCollisionNormal",
                           "quantizeTm", "label", "require", "colors", "xScale",
                           "snake_case aliases"],
-        "blocked": ["prefab without explicit lossy opt-in", "inline p2 without typed profile"],
+        "blocked": ["prefab without explicit lossy opt-in",
+                    "scene include without typed profile"],
     }
 
 
@@ -1228,6 +1355,19 @@ def publish_dag4blend_composite_collection(
         mode="include_all", lock_root=None, allow_prefab_as_mesh_lossy=False,
         _boundary_hook=None) -> dict:
     """Publish source files from the scene DTOs without changing any datablock."""
+    from .export_material import (
+        _active_material_export_session,
+        material_export_session,
+    )
+    if _active_material_export_session() is None:
+        with material_export_session() as session:
+            report = publish_dag4blend_composite_collection(
+                collection, output_dir, source_root=source_root, mode=mode,
+                lock_root=lock_root,
+                allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
+                _boundary_hook=_boundary_hook)
+        report["material_export_metrics"] = session.metrics_snapshot()
+        return report
     from .dag4blend_publication import prepare_dag4blend_publication
     from .export_closure import (
         publish_composite_closure_export,
@@ -1235,14 +1375,17 @@ def publish_dag4blend_composite_collection(
     )
 
     warnings = []
+    generated_profiles = {}
     documents, overrides, _sources = _dag4blend_collection_bundle(
         collection, allow_prefab_as_mesh_lossy=allow_prefab_as_mesh_lossy,
-        warnings=warnings, mode=mode, source_root=source_root)
+        warnings=warnings, mode=mode, source_root=source_root,
+        generated_profiles=generated_profiles)
     _kind, root_name = _resource_identity(
         collection, None, f"collection:{collection.name}")
     plan = prepare_dag4blend_publication(
         documents, overrides, root_name=root_name, source_root=source_root,
-        output_dir=output_dir, mode=mode)
+        output_dir=output_dir, mode=mode,
+        generated_profiles=generated_profiles)
     # Writer-side drops (doc 15 §2.2: excluded Dagor collision nodes and
     # technical materials) are recorded on the prepared FBX rows; the artist
     # must see them in the same report/exception channel as adapter warnings.
