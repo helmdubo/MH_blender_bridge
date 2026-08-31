@@ -215,6 +215,20 @@ FbxAMatrix GeometryTransform(const FbxNode& Node)
     return Result;
 }
 
+FbxAMatrix CanonicalAxisUnwind()
+{
+    // Blender's canonical axis_forward='X' export composes a RotZ(-90) axis
+    // conversion into every root node transform while control points stay in
+    // raw Blender coordinates. The ratified R1 transport (axis_probe fixture,
+    // MHAxisProbeTest) bakes raw points plus the Y reflection only, so the
+    // conversion must be unwound before node transforms are baked into
+    // geometry - otherwise every mesh arrives rotated 90 degrees against its
+    // composite node TRS (field defect 2026-08-31).
+    FbxAMatrix Result;
+    Result.SetR(FbxVector4(0.0, 0.0, 90.0));
+    return Result;
+}
+
 FTransform ToUnrealTransform(const FbxAMatrix& Matrix, bool& bOutRepresentableAsTRS)
 {
     const FbxVector4 OriginFbx = Matrix.MultT(FbxVector4(0.0, 0.0, 0.0, 1.0));
@@ -282,7 +296,8 @@ bool ReadGeometry(
             TEXT("mesh node '%s' has no usable geometry"), UTF8_TO_TCHAR(Node.GetName())));
         return false;
     }
-    const FbxAMatrix GlobalGeometry = Node.EvaluateGlobalTransform() * GeometryTransform(Node);
+    const FbxAMatrix GlobalGeometry =
+        CanonicalAxisUnwind() * Node.EvaluateGlobalTransform() * GeometryTransform(Node);
     const double GeometryDeterminant = GlobalGeometry.Determinant();
     if (!FMath::IsFinite(GeometryDeterminant) || FMath::IsNearlyZero(GeometryDeterminant))
     {
@@ -442,7 +457,8 @@ bool AppendNodeRecursive(
         return false;
     }
     bool bGlobalTransformIsTRS = false;
-    NewNode.GlobalTransform = ToUnrealTransform(Node.EvaluateGlobalTransform(), bGlobalTransformIsTRS);
+    NewNode.GlobalTransform = ToUnrealTransform(
+        CanonicalAxisUnwind() * Node.EvaluateGlobalTransform(), bGlobalTransformIsTRS);
 
     FbxNodeAttribute* Attribute = Node.GetNodeAttribute();
     if (Attribute == nullptr || Attribute->GetAttributeType() == FbxNodeAttribute::eNull)
