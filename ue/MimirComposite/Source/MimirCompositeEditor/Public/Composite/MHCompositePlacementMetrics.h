@@ -44,6 +44,10 @@ struct MIMIRCOMPOSITEEDITOR_API FMHDefinitionCacheMetrics
     uint64 EndpointHits = 0;
     uint64 EndpointStores = 0;
     uint64 DeadEndpointReloads = 0;
+    // Definition-map entries actually examined; a linear scan over the whole
+    // pool and an indexed bucket walk are only distinguishable here.
+    uint64 LookupProbes = 0;
+    uint64 InvalidationProbes = 0;
 };
 
 /** Non-serialized component work performed while materializing a placement. */
@@ -103,6 +107,8 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointResolve();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointHit();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointStore();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionDeadEndpointReload();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionLookupProbe();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionInvalidationProbe();
 MIMIRCOMPOSITEEDITOR_API void MHResetPlacementMutationMetrics();
 MIMIRCOMPOSITEEDITOR_API FMHPlacementMutationMetrics MHGetPlacementMutationMetrics();
 MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementComponentCreated();

@@ -78,6 +78,16 @@ void MHRecordDefinitionDeadEndpointReload()
     ++GMHDefinitionCacheMetrics.DeadEndpointReloads;
 }
 
+void MHRecordDefinitionLookupProbe()
+{
+    ++GMHDefinitionCacheMetrics.LookupProbes;
+}
+
+void MHRecordDefinitionInvalidationProbe()
+{
+    ++GMHDefinitionCacheMetrics.InvalidationProbes;
+}
+
 void MHResetPlacementMutationMetrics()
 {
     GMHPlacementMutationMetrics = FMHPlacementMutationMetrics();

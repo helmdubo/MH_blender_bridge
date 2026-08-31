@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -748,6 +749,88 @@ bool FMHDefinitionPoolEndpointReimportTest::RunTest(const FString& Parameters)
             MeshComponent->GetStaticMesh().Get(), Replacement);
     bPassed &= DefinitionPlanParity(*this, *Second, *Fixture.Root);
     SecondWorld->DestroyWorld(true);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHDefinitionPoolIndexedLookupTest,
+    "Mimir.V5.Composite.DefinitionPool.IndexedLookupAndInvalidation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHDefinitionPoolIndexedLookupTest::RunTest(const FString& Parameters)
+{
+    if (!DefinitionMetricsIsolatedHost(*this)) return true;
+    UMHCompositeDefinitionSubsystem* Definitions =
+        GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>();
+    if (!TestNotNull(TEXT("indexed lookup definition subsystem"), Definitions)) return false;
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (!TestNotNull(TEXT("indexed lookup settings"), Settings)) return false;
+
+    constexpr int32 RootCount = 4;
+    TArray<TUniquePtr<FMHDefinitionMetricsFixture>> Fixtures;
+    for (int32 Index = 0; Index < RootCount; ++Index)
+    {
+        TUniquePtr<FMHDefinitionMetricsFixture> Fixture =
+            MakeUnique<FMHDefinitionMetricsFixture>(*this);
+        if (!Fixture->BuildSynthetic(Index + 1)) return false;
+        Fixtures.Add(MoveTemp(Fixture));
+    }
+
+    // Probe counts only mean something over a pool this test fully owns.
+    Definitions->InvalidateAllDefinitions();
+    TSet<FMHResourceKey> Dependencies;
+    FString Error;
+    for (const TUniquePtr<FMHDefinitionMetricsFixture>& Fixture : Fixtures)
+    {
+        if (!TestTrue(TEXT("every distinct root is admitted once"),
+            Definitions->GetOrBuildDefinition(*Fixture->Root, *Settings, Dependencies, Error)
+                .IsValid()))
+        {
+            AddError(TEXT("indexed lookup admission failed: ") + Error);
+            return false;
+        }
+    }
+
+    // The last admitted root is the worst case for an insertion-ordered scan.
+    const FMHDefinitionMetricsFixture& Probed = *Fixtures.Last();
+    MHResetPlacementStageMetrics();
+    MHResetDefinitionCacheMetrics();
+    bool bPassed = TestTrue(TEXT("repeat lookup returns the admitted definition"),
+        Definitions->GetOrBuildDefinition(*Probed.Root, *Settings, Dependencies, Error).IsValid());
+    const uint64 LookupProbes = MHGetDefinitionCacheMetrics().LookupProbes;
+    bPassed &= TestEqual(TEXT("repeat lookup rebuilds no closure"),
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
+    // Exactly one admitted definition belongs to this root, and a probe is
+    // recorded for every examined entry, so a pool-wide scan cannot reach 1.
+    bPassed &= TestEqual(TEXT("repeat lookup examines only its own root entry"),
+        LookupProbes, 1ull);
+
+    FMHResourceKey ChangedMesh;
+    ChangedMesh.Kind = EMHResourceKind::StaticMesh;
+    ChangedMesh.LogicalName = Fixtures[0]->MeshName;
+    MHResetDefinitionCacheMetrics();
+    Definitions->InvalidateDefinition(ChangedMesh);
+    const uint64 InvalidationProbes = MHGetDefinitionCacheMetrics().InvalidationProbes;
+    bPassed &= TestEqual(TEXT("invalidation examines only the dependent entry"),
+        InvalidationProbes, 1ull);
+    AddInfo(FString::Printf(
+        TEXT("S65_INDEX scenario=indexed_lookup roots=%d lookup_probes=%llu invalidation_probes=%llu"),
+        RootCount, LookupProbes, InvalidationProbes));
+
+    MHResetPlacementStageMetrics();
+    bPassed &= TestTrue(TEXT("invalidated root resolves again"),
+        Definitions->GetOrBuildDefinition(*Fixtures[0]->Root, *Settings, Dependencies, Error)
+            .IsValid());
+    bPassed &= TestEqual(TEXT("invalidated root is rebuilt exactly once"),
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+
+    MHResetPlacementStageMetrics();
+    for (int32 Index = 1; Index < Fixtures.Num(); ++Index)
+        bPassed &= TestTrue(TEXT("untouched root resolves again"),
+            Definitions->GetOrBuildDefinition(*Fixtures[Index]->Root, *Settings, Dependencies, Error)
+                .IsValid());
+    bPassed &= TestEqual(TEXT("untouched roots stay cached across a targeted invalidation"),
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     return bPassed;
 }
 } // namespace UE::MimirComposite::Tests
