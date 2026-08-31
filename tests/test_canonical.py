@@ -1,4 +1,4 @@
-"""Tests for the retained Source Protocol v4 canonical primitives."""
+﻿"""Tests for the retained Source Protocol v4 canonical primitives."""
 
 import math
 from pathlib import Path
@@ -90,10 +90,11 @@ def test_error_codes_registry_matches_golden_list():
         "MH_W_REGISTRY_INVALID",
         "MH_W_REGISTRY_STALE",
         "MH_W_RESOURCE_FAR_FROM_ORIGIN",
+        "MH_W_SCALE_NOISE_CANONICALIZED",
         "MH_W_UNRESOLVED_PLACEMENT",
     })
     assert sum(code.startswith("MH_E_") for code in ERROR_CODES) == 53
-    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 15
+    assert sum(code.startswith("MH_W_") for code in ERROR_CODES) == 16
     assert all(re.fullmatch(r"MH_[EW]_[A-Z0-9_]+", code)
                for code in ERROR_CODES)
 

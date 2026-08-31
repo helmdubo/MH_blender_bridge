@@ -138,8 +138,64 @@ def _validate_trs(matrix, subjects, boundary):
     return translation, rotation, scale
 
 
-def _canonical_local_transform(matrix, subjects):
+# Owner decision 2026-08-31 (adapter-boundary revision of doc 10 §6.2):
+# Dagor matrices are donor data whose TRS decomposition carries accumulated
+# float noise (observed ~6e-8..8e-5 relative between components the artist
+# authored as equal, versus >=5e-3 for real anisotropy). Components closer
+# than this threshold are authored-equal and snap to their mean, so composed
+# world admission stops tripping over sub-authored shear. Authored anisotropy
+# is never touched; MH-native scenes never pass through this boundary.
+_SCALE_NOISE_RELATIVE_TOLERANCE = 2.0e-4
+
+
+def _canonicalize_scale_noise(scale):
+    """Snap authored-equal scale components to their mean; None if untouched."""
+
+    values = [float(value) for value in scale]
+
+    def close(a, b):
+        return abs(a - b) <= _SCALE_NOISE_RELATIVE_TOLERANCE * max(
+            abs(a), abs(b))
+
+    groups = [{0}, {1}, {2}]
+    for first in range(3):
+        for second in range(first + 1, 3):
+            if close(values[first], values[second]):
+                merged = None
+                for group in groups:
+                    if first in group or second in group:
+                        if merged is None:
+                            merged = group
+                        else:
+                            merged.update(group)
+                            groups.remove(group)
+                        merged.update({first, second})
+    canonical = list(values)
+    changed = False
+    for group in groups:
+        if len(group) < 2:
+            continue
+        mean = math.fsum(values[index] for index in group) / len(group)
+        for index in group:
+            if canonical[index] != mean:
+                canonical[index] = mean
+                changed = True
+    return tuple(canonical) if changed else None
+
+
+def _canonical_local_transform(matrix, subjects, *, scale_noise_sink=None):
     translation, rotation, scale = _validate_trs(matrix, subjects, "local")
+    snapped = _canonicalize_scale_noise(scale)
+    if snapped is not None:
+        original_scale = tuple(float(value) for value in scale)
+        scale = snapped
+        matrix = (
+            Matrix.Translation(translation)
+            @ rotation.to_matrix().to_4x4()
+            @ Matrix.Diagonal((*snapped, 1.0))
+        )
+        if scale_noise_sink is not None:
+            scale_noise_sink(subjects, original_scale, snapped)
     if any(float(value) == 0.0 for value in scale):
         _raise(
             "MH_E_INVALID_SCALE", subjects,
@@ -853,7 +909,7 @@ def _register_override(overrides, key, collection, provenance):
     overrides[key] = collection
 
 
-def _dag4blend_local(obj, subjects):
+def _dag4blend_local(obj, subjects, *, scale_noise_sink=None):
     """Read the AUTHORED parent-local matrix, never the depsgraph mirror.
 
     ``Object.matrix_local`` is derived from evaluated world matrices, so a
@@ -873,7 +929,8 @@ def _dag4blend_local(obj, subjects):
         _raise(
             "MH_E_UNREPRESENTABLE_TRANSFORM", subjects,
             f"cannot read dag4blend parent-local matrix: {exc}")
-    return _canonical_local_transform(matrix, subjects)
+    return _canonical_local_transform(
+        matrix, subjects, scale_noise_sink=scale_noise_sink)
 
 
 def convert_dag4blend_collection(
@@ -972,6 +1029,18 @@ def convert_dag4blend_collection(
             obj, subject, node_path)
         profile, inline_placement = _dag4blend_profile(
             obj, subject, generated_profiles=generated_profiles)
+        def scale_noise_warning(noise_subjects, original, canonical):
+            warning = {
+                "code": "MH_W_SCALE_NOISE_CANONICALIZED",
+                "node_path": node_path,
+                "subjects": list(noise_subjects),
+                "message": (
+                    "donor scale float noise canonicalized: "
+                    f"{tuple(original)} -> {tuple(canonical)}"),
+            }
+            if warnings is not None:
+                warnings.append(warning)
+
         if inline_placement is not None:
             # Dagor p2 and tm are mutually exclusive. dag4blend materializes
             # p2 base values into matrix_local only as a viewport preview; the
@@ -980,7 +1049,8 @@ def convert_dag4blend_collection(
             local = Matrix.Identity(4)
             transform, local = _canonical_local_transform(local, subjects)
         else:
-            transform, local = _dag4blend_local(obj, subjects)
+            transform, local = _dag4blend_local(
+                obj, subjects, scale_noise_sink=scale_noise_warning)
         world = parent_world @ local
         _validate_trs(world, subjects, "composed world")
 
