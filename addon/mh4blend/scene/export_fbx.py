@@ -1,4 +1,4 @@
-"""Standalone FBX export for one explicitly selected Blender collection.
+﻿"""Standalone FBX export for one explicitly selected Blender collection.
 
 The collection is treated like dag4blend's ``Col.Joined`` mode: direct mesh
 objects and mesh objects in recursive child collections form one static-mesh
@@ -662,6 +662,39 @@ def _temporary_ue_centimeter_export_state(objects):
         unit_settings.length_unit = saved_unit_state[2]
 
 
+def _exit_local_view_isolation():
+    """Leave every 3D viewport Local View (isolate mode) before staging.
+
+    A Local View session makes everything outside the isolated set invisible
+    to the artist, so a full-package export started in that state silently
+    disagrees with what the scene authors.  Publication must always see the
+    complete scene; any viewport still in Local View is switched back.
+    Windowless sessions and viewports without Local View are no-ops.
+    """
+    window_manager = getattr(bpy.context, "window_manager", None)
+    if window_manager is None:
+        return
+    for window in window_manager.windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type != "VIEW_3D":
+                continue
+            space = area.spaces.active
+            if space is None or space.local_view is None:
+                continue
+            region = next(
+                (region for region in area.regions if region.type == "WINDOW"),
+                None)
+            if region is None:
+                continue
+            with contextlib.suppress(RuntimeError):
+                with bpy.context.temp_override(
+                        window=window, area=area, region=region):
+                    bpy.ops.view3d.localview(frame_selected=False)
+
+
 @contextlib.contextmanager
 def _temporary_fbx_batch_scene(scene):
     """Keep one shared export scene active across a closure mesh batch."""
@@ -731,6 +764,18 @@ def _temporary_selection_context(scene, objects):
                     f"object '{obj.name}' is excluded from the active view layer")
             obj.hide_select = False
             obj.select_set(True)
+        # Blender turns select_set(True) into a silent no-op for objects the
+        # artist hid (H / isolate around another mesh).  The FBX writer runs
+        # with use_selection, so an unverified selection becomes a published
+        # mesh file without its geometry.  Field defect 2026-08-31: 731 empty
+        # transports out of 732.
+        unselected = [obj.name for obj in objects if not obj.select_get()]
+        if unselected:
+            raise MHValidationError(
+                "MH_E_INVALID_RESOURCE_SOURCE", unselected,
+                "export objects are hidden in the active view layer and "
+                "cannot be selected for FBX transport; unhide them (Alt+H) "
+                "or leave local view before exporting")
         export_view_layer.objects.active = objects[0]
         yield
     finally:
@@ -1430,6 +1475,7 @@ def stage_prepared_fbx(prepared, staged_filepath):
         with material_export_session():
             return stage_prepared_fbx(prepared, staged_filepath)
     session.validate_sources()
+    _exit_local_view_isolation()
     if not isinstance(prepared, PreparedFBXExport):
         raise TypeError("prepared must be PreparedFBXExport")
     if not isinstance(staged_filepath, (str, os.PathLike)) \
@@ -1520,6 +1566,20 @@ def stage_prepared_fbx(prepared, staged_filepath):
                 section_ids):
             raise RuntimeError(
                 "staged FBX failed structural read-back validation")
+        # Every transported object must survive as one FBX Model node.  A
+        # structurally valid file with fewer Models is a silently truncated
+        # export (empty selection, hidden geometry) and must never publish.
+        model_count = sum(
+            1
+            for item in root.elems
+            if item.id == b"Objects"
+            for child in item.elems
+            if child.id == b"Model")
+        expected_models = len(prepared.export_objects)
+        if model_count != expected_models:
+            raise RuntimeError(
+                f"staged FBX transports {model_count} Model nodes, expected "
+                f"{expected_models} for '{prepared.resource_name}'")
         succeeded = True
         return StagedFBXExport(filepath=staged, payload=payload)
     finally:

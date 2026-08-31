@@ -241,6 +241,101 @@ def test_non_fbx_stage_readback_is_rejected_and_removed(tmp_path, monkeypatch):
     assert not stage_path.exists()
 
 
+def test_hidden_export_object_fails_closed_before_any_write(tmp_path):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, _direct, nested = _build_joined("hidden_member")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "hidden_member.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+
+    # A field session hides geometry with H (or isolates around it); Blender
+    # then turns select_set(True) into a silent no-op, which must never
+    # become a published FBX without the object's geometry.
+    nested.hide_set(True)
+    with pytest.raises(
+            MHValidationError, match="MH_E_INVALID_RESOURCE_SOURCE"):
+        stage_prepared_fbx(prepared, stage_dir / target.name)
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert list(stage_dir.iterdir()) == []
+    assert nested.hide_get() is True
+
+    nested.hide_set(False)
+    staged = stage_prepared_fbx(prepared, stage_dir / target.name)
+    assert len(staged.payload) > 0
+
+
+def test_stage_leaves_local_view_isolation(tmp_path):
+    # Local View needs a real VIEW_3D area, so keep the factory screen.
+    bpy.ops.wm.read_factory_settings()
+    for obj in tuple(bpy.data.objects):
+        bpy.data.objects.remove(obj)
+    collection, direct, _nested = _build_joined("isolated_member")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+
+    window = bpy.context.window_manager.windows[0]
+    area = next(
+        (area for area in window.screen.areas if area.type == "VIEW_3D"),
+        None)
+    if area is None:
+        pytest.skip("no VIEW_3D area in this Blender session")
+    region = next(
+        region for region in area.regions if region.type == "WINDOW")
+    direct.select_set(True)
+    bpy.context.view_layer.objects.active = direct
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        bpy.ops.view3d.localview(frame_selected=False)
+    if area.spaces.active.local_view is None:
+        pytest.skip("Local View cannot be entered in this Blender session")
+
+    staged = stage_prepared_fbx(
+        prepared, stage_dir / "isolated_member.mesh.fbx")
+
+    assert area.spaces.active.local_view is None
+    assert len(staged.payload) > 0
+
+
+def test_staged_fbx_must_transport_every_export_object(tmp_path, monkeypatch):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection, _direct, _nested = _build_joined("silent_empty")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target = source_dir / "silent_empty.mesh.fbx"
+    target.write_bytes(b"existing-source-authority")
+    stage_dir = tmp_path / "stage"
+    stage_dir.mkdir()
+    stage_path = stage_dir / target.name
+    prepared = prepare_fbx_collection(
+        collection, source_dir, source_root=source_dir)
+
+    # Simulate the field failure shape: the exporter runs with an empty
+    # selection and writes a structurally valid FBX with zero Model nodes.
+    original_export = export_fbx_module._export_selected_fbx
+
+    def empty_selection_export(filepath):
+        for obj in tuple(bpy.context.selected_objects):
+            obj.select_set(False)
+        original_export(filepath)
+
+    monkeypatch.setattr(
+        export_fbx_module, "_export_selected_fbx", empty_selection_export)
+    with pytest.raises(RuntimeError, match="Model"):
+        stage_prepared_fbx(prepared, stage_path)
+
+    assert target.read_bytes() == b"existing-source-authority"
+    assert not stage_path.exists()
+
+
 def test_stage_rejects_dependency_change_after_prepare(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection, direct, _nested = _build_joined("changed_after_preflight")
