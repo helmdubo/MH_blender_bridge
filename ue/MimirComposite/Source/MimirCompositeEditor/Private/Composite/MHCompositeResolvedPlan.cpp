@@ -235,20 +235,17 @@ struct FAppliedPlanBuilder
         const FMHResourceKey Key = AppliedPlanKey(EMHResourceKind::StaticMesh, Name);
         if (Finished.Contains(Key.ToString())) return true;
         UStaticMesh* Mesh = Cast<UStaticMesh>(Load(Key));
-        if (Mesh != nullptr && Mesh->IsCompiling())
+        if (Mesh == nullptr)
         {
-            // Cold PostLoad may start async compilation. Until it finishes,
-            // UStaticMesh::GetAssetRegistryTags returns before the inherited
-            // tag provider, hiding all six valid receipt tags. Join only this
-            // closure member before live admission; never skip tag validation.
-            UStaticMesh* PendingMeshes[] = {Mesh};
-            FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
-            FStaticMeshCompilingManager::Get().FinishCompilation(PendingMeshes);
+            return Error.IsEmpty() ? Fail(Key.ToString() + TEXT(" has no matching managed mesh receipt")) : false;
         }
-        const UMHStaticMeshImportData* Receipt = Mesh != nullptr ? Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData()) : nullptr;
-        if (Receipt == nullptr || Receipt->LogicalName != Name) return Fail(Key.ToString() + TEXT(" has no matching managed mesh receipt"));
-        if (!AppliedPlanReceipt(*Mesh, Key, Receipt->SourceRelativePath, Receipt->SourceHash, Receipt->SourceHash, Error)) return false;
-        if (!AddHash(Key, Receipt->SourceHash)) return false;
+        // Material slot names are plain structure and stay readable while the
+        // mesh compiles asynchronously; only the registry-tag receipt
+        // admission below has to wait for compilation. Defer that one check
+        // (FinalizeDeferredMeshes) so the whole closure joins a single
+        // batched FinishCompilation instead of serializing one stall per
+        // mesh — the 10x map-load field defect of 2026-08-31. Every deferred
+        // mesh is still fully admitted before the graph is returned.
         for (const FStaticMaterial& Slot : Mesh->GetStaticMaterials())
         {
             if (Slot.ImportedMaterialSlotName.IsNone()) continue;
@@ -256,7 +253,45 @@ struct FAppliedPlanBuilder
             Graph.ResourceDependencies.FindOrAdd(Key.ToString()).AddUnique(TEXT("material:") + MaterialName);
             if (!Material(MaterialName)) return false;
         }
+        DeferredMeshes.Add({Key, Mesh, Name});
         Finished.Add(Key.ToString());
+        return true;
+    }
+
+    struct FDeferredMesh
+    {
+        FMHResourceKey Key;
+        UStaticMesh* Mesh = nullptr;
+        FString Name;
+    };
+    TArray<FDeferredMesh> DeferredMeshes;
+
+    bool FinalizeDeferredMeshes()
+    {
+        TArray<UStaticMesh*> Compiling;
+        for (const FDeferredMesh& Row : DeferredMeshes)
+        {
+            if (Row.Mesh->IsCompiling()) Compiling.Add(Row.Mesh);
+        }
+        if (!Compiling.IsEmpty())
+        {
+            // Cold PostLoad may start async compilation. Until it finishes,
+            // UStaticMesh::GetAssetRegistryTags returns before the inherited
+            // tag provider, hiding all six valid receipt tags — so admission
+            // still joins compilation, but exactly once for the closure.
+            FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
+            FStaticMeshCompilingManager::Get().FinishCompilation(Compiling);
+        }
+        for (const FDeferredMesh& Row : DeferredMeshes)
+        {
+            const UMHStaticMeshImportData* Receipt = Cast<UMHStaticMeshImportData>(Row.Mesh->GetAssetImportData());
+            if (Receipt == nullptr || Receipt->LogicalName != Row.Name)
+            {
+                return Fail(Row.Key.ToString() + TEXT(" has no matching managed mesh receipt"));
+            }
+            if (!AppliedPlanReceipt(*Row.Mesh, Row.Key, Receipt->SourceRelativePath, Receipt->SourceHash, Receipt->SourceHash, Error)) return false;
+            if (!AddHash(Row.Key, Receipt->SourceHash)) return false;
+        }
         return true;
     }
 
@@ -415,6 +450,7 @@ bool MHBuildAppliedCompositeGraph(const UMHCompositeAsset& Root, const UMHCompos
     OutError.Reset();
     FAppliedPlanBuilder Builder{Settings, OutGraph, OutDependencies, OutError};
     if (!Builder.Composite(Root, Root.LogicalName)) return false;
+    if (!Builder.FinalizeDeferredMeshes()) return false;
     FMHRandomSourceClosure Closure;
     return MHBuildRandomSourceClosure(OutGraph, Closure, OutError);
 }
