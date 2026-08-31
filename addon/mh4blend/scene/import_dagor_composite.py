@@ -142,25 +142,40 @@ def _validate_trs(matrix, subjects, boundary):
 # Dagor matrices are donor data whose TRS decomposition carries accumulated
 # float noise (observed ~6e-8..8e-5 relative between components the artist
 # authored as equal, versus >=5e-3 for real anisotropy). Components closer
-# than this threshold are authored-equal and snap to their mean, so composed
-# world admission stops tripping over sub-authored shear. Authored anisotropy
-# is never touched; MH-native scenes never pass through this boundary.
+# than this threshold are authored-equal and snap to their mean.
 _SCALE_NOISE_RELATIVE_TOLERANCE = 2.0e-4
+# Owner decision 2026-08-31 (A3): a donor scale whose full spread stays below
+# this bound is a Dagor size-fit (interior blocks squeezed ~0.5% on one axis),
+# not meaningful anisotropy. It snaps to one uniform value, because only a
+# uniform scale commutes with arbitrarily rotated descendants and keeps every
+# composed world TRS-representable. Anisotropy at or above the bound is
+# authored, stays untouched, and may still fail composed-world admission.
+# MH-native scenes never pass through this donor boundary.
+_SCALE_UNIFORM_RELATIVE_TOLERANCE = 1.0e-2
 
 
 def _canonicalize_scale_noise(scale):
-    """Snap authored-equal scale components to their mean; None if untouched."""
+    """Snap donor scale noise/size-fits canonical; None if untouched."""
 
     values = [float(value) for value in scale]
 
-    def close(a, b):
-        return abs(a - b) <= _SCALE_NOISE_RELATIVE_TOLERANCE * max(
-            abs(a), abs(b))
+    def close(a, b, tolerance):
+        return abs(a - b) <= tolerance * max(abs(a), abs(b))
+
+    if all(
+        close(values[first], values[second], _SCALE_UNIFORM_RELATIVE_TOLERANCE)
+        for first in range(3)
+        for second in range(first + 1, 3)
+    ):
+        mean = math.fsum(values) / 3.0
+        canonical = (mean, mean, mean)
+        return canonical if canonical != tuple(values) else None
 
     groups = [{0}, {1}, {2}]
     for first in range(3):
         for second in range(first + 1, 3):
-            if close(values[first], values[second]):
+            if close(values[first], values[second],
+                     _SCALE_NOISE_RELATIVE_TOLERANCE):
                 merged = None
                 for group in groups:
                     if first in group or second in group:

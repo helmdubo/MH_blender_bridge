@@ -281,7 +281,7 @@ def test_donor_scale_noise_is_canonicalized_with_warning(tmp_path):
     noisy = empty("noisy_frame", root)
     noisy.matrix_basis = (
         Matrix.Translation((1.0, 2.0, 3.0))
-        @ Matrix.Diagonal((1.0212899, 1.0212300, 1.0266, 1.0)))
+        @ Matrix.Diagonal((1.0212899, 1.0212300, 1.05, 1.0)))
     report = export_composite_closure_collection(
         root, tmp_path, source_root=tmp_path, mode="include_all")
 
@@ -289,7 +289,28 @@ def test_donor_scale_noise_is_canonicalized_with_warning(tmp_path):
     scale = document.nodes[0].transform.scale
     assert scale[0] == scale[1]
     assert scale[0] == pytest.approx(1.02126, rel=1e-5)
-    assert scale[2] == pytest.approx(1.0266)
+    assert scale[2] == pytest.approx(1.05)
+    assert any(
+        warning.get("code") == "MH_W_SCALE_NOISE_CANONICALIZED"
+        for warning in report["warnings"]
+        if isinstance(warning, dict))
+
+
+def test_donor_sub_percent_anisotropy_snaps_to_uniform(tmp_path):
+    # Owner decision 2026-08-31 (A3): a donor scale whose full spread stays
+    # below 1e-2 relative is a Dagor size-fit, not meaningful anisotropy.
+    # It snaps to one uniform value, so the composed world stays
+    # TRS-representable under arbitrarily rotated descendants.
+    root = legacy("direct_root")
+    fitted = empty("fitted_frame", root)
+    fitted.matrix_basis = Matrix.Diagonal((1.02127, 1.02127, 1.0266, 1.0))
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+
+    document = read_composite_file(tmp_path / "direct_root.composite")
+    scale = document.nodes[0].transform.scale
+    assert scale[0] == scale[1] == scale[2]
+    assert scale[0] == pytest.approx(1.023047, rel=1e-5)
     assert any(
         warning.get("code") == "MH_W_SCALE_NOISE_CANONICALIZED"
         for warning in report["warnings"]
@@ -299,14 +320,14 @@ def test_donor_scale_noise_is_canonicalized_with_warning(tmp_path):
 def test_authored_scale_anisotropy_is_never_touched(tmp_path):
     root = legacy("direct_root")
     authored = empty("authored_frame", root)
-    authored.matrix_basis = Matrix.Diagonal((1.0, 1.005, 1.0, 1.0))
+    authored.matrix_basis = Matrix.Diagonal((1.0, 1.02, 1.0, 1.0))
     report = export_composite_closure_collection(
         root, tmp_path, source_root=tmp_path, mode="include_all")
 
     document = read_composite_file(tmp_path / "direct_root.composite")
     scale = document.nodes[0].transform.scale
     assert scale[0] == pytest.approx(1.0)
-    assert scale[1] == pytest.approx(1.005)
+    assert scale[1] == pytest.approx(1.02)
     assert scale[2] == pytest.approx(1.0)
     assert not any(
         warning.get("code") == "MH_W_SCALE_NOISE_CANONICALIZED"
