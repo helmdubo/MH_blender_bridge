@@ -116,11 +116,6 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
 {
     UMHSourceImporter* Importer = NewObject<UMHSourceImporter>();
     int32 StartupAttempts = 0;
-    int32 StartupCompositeRefreshes = 0;
-    Importer->SetStartupCompositeRefreshExecutorForTests([&StartupCompositeRefreshes]()
-    {
-        ++StartupCompositeRefreshes;
-    });
     Importer->SetStartupExecutorForTests([&StartupAttempts]()
     {
         ++StartupAttempts;
@@ -139,15 +134,12 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
     Importer->SetLifecycleTimeForTests(101.0);
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("first startup attempt is retryable"), StartupAttempts, 1);
-    bPassed &= TestEqual(TEXT("failed startup does not refresh composite instances"), StartupCompositeRefreshes, 0);
     bPassed &= TestFalse(TEXT("failed attempt is not marked complete"), Importer->HasStartupPlanRunForTests());
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("startup retries once"), StartupAttempts, 2);
     bPassed &= TestTrue(TEXT("successful startup is complete"), Importer->HasStartupPlanRunForTests());
-    bPassed &= TestEqual(TEXT("successful startup refreshes composite instances once"), StartupCompositeRefreshes, 1);
     Importer->TickSourceLifecycleForTests();
     bPassed &= TestEqual(TEXT("completed startup is exactly once"), StartupAttempts, 2);
-    bPassed &= TestEqual(TEXT("completed startup does not refresh twice"), StartupCompositeRefreshes, 1);
 
     UMHSourceImporter* PIEStartupImporter = NewObject<UMHSourceImporter>();
     int32 PIEStartupAttempts = 0;
@@ -199,6 +191,57 @@ bool FMHSourceLifecycleStartupAndOrderTest::RunTest(const FString& Parameters)
         EMHResourceKind::Composite};
     bPassed &= TestTrue(TEXT("coordinator stage order is P-T-M-SM-C"), Stages == Expected);
     MHShutdownProjectIndex();
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHSourceLifecycleStartupFreshnessOnlyTest,
+    "Mimir.V4.SourceLifecycle.StartupFreshnessOnly",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHSourceLifecycleStartupFreshnessOnlyTest::RunTest(const FString& Parameters)
+{
+    // U0c (owner 2026-09-01): editor startup must never import or rebuild -
+    // it only reports how many source resources differ from their managed
+    // receipts, and the user syncs explicitly via MH Source -> Import Changed.
+    const FString Token = FString::Printf(TEXT("u0c_fresh_%08x"), FPlatformTime::Cycles());
+    FString SourceRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+        FPaths::ProjectSavedDir(), TEXT("MimirCompositeTests/u0c_freshness"), Token));
+    FPaths::NormalizeDirectoryName(SourceRoot);
+    IFileManager::Get().MakeDirectory(*SourceRoot, true);
+    const FString SourcePath = FPaths::Combine(SourceRoot, Token + TEXT(".composite"));
+    const FString Payload = TEXT("{\n  \"v\": 5,\n  \"nodes\": []\n}\n");
+    bool bPassed = TestTrue(
+        TEXT("write pending composite"),
+        FFileHelper::SaveStringToFile(Payload, *SourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM));
+
+    UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+    const FString SavedRoot = Settings->SourceRoot.Path;
+    Settings->SourceRoot.Path = SourceRoot;
+    MHShutdownProjectIndex();
+
+    UMHSourceImporter* Importer = NewObject<UMHSourceImporter>();
+    Importer->SetLifecycleTimeForTests(100.0);
+    Importer->SetAssetRegistryReadyForTests(true);
+    Importer->SetLifecycleTimeForTests(101.0);
+    Importer->TickSourceLifecycleForTests();
+    Settings->SourceRoot.Path = SavedRoot;
+    MHShutdownProjectIndex();
+
+    bPassed &= TestTrue(TEXT("freshness startup completes"), Importer->HasStartupPlanRunForTests());
+    bPassed &= TestTrue(TEXT("startup is marked complete"), Importer->HasStartupPlanRunForTests());
+    // The shared Automation host contributes its own Remove rows (managed
+    // assets from earlier tests against this throwaway root), so assert the
+    // report includes at least our pending composite rather than exactly one.
+    bPassed &= TestTrue(
+        TEXT("startup reports pending resources"),
+        Importer->GetLastStartupPendingCountForTests() >= 1);
+    const FString GeneratedPackage =
+        TEXT("/Game/MH/Generated/Composites/") + Token + TEXT(".") + Token;
+    bPassed &= TestNull(
+        TEXT("startup never imports: no generated asset exists"),
+        StaticLoadObject(UObject::StaticClass(), nullptr, *GeneratedPackage, nullptr,
+            LOAD_NoWarn | LOAD_Quiet));
     return bPassed;
 }
 

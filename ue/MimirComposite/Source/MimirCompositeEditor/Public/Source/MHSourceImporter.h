@@ -152,16 +152,15 @@ public:
     void SetBatchExecutorForTests(
         TFunction<bool(const TArray<FString>&, bool)> Executor);
     void SetStartupExecutorForTests(TFunction<bool()> Executor);
-    void SetStartupCompositeRefreshExecutorForTests(TFunction<void()> Executor);
     int32 GetExecutedBatchCountForTests() const { return ExecutedBatchCountForTests; }
     int32 GetPendingPathCountForTests() const { return PendingSourcePaths.Num(); }
     bool HasStartupPlanRunForTests() const { return bStartupPlanRan; }
+    int32 GetLastStartupPendingCountForTests() const { return LastStartupPendingCount; }
 #endif
 
 private:
     void OnAssetRegistryFilesLoaded();
     bool RunStartupPlan();
-    void RefreshLoadedCompositeActorsAfterStartup();
     void PresentPlan(const UE::MimirComposite::FMHSourceAnalysis& Analysis) const;
     bool TickSourceLifecycle(float DeltaSeconds);
     void OnBeginPIE(bool bIsSimulating);
@@ -185,6 +184,8 @@ private:
     double AssetRegistryReadySeconds = 0.0;
     bool bAssetRegistryReady = false;
     bool bStartupPlanRan = false;
+    /** Resources the startup freshness scan reported as out of sync. */
+    int32 LastStartupPendingCount = 0;
     bool bPIEActive = false;
     bool bImportInProgress = false;
     bool bPendingFullScan = false;
@@ -193,7 +194,6 @@ private:
     TOptional<double> LifecycleTimeForTests;
     TFunction<bool(const TArray<FString>&, bool)> BatchExecutorForTests;
     TFunction<bool()> StartupExecutorForTests;
-    TFunction<void()> StartupCompositeRefreshExecutorForTests;
     int32 ExecutedBatchCountForTests = 0;
 #endif
 };

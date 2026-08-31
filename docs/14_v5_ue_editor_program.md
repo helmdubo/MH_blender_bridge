@@ -129,3 +129,24 @@ explicit-overwrite publish), «Reset to file» откатывает к файл�
 - Level Instance (V5-S8) — parked, без изменений.
 - Расширение overlay dag4blend — отклонено owner 2026-08-29 (док 13,
   «Поправки» п.3).
+
+## 6. Перф-программа U0–U7 (ратификация owner 2026-08-31/09-01)
+
+Полевой контекст: полный коттедж (240 композитов, 732 меша) поднял
+загрузку карты ~10×. Направление ратифицировано owner: ленивая/ручная
+модель («нашли файлы к обновлению» + явная синхронизация), UI —
+только на английском языке.
+
+| Срез | Содержание | Статус |
+|---|---|---|
+| U0a | Батчевое ожидание компиляции мешей в definition build (один `FinishCompilation` на замыкание) | Смержен (PR #51, квитанция `map_load_batch_wait.md`) |
+| U0b | Бюджет async static mesh compilation в Project Settings | На стороне owner (конфиг) |
+| U0c | Freshness-only старт редактора: без автоимпорта и ребилдов; write-free скан + отчёт в Message Log «N resource(s) differ… Run MH Source → Import Changed» | Смержен (квитанция `startup_freshness_scan.md`) |
+| U2 | Secondary definition lookup + reverse dependency index в кэше | Бэклог, малый |
+| U5 | ISM/HISM-материализация static-листьев (бакеты, PerInstanceCustomData, селекшн-маппинг Outliner, Edit-Mode вынос) | Контракт выдан внешнему исполнителю 2026-09-01 |
+| U7 | Compact resolved state + lazy debug trace (NodePath/матрицы только при открытом Outliner) | После U5 |
+| U3/U4/U6 | Flat compiled definition; специализация по SeedAffectsResult; world-level instance pool | Отложены до замеров после U5 |
+
+Blender-половина перф-бэклога (E1–E6 аудитора): E2 (общая
+export-сессия) фактически закрыт срезами S6.5/perf; E1 частично
+(`material_export_metrics`); E3–E6 — бэклог.

@@ -8,6 +8,7 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Containers/Ticker.h"
+#include "Diagnostics/MHSourceOperations.h"
 #include "DirectoryWatcherModule.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
@@ -726,10 +727,6 @@ bool UMHSourceImporter::RunStartupPlan()
     {
         const bool bAttempted = StartupExecutorForTests();
         bStartupPlanRan = bAttempted;
-        if (bAttempted)
-        {
-            RefreshLoadedCompositeActorsAfterStartup();
-        }
         return bAttempted;
     }
 #endif
@@ -740,34 +737,40 @@ bool UMHSourceImporter::RunStartupPlan()
         return false;
     }
 
+    // U0c (owner 2026-09-01): startup never imports and never rebuilds placed
+    // composite instances. It runs one write-free freshness scan and reports
+    // how many resources differ from their managed receipts; the user syncs
+    // explicitly through MH Source -> Import Changed. Editor startup time
+    // therefore no longer scales with the amount of pending source work.
     FMHSourceAnalysis Analysis;
-    bool bExecuted = false;
-    bImportInProgress = true;
-    ImportSources(FMHImportSourcesScope::All(), Analysis, bExecuted);
-    bImportInProgress = false;
-    // A configured startup root is attempted exactly once. Validation failures
-    // remain visible in the plan; subsequent source fixes arrive via watcher.
+    FString Error;
+    if (!MHScanSourcesOperation(Settings->GetSourceRootPath(), Analysis, Error))
+    {
+        FMessageLog(TEXT("Mimir")).Error(FText::Format(
+            INVTEXT("Startup source freshness scan failed: {0}"),
+            FText::FromString(Error)));
+        bStartupPlanRan = true;
+        return true;
+    }
+    const int32 Pending =
+        Analysis.CountOf(EMHSourceChange::Create) +
+        Analysis.CountOf(EMHSourceChange::Reimport) +
+        Analysis.CountOf(EMHSourceChange::Move) +
+        Analysis.CountOf(EMHSourceChange::Remove);
+    const int32 Blocked = Analysis.CountOf(EMHSourceChange::Blocked);
+    LastStartupPendingCount = Pending;
+    if (Pending > 0 || Blocked > 0)
+    {
+        FMessageLog Log(TEXT("Mimir"));
+        Log.Info(FText::Format(
+            INVTEXT("Source freshness: {0} resource(s) differ from their managed receipts{1}. Run MH Source -> Import Changed to sync."),
+            FText::AsNumber(Pending),
+            Blocked > 0
+                ? FText::Format(INVTEXT(" ({0} blocked)"), FText::AsNumber(Blocked))
+                : FText::GetEmpty()));
+    }
     bStartupPlanRan = true;
-    RefreshLoadedCompositeActorsAfterStartup();
     return true;
-}
-
-void UMHSourceImporter::RefreshLoadedCompositeActorsAfterStartup()
-{
-#if WITH_DEV_AUTOMATION_TESTS
-    if (StartupCompositeRefreshExecutorForTests)
-    {
-        StartupCompositeRefreshExecutorForTests();
-        return;
-    }
-#endif
-    const int32 RebuiltCount = MHRebuildAllLoadedCompositeActors();
-    if (RebuiltCount > 0)
-    {
-        FMessageLog(TEXT("Mimir")).Info(FText::Format(
-            INVTEXT("Startup source pass settled; rebuilt {0} loaded composite instance(s)"),
-            FText::AsNumber(RebuiltCount)));
-    }
 }
 
 bool UMHSourceImporter::ImportSources(
@@ -1103,11 +1106,6 @@ void UMHSourceImporter::SetStartupExecutorForTests(TFunction<bool()> Executor)
     StartupExecutorForTests = MoveTemp(Executor);
 }
 
-void UMHSourceImporter::SetStartupCompositeRefreshExecutorForTests(
-    TFunction<void()> Executor)
-{
-    StartupCompositeRefreshExecutorForTests = MoveTemp(Executor);
-}
 #endif
 
 bool UMHSourceImporter::ReimportStaticMesh(
