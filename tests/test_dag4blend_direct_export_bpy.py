@@ -165,14 +165,18 @@ def test_saved_dagorprops_inline_p2_authors_node_placement_without_double_base(
 
     # Owner revision of OPEN-V5-15 (2026-08-31): inline Dagor p2 stays inline
     # in the node itself; no derived external .placement resource exists.
+    # Dagor is Y-up left-handed; placement-v1 axes are UE Z-up. The adapter
+    # converts p2 axes exactly like node matrices (owner 2026-08-31, teapot
+    # field defect): rot_x -> [0] base -x, rot_z -> [1] base +z,
+    # rot_y (Dagor vertical) -> [2] base -y.
     document = read_composite_file(tmp_path / "direct_root.composite")
     assert document.nodes[0].profile is None
     assert document.nodes[1].profile is None
     assert document.nodes[0].placement == document.nodes[1].placement
     assert document.nodes[0].placement.rotation_deg == (
         PlacementRange(0.0, 0.0),
-        PlacementRange(15.0, 1.0),
         PlacementRange(-5.0, 2.0),
+        PlacementRange(-15.0, 1.0),
     )
     assert document.nodes[0].transform == IDENTITY_TRANSFORM
     assert document.nodes[1].transform == IDENTITY_TRANSFORM
@@ -205,20 +209,54 @@ def test_inline_p2_preserves_all_ranges_and_fills_only_missing_axes(tmp_path):
     assert document.nodes[0].profile is None
     assert not list(tmp_path.glob("*.placement"))
     profile = document.nodes[0].placement
+    # Dagor authors offsets in meters along Y-up axes; placement-v1 stores
+    # UE centimeters along Z-up axes: offset_x -> [0] x100,
+    # offset_z -> [1] base negated x100, offset_y (vertical) -> [2] x100.
     assert profile.offset_cm == (
-        PlacementRange(10.0, 2.0),
+        PlacementRange(1000.0, 200.0),
         PlacementRange(0.0, 0.0),
         PlacementRange(0.0, 0.0),
     )
     assert profile.rotation_deg == (
         PlacementRange(0.0, 0.0),
-        PlacementRange(0.0, 0.0),
         PlacementRange(-30.0, 5.0),
+        PlacementRange(0.0, 0.0),
     )
     assert profile.uniform_scale.base == 1.25
     assert profile.uniform_scale.deviation == pytest.approx(0.1)
     assert profile.vertical_scale.base == 0.75
     assert profile.vertical_scale.deviation == pytest.approx(0.05)
+
+
+def test_inline_p2_converts_every_dagor_axis_to_ue_space(tmp_path):
+    root = legacy("direct_root")
+    node = empty("frame", root)
+    node["dagorprops"] = {
+        "offset_x:p2": [1.0, 0.5],
+        "offset_y:p2": [2.0, 0.25],
+        "offset_z:p2": [3.0, 0.125],
+        "rot_x:p2": [10.0, 1.0],
+        "rot_y:p2": [20.0, 2.0],
+        "rot_z:p2": [30.0, 3.0],
+    }
+    export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="root_only")
+
+    profile = read_composite_file(
+        tmp_path / "direct_root.composite").nodes[0].placement
+    # Conjugation by the Dagor(Y-up, LH) -> UE(Z-up) axis swap: X stays X,
+    # Dagor Z becomes UE Y with a negated base, Dagor Y (vertical) becomes
+    # UE Z; the reflection flips rotation direction for X and the vertical.
+    assert profile.offset_cm == (
+        PlacementRange(100.0, 50.0),
+        PlacementRange(-300.0, 12.5),
+        PlacementRange(200.0, 25.0),
+    )
+    assert profile.rotation_deg == (
+        PlacementRange(-10.0, 1.0),
+        PlacementRange(30.0, 3.0),
+        PlacementRange(-20.0, 2.0),
+    )
 
 
 def test_inline_p2_signed_spread_normalizes_to_the_same_symmetric_range(
@@ -237,7 +275,8 @@ def test_inline_p2_signed_spread_normalizes_to_the_same_symmetric_range(
     assert document.nodes[0].placement == document.nodes[1].placement
     profile = document.nodes[0].placement
     assert profile.offset_cm[0].base == 0.0
-    assert profile.offset_cm[0].deviation == pytest.approx(0.01)
+    # 0.01 Dagor meters -> 1 cm in placement-v1.
+    assert profile.offset_cm[0].deviation == pytest.approx(1.0)
     assert not any(
         item.startswith("placement_profile:")
         for item in report["published"])

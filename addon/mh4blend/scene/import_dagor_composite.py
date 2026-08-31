@@ -775,14 +775,45 @@ def _dag4blend_inline_placement(claims, provenance):
 
     zero = PlacementRange(0.0, 0.0)
 
-    def triple(prefix):
-        keys = tuple(f"{prefix}_{axis}:p2" for axis in "xyz")
-        if not any(key in claims for key in keys):
+    def axis_range(prefix, axis):
+        key = f"{prefix}_{axis}:p2"
+        if key not in claims:
             return None
+        return _dag4blend_p2_range(*claims[key], provenance)
+
+    def convert_triple(prefix, base_scale):
+        """Dagor(Y-up, LH) p2 axes -> placement-v1 UE(Z-up) axes.
+
+        The same conjugation the adapter applies to node matrices
+        (_DAGOR_TO_BLENDER swap + the Blender->UE Y reflection): Dagor X
+        stays UE X, Dagor Z becomes UE Y with a negated base, and Dagor Y
+        (the vertical) becomes UE Z. The reflection flips the rotation
+        direction around X and the vertical; deviations are magnitudes and
+        never change sign. Owner field defect 2026-08-31: the teapot's
+        rot_y spread must spin it around the UE vertical, not pitch it
+        face-down into the stove.
+        """
+        x = axis_range(prefix, "x")
+        y = axis_range(prefix, "y")
+        z = axis_range(prefix, "z")
+        if x is None and y is None and z is None:
+            return None
+        if prefix == "offset":
+            converted = (
+                x,
+                PlacementRange(-z.base, z.deviation) if z is not None else None,
+                y,
+            )
+        else:
+            converted = (
+                PlacementRange(-x.base, x.deviation) if x is not None else None,
+                z,
+                PlacementRange(-y.base, y.deviation) if y is not None else None,
+            )
         return tuple(
-            (_dag4blend_p2_range(*claims[key], provenance)
-             if key in claims else zero)
-            for key in keys
+            (PlacementRange(item.base * base_scale, item.deviation * base_scale)
+             if item is not None else zero)
+            for item in converted
         )
 
     def scalar(key):
@@ -791,8 +822,9 @@ def _dag4blend_inline_placement(claims, provenance):
 
     provisional = PlacementProfile(
         "",
-        offset_cm=triple("offset"),
-        rotation_deg=triple("rot"),
+        # Dagor authors offsets in meters; placement-v1 stores centimeters.
+        offset_cm=convert_triple("offset", 100.0),
+        rotation_deg=convert_triple("rot", 1.0),
         uniform_scale=scalar("scale:p2"),
         vertical_scale=scalar("yscale:p2"),
     )
