@@ -81,6 +81,7 @@ const TSet<FString>& MHRegisteredWarningCodes()
         TEXT("MH_W_RESOURCE_FAR_FROM_ORIGIN"),
         TEXT("MH_W_PAYLOAD_EXTERNAL_MODIFIED"),
         TEXT("MH_W_UNRESOLVED_PLACEMENT"),
+        TEXT("MH_W_SCALE_NOISE_CANONICALIZED"),
     };
     return Codes;
 }

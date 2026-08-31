@@ -6,6 +6,7 @@ import sys
 import pytest
 
 bpy = pytest.importorskip("bpy")
+from mathutils import Matrix  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addon"))
 from mh4blend.scene.export_closure import export_composite_closure_collection
 from mh4blend.scene.export_composite import export_composite_collection
@@ -268,6 +269,49 @@ def test_scene_include_without_typed_profile_remains_fail_closed(tmp_path):
             root, tmp_path, source_root=tmp_path, mode="include_all")
     assert snapshot() == before
     assert not list(tmp_path.iterdir())
+
+
+def test_donor_scale_noise_is_canonicalized_with_warning(tmp_path):
+    # Owner decision 2026-08-31 (revision of doc 10 §6.2 for the adapter
+    # boundary only): Dagor matrices carry accumulated float noise, so scale
+    # components that differ by less than 2e-4 relative are authored-equal
+    # and snap to their mean. Downstream composed-world admission then stops
+    # tripping over sub-ULP shear that no artist ever authored.
+    root = legacy("direct_root")
+    noisy = empty("noisy_frame", root)
+    noisy.matrix_basis = (
+        Matrix.Translation((1.0, 2.0, 3.0))
+        @ Matrix.Diagonal((1.0212899, 1.0212300, 1.0266, 1.0)))
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+
+    document = read_composite_file(tmp_path / "direct_root.composite")
+    scale = document.nodes[0].transform.scale
+    assert scale[0] == scale[1]
+    assert scale[0] == pytest.approx(1.02126, rel=1e-5)
+    assert scale[2] == pytest.approx(1.0266)
+    assert any(
+        warning.get("code") == "MH_W_SCALE_NOISE_CANONICALIZED"
+        for warning in report["warnings"]
+        if isinstance(warning, dict))
+
+
+def test_authored_scale_anisotropy_is_never_touched(tmp_path):
+    root = legacy("direct_root")
+    authored = empty("authored_frame", root)
+    authored.matrix_basis = Matrix.Diagonal((1.0, 1.005, 1.0, 1.0))
+    report = export_composite_closure_collection(
+        root, tmp_path, source_root=tmp_path, mode="include_all")
+
+    document = read_composite_file(tmp_path / "direct_root.composite")
+    scale = document.nodes[0].transform.scale
+    assert scale[0] == pytest.approx(1.0)
+    assert scale[1] == pytest.approx(1.005)
+    assert scale[2] == pytest.approx(1.0)
+    assert not any(
+        warning.get("code") == "MH_W_SCALE_NOISE_CANONICALIZED"
+        for warning in report["warnings"]
+        if isinstance(warning, dict))
 
 
 def test_inline_p2_reexport_ignores_foreign_placement_files(tmp_path):
