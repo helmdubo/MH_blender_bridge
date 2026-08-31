@@ -14,7 +14,9 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/Actor.h"
+#include "Materials/MaterialInterface.h"
 #include "Settings/MHCompositeSettings.h"
+#include "Templates/Greater.h"
 
 namespace UE::MimirComposite
 {

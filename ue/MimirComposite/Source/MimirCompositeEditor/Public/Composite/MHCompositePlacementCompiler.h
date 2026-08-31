@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Random/MHRandomStream.h"
+#include "UObject/ObjectPtr.h"
 
 class AActor;
 class UActorComponent;
