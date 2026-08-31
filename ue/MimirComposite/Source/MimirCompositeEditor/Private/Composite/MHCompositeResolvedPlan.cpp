@@ -124,6 +124,8 @@ EMHRandomSemanticKind AppliedPlanOptionKind(const EMHCompositeOptionKind Kind)
     return static_cast<EMHRandomSemanticKind>(MAX_uint8);
 }
 
+FMHRandomPlacementProfile AppliedPlanProfile(const FMHPlacementProfile& Profile);
+
 FMHRandomNode AppliedPlanNode(const FMHCompositeNode& Node)
 {
     FMHRandomNode Result;
@@ -131,6 +133,14 @@ FMHRandomNode AppliedPlanNode(const FMHCompositeNode& Node)
     Result.Resource = Node.Resource;
     Result.DisplayName = Node.Name;
     Result.Profile = Node.Profile;
+    if (Node.bHasInlinePlacement)
+    {
+        Result.bHasInlinePlacement = true;
+        Result.InlinePlacement = AppliedPlanProfile(Node.InlinePlacement);
+        // The wire body is anonymous; the runtime validator still requires a
+        // stable, non-identifying label.
+        Result.InlinePlacement.Name = TEXT("inline");
+    }
     Result.bAppearanceSeedBoundary = Node.bAppearanceSeedBoundary;
     Result.Transform.TranslationCm = FVector3f(Node.Transform.TranslationCm);
     Result.Transform.RotationQuat = FQuat4f(Node.Transform.RotationQuat);

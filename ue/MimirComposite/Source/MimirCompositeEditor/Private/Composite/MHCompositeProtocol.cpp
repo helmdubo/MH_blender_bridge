@@ -503,6 +503,16 @@ bool ParseOption(const TSharedPtr<FJsonValue>& Value, FMHCompositeOption& Out, F
     return true;
 }
 
+bool ParsePlacementProfileObject(
+    const TSharedPtr<FJsonObject>& Root,
+    FMHPlacementProfile& OutProfile,
+    FString& OutError);
+bool AppendInlinePlacement(
+    const FMHPlacementProfile& Profile,
+    int32 Level,
+    FString& Out,
+    FString& OutError);
+
 bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FString& OutError)
 {
     if (!Value.IsValid() || Value->Type != EJson::Object)
@@ -512,8 +522,8 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
     const TSharedPtr<FJsonObject> Object = Value->AsObject();
     static const TSet<FString> Allowed = {
         TEXT("kind"), TEXT("resource"), TEXT("name"), TEXT("transform"),
-        TEXT("profile"), TEXT("place_type"), TEXT("appearance_seed_boundary"),
-        TEXT("options"), TEXT("children")};
+        TEXT("profile"), TEXT("placement"), TEXT("place_type"),
+        TEXT("appearance_seed_boundary"), TEXT("options"), TEXT("children")};
     for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Object->Values)
     {
         if (!Allowed.Contains(Pair.Key))
@@ -570,6 +580,22 @@ bool ParseNode(const TSharedPtr<FJsonValue>& Value, FMHCompositeNode& Out, FStri
         {
             return CompositeGrammarError(OutError, TEXT("profile must be canonical [a-z0-9_]+"));
         }
+    }
+    if (const TSharedPtr<FJsonValue>* Placement = Object->Values.Find(TEXT("placement")))
+    {
+        if (!Out.Profile.IsEmpty())
+        {
+            return CompositeGrammarError(OutError, TEXT("fields 'profile' and 'placement' are mutually exclusive"));
+        }
+        if (!Placement->IsValid() || (*Placement)->Type != EJson::Object)
+        {
+            return CompositeGrammarError(OutError, TEXT("inline placement must be an object"));
+        }
+        if (!ParsePlacementProfileObject((*Placement)->AsObject(), Out.InlinePlacement, OutError))
+        {
+            return false;
+        }
+        Out.bHasInlinePlacement = true;
     }
     // Provenance carriers. Absence is not zero; an explicit 0 is preserved.
     // Non-negative values outside the known 0..6 stay legal by owner decision:
@@ -905,6 +931,10 @@ bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FS
     }
     if (!Node.Profile.IsEmpty())
     {
+        if (Node.bHasInlinePlacement)
+        {
+            return CompositeGrammarError(OutError, TEXT("writer fields 'profile' and 'placement' are mutually exclusive"));
+        }
         if (!MHIsCanonicalCompositeToken(Node.Profile))
         {
             return CompositeGrammarError(OutError, TEXT("writer profile must be canonical [a-z0-9_]+"));
@@ -912,8 +942,14 @@ bool WriteNode(const FMHCompositeNode& Node, const int32 Level, FString& Out, FS
         Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"profile\": ");
         AppendQuoted(Node.Profile, Out);
     }
-    // Canonical order: kind, resource, name, transform, profile, place_type,
-    // appearance_seed_boundary, options, children (OPEN-V5-21 as amended).
+    if (Node.bHasInlinePlacement)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"placement\": ");
+        if (!AppendInlinePlacement(Node.InlinePlacement, Level + 1, Out, OutError)) return false;
+    }
+    // Canonical order: kind, resource, name, transform, profile, placement,
+    // place_type, appearance_seed_boundary, options, children (OPEN-V5-21 as
+    // amended by the 2026-08-31 owner revision of OPEN-V5-15).
     if (Node.PlaceType < INDEX_NONE)
     {
         return CompositeGrammarError(OutError, TEXT("writer place_type must be absent (-1) or a non-negative integer"));
@@ -980,6 +1016,8 @@ void FlattenNodes(const TArray<FMHCompositeNode>& Nodes, const int32 Parent, TAr
         Stored.PlaceType = Node.PlaceType;
         Stored.bAppearanceSeedBoundary = Node.bAppearanceSeedBoundary;
         Stored.Options = Node.Options;
+        Stored.bHasInlinePlacement = Node.bHasInlinePlacement;
+        Stored.InlinePlacement = Node.InlinePlacement;
         FlattenNodes(Node.Children, ThisIndex, Out);
     }
 }
@@ -1046,6 +1084,61 @@ bool ParsePlacementTriple(
     {
         FMHPlacementRange& Range = Out.AddDefaulted_GetRef();
         if (!ParsePlacementRange(Value->AsArray()[Index], false, Range, OutError, Context)) return false;
+    }
+    return true;
+}
+
+bool ParsePlacementProfileObject(
+    const TSharedPtr<FJsonObject>& Root,
+    FMHPlacementProfile& OutProfile,
+    FString& OutError)
+{
+    static const TSet<FString> Allowed = {
+        TEXT("v"), TEXT("kind"), TEXT("offset_cm"), TEXT("rotation_deg"),
+        TEXT("uniform_scale"), TEXT("vertical_scale")};
+    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Root->Values)
+    {
+        if (!Allowed.Contains(Pair.Key))
+        {
+            return PlacementGrammarError(OutError, FString::Printf(TEXT("unknown field '%s'"), *Pair.Key));
+        }
+    }
+    if (!Root->HasField(TEXT("v")) || !Root->HasField(TEXT("kind")))
+    {
+        return PlacementGrammarError(OutError, TEXT("root requires v and kind"));
+    }
+    FString RawVersion;
+    if (!HasExactIntegerVersion(Root, TEXT("1"), RawVersion))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_UNKNOWN_SCHEMA_VERSION: placement version must be integer 1, got '%s'"),
+            *RawVersion);
+        return false;
+    }
+    FString Kind;
+    if (!Root->TryGetStringField(TEXT("kind"), Kind) || Kind != TEXT("placement_profile"))
+    {
+        return PlacementGrammarError(OutError, TEXT("kind must equal placement_profile"));
+    }
+    if (const TSharedPtr<FJsonValue>* Offset = Root->Values.Find(TEXT("offset_cm")))
+    {
+        OutProfile.bHasOffsetCm = true;
+        if (!ParsePlacementTriple(*Offset, OutProfile.OffsetCm, OutError, TEXT("offset_cm"))) return false;
+    }
+    if (const TSharedPtr<FJsonValue>* Rotation = Root->Values.Find(TEXT("rotation_deg")))
+    {
+        OutProfile.bHasRotationDeg = true;
+        if (!ParsePlacementTriple(*Rotation, OutProfile.RotationDeg, OutError, TEXT("rotation_deg"))) return false;
+    }
+    if (const TSharedPtr<FJsonValue>* Uniform = Root->Values.Find(TEXT("uniform_scale")))
+    {
+        OutProfile.bHasUniformScale = true;
+        if (!ParsePlacementRange(*Uniform, true, OutProfile.UniformScale, OutError, TEXT("uniform_scale"))) return false;
+    }
+    if (const TSharedPtr<FJsonValue>* Vertical = Root->Values.Find(TEXT("vertical_scale")))
+    {
+        OutProfile.bHasVerticalScale = true;
+        if (!ParsePlacementRange(*Vertical, true, OutProfile.VerticalScale, OutError, TEXT("vertical_scale"))) return false;
     }
     return true;
 }
@@ -1118,6 +1211,40 @@ void AppendPlacementTriple(
         Out += Index + 1 < Ranges.Num() ? TEXT(",\n") : TEXT("\n");
     }
     Indent(Level, Out); Out += TEXT("]");
+}
+
+bool AppendInlinePlacement(
+    const FMHPlacementProfile& Profile,
+    const int32 Level,
+    FString& Out,
+    FString& OutError)
+{
+    if (!ValidatePlacementProfile(Profile, OutError)) return false;
+    Out += TEXT("{\n");
+    Indent(Level + 1, Out); Out += TEXT("\"v\": 1,\n");
+    Indent(Level + 1, Out); Out += TEXT("\"kind\": \"placement_profile\"");
+    if (Profile.bHasOffsetCm)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"offset_cm\": ");
+        AppendPlacementTriple(Profile.OffsetCm, Level + 1, Out);
+    }
+    if (Profile.bHasRotationDeg)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"rotation_deg\": ");
+        AppendPlacementTriple(Profile.RotationDeg, Level + 1, Out);
+    }
+    if (Profile.bHasUniformScale)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"uniform_scale\": ");
+        AppendPlacementRange(Profile.UniformScale, Level + 1, Out);
+    }
+    if (Profile.bHasVerticalScale)
+    {
+        Out += TEXT(",\n"); Indent(Level + 1, Out); Out += TEXT("\"vertical_scale\": ");
+        AppendPlacementRange(Profile.VerticalScale, Level + 1, Out);
+    }
+    Out += TEXT("\n"); Indent(Level, Out); Out += TEXT("}");
+    return true;
 }
 
 } // namespace
@@ -1324,6 +1451,8 @@ bool MHExtractCompositeV5(
         Node->PlaceType = Stored.PlaceType;
         Node->bAppearanceSeedBoundary = Stored.bAppearanceSeedBoundary;
         Node->Options = Stored.Options;
+        Node->bHasInlinePlacement = Stored.bHasInlinePlacement;
+        Node->InlinePlacement = Stored.InlinePlacement;
         Node->Transform.TranslationCm = Stored.Transform.GetTranslation();
         Node->Transform.RotationQuat = Stored.Transform.GetRotation();
         Node->Transform.Scale = Stored.Transform.GetScale3D();
@@ -1357,55 +1486,7 @@ bool MHParsePlacementProfileV1(
     FString WalkDetail;
     FStrictJsonWalk Walk(Text);
     if (!Walk.Validate(WalkDetail)) return PlacementGrammarError(OutError, WalkDetail);
-    const TSharedPtr<FJsonObject> Root = RootValue->AsObject();
-    static const TSet<FString> Allowed = {
-        TEXT("v"), TEXT("kind"), TEXT("offset_cm"), TEXT("rotation_deg"),
-        TEXT("uniform_scale"), TEXT("vertical_scale")};
-    for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Root->Values)
-    {
-        if (!Allowed.Contains(Pair.Key))
-        {
-            return PlacementGrammarError(OutError, FString::Printf(TEXT("unknown field '%s'"), *Pair.Key));
-        }
-    }
-    if (!Root->HasField(TEXT("v")) || !Root->HasField(TEXT("kind")))
-    {
-        return PlacementGrammarError(OutError, TEXT("root requires v and kind"));
-    }
-    FString RawVersion;
-    if (!HasExactIntegerVersion(Root, TEXT("1"), RawVersion))
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNKNOWN_SCHEMA_VERSION: placement version must be integer 1, got '%s'"),
-            *RawVersion);
-        return false;
-    }
-    FString Kind;
-    if (!Root->TryGetStringField(TEXT("kind"), Kind) || Kind != TEXT("placement_profile"))
-    {
-        return PlacementGrammarError(OutError, TEXT("kind must equal placement_profile"));
-    }
-    if (const TSharedPtr<FJsonValue>* Offset = Root->Values.Find(TEXT("offset_cm")))
-    {
-        OutProfile.bHasOffsetCm = true;
-        if (!ParsePlacementTriple(*Offset, OutProfile.OffsetCm, OutError, TEXT("offset_cm"))) return false;
-    }
-    if (const TSharedPtr<FJsonValue>* Rotation = Root->Values.Find(TEXT("rotation_deg")))
-    {
-        OutProfile.bHasRotationDeg = true;
-        if (!ParsePlacementTriple(*Rotation, OutProfile.RotationDeg, OutError, TEXT("rotation_deg"))) return false;
-    }
-    if (const TSharedPtr<FJsonValue>* Uniform = Root->Values.Find(TEXT("uniform_scale")))
-    {
-        OutProfile.bHasUniformScale = true;
-        if (!ParsePlacementRange(*Uniform, true, OutProfile.UniformScale, OutError, TEXT("uniform_scale"))) return false;
-    }
-    if (const TSharedPtr<FJsonValue>* Vertical = Root->Values.Find(TEXT("vertical_scale")))
-    {
-        OutProfile.bHasVerticalScale = true;
-        if (!ParsePlacementRange(*Vertical, true, OutProfile.VerticalScale, OutError, TEXT("vertical_scale"))) return false;
-    }
-    return true;
+    return ParsePlacementProfileObject(RootValue->AsObject(), OutProfile, OutError);
 }
 
 bool MHWriteCanonicalPlacementProfileV1(

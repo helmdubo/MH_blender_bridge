@@ -23,6 +23,8 @@ from mh4blend.core.model import (  # noqa: E402
     Composite,
     CompositeTransform,
     Node,
+    PlacementProfile,
+    PlacementRange,
     RandomOption,
 )
 from tools.mh_v5_codec_fixture import golden_bytes  # noqa: E402
@@ -246,6 +248,80 @@ def test_non_boolean_seed_boundary_is_grammar(value):
         parse_composite({"v": 5, "nodes": [
             {"kind": "group", "appearance_seed_boundary": value}]})
     assert excinfo.value.code == "MH_E_COMPOSITE_GRAMMAR"
+
+
+def _inline_profile():
+    return PlacementProfile(
+        "",
+        rotation_deg=(
+            PlacementRange(0.0, 0.0),
+            PlacementRange(0.0, 15.0),
+            PlacementRange(0.0, 15.0),
+        ),
+    )
+
+
+def test_inline_placement_roundtrips_in_the_ratified_node_order():
+    resource = Composite("vehicle", [
+        Node("mesh", resource="hood", name="Hood",
+             transform=CompositeTransform(translation_cm=(1.0, 0.0, 0.0)),
+             placement=_inline_profile(), place_type=3),
+    ])
+    document = composite_document(resource)
+    assert list(document["nodes"][0]) == [
+        "kind", "resource", "name", "transform", "placement", "place_type"]
+    assert document["nodes"][0]["placement"] == {
+        "v": 1,
+        "kind": "placement_profile",
+        "rotation_deg": [[0.0, 0.0], [0.0, 15.0], [0.0, 15.0]],
+    }
+    canonical = composite_json_bytes(resource)
+    parsed = parse_composite(canonical, name="vehicle")
+    assert parsed.nodes[0].placement == _inline_profile()
+    assert composite_json_bytes(parsed) == canonical
+
+
+def test_inline_placement_and_profile_reference_are_mutually_exclusive():
+    with pytest.raises(CompositeValueError) as reader:
+        parse_composite({"v": 5, "nodes": [{
+            "kind": "mesh", "resource": "hood",
+            "profile": "scatter",
+            "placement": {"v": 1, "kind": "placement_profile"},
+        }]})
+    assert reader.value.code == "MH_E_COMPOSITE_GRAMMAR"
+    with pytest.raises(CompositeValueError) as writer:
+        composite_document(Composite("vehicle", [
+            Node("mesh", resource="hood", profile="scatter",
+                 placement=_inline_profile()),
+        ]))
+    assert writer.value.code == "MH_E_COMPOSITE_GRAMMAR"
+
+
+def test_inline_placement_body_keeps_the_closed_placement_grammar():
+    with pytest.raises(CompositeValueError) as excinfo:
+        parse_composite({"v": 5, "nodes": [{
+            "kind": "mesh", "resource": "hood",
+            "placement": {
+                "v": 1, "kind": "placement_profile",
+                "offset_cm": [[0, -1], [0, 0], [0, 0]],
+            },
+        }]})
+    assert excinfo.value.code == "MH_E_PLACEMENT_PROFILE_GRAMMAR"
+    with pytest.raises(CompositeValueError) as version:
+        parse_composite({"v": 5, "nodes": [{
+            "kind": "mesh", "resource": "hood",
+            "placement": {"v": 2, "kind": "placement_profile"},
+        }]})
+    assert version.value.code == "MH_E_UNKNOWN_SCHEMA_VERSION"
+
+
+def test_inline_placement_never_enters_profile_references():
+    resource = Composite("root", [
+        Node("group", profile="external", children=[
+            Node("mesh", resource="hood", placement=_inline_profile()),
+        ]),
+    ])
+    assert list(iter_profile_references(resource)) == ["external"]
 
 
 @pytest.mark.parametrize("field", ["place_type", "appearance_seed_boundary"])

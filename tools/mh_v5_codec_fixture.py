@@ -57,6 +57,29 @@ def golden_document() -> dict:
                 ),
             ),
         ])),
+        # Appended by the 2026-08-31 owner revision of OPEN-V5-15: a node may
+        # carry its placement-v1 body inline instead of referencing a derived
+        # external `.placement` resource.
+        ("inline_placement", Composite("inline_probe", [
+            Node(
+                "mesh",
+                resource="table_mug",
+                transform=CompositeTransform(translation_cm=(50, 0, 90)),
+                placement=PlacementProfile(
+                    "",
+                    offset_cm=(
+                        PlacementRange(0, 1),
+                        PlacementRange(0, 1),
+                        PlacementRange(0, 0),
+                    ),
+                    rotation_deg=(
+                        PlacementRange(0, 0),
+                        PlacementRange(0, 15),
+                        PlacementRange(0, 15),
+                    ),
+                ),
+            ),
+        ])),
     ]
     profiles = [
         ("empty", PlacementProfile("empty")),
@@ -104,6 +127,9 @@ def golden_document() -> dict:
             {"name": "nonrandom_options", "json": '{"v":5,"nodes":[{"kind":"group","options":[{"kind":"empty","weight":1}]}]}', "error": "MH_E_COMPOSITE_GRAMMAR"},
             {"name": "zero_scale", "json": '{"v":5,"nodes":[{"kind":"group","transform":{"scale":[1,0,1]}}]}', "error": "MH_E_INVALID_SCALE"},
             {"name": "nonfinite_weight", "json": '{"v":5,"nodes":[{"kind":"random","options":[{"kind":"empty","weight":NaN}]}]}', "error": "MH_E_NAN_INF_VALUE"},
+            {"name": "profile_and_placement_conflict", "json": '{"v":5,"nodes":[{"kind":"mesh","resource":"mug","profile":"scatter","placement":{"v":1,"kind":"placement_profile"}}]}', "error": "MH_E_COMPOSITE_GRAMMAR"},
+            {"name": "inline_placement_negative_deviation", "json": '{"v":5,"nodes":[{"kind":"mesh","resource":"mug","placement":{"v":1,"kind":"placement_profile","offset_cm":[[0,-1],[0,0],[0,0]]}}]}', "error": "MH_E_PLACEMENT_PROFILE_GRAMMAR"},
+            {"name": "inline_placement_wrong_version", "json": '{"v":5,"nodes":[{"kind":"mesh","resource":"mug","placement":{"v":2,"kind":"placement_profile"}}]}', "error": "MH_E_UNKNOWN_SCHEMA_VERSION"},
         ],
         "placement_vectors": [
             {"name": name, "canonical_utf8": _canonical_text(placement_json_bytes(value))}

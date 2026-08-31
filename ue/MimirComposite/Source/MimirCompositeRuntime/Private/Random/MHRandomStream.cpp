@@ -713,7 +713,16 @@ bool MHBuildRandomSourceClosure(
         {
             FMHRandomTrs Canonical;
             if (!CanonicalTrs(Node.Transform, Canonical, OutError)) return false;
-            if (!Node.Profile.IsEmpty())
+            if (Node.bHasInlinePlacement && !Node.Profile.IsEmpty())
+            {
+                OutError = TEXT("node profile and inline placement are mutually exclusive");
+                return false;
+            }
+            if (Node.bHasInlinePlacement)
+            {
+                if (!ValidateProfile(Node.InlinePlacement, OutError)) return false;
+            }
+            else if (!Node.Profile.IsEmpty())
             {
                 const FString Key = TEXT("placement_profile:") + Node.Profile;
                 Resources.Add(Key);
@@ -895,7 +904,8 @@ bool MHResolveCompositePlan(
     {
         const int32 RootNodeIndex = Context.RootNodeIndex;
         TOptional<FMHRandomStream1> NodeStream;
-        if (Node.Kind == EMHRandomSemanticKind::Random || !Node.Profile.IsEmpty())
+        if (Node.Kind == EMHRandomSemanticKind::Random || !Node.Profile.IsEmpty() ||
+            Node.bHasInlinePlacement)
         {
             NodeStream.Emplace(MHMakeNodeRandomStream(Seed, NodePath));
         }
@@ -917,15 +927,25 @@ bool MHResolveCompositePlan(
         FMHRandomTrs Local;
         if (!CanonicalTrs(Node.Transform, Local, OutError)) return false;
         const FMHRandomTrs AuthoredLocal = Local;
-        if (!Node.Profile.IsEmpty())
+        if (!Node.Profile.IsEmpty() || Node.bHasInlinePlacement)
         {
-            const FMHRandomPlacementProfile* Profile = Graph.Profiles.Find(Node.Profile);
-            if (Profile == nullptr)
+            const FMHRandomPlacementProfile* Profile = nullptr;
+            if (Node.bHasInlinePlacement)
             {
-                OutError = TEXT("missing placement_profile:") + Node.Profile;
-                return false;
+                // The inline body travels with the node itself: no graph
+                // resource, no selected-resource record, no dependency.
+                Profile = &Node.InlinePlacement;
             }
-            AddSelectedResource(TEXT("placement_profile:") + Node.Profile);
+            else
+            {
+                Profile = Graph.Profiles.Find(Node.Profile);
+                if (Profile == nullptr)
+                {
+                    OutError = TEXT("missing placement_profile:") + Node.Profile;
+                    return false;
+                }
+                AddSelectedResource(TEXT("placement_profile:") + Node.Profile);
+            }
             FSampledProfile Sample;
             if (!SampleProfile(NodeStream.GetValue(), NodePath, *Profile, OutPlan.Draws, Sample, OutError) ||
                 !ApplyProfile(Local, Sample, Local, OutError)) return false;

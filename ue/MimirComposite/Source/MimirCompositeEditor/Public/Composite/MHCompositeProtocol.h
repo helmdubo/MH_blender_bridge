@@ -22,6 +22,13 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeNode
     FMHCompositeTransform Transform;
     FString Profile;
     /**
+     * Inline placement-v1 body (owner revision of OPEN-V5-15, 2026-08-31):
+     * the node carries its randomization ranges directly, the way Dagor
+     * authors inline p2. Mutually exclusive with Profile.
+     */
+    bool bHasInlinePlacement = false;
+    FMHPlacementProfile InlinePlacement;
+    /**
      * Source provenance only (13 §7.1): the authored Dagor `place_type`.
      * INDEX_NONE means the wire field was absent; an explicit 0 is preserved
      * as 0. UE never executes placement, so nothing may branch on this value.

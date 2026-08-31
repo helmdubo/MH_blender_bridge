@@ -407,4 +407,126 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHInlinePlacementParityTest,
+    "Mimir.V5.Random.InlinePlacementParity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHInlinePlacementParityTest::RunTest(const FString& Parameters)
+{
+    // Owner revision of OPEN-V5-15 (2026-08-31): an inline placement body must
+    // sample exactly like the same ranges referenced through a named profile,
+    // while never becoming a resource or a selected dependency.
+    FMHRandomPlacementProfile Ranges;
+    Ranges.bHasRotationDeg = true;
+    Ranges.RotationDeg[1] = {15.0f, 5.0f};
+    Ranges.RotationDeg[2] = {-30.0f, 10.0f};
+    Ranges.bHasUniformScale = true;
+    Ranges.UniformScale = {1.0f, 0.25f};
+
+    FMHRandomSourceGraph Named;
+    Named.RootComposite = TEXT("root");
+    {
+        FMHRandomComposite Composite;
+        Composite.Name = TEXT("root");
+        FMHRandomNode& Node = Composite.Nodes.AddDefaulted_GetRef();
+        Node.Kind = EMHRandomSemanticKind::Mesh;
+        Node.Resource = TEXT("mug");
+        Node.Profile = TEXT("scatter");
+        Named.Composites.Add(TEXT("root"), Composite);
+        FMHRandomPlacementProfile Profile = Ranges;
+        Profile.Name = TEXT("scatter");
+        Named.Profiles.Add(TEXT("scatter"), Profile);
+        Named.RawHashes.Add(TEXT("composite:root"), TEXT("blake3-160:83cdf24cb1623e340e9cd9d7c85e49cf5018e5ec"));
+        Named.RawHashes.Add(TEXT("static_mesh:mug"), TEXT("blake3-160:396f09fd9654ae39d955859e471310ea6aba8a3e"));
+        Named.RawHashes.Add(TEXT("placement_profile:scatter"), TEXT("blake3-160:3d84d9706b32e702bdc30a2c633cb4ec48cbbab3"));
+    }
+
+    FMHRandomSourceGraph Inline;
+    Inline.RootComposite = TEXT("root");
+    {
+        FMHRandomComposite Composite;
+        Composite.Name = TEXT("root");
+        FMHRandomNode& Node = Composite.Nodes.AddDefaulted_GetRef();
+        Node.Kind = EMHRandomSemanticKind::Mesh;
+        Node.Resource = TEXT("mug");
+        Node.bHasInlinePlacement = true;
+        Node.InlinePlacement = Ranges;
+        Node.InlinePlacement.Name = TEXT("inline");
+        Inline.Composites.Add(TEXT("root"), Composite);
+        Inline.RawHashes.Add(TEXT("composite:root"), TEXT("blake3-160:83cdf24cb1623e340e9cd9d7c85e49cf5018e5ec"));
+        Inline.RawHashes.Add(TEXT("static_mesh:mug"), TEXT("blake3-160:396f09fd9654ae39d955859e471310ea6aba8a3e"));
+    }
+
+    bool bPassed = true;
+    for (const int32 Seed : {7, 12345, -19})
+    {
+        FMHResolvedCompositePlan NamedPlan;
+        FMHResolvedCompositePlan InlinePlan;
+        FString Error;
+        bPassed &= TestTrue(
+            *FString::Printf(TEXT("seed %d named graph resolves"), Seed),
+            MHResolveCompositePlan(Named, Seed, Seed, NamedPlan, Error));
+        if (!Error.IsEmpty()) AddError(Error);
+        Error.Reset();
+        bPassed &= TestTrue(
+            *FString::Printf(TEXT("seed %d inline graph resolves"), Seed),
+            MHResolveCompositePlan(Inline, Seed, Seed, InlinePlan, Error));
+        if (!Error.IsEmpty()) AddError(Error);
+
+        bPassed &= TestEqual(
+            *FString::Printf(TEXT("seed %d draw counts match"), Seed),
+            InlinePlan.Draws.Num(), NamedPlan.Draws.Num());
+        for (int32 Index = 0;
+             Index < FMath::Min(InlinePlan.Draws.Num(), NamedPlan.Draws.Num());
+             ++Index)
+        {
+            bPassed &= TestEqual(TEXT("draw path parity"), InlinePlan.Draws[Index].NodePath, NamedPlan.Draws[Index].NodePath);
+            bPassed &= TestEqual(TEXT("draw role parity"), InlinePlan.Draws[Index].Role, NamedPlan.Draws[Index].Role);
+            bPassed &= TestEqual(TEXT("draw raw parity"), InlinePlan.Draws[Index].RawU32, NamedPlan.Draws[Index].RawU32);
+            bPassed &= TestEqual(TEXT("draw sample parity"), InlinePlan.Draws[Index].Sample, NamedPlan.Draws[Index].Sample);
+        }
+        bPassed &= TestEqual(
+            *FString::Printf(TEXT("seed %d leaf counts match"), Seed),
+            InlinePlan.Leaves.Num(), NamedPlan.Leaves.Num());
+        for (int32 Index = 0;
+             Index < FMath::Min(InlinePlan.Leaves.Num(), NamedPlan.Leaves.Num());
+             ++Index)
+        {
+            const FMHRandomTrs& Left = InlinePlan.Leaves[Index].WorldTrs;
+            const FMHRandomTrs& Right = NamedPlan.Leaves[Index].WorldTrs;
+            bPassed &= TestEqual(TEXT("leaf translation parity"), Left.TranslationCm, Right.TranslationCm);
+            bPassed &= TestEqual(TEXT("leaf scale parity"), Left.Scale, Right.Scale);
+            bPassed &= TestEqual(TEXT("leaf rotation x parity"), Left.RotationQuat.X, Right.RotationQuat.X);
+            bPassed &= TestEqual(TEXT("leaf rotation y parity"), Left.RotationQuat.Y, Right.RotationQuat.Y);
+            bPassed &= TestEqual(TEXT("leaf rotation z parity"), Left.RotationQuat.Z, Right.RotationQuat.Z);
+            bPassed &= TestEqual(TEXT("leaf rotation w parity"), Left.RotationQuat.W, Right.RotationQuat.W);
+        }
+        for (const FString& Dependency : InlinePlan.SelectedDependencies)
+        {
+            bPassed &= TestFalse(
+                TEXT("inline plan never selects a placement_profile resource"),
+                Dependency.StartsWith(TEXT("placement_profile:")));
+        }
+        bPassed &= TestTrue(
+            *FString::Printf(TEXT("seed %d named plan keeps its profile dependency"), Seed),
+            NamedPlan.SelectedDependencies.Contains(TEXT("placement_profile:scatter")));
+    }
+
+    // A node carrying both carriers must fail closed before any draw.
+    FMHRandomSourceGraph Conflicted = Inline;
+    Conflicted.Composites[TEXT("root")].Nodes[0].Profile = TEXT("scatter");
+    Conflicted.Profiles = Named.Profiles;
+    Conflicted.RawHashes = Named.RawHashes;
+    FMHResolvedCompositePlan ConflictedPlan;
+    FString ConflictError;
+    bPassed &= TestFalse(
+        TEXT("profile plus inline placement fails closed"),
+        MHResolveCompositePlan(Conflicted, 7, 7, ConflictedPlan, ConflictError));
+    bPassed &= TestTrue(
+        TEXT("conflict error names the mutual exclusion"),
+        ConflictError.Contains(TEXT("mutually exclusive")));
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests

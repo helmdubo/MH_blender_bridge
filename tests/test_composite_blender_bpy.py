@@ -112,6 +112,30 @@ def test_group_actor_import_export_preserves_tree_order_and_parent_local_transfo
         == expected
 
 
+def test_inline_placement_composite_import_fails_closed_before_any_edit(
+        tmp_path):
+    # The 2026-08-31 owner revision made inline placement a wire construct;
+    # MH scene authoring has no carrier for it yet. A silent import would
+    # lose the body on the next scene export, so the import must refuse.
+    from mh4blend.core.model import PlacementProfile, PlacementRange
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    source = Composite("inline_root", [
+        Node("group", name="frame", placement=PlacementProfile(
+            "",
+            rotation_deg=(
+                PlacementRange(0.0, 0.0),
+                PlacementRange(0.0, 15.0),
+                PlacementRange(0.0, 0.0),
+            ),
+        )),
+    ])
+    path = _write(tmp_path / "inline_root.composite", source)
+    before = _counts()
+    with pytest.raises(MHValidationError, match="inline placement"):
+        import_composite_file(path, source_root=tmp_path)
+    assert _counts() == before
+
+
 def test_direct_writer_uses_explicit_actor_token_without_registry(tmp_path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     collection = bpy.data.collections.new("actor_only")

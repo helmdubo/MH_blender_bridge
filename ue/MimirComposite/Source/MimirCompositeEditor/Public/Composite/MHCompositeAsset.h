@@ -141,6 +141,13 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeAssetNode
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     TArray<FMHCompositeOption> Options;
+
+    /** Inline placement-v1 body (owner revision of OPEN-V5-15, 2026-08-31). */
+    UPROPERTY(VisibleAnywhere, Category = "Mimir")
+    bool bHasInlinePlacement = false;
+
+    UPROPERTY(VisibleAnywhere, Category = "Mimir")
+    FMHPlacementProfile InlinePlacement;
 };
 
 /** Editor-only managed representation of one Source Protocol v5 composite. */

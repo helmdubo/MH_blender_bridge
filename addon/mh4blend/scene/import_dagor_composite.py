@@ -694,8 +694,13 @@ def _dag4blend_p2_range(key, value, provenance):
     return PlacementRange(float(raw[0]), abs(float(raw[1])))
 
 
-def _dag4blend_generated_profile(claims, provenance):
-    """Build one canonical content-addressed profile from inline Dagor p2."""
+def _dag4blend_inline_placement(claims, provenance):
+    """Build one canonical inline placement-v1 body from inline Dagor p2.
+
+    Owner revision of OPEN-V5-15 (2026-08-31): the body stays inline in the
+    node, the way Dagor authors p2, instead of becoming a derived external
+    content-addressed `.placement` resource.
+    """
 
     zero = PlacementRange(0.0, 0.0)
 
@@ -714,7 +719,7 @@ def _dag4blend_generated_profile(claims, provenance):
                 if key in claims else None)
 
     provisional = PlacementProfile(
-        "dagor_inline_p2",
+        "",
         offset_cm=triple("offset"),
         rotation_deg=triple("rot"),
         uniform_scale=scalar("scale:p2"),
@@ -722,15 +727,12 @@ def _dag4blend_generated_profile(claims, provenance):
     )
     try:
         canonical = placement_json_bytes(provisional)
-        suffix = hash_hex(canonical).removeprefix("xxh3:")
-        name = f"dagor_p2_{suffix}"
-        parse_placement_profile(canonical, name=name)
+        return parse_placement_profile(canonical, name="")
     except (RuntimeError, TypeError, ValueError) as exc:
         code = getattr(exc, "code", None) or "MH_E_PLACEMENT_PROFILE_GRAMMAR"
         _raise(
             code, [provenance, *(key for key, _value in claims.values())],
             f"inline dag4blend p2 cannot become a placement profile: {exc}")
-    return name, canonical
 
 
 def _dag4blend_profile(
@@ -755,7 +757,7 @@ def _dag4blend_profile(
             [provenance, profile, *carrier_keys],
             "dag4blend random options cannot carry placement profiles")
     if profile:
-        return profile, False
+        return profile, None
 
     include_keys = [
         key for folded, (key, _value) in claims.items()
@@ -774,27 +776,17 @@ def _dag4blend_profile(
         if folded.endswith(":p2")
     }
     if not p2_claims:
-        return None, False
+        return None, None
     if generated_profiles is None:
         _raise(
             "MH_E_COMPOSITE_GRAMMAR",
             [provenance, *(key for key, _value in p2_claims.values())],
             "dag4blend scene adapter refuses inline p2 outside direct "
-            "composite publication; the derived .placement must be committed "
-            "in the same batch; parameters: "
+            "composite publication; parameters: "
             + ", ".join(sorted(
                 key for key, _value in p2_claims.values())))
 
-    name, canonical = _dag4blend_generated_profile(
-        p2_claims, provenance)
-    existing = generated_profiles.get(name)
-    if existing is not None and existing != canonical:
-        _raise(
-            "MH_E_AMBIGUOUS_RESOURCE_NAME", [provenance, name],
-            "content-addressed dag4blend p2 profile collision has different "
-            "canonical bytes")
-    generated_profiles[name] = canonical
-    return name, True
+    return None, _dag4blend_inline_placement(p2_claims, provenance)
 
 
 def _resource_identity(collection, owner, provenance):
@@ -978,12 +970,12 @@ def convert_dag4blend_collection(
         subjects = [*ancestor_subjects, subject]
         place_type, appearance_seed_boundary = inspect_properties(
             obj, subject, node_path)
-        profile, inline_profile = _dag4blend_profile(
+        profile, inline_placement = _dag4blend_profile(
             obj, subject, generated_profiles=generated_profiles)
-        if inline_profile:
+        if inline_placement is not None:
             # Dagor p2 and tm are mutually exclusive. dag4blend materializes
             # p2 base values into matrix_local only as a viewport preview; the
-            # generated profile is the complete authority, so admitting that
+            # inline placement is the complete authority, so admitting that
             # matrix here would apply every base twice.
             local = Matrix.Identity(4)
             transform, local = _canonical_local_transform(local, subjects)
@@ -1074,6 +1066,7 @@ def convert_dag4blend_collection(
             children=converted_children,
             place_type=place_type,
             appearance_seed_boundary=appearance_seed_boundary,
+            placement=inline_placement,
         )
 
     document = Composite(root_name, [

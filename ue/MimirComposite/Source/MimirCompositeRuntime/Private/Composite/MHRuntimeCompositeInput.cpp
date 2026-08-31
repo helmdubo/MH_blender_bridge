@@ -17,10 +17,12 @@ namespace
 // This transport is private to cooked UObject data. It does not change any
 // source-file version, random stream, resolver token, hash or signature domain.
 // Append-only: version 1 payloads stay readable and decode with an absent
-// appearance boundary flag, which is exactly that grammar's default.
+// appearance boundary flag, version 2 payloads with an absent inline
+// placement; both absences are exactly those grammars' defaults.
 constexpr uint8 RuntimeInputTag[] = {'M', 'H', 'R', 'C', 'I', 'N', 'P'};
 constexpr uint8 RuntimeInputVersion1 = 1;
-constexpr uint8 RuntimeInputVersion = 2;
+constexpr uint8 RuntimeInputVersion2 = 2;
+constexpr uint8 RuntimeInputVersion = 3;
 constexpr int32 RuntimeInputMaxBytes = 64 * 1024 * 1024;
 constexpr uint32 RuntimeInputMaxStringBytes = 1024 * 1024;
 constexpr uint32 RuntimeInputMaxItems = 1024 * 1024;
@@ -250,6 +252,8 @@ bool RuntimeInputOptionKind(const EMHRandomSemanticKind Kind)
     }
 }
 
+bool RuntimeInputProfile(FRuntimeInputArchive& Archive, FMHRandomPlacementProfile& Profile);
+
 bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nodes, const int32 Depth, const uint8 Version)
 {
     if (Depth > RuntimeInputMaxDepth) return Archive.Fail(TEXT("node hierarchy exceeds bounded transport depth"));
@@ -269,6 +273,16 @@ bool RuntimeInputNodes(FRuntimeInputArchive& Archive, TArray<FMHRandomNode>& Nod
             Node.bAppearanceSeedBoundary = Boundary != 0;
         }
         else Node.bAppearanceSeedBoundary = false;
+        if (Version >= 3)
+        {
+            uint8 Inline = Node.bHasInlinePlacement ? 1 : 0;
+            if (!Archive.Byte(Inline)) return false;
+            if (Inline > 1) return Archive.Fail(TEXT("inline placement presence is not a boolean byte"));
+            Node.bHasInlinePlacement = Inline != 0;
+            if (Node.bHasInlinePlacement &&
+                !RuntimeInputProfile(Archive, Node.InlinePlacement)) return false;
+        }
+        else Node.bHasInlinePlacement = false;
         if (!Archive.Array(Node.Options, [&](FMHRandomOption& Option)
         {
             uint8 OptionKind = static_cast<uint8>(Option.Kind);
@@ -311,7 +325,8 @@ bool RuntimeInputGraph(FRuntimeInputArchive& Archive, FMHRandomSourceGraph& Grap
     // predecessor so previously cooked graph bytes keep decoding unchanged.
     uint8 Version = RuntimeInputVersion;
     if (!Archive.Byte(Version)) return false;
-    if (Version != RuntimeInputVersion && Version != RuntimeInputVersion1)
+    if (Version != RuntimeInputVersion && Version != RuntimeInputVersion2 &&
+        Version != RuntimeInputVersion1)
         return Archive.Fail(TEXT("unknown internal transport tag/version"));
     return Archive.String(Graph.RootComposite) &&
         Archive.Map(Graph.Composites, [&](FMHRandomComposite& Composite)

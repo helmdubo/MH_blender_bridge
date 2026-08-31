@@ -42,6 +42,11 @@ class Node:
     # field reaches the resolver, ResolvedSignature or random draws.
     place_type: int | None = None
     appearance_seed_boundary: bool = False
+    # Inline placement-v1 body (owner decision 2026-08-31, revising
+    # OPEN-V5-15): the node carries its randomization ranges directly, the
+    # way Dagor authors inline p2, instead of referencing a derived external
+    # `.placement` resource. Mutually exclusive with ``profile``.
+    placement: "PlacementProfile | None" = None
 
 
 @dataclass
