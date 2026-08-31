@@ -48,6 +48,8 @@ UObject* UE::MimirComposite::MHResolveCompositeDefinitionEndpoint(
 void UMHCompositeDefinitionSubsystem::Deinitialize()
 {
     Definitions.Reset();
+    DefinitionKeysByRoot.Reset();
+    DefinitionKeysByDependency.Reset();
     ActorClassRegistrySnapshot.Reset();
     ResourceInvalidationRevisions.Reset();
     Super::Deinitialize();
@@ -70,11 +72,48 @@ uint64 UMHCompositeDefinitionSubsystem::RefreshActorClassRegistryRevision(
     return ActorClassRegistryRevision;
 }
 
+void UMHCompositeDefinitionSubsystem::IndexDefinition(
+    const FMHCompositeDefinitionKey& Key, const FMHCompositeDefinitionEntry& Entry)
+{
+    // AddUnique guards the readmission of an already-pooled five-part key.
+    DefinitionKeysByRoot.FindOrAdd(Key.RootResourceKey).AddUnique(Key);
+    for (const FMHResourceKey& Dependency : Entry.Dependencies)
+        DefinitionKeysByDependency.FindOrAdd(Dependency).Add(Key);
+}
+
+void UMHCompositeDefinitionSubsystem::UnindexDefinition(
+    const FMHCompositeDefinitionKey& Key, const FMHCompositeDefinitionEntry* Entry)
+{
+    if (TArray<FMHCompositeDefinitionKey>* RootKeys = DefinitionKeysByRoot.Find(Key.RootResourceKey))
+    {
+        RootKeys->RemoveSingle(Key);
+        if (RootKeys->IsEmpty()) DefinitionKeysByRoot.Remove(Key.RootResourceKey);
+    }
+    if (Entry == nullptr) return;
+    for (const FMHResourceKey& Dependency : Entry->Dependencies)
+        if (TSet<FMHCompositeDefinitionKey>* Dependents = DefinitionKeysByDependency.Find(Dependency))
+        {
+            Dependents->Remove(Key);
+            if (Dependents->IsEmpty()) DefinitionKeysByDependency.Remove(Dependency);
+        }
+}
+
+void UMHCompositeDefinitionSubsystem::RemoveDefinitionByKey(const FMHCompositeDefinitionKey& Key)
+{
+    TSharedPtr<FMHCompositeDefinitionEntry> Entry;
+    if (!Definitions.RemoveAndCopyValue(Key, Entry)) return;
+    UnindexDefinition(Key, Entry.Get());
+}
+
 void UMHCompositeDefinitionSubsystem::RemoveDeadDefinitions()
 {
     for (auto It = Definitions.CreateIterator(); It; ++It)
         if (!It.Value().IsValid() || !It.Value()->RootObject.IsValid() ||
-            !It.Value()->Graph.IsValid()) It.RemoveCurrent();
+            !It.Value()->Graph.IsValid())
+        {
+            UnindexDefinition(It.Key(), It.Value().Get());
+            It.RemoveCurrent();
+        }
 }
 
 bool UMHCompositeDefinitionSubsystem::WasInvalidatedDuring(
@@ -102,22 +141,25 @@ TSharedPtr<FMHCompositeDefinitionEntry> UMHCompositeDefinitionSubsystem::GetOrBu
     const FString RootAppliedHash = Root.AppliedHash;
     const FString RootSourceHash = Root.SourceHash;
 
-    for (auto It = Definitions.CreateIterator(); It; ++It)
+    // Snapshot the bucket: a stale removal rewrites both secondary indices.
+    TArray<FMHCompositeDefinitionKey> RootCandidates;
+    if (const TArray<FMHCompositeDefinitionKey>* Bucket = DefinitionKeysByRoot.Find(RootKey))
+        RootCandidates = *Bucket;
+    for (const FMHCompositeDefinitionKey& Key : RootCandidates)
     {
-        const FMHCompositeDefinitionKey& Key = It.Key();
-        const TSharedPtr<FMHCompositeDefinitionEntry>& Entry = It.Value();
-        if (Key.RootResourceKey != RootKey) continue;
+        MHRecordDefinitionLookupProbe();
+        const TSharedPtr<FMHCompositeDefinitionEntry>& Entry = Definitions.FindChecked(Key);
         if (Key.RootAppliedHash != RootAppliedHash ||
             Key.ActorClassRegistryRevision != RegistryRevision ||
             Key.ImporterVersion != MHStaticMeshImporterVersion ||
             Entry->RootSourceHash != RootSourceHash)
         {
-            It.RemoveCurrent();
+            RemoveDefinitionByKey(Key);
             continue;
         }
         if (!MHValidateAppliedCompositeRoot(Root, OutError))
         {
-            It.RemoveCurrent();
+            RemoveDefinitionByKey(Key);
             break;
         }
         OutDependencies = Entry->Dependencies;
@@ -151,6 +193,7 @@ TSharedPtr<FMHCompositeDefinitionEntry> UMHCompositeDefinitionSubsystem::GetOrBu
     Entry->RootSourceHash = RootSourceHash;
     Entry->Graph = Graph;
     Entry->Dependencies = OutDependencies;
+    IndexDefinition(Key, *Entry);
     Definitions.Add(MoveTemp(Key), Entry);
     return Entry;
 }
@@ -160,8 +203,15 @@ void UMHCompositeDefinitionSubsystem::InvalidateDefinition(const FMHResourceKey&
     if (!ChangedKey.IsCanonical()) return;
     ++InvalidationSerial;
     ResourceInvalidationRevisions.Add(ChangedKey, InvalidationSerial);
-    for (auto It = Definitions.CreateIterator(); It; ++It)
-        if (It.Value().IsValid() && It.Value()->Dependencies.Contains(ChangedKey)) It.RemoveCurrent();
+    // Detaching the bucket first also retires it: every definition that observed
+    // ChangedKey is revoked below, so nothing may depend on it afterwards.
+    TSet<FMHCompositeDefinitionKey> Dependents;
+    if (!DefinitionKeysByDependency.RemoveAndCopyValue(ChangedKey, Dependents)) return;
+    for (const FMHCompositeDefinitionKey& Key : Dependents)
+    {
+        MHRecordDefinitionInvalidationProbe();
+        RemoveDefinitionByKey(Key);
+    }
 }
 
 void UMHCompositeDefinitionSubsystem::InvalidateAllDefinitions()
@@ -170,4 +220,6 @@ void UMHCompositeDefinitionSubsystem::InvalidateAllDefinitions()
     GlobalInvalidationRevision = InvalidationSerial;
     ResourceInvalidationRevisions.Reset();
     Definitions.Reset();
+    DefinitionKeysByRoot.Reset();
+    DefinitionKeysByDependency.Reset();
 }

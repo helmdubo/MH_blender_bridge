@@ -79,12 +79,27 @@ public:
 private:
     uint64 RefreshActorClassRegistryRevision(const UMHCompositeSettings& Settings);
     void RemoveDeadDefinitions();
+    void IndexDefinition(
+        const UE::MimirComposite::FMHCompositeDefinitionKey& Key,
+        const UE::MimirComposite::FMHCompositeDefinitionEntry& Entry);
+    /** Index-only maintenance; the caller still owns the Definitions removal. */
+    void UnindexDefinition(
+        const UE::MimirComposite::FMHCompositeDefinitionKey& Key,
+        const UE::MimirComposite::FMHCompositeDefinitionEntry* Entry);
+    void RemoveDefinitionByKey(const UE::MimirComposite::FMHCompositeDefinitionKey& Key);
     bool WasInvalidatedDuring(
         uint64 AdmissionSerial,
         const TSet<UE::MimirComposite::FMHResourceKey>& Dependencies) const;
 
     TMap<UE::MimirComposite::FMHCompositeDefinitionKey,
         TSharedPtr<UE::MimirComposite::FMHCompositeDefinitionEntry>> Definitions;
+    // Secondary views of Definitions, never an identity of their own. The
+    // five-part key stays the integrity identity; every mutation of Definitions
+    // must keep both maps exactly consistent and drop emptied buckets.
+    TMap<UE::MimirComposite::FMHResourceKey,
+        TArray<UE::MimirComposite::FMHCompositeDefinitionKey>> DefinitionKeysByRoot;
+    TMap<UE::MimirComposite::FMHResourceKey,
+        TSet<UE::MimirComposite::FMHCompositeDefinitionKey>> DefinitionKeysByDependency;
     TMap<FString, FSoftClassPath> ActorClassRegistrySnapshot;
     TMap<UE::MimirComposite::FMHResourceKey, uint64> ResourceInvalidationRevisions;
     uint64 ActorClassRegistryRevision = 1;
