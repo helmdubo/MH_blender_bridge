@@ -217,7 +217,34 @@ default `false`, опускается при false). Неавторитетны�
   остаётся заблокированным: произвольный путь из сохранённой сцены не является
   разрешённым source authority.
 
-**Статус. РЕШЕНО OWNER 2026-08-30.**
+**Ревизия owner 2026-08-31.** Полевой прогон показал, что производные
+content-addressed файлы `dagor_p2_*.placement` засоряют Source Root, и owner
+явно пересмотрел выбор в пользу варианта (b): **inline-профиль в грамматике
+`.composite`**, как в Dagor. Нормативная семантика:
+
+- узел получает новое опциональное поле `placement` — полный canonical
+  placement-v1 документ inline (`{"v":1,"kind":"placement_profile",...}`);
+  порядок полей узла: kind, resource, name, transform, profile, `placement`,
+  place_type, appearance_seed_boundary, options, children. Расширение
+  append-only: существующие документы остаются байт-в-байт;
+- `profile` (ссылка) и `placement` (inline) на одном узле взаимоисключимы —
+  fail-closed `MH_E_COMPOSITE_GRAMMAR` в обоих ридерах и врайтерах;
+- тело inline подчиняется полной закрытой placement-v1 грамматике (включая
+  версию, abs-нормализацию deviation на границе адаптера, neutral-дополнение
+  осей, идентичность authored transform без double-base);
+- inline не является ресурсом: не входит в profile references, dependencies,
+  selected resources и project index; runtime-резолвер сэмплит его напрямую
+  из узла теми же draw-ролями и тем же node stream;
+- адаптер dag4blend при direct publication больше не порождает
+  `dagor_p2_*.placement`; уже опубликованные производные файлы становятся
+  сиротами после переэкспорта композитов и подлежат удалению owner'ом;
+- typed `mh4blend.profile` и внешние `.placement` ресурсы продолжают
+  работать без изменений; MH-сценовый импорт композита с inline-узлом —
+  fail-closed до появления сценового carrier'а (follow-up);
+- внутренний runtime тини-транспорт расширен append-only версией 3
+  (v1/v2 payload'ы читаются без изменений).
+
+**Статус. РЕШЕНО OWNER 2026-08-31 (ревизия): вариант (b), inline.**
 
 ## OPEN-V5-16 — значение `MH_APPEARANCE_CHANNELS`
 

@@ -143,7 +143,7 @@ def test_nested_dagor_collection_cannot_bypass_mixed_authority_gate(
     assert not list(tmp_path.iterdir())
 
 
-def test_saved_dagorprops_inline_p2_publishes_one_shared_profile_without_double_base(
+def test_saved_dagorprops_inline_p2_authors_node_placement_without_double_base(
         tmp_path):
     assert not hasattr(bpy.types.Object, "dagorprops")
     root = legacy("direct_root")
@@ -155,38 +155,34 @@ def test_saved_dagorprops_inline_p2_publishes_one_shared_profile_without_double_
             "rot_z:p2": [-5.0, 2.0],
         }
         # dag4blend's matrix is a preview of p2 base values. It must never be
-        # added to the generated profile a second time.
+        # added to the inline placement a second time.
         obj.location = (91.0, 92.0, 93.0)
     before = snapshot()
     report = export_composite_closure_collection(
         root, tmp_path, source_root=tmp_path, mode="include_all")
     assert snapshot() == before
 
+    # Owner revision of OPEN-V5-15 (2026-08-31): inline Dagor p2 stays inline
+    # in the node itself; no derived external .placement resource exists.
     document = read_composite_file(tmp_path / "direct_root.composite")
-    assert document.nodes[0].profile == document.nodes[1].profile
-    profile_name = document.nodes[0].profile
-    assert profile_name.startswith("dagor_p2_")
-    assert document.nodes[0].transform == IDENTITY_TRANSFORM
-    assert document.nodes[1].transform == IDENTITY_TRANSFORM
-
-    profile = read_placement_file(tmp_path / f"{profile_name}.placement")
-    assert profile.rotation_deg == (
+    assert document.nodes[0].profile is None
+    assert document.nodes[1].profile is None
+    assert document.nodes[0].placement == document.nodes[1].placement
+    assert document.nodes[0].placement.rotation_deg == (
         PlacementRange(0.0, 0.0),
         PlacementRange(15.0, 1.0),
         PlacementRange(-5.0, 2.0),
     )
-    assert report["published"] == [
-        f"placement_profile:{profile_name}",
-        "composite:direct_root",
-    ]
+    assert document.nodes[0].transform == IDENTITY_TRANSFORM
+    assert document.nodes[1].transform == IDENTITY_TRANSFORM
+
+    assert report["published"] == ["composite:direct_root"]
+    assert not list(tmp_path.glob("*.placement"))
 
     repeated = export_composite_closure_collection(
         root, tmp_path, source_root=tmp_path, mode="include_all")
     assert repeated["published"] == []
-    assert repeated["reused"] == [
-        f"placement_profile:{profile_name}",
-        "composite:direct_root",
-    ]
+    assert repeated["reused"] == ["composite:direct_root"]
     assert snapshot() == before
 
 
@@ -205,8 +201,9 @@ def test_inline_p2_preserves_all_ranges_and_fills_only_missing_axes(tmp_path):
     assert snapshot() == before
 
     document = read_composite_file(tmp_path / "direct_root.composite")
-    profile = read_placement_file(
-        tmp_path / f"{document.nodes[0].profile}.placement")
+    assert document.nodes[0].profile is None
+    assert not list(tmp_path.glob("*.placement"))
+    profile = document.nodes[0].placement
     assert profile.offset_cm == (
         PlacementRange(10.0, 2.0),
         PlacementRange(0.0, 0.0),
@@ -236,15 +233,14 @@ def test_inline_p2_signed_spread_normalizes_to_the_same_symmetric_range(
     assert snapshot() == before
 
     document = read_composite_file(tmp_path / "direct_root.composite")
-    assert document.nodes[0].profile == document.nodes[1].profile
-    profile = read_placement_file(
-        tmp_path / f"{document.nodes[0].profile}.placement")
+    assert document.nodes[0].placement == document.nodes[1].placement
+    profile = document.nodes[0].placement
     assert profile.offset_cm[0].base == 0.0
     assert profile.offset_cm[0].deviation == pytest.approx(0.01)
-    assert sum(
+    assert not any(
         item.startswith("placement_profile:")
-        for item in report["published"]
-    ) == 1
+        for item in report["published"])
+    assert not list(tmp_path.glob("*.placement"))
 
 
 @pytest.mark.parametrize("properties", [
@@ -274,23 +270,21 @@ def test_scene_include_without_typed_profile_remains_fail_closed(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
-def test_generated_p2_hash_collision_never_overwrites_existing_profile(tmp_path):
+def test_inline_p2_reexport_ignores_foreign_placement_files(tmp_path):
+    # The 2026-08-31 owner revision removed derived .placement resources, so
+    # a foreign placement file in the output folder is not our resource and
+    # must never be read, claimed, or overwritten by inline p2 publication.
     root = legacy("direct_root")
     empty("frame", root)["dagorprops"] = {"rot_y:p2": [0.0, 1.0]}
+    foreign = tmp_path / "dagor_p2_deadbeefdeadbeef.placement"
+    foreign.write_bytes(b"foreign bytes\n")
     before = snapshot()
-    export_composite_closure_collection(
+    report = export_composite_closure_collection(
         root, tmp_path, source_root=tmp_path, mode="include_all")
-    document_path = tmp_path / "direct_root.composite"
-    original_document = document_path.read_bytes()
-    profile_name = read_composite_file(document_path).nodes[0].profile
-    profile_path = tmp_path / f"{profile_name}.placement"
-    profile_path.write_bytes(b"foreign collision\n")
-
-    with pytest.raises(ValueError, match="MH_E_AMBIGUOUS_RESOURCE_NAME"):
-        export_composite_closure_collection(
-            root, tmp_path, source_root=tmp_path, mode="include_all")
-    assert profile_path.read_bytes() == b"foreign collision\n"
-    assert document_path.read_bytes() == original_document
+    assert report["published"] == ["composite:direct_root"]
+    assert foreign.read_bytes() == b"foreign bytes\n"
+    document = read_composite_file(tmp_path / "direct_root.composite")
+    assert document.nodes[0].placement is not None
     assert snapshot() == before
 
 

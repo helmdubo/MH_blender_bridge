@@ -100,6 +100,13 @@ struct MIMIRCOMPOSITERUNTIME_API FMHRandomNode
     bool bAppearanceSeedBoundary = false;
     TArray<FMHRandomOption> Options;
     TArray<FMHRandomNode> Children;
+    /**
+     * Inline placement body (owner revision of OPEN-V5-15, 2026-08-31): the
+     * node samples these ranges directly, without a named external profile.
+     * Mutually exclusive with Profile; not a graph resource or dependency.
+     */
+    bool bHasInlinePlacement = false;
+    FMHRandomPlacementProfile InlinePlacement;
 };
 
 struct MIMIRCOMPOSITERUNTIME_API FMHRandomComposite

@@ -232,7 +232,6 @@ bool FMHCompositeNodeMetadataGrammarTest::RunTest(const FString& Parameters)
         TEXT(R"({"v":5,"nodes":[{"kind":"group","appearance_seed_boundary":true,"appearance_seed_boundary":false}]})"),
         // The node grammar stays closed: near-miss names are still unknown fields.
         TEXT(R"({"v":5,"nodes":[{"kind":"group","place_types":0}]})"),
-        TEXT(R"({"v":5,"nodes":[{"kind":"group","placement":{"mode":"pivot"}}]})"),
         // Carriers are node-only; random options keep their three-field grammar.
         TEXT(R"({"v":5,"nodes":[{"kind":"random","options":[{"kind":"gameobj","resource":"a","weight":1,"place_type":0}]}]})"),
         TEXT(R"({"v":5,"nodes":[{"kind":"random","options":[{"kind":"gameobj","resource":"a","weight":1,"appearance_seed_boundary":true}]}]})")};
@@ -244,6 +243,19 @@ bool FMHCompositeNodeMetadataGrammarTest::RunTest(const FString& Parameters)
             MHParseCompositeV5(MetadataUtf8(Json), Document, Error));
         bPassed &= TestTrue(TEXT("rejection uses the existing composite grammar code"),
             Error.Contains(TEXT("MH_E_COMPOSITE_GRAMMAR")));
+    }
+    // Since the 2026-08-31 owner revision of OPEN-V5-15, `placement` is a
+    // legal node field whose body keeps the full closed placement-v1 grammar
+    // with its own codes; a malformed body is still rejected before any use.
+    {
+        FMHCompositeDocument PlacementDocument;
+        FString PlacementError;
+        bPassed &= TestFalse(TEXT("malformed inline placement body is rejected"),
+            MHParseCompositeV5(
+                MetadataUtf8(TEXT(R"({"v":5,"nodes":[{"kind":"group","placement":{"mode":"pivot"}}]})")),
+                PlacementDocument, PlacementError));
+        bPassed &= TestTrue(TEXT("inline placement rejection uses the placement grammar code"),
+            PlacementError.Contains(TEXT("MH_E_PLACEMENT_PROFILE_GRAMMAR")));
     }
     // The writer refuses anything below the absent sentinel; no new code is introduced.
     FMHCompositeDocument Document;

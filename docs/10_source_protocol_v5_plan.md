@@ -539,17 +539,29 @@ applied state не получают version-поля. Существующие v
 Канонические байты сохраняют режим v4 §5: UTF-8, LF, финальный LF, отступ 2,
 float32-shortest, целые без дробной части, identity-поля опускаются.
 Порядок полей корня `v → nodes`; узла
-`kind → resource → name → transform → profile → placement → appearance_seed_boundary
-→ options → children`; transform
+`kind → resource → name → transform → profile → placement → place_type
+→ appearance_seed_boundary → options → children`; transform
 `translation_cm → rotation_quat → scale`; option `kind → resource → weight`.
 Узлы и options не сортируются.
 
-`profile` сохраняет прежнее место после transform. Порядок двух новых
-опциональных носителей из документа 13 R2 §7 фиксируется после него
-(закрытие OPEN-V5-21 owner'ом); пропуск profile в документе 12 — редакционный
-остаток, не удаление действующего поля. Неизменённые документы дают прежние
-байты; новые поля не меняют формулу ResolvedSignature или RNG. Их source bytes
+`profile` сохраняет прежнее место после transform. Порядок двух
+провенанс-носителей из документа 13 R2 §7 (`place_type`,
+`appearance_seed_boundary`) фиксируется после него (закрытие OPEN-V5-21
+owner'ом); пропуск profile в документе 12 — редакционный остаток, не
+удаление действующего поля. Неизменённые документы дают прежние байты;
+новые поля не меняют формулу ResolvedSignature или RNG. Их source bytes
 участвуют в raw/closure hash обычным образом (§13.3).
+
+Ревизия OPEN-V5-15 (owner 2026-08-31): узел может нести опциональное поле
+`placement` — полный canonical placement-v1 документ inline
+(`{"v":1,"kind":"placement_profile",...}`), в каноническом порядке сразу
+после `profile`. `profile` и `placement` взаимоисключимы
+(`MH_E_COMPOSITE_GRAMMAR`); тело inline подчиняется полной закрытой
+placement-v1 грамматике со своими кодами. Inline не является ресурсом: не
+входит в profile references, dependency-граф и project index; резолвер
+сэмплит его напрямую из узла теми же draw-ролями и node stream, что и
+внешний профиль. Расширение append-only: документы без поля остаются
+байт-в-байт.
 
 ### 6.2 Parent-local transform contract и shear
 

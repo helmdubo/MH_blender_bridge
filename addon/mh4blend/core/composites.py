@@ -40,8 +40,8 @@ _KINDS = frozenset({"mesh", "actor", "composite", "group", "random", "gameobj"})
 _RESOURCE_KINDS = frozenset({"mesh", "actor", "composite", "gameobj"})
 _OPTION_KINDS = frozenset({"mesh", "actor", "composite", "empty", "gameobj"})
 _NODE_FIELDS = frozenset({
-    "kind", "resource", "name", "transform", "profile", "place_type",
-    "appearance_seed_boundary", "options", "children",
+    "kind", "resource", "name", "transform", "profile", "placement",
+    "place_type", "appearance_seed_boundary", "options", "children",
 })
 _OPTION_FIELDS = frozenset({"kind", "resource", "weight"})
 _TRANSFORM_FIELDS = frozenset({"translation_cm", "rotation_quat", "scale"})
@@ -181,6 +181,39 @@ def _appearance_seed_boundary(value: Any, path: str) -> bool:
     return value
 
 
+def _rebased_placement_path(node_path: str, placement_path: str) -> str:
+    if placement_path.startswith("$"):
+        return node_path + placement_path[1:]
+    return f"{node_path}.{placement_path}"
+
+
+def _inline_placement_from_document(value: Any, path: str) -> "PlacementProfile":
+    from .placements import PlacementValueError, parse_placement_profile
+    if not isinstance(value, dict):
+        raise _error(path, "inline placement must be an object")
+    try:
+        return parse_placement_profile(value, name="")
+    except PlacementValueError as exc:
+        raise CompositeValueError(
+            exc.code,
+            _rebased_placement_path(path, exc.path),
+            str(exc).split(": ", 2)[-1],
+        ) from exc
+
+
+def _inline_placement_document(value: Any, path: str) -> dict[str, Any]:
+    from .placements import PlacementValueError, placement_document
+    try:
+        return placement_document(value)
+    except (PlacementValueError, TypeError) as exc:
+        placement_path = getattr(exc, "path", "$")
+        raise CompositeValueError(
+            getattr(exc, "code", "MH_E_COMPOSITE_GRAMMAR"),
+            _rebased_placement_path(path, placement_path),
+            str(exc).split(": ", 2)[-1],
+        ) from exc
+
+
 def _option_from_document(value: Any, path: str) -> RandomOption:
     if not isinstance(value, dict):
         raise _error(path, "option must be an object")
@@ -235,6 +268,13 @@ def _node_from_document(value: Any, path: str) -> Node:
     profile = (
         _token(value["profile"], f"{path}.profile")
         if "profile" in value else None)
+    placement = (
+        _inline_placement_from_document(value["placement"], f"{path}.placement")
+        if "placement" in value else None)
+    if profile is not None and placement is not None:
+        raise _error(
+            path,
+            "fields 'profile' and 'placement' are mutually exclusive")
     transform = (
         _transform(value["transform"], f"{path}.transform", reader=True)
         if "transform" in value else IDENTITY_TRANSFORM)
@@ -268,7 +308,7 @@ def _node_from_document(value: Any, path: str) -> Node:
         for index, child in enumerate(children_value)]
     return Node(
         kind, transform, name, resource, profile, options, children,
-        place_type, appearance_seed_boundary)
+        place_type, appearance_seed_boundary, placement=placement)
 
 
 def _option_document(option: RandomOption, path: str) -> dict[str, Any]:
@@ -321,10 +361,18 @@ def _node_document(node: Node, path: str) -> dict[str, Any]:
     if transform_document:
         document["transform"] = transform_document
     if node.profile is not None:
+        if node.placement is not None:
+            raise _error(
+                path,
+                "fields 'profile' and 'placement' are mutually exclusive")
         document["profile"] = _token(node.profile, f"{path}.profile")
-    # OPEN-V5-21 order: kind, resource, name, transform, profile, place_type,
-    # appearance_seed_boundary, options, children.  Both carriers are elided at
-    # their defaults so every existing document stays byte identical.
+    if node.placement is not None:
+        document["placement"] = _inline_placement_document(
+            node.placement, f"{path}.placement")
+    # OPEN-V5-21 order extended by the 2026-08-31 owner revision of
+    # OPEN-V5-15: kind, resource, name, transform, profile, placement,
+    # place_type, appearance_seed_boundary, options, children.  Every carrier
+    # is elided at its default so existing documents stay byte identical.
     if node.place_type is not None:
         document["place_type"] = _place_type(node.place_type, f"{path}.place_type")
     if _appearance_seed_boundary(

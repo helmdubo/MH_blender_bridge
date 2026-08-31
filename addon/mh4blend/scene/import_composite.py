@@ -190,6 +190,15 @@ def _preflight(
 
     for profile_name in preloaded_profiles:
         validate_resource_name(profile_name)
+    for document in documents.values():
+        for _index, node in _iter_nodes(document):
+            if node.placement is not None:
+                raise MHValidationError(
+                    "MH_E_UNREPRESENTABLE_SCENE_OBJECT",
+                    [document.name],
+                    "inline placement nodes have no MH scene authoring "
+                    "carrier yet; edit the originating Dagor scene or the "
+                    "composite source directly")
     profile_names = {
         node.profile
         for document in documents.values()
