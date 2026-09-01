@@ -59,6 +59,17 @@ public:
     bool HasStoredAppearanceSeed() const { return bAppearanceSeedStored; }
 
     const UE::MimirComposite::FMHResolvedCompositePlan* GetResolvedPlan() const;
+    /** U7 instrumentation: a full diagnostic plan is resident only on demand. */
+    bool HasResidentResolvedDebugPlan() const;
+    /** U7 instrumentation: compact placement state must never retain trace/preimage arrays. */
+    bool HasCompactResolvedDiagnostics() const;
+    /** U7 instrumentation: owned heap bytes of the placement's retained resolved state. */
+    uint64 GetCompactResolvedStateAllocatedBytes() const;
+    /** U7 instrumentation: plan-aligned leaf count without materializing a debug trace. */
+    int32 GetCompactResolvedLeafCount() const;
+    const FString& GetCompactResolvedSignature() const;
+    const FString& GetCompactAppearanceSignature() const;
+    const FString& GetCompactPlacementSignature() const;
     const FString& GetLastPlacementError() const { return LastPlacementError; }
     EMHCompositeSeedEffect GetSeedAffectsResult() const { return SeedAffectsResult; }
 

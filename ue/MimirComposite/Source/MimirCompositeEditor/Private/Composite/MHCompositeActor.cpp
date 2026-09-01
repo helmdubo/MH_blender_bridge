@@ -189,6 +189,76 @@ const UE::MimirComposite::FMHResolvedCompositePlan* AMHCompositeActor::GetResolv
         LastPlacementError.IsEmpty() ? ResolvedPlan.Get() : nullptr;
 }
 
+bool AMHCompositeActor::HasResidentResolvedDebugPlan() const
+{
+    // Red-first U7 baseline: before compact storage, the sole retained plan is
+    // necessarily the full diagnostic plan.
+    return ResolvedPlan.IsValid();
+}
+
+bool AMHCompositeActor::HasCompactResolvedDiagnostics() const
+{
+    if (!ResolvedPlan.IsValid()) return false;
+    return !ResolvedPlan->Decisions.IsEmpty() || !ResolvedPlan->Draws.IsEmpty() ||
+        !ResolvedPlan->SignaturePreimage.IsEmpty() ||
+        !ResolvedPlan->Appearance.Draws.IsEmpty() ||
+        !ResolvedPlan->Appearance.SignaturePreimage.IsEmpty();
+}
+
+uint64 AMHCompositeActor::GetCompactResolvedStateAllocatedBytes() const
+{
+    if (!ResolvedPlan.IsValid()) return 0;
+    const UE::MimirComposite::FMHResolvedCompositePlan& Plan = *ResolvedPlan;
+    uint64 Bytes = Plan.Closure.Resources.GetAllocatedSize() +
+        Plan.Closure.OrderedRawHashes.GetAllocatedSize() +
+        Plan.Closure.HashPreimage.GetAllocatedSize() +
+        Plan.Decisions.GetAllocatedSize() + Plan.Draws.GetAllocatedSize() +
+        Plan.Nodes.GetAllocatedSize() + Plan.Leaves.GetAllocatedSize() +
+        Plan.SelectedDependencies.GetAllocatedSize() + Plan.SignaturePreimage.GetAllocatedSize() +
+        Plan.Appearance.Draws.GetAllocatedSize() +
+        Plan.Appearance.SignaturePreimage.GetAllocatedSize();
+    for (const FString& Value : Plan.Closure.Resources) Bytes += Value.GetAllocatedSize();
+    for (const FString& Value : Plan.Closure.OrderedRawHashes) Bytes += Value.GetAllocatedSize();
+    for (const UE::MimirComposite::FMHResolvedCompositeDecision& Value : Plan.Decisions)
+        Bytes += Value.NodePath.GetAllocatedSize() + Value.Weights.GetAllocatedSize();
+    for (const UE::MimirComposite::FMHResolvedCompositeDraw& Value : Plan.Draws)
+        Bytes += Value.NodePath.GetAllocatedSize() + Value.Role.GetAllocatedSize();
+    for (const UE::MimirComposite::FMHResolvedCompositeNode& Value : Plan.Nodes)
+        Bytes += Value.NodePath.GetAllocatedSize() + Value.DisplayName.GetAllocatedSize() +
+            Value.Resource.GetAllocatedSize();
+    for (const UE::MimirComposite::FMHResolvedCompositeLeaf& Value : Plan.Leaves)
+        Bytes += Value.Resource.GetAllocatedSize() + Value.Origin.GetAllocatedSize() +
+            Value.DisplayName.GetAllocatedSize() + Value.AppearanceBoundaryPath.GetAllocatedSize();
+    for (const FString& Value : Plan.SelectedDependencies) Bytes += Value.GetAllocatedSize();
+    for (const UE::MimirComposite::FMHResolvedCompositeAppearanceDraw& Value : Plan.Appearance.Draws)
+        Bytes += Value.NodePath.GetAllocatedSize() + Value.BoundaryPath.GetAllocatedSize();
+    Bytes += Plan.Closure.ClosureHash.GetAllocatedSize() + Plan.ResolvedSignature.GetAllocatedSize() +
+        Plan.Appearance.AppearanceSignature.GetAllocatedSize() + Plan.PlacementSignature.GetAllocatedSize();
+    return Bytes;
+}
+
+int32 AMHCompositeActor::GetCompactResolvedLeafCount() const
+{
+    return ResolvedPlan.IsValid() ? ResolvedPlan->Leaves.Num() : 0;
+}
+
+const FString& AMHCompositeActor::GetCompactResolvedSignature() const
+{
+    return ResolvedPlan.IsValid() ? ResolvedPlan->ResolvedSignature : ResolvedSignature;
+}
+
+const FString& AMHCompositeActor::GetCompactAppearanceSignature() const
+{
+    static const FString Empty;
+    return ResolvedPlan.IsValid() ? ResolvedPlan->Appearance.AppearanceSignature : Empty;
+}
+
+const FString& AMHCompositeActor::GetCompactPlacementSignature() const
+{
+    static const FString Empty;
+    return ResolvedPlan.IsValid() ? ResolvedPlan->PlacementSignature : Empty;
+}
+
 void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
 {
     Modify();

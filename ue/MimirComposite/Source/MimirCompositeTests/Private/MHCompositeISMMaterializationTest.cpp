@@ -180,6 +180,53 @@ bool FMHCompositeISMBucketMaterializationTest::RunTest(const FString& Parameters
     return bPassed;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHCompositeCompactResolvedStateTest,
+    "Mimir.V5.Composite.CompactResolvedState.LazyDebugPlan",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositeCompactResolvedStateTest::RunTest(const FString& Parameters)
+{
+    FMHISMMaterializationFixture Fixture(*this);
+    if (!Fixture.Build(12)) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    Actor->SetAutoSeed(false);
+    Actor->SetAutoAppearanceSeed(false);
+    Actor->SetSeed(1729);
+    Actor->SetAppearanceSeed(2718);
+    Actor->SetCompositeAsset(Fixture.Composite);
+
+    bool bPassed = TestFalse(TEXT("ordinary placement retains no full debug plan"),
+        Actor->HasResidentResolvedDebugPlan());
+    bPassed &= TestFalse(TEXT("compact state retains no draws, decisions, or preimages"),
+        Actor->HasCompactResolvedDiagnostics());
+    bPassed &= TestEqual(TEXT("compact state keeps every materialized leaf"),
+        Actor->GetCompactResolvedLeafCount(), 12);
+
+    const FString ResolvedSignature = Actor->GetCompactResolvedSignature();
+    const FString AppearanceSignature = Actor->GetCompactAppearanceSignature();
+    const FString PlacementSignature = Actor->GetCompactPlacementSignature();
+    const FMHResolvedCompositePlan* Debug = Actor->GetResolvedPlan();
+    bPassed &= TestNotNull(TEXT("explicit inspection lazily materializes the full debug plan"), Debug);
+    if (Debug != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("lazy plan contains appearance trace"),
+            !Debug->Appearance.Draws.IsEmpty() && !Debug->Appearance.SignaturePreimage.IsEmpty());
+        bPassed &= TestEqual(TEXT("lazy plan preserves the resolved signature"),
+            Debug->ResolvedSignature, ResolvedSignature);
+        bPassed &= TestEqual(TEXT("lazy plan preserves the appearance signature"),
+            Debug->Appearance.AppearanceSignature, AppearanceSignature);
+        bPassed &= TestEqual(TEXT("lazy plan preserves the placement signature"),
+            Debug->PlacementSignature, PlacementSignature);
+    }
+    bPassed &= TestTrue(TEXT("debug plan is resident after explicit inspection"),
+        Actor->HasResidentResolvedDebugPlan());
+
+    Actor->Destroy();
+    World->DestroyWorld(false);
+    return bPassed;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHCompositeISMBucketPolicyAdmissionTest,
     "Mimir.V5.Composite.ISM.BucketPolicyRejectsMutatedReuse",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
