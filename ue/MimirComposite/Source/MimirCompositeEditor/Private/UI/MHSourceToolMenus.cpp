@@ -687,7 +687,9 @@ void ExecuteInspectResolvedPlan(
     bool bHasErrors = false;
     for (const AMHCompositeActor* Actor : Actors)
     {
-        // Inspection never resolves a new result or guesses a seed for an asset.
+        Actor->RetainResolvedDebugPlan();
+        // Inspection reconstructs the actor's already signed result on demand;
+        // it never guesses a seed or changes the placement authority.
         const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
         if (Plan == nullptr || Plan->Seed != Actor->GetSeed() || !Actor->GetLastPlacementError().IsEmpty())
         {
@@ -695,6 +697,7 @@ void ExecuteInspectResolvedPlan(
             Log.Error(FText::FromString(FString::Printf(
                 TEXT("MH_E_INVALID_RESOURCE_SOURCE: no current resolved plan for %s: %s"),
                 *Actor->GetPathName(), *Actor->GetLastPlacementError())));
+            Actor->ReleaseResolvedDebugPlan();
             continue;
         }
         Log.Info(FText::FromString(FString::Printf(
@@ -735,6 +738,7 @@ void ExecuteInspectResolvedPlan(
             TEXT("%d decisions, %d draws, %d leaves | SelectedDependencies=[%s]"),
             Plan->Decisions.Num(), Plan->Draws.Num(), Plan->Leaves.Num(),
             *FString::Join(Plan->SelectedDependencies, TEXT(", ")))));
+        Actor->ReleaseResolvedDebugPlan();
     }
     Log.Notify(Page, bHasErrors ? EMessageSeverity::Error : EMessageSeverity::Info, true);
     Log.Open(EMessageSeverity::Info);

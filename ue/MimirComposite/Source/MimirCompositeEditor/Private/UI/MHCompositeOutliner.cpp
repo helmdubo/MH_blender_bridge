@@ -192,6 +192,7 @@ public:
 
     virtual ~SMHCompositeOutliner() override
     {
+        if (CurrentActor.IsValid()) CurrentActor->ReleaseResolvedDebugPlan();
         if (FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
         {
             FLevelEditorModule& LevelEditor =
@@ -596,7 +597,13 @@ private:
                 }
             }
         }
-        CurrentActor = CompositeCount == 1 ? Actor : nullptr;
+        AMHCompositeActor* NextActor = CompositeCount == 1 ? Actor : nullptr;
+        if (CurrentActor.Get() != NextActor)
+        {
+            if (CurrentActor.IsValid()) CurrentActor->ReleaseResolvedDebugPlan();
+            CurrentActor = NextActor;
+            if (CurrentActor.IsValid()) CurrentActor->RetainResolvedDebugPlan();
+        }
         RefreshModel();
     }
 
