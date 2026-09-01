@@ -7,12 +7,16 @@
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Diagnostics/MHSourceOperations.h"
+#include "DesktopPlatformModule.h"
 #include "Editor.h"
 #include "Elements/Framework/TypedElementSelectionSet.h"
+#include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "IDesktopPlatform.h"
 #include "Index/MHProjectResourceIndex.h"
 #include "LevelEditorMenuContext.h"
 #include "Logging/MessageLog.h"
+#include "Material/MHMaterialDocumentExport.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
@@ -869,6 +873,181 @@ void ExecutePublishMaterials(const FToolMenuContext& MenuContext)
         Error);
 }
 
+void ReportMaterialDocumentExport(
+    const FMHMaterialDocumentExportPlan& Plan,
+    const FMHMaterialDocumentExportResult& Result,
+    const FString& Error)
+{
+    FMessageLog Log(TEXT("Mimir"));
+    Log.NewPage(LOCTEXT("ExportMaterialDocumentPage", "Export MH Material Documents"));
+    for (const FMHMaterialDocumentExportFailure& Skipped : Plan.Skipped)
+    {
+        Log.Error(FText::FromString(FString::Printf(
+            TEXT("%s -> %s: %s"),
+            *Skipped.MaterialPath,
+            *Skipped.DestinationPath,
+            *Skipped.Error)));
+    }
+    for (const FMHMaterialDocumentExportFailure& Failed : Result.FailedWrites)
+    {
+        Log.Error(FText::FromString(FString::Printf(
+            TEXT("%s -> %s: %s"),
+            *Failed.MaterialPath,
+            *Failed.DestinationPath,
+            *Failed.Error)));
+    }
+    for (const FString& ExportedPath : Result.ExportedPaths)
+    {
+        Log.Info(FText::FromString(FString::Printf(
+            TEXT("Exported material document: %s"),
+            *ExportedPath)));
+    }
+    if (Result.bCancelled)
+    {
+        Log.Info(LOCTEXT(
+            "ExportMaterialDocumentsCancelledLog",
+            "Material document export cancelled before any file was written."));
+    }
+    if (!Error.IsEmpty())
+    {
+        Log.Error(FText::FromString(Error));
+    }
+
+    const FText Summary = Result.bCancelled
+        ? LOCTEXT("ExportMaterialDocumentsCancelled", "Material document export cancelled")
+        : FText::Format(
+            LOCTEXT(
+                "ExportMaterialDocumentsSummary",
+                "Exported {0} material document(s); skipped {1}"),
+            FText::AsNumber(Result.ExportedCount),
+            FText::AsNumber(Plan.Skipped.Num() + Result.FailedWrites.Num()));
+    const bool bHasErrors = !Error.IsEmpty() || !Plan.Skipped.IsEmpty() ||
+        !Result.FailedWrites.IsEmpty();
+    Log.Notify(
+        Summary,
+        bHasErrors ? EMessageSeverity::Warning : EMessageSeverity::Info,
+        true);
+}
+
+void ExecuteExportMaterialDocuments(const FToolMenuContext& MenuContext)
+{
+    const UContentBrowserAssetContextMenuContext* Context =
+        UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext);
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+    if (Context == nullptr || Settings == nullptr || DesktopPlatform == nullptr ||
+        !FSlateApplication::IsInitialized())
+    {
+        FMHMaterialDocumentExportPlan EmptyPlan;
+        FMHMaterialDocumentExportResult EmptyResult;
+        ReportMaterialDocumentExport(
+            EmptyPlan,
+            EmptyResult,
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: material document export UI is unavailable"));
+        return;
+    }
+
+    TArray<UMaterialInstanceConstant*> Materials =
+        Context->LoadSelectedObjects<UMaterialInstanceConstant>();
+    Materials.Remove(nullptr);
+    Materials.Sort([](const UMaterialInstanceConstant& Left, const UMaterialInstanceConstant& Right)
+    {
+        return Left.GetPathName() < Right.GetPathName();
+    });
+    if (Materials.IsEmpty())
+    {
+        FMHMaterialDocumentExportPlan EmptyPlan;
+        FMHMaterialDocumentExportResult EmptyResult;
+        ReportMaterialDocumentExport(
+            EmptyPlan,
+            EmptyResult,
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: no Material Instance is selected"));
+        return;
+    }
+
+    const void* ParentWindow =
+        FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+    const FString DefaultFolder = FPaths::ConvertRelativePathToFull(
+        FPaths::ProjectSavedDir(),
+        TEXT("Mimir/MaterialExports"));
+    TArray<FMHMaterialDocumentExportRequest> Requests;
+    Requests.Reserve(Materials.Num());
+    if (Materials.Num() == 1)
+    {
+        const FString SuggestedName =
+            MHGetMaterialDocumentExportLogicalName(*Materials[0]) + TEXT(".material");
+        TArray<FString> SelectedPaths;
+        if (!DesktopPlatform->SaveFileDialog(
+                ParentWindow,
+                LOCTEXT("ExportMaterialDocumentDialogTitle", "Export Material Document").ToString(),
+                DefaultFolder,
+                SuggestedName,
+                TEXT("MH Material Document (*.material)|*.material"),
+                EFileDialogFlags::None,
+                SelectedPaths) ||
+            SelectedPaths.Num() != 1)
+        {
+            return;
+        }
+        Requests.Add({Materials[0], SelectedPaths[0]});
+    }
+    else
+    {
+        FString SelectedFolder;
+        if (!DesktopPlatform->OpenDirectoryDialog(
+                ParentWindow,
+                LOCTEXT("ExportMaterialDocumentsFolderTitle", "Export Material Documents").ToString(),
+                DefaultFolder,
+                SelectedFolder))
+        {
+            return;
+        }
+        for (UMaterialInstanceConstant* Material : Materials)
+        {
+            Requests.Add({
+                Material,
+                FPaths::Combine(
+                    SelectedFolder,
+                    MHGetMaterialDocumentExportLogicalName(*Material) + TEXT(".material"))});
+        }
+    }
+
+    FMHMaterialDocumentExportPlan Plan;
+    FString Error;
+    if (!MHPrepareMaterialDocumentExport(
+            Requests,
+            *Settings,
+            Settings->GetSourceRootPath(),
+            Plan,
+            Error))
+    {
+        FMHMaterialDocumentExportResult EmptyResult;
+        ReportMaterialDocumentExport(Plan, EmptyResult, Error);
+        return;
+    }
+
+    bool bAllowOverwrite = false;
+    if (!Plan.OverwritePaths.IsEmpty())
+    {
+        const FString Paths = FString::Join(Plan.OverwritePaths, TEXT("\n"));
+        const FText Prompt = FText::Format(
+            LOCTEXT(
+                "ExportMaterialDocumentsOverwritePrompt",
+                "The following material documents already exist:\n\n{0}\n\nOverwrite all of them? Cancelling writes nothing."),
+            FText::FromString(Paths));
+        bAllowOverwrite = FMessageDialog::Open(
+            EAppMsgType::YesNo,
+            Prompt,
+            LOCTEXT("ExportMaterialDocumentsOverwriteTitle", "Overwrite Material Documents")) ==
+            EAppReturnType::Yes;
+    }
+
+    FMHMaterialDocumentExportResult Result;
+    Error.Reset();
+    MHCommitMaterialDocumentExport(Plan, bAllowOverwrite, Result, Error);
+    ReportMaterialDocumentExport(Plan, Result, Error);
+}
+
 void ExecutePublishComposites(const FToolMenuContext& MenuContext)
 {
     const UContentBrowserAssetContextMenuContext* Context =
@@ -1235,6 +1414,17 @@ void MHRegisterS6ToolMenus()
                     LOCTEXT("PublishMaterialTip", "Full-overwrite the selected .material documents from their live Material Instances."),
                     FSlateIcon(),
                     Action);
+                FToolUIAction ExportAction;
+                ExportAction.ExecuteAction =
+                    FToolMenuExecuteAction::CreateStatic(&ExecuteExportMaterialDocuments);
+                DynamicSection.AddMenuEntry(
+                    TEXT("MHExportMaterialDocuments"),
+                    LOCTEXT("ExportMaterialDocument", "Export Material Document..."),
+                    LOCTEXT(
+                        "ExportMaterialDocumentTip",
+                        "Write canonical .material document copies outside MH Source Root without changing receipts."),
+                    FSlateIcon(),
+                    ExportAction);
             }));
     }
 
