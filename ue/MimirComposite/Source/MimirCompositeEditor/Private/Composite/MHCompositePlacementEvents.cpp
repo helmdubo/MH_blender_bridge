@@ -84,7 +84,9 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         {
             const uint64 RebuildStart = FPlatformTime::Cycles64();
             Actor->RebuildComposite();
-            MHRecordReimportActorRebuild(FPlatformTime::Cycles64() - RebuildStart);
+            MHRecordReimportActorRebuild(
+                *Actor,
+                FPlatformTime::Cycles64() - RebuildStart);
         }
         else
         {

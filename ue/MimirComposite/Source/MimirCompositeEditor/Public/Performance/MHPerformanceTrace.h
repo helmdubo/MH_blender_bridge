@@ -136,7 +136,8 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanPass();
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanEnumeratedBytes(uint64 Bytes);
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanIOHash(uint64 Cycles, bool bHashed);
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanParse(
-    EMHResourceKind Kind,
+    const FMHResourceKey& Key,
+    const FString& SourcePath,
     uint64 Cycles);
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanSQLite(uint64 Cycles);
 MIMIRCOMPOSITEEDITOR_API void MHRecordFullScanCompleted();
@@ -164,5 +165,7 @@ private:
 
 MIMIRCOMPOSITEEDITOR_API void MHRecordReimportNotifiedResource(
     const FMHResourceKey& Key);
-MIMIRCOMPOSITEEDITOR_API void MHRecordReimportActorRebuild(uint64 Cycles);
+MIMIRCOMPOSITEEDITOR_API void MHRecordReimportActorRebuild(
+    const UObject& Actor,
+    uint64 Cycles);
 } // namespace UE::MimirComposite

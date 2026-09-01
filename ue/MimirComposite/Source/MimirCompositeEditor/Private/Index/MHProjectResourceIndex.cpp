@@ -1371,7 +1371,10 @@ private:
             Key.Kind == EMHResourceKind::Composite ||
             Key.Kind == EMHResourceKind::PlacementProfile))
         {
-            MHRecordSourceScanParse(Key.Kind, FPlatformTime::Cycles64() - ParseStart);
+            MHRecordSourceScanParse(
+                Key,
+                OutCandidate.RelativePath,
+                FPlatformTime::Cycles64() - ParseStart);
         }
         return true;
     }

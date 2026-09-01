@@ -36,6 +36,7 @@ struct FMapLoadAccumulator
     TSet<FMHResourceKey> SelectedMeshes;
     TSet<FMHResourceKey> CompilingMeshes;
     TMap<FMHResourceKey, FString> VerboseMeshPaths;
+    TMap<FString, double> VerboseActorMilliseconds;
     int32 ActiveScopes = 0;
     bool bPending = false;
 };
@@ -52,6 +53,7 @@ struct FSourceScanAccumulator
     FMHStartupScanPerfReport Values;
     uint64 StartCycles = 0;
     uint64 FullScansBefore = 0;
+    TMap<FString, double> VerboseResourceMilliseconds;
 };
 
 struct FReimportAccumulator
@@ -60,6 +62,7 @@ struct FReimportAccumulator
     uint64 StartCycles = 0;
     uint64 FullScansBefore = 0;
     TSet<FMHResourceKey> NotifiedKeys;
+    TMap<FString, double> VerboseActorMilliseconds;
 };
 
 thread_local FSourceScanAccumulator* GActiveSourceScan = nullptr;
@@ -81,6 +84,29 @@ FString ScanTriggerLabel(EMHPerfScanTrigger Trigger)
     case EMHPerfScanTrigger::Automatic: break;
     }
     return TEXT("manual");
+}
+
+FString SlowestRows(const TMap<FString, double>& Durations)
+{
+    TArray<TPair<FString, double>> Rows;
+    Rows.Reserve(Durations.Num());
+    for (const TPair<FString, double>& Pair : Durations)
+    {
+        Rows.Add(Pair);
+    }
+    Rows.Sort([](const TPair<FString, double>& Left, const TPair<FString, double>& Right)
+    {
+        if (Left.Value != Right.Value) return Left.Value > Right.Value;
+        return Left.Key < Right.Key;
+    });
+    if (Rows.Num() > 5) Rows.SetNum(5, EAllowShrinking::No);
+    TArray<FString> Parts;
+    Parts.Reserve(Rows.Num());
+    for (const TPair<FString, double>& Row : Rows)
+    {
+        Parts.Add(FString::Printf(TEXT("%s:%.3fms"), *Row.Key, Row.Value));
+    }
+    return FString::Join(Parts, TEXT(","));
 }
 
 void AddStageDelta(
@@ -182,7 +208,8 @@ void FlushMapLoadInternal()
         }
         Meshes.Sort();
         UE_LOG(LogMHPerformanceTrace, Display,
-            TEXT("MH_PERF_MAPLOAD_VERBOSE all_option_meshes=[%s]"),
+            TEXT("MH_PERF_MAPLOAD_VERBOSE slowest_actors=[%s] all_option_meshes=[%s]"),
+            *SlowestRows(GMapLoad.VerboseActorMilliseconds),
             *FString::Join(Meshes, TEXT(",")));
     }
     GMapLoad = FMapLoadAccumulator();
@@ -403,8 +430,14 @@ void FMHMapLoadInitialBuildScope::Complete(const AMHCompositeActor& Actor)
             GMapLoad.Values.ISMInstances += Bucket->GetInstanceCount();
         }
     }
-    GMapLoad.Values.TotalMs +=
+    const double ActorMilliseconds =
         CyclesToMilliseconds(FPlatformTime::Cycles64() - Impl->StartCycles);
+    GMapLoad.Values.TotalMs += ActorMilliseconds;
+    if (MHGetPerfTraceLevel() >= 2)
+    {
+        GMapLoad.VerboseActorMilliseconds.FindOrAdd(Actor.GetPathName()) +=
+            ActorMilliseconds;
+    }
     --GMapLoad.ActiveScopes;
     ScheduleMapLoadFlush();
 }
@@ -495,6 +528,12 @@ FMHSourceScanPerfScope::~FMHSourceScanPerfScope()
     Report.EmittedReports = 1;
     GLastStartupScanReport = Report;
     LogStartupScanReport(GLastStartupScanReport);
+    if (MHGetPerfTraceLevel() >= 2)
+    {
+        UE_LOG(LogMHPerformanceTrace, Display,
+            TEXT("MH_PERF_STARTUP_SCAN_VERBOSE slowest_resources=[%s]"),
+            *SlowestRows(Impl->Accumulator.VerboseResourceMilliseconds));
+    }
 }
 
 void MHRecordSourceScanEnumeration(const uint64 Cycles, const int32 EnumeratedFiles)
@@ -529,20 +568,28 @@ void MHRecordSourceScanIOHash(const uint64 Cycles, const bool bHashed)
     if (bHashed) ++GActiveSourceScan->Values.HashedFiles;
 }
 
-void MHRecordSourceScanParse(const EMHResourceKind Kind, const uint64 Cycles)
+void MHRecordSourceScanParse(
+    const FMHResourceKey& Key,
+    const FString& SourcePath,
+    const uint64 Cycles)
 {
     if (GActiveSourceScan == nullptr)
     {
         return;
     }
     GActiveSourceScan->Values.ParseMs += CyclesToMilliseconds(Cycles);
-    switch (Kind)
+    switch (Key.Kind)
     {
     case EMHResourceKind::StaticMesh: ++GActiveSourceScan->Values.ParsedFbx; break;
     case EMHResourceKind::Material: ++GActiveSourceScan->Values.ParsedMaterial; break;
     case EMHResourceKind::Composite: ++GActiveSourceScan->Values.ParsedComposite; break;
     case EMHResourceKind::PlacementProfile: ++GActiveSourceScan->Values.ParsedProfile; break;
     case EMHResourceKind::Texture: break;
+    }
+    if (MHGetPerfTraceLevel() >= 2)
+    {
+        GActiveSourceScan->VerboseResourceMilliseconds.FindOrAdd(
+            Key.ToString() + TEXT("@") + SourcePath) += CyclesToMilliseconds(Cycles);
     }
 }
 
@@ -554,7 +601,10 @@ void MHRecordSourceScanSQLite(const uint64 Cycles)
 
 void MHRecordFullScanCompleted()
 {
-    if (MHGetPerfTraceLevel() > 0) ++GObservedFullScans;
+    if (GActiveSourceScan != nullptr || GActiveReimport != nullptr)
+    {
+        ++GObservedFullScans;
+    }
 }
 
 FMHReimportPerfScope::FMHReimportPerfScope()
@@ -587,6 +637,12 @@ FMHReimportPerfScope::~FMHReimportPerfScope()
     Report.EmittedReports = 1;
     GLastReimportReport = Report;
     LogReimportReport(GLastReimportReport);
+    if (MHGetPerfTraceLevel() >= 2)
+    {
+        UE_LOG(LogMHPerformanceTrace, Display,
+            TEXT("MH_PERF_REIMPORT_VERBOSE slowest_actors=[%s]"),
+            *SlowestRows(Impl->Accumulator.VerboseActorMilliseconds));
+    }
 }
 
 void FMHReimportPerfScope::SetResourceKey(const FMHResourceKey& Key)
@@ -624,12 +680,17 @@ void MHRecordReimportNotifiedResource(const FMHResourceKey& Key)
     if (GActiveReimport != nullptr) GActiveReimport->NotifiedKeys.Add(Key);
 }
 
-void MHRecordReimportActorRebuild(const uint64 Cycles)
+void MHRecordReimportActorRebuild(const UObject& Actor, const uint64 Cycles)
 {
     if (GActiveReimport != nullptr)
     {
         ++GActiveReimport->Values.NotifiedActors;
         GActiveReimport->Values.ActorRebuildMsTotal += CyclesToMilliseconds(Cycles);
+        if (MHGetPerfTraceLevel() >= 2)
+        {
+            GActiveReimport->VerboseActorMilliseconds.FindOrAdd(Actor.GetPathName()) +=
+                CyclesToMilliseconds(Cycles);
+        }
     }
 }
 } // namespace UE::MimirComposite
