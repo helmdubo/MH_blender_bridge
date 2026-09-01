@@ -101,6 +101,63 @@ AMHCompositeActor* MHResolveCompositeOutlinerActor(
     return Actor;
 }
 
+FMHCompositeOutlinerFreshness FMHCompositeOutlinerFreshness::Capture(
+    const AMHCompositeActor& Actor)
+{
+    FMHCompositeOutlinerFreshness Result;
+    Result.Seed = Actor.GetSeed();
+    Result.AppearanceSeed = Actor.GetAppearanceSeed();
+    Result.ResolvedSignature = Actor.GetCompactResolvedSignature();
+    Result.AppearanceSignature = Actor.GetCompactAppearanceSignature();
+    Result.PlacementSignature = Actor.GetCompactPlacementSignature();
+    return Result;
+}
+
+bool FMHCompositeOutlinerFreshness::IsComplete() const
+{
+    return !ResolvedSignature.IsEmpty() &&
+        !AppearanceSignature.IsEmpty() &&
+        !PlacementSignature.IsEmpty();
+}
+
+bool FMHCompositeOutlinerFreshness::Matches(
+    const FMHCompositeOutlinerFreshness& Other) const
+{
+    return IsComplete() && Other.IsComplete() &&
+        Seed == Other.Seed && AppearanceSeed == Other.AppearanceSeed &&
+        ResolvedSignature == Other.ResolvedSignature &&
+        AppearanceSignature == Other.AppearanceSignature &&
+        PlacementSignature == Other.PlacementSignature;
+}
+
+bool FMHCompositeOutlinerRefreshState::NeedsRebuild(
+    AMHCompositeActor* Actor,
+    const FMHCompositeOutlinerFreshness& CurrentFreshness) const
+{
+    return !IsValid(Actor) || BuiltActor.Get() != Actor ||
+        !BuiltFreshness.Matches(CurrentFreshness);
+}
+
+void FMHCompositeOutlinerRefreshState::RecordRebuild(
+    AMHCompositeActor* Actor,
+    const FMHCompositeOutlinerFreshness& CurrentFreshness,
+    const bool bSucceeded)
+{
+    if (!bSucceeded || !IsValid(Actor) || !CurrentFreshness.IsComplete())
+    {
+        Reset();
+        return;
+    }
+    BuiltActor = Actor;
+    BuiltFreshness = CurrentFreshness;
+}
+
+void FMHCompositeOutlinerRefreshState::Reset()
+{
+    BuiltActor.Reset();
+    BuiltFreshness = FMHCompositeOutlinerFreshness();
+}
+
 FMHCompositeOutlinerModel::FMHCompositeOutlinerModel(FAssetResolver InAssetResolver)
     : AssetResolver(MoveTemp(InAssetResolver))
 {

@@ -604,12 +604,18 @@ private:
         }
         AMHCompositeActor* NextActor =
             MHResolveCompositeOutlinerActor(SelectedActors, SelectedInstances);
+        const FMHCompositeOutlinerFreshness NextFreshness = NextActor != nullptr
+            ? FMHCompositeOutlinerFreshness::Capture(*NextActor)
+            : FMHCompositeOutlinerFreshness();
+        const bool bNeedsRebuild =
+            RefreshState.NeedsRebuild(NextActor, NextFreshness);
         if (CurrentActor.Get() != NextActor)
         {
             if (CurrentActor.IsValid()) CurrentActor->ReleaseResolvedDebugPlan();
             CurrentActor = NextActor;
             if (CurrentActor.IsValid()) CurrentActor->RetainResolvedDebugPlan();
         }
+        if (!bNeedsRebuild) return;
         RefreshModel();
     }
 
@@ -618,7 +624,14 @@ private:
         const FString PreviousPath = SelectedItem.IsValid() ? SelectedItem->NodePath : FString();
         SelectedItem.Reset();
         RootItems.Reset();
-        if (!CurrentActor.IsValid() || !Model.BuildFromActor(*CurrentActor))
+        const bool bBuilt = CurrentActor.IsValid() && Model.BuildFromActor(*CurrentActor);
+        const FMHCompositeOutlinerFreshness BuiltFreshness = CurrentActor.IsValid()
+            ? FMHCompositeOutlinerFreshness::Capture(*CurrentActor)
+            : FMHCompositeOutlinerFreshness();
+        const bool bFreshBuild = bBuilt && CurrentActor.IsValid() &&
+            CurrentActor->HasResidentResolvedDebugPlan();
+        RefreshState.RecordRebuild(CurrentActor.Get(), BuiltFreshness, bFreshBuild);
+        if (!bBuilt)
         {
             if (HeaderText.IsValid()) HeaderText->SetText(LOCTEXT("NoCompositeSelected", "Select one MH Composite actor"));
             if (StatusText.IsValid())
@@ -661,6 +674,7 @@ private:
     }
 
     FMHCompositeOutlinerModel Model;
+    FMHCompositeOutlinerRefreshState RefreshState;
     TWeakObjectPtr<AMHCompositeActor> CurrentActor;
     TArray<TSharedPtr<FMHCompositeOutlinerItem>> RootItems;
     TSharedPtr<FMHCompositeOutlinerItem> SelectedItem;

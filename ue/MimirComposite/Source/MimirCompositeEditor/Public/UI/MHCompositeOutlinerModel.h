@@ -76,6 +76,38 @@ MIMIRCOMPOSITEEDITOR_API AMHCompositeActor* MHResolveCompositeOutlinerActor(
     const TArray<UObject*>& SelectedActors,
     const TArray<UInstancedStaticMeshComponent*>& SelectedInstances);
 
+/** Public actor state that proves an already-built Outliner model is current. */
+struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerFreshness final
+{
+    int32 Seed = 0;
+    int32 AppearanceSeed = 0;
+    FString ResolvedSignature;
+    FString AppearanceSignature;
+    FString PlacementSignature;
+
+    static FMHCompositeOutlinerFreshness Capture(const AMHCompositeActor& Actor);
+    bool IsComplete() const;
+    bool Matches(const FMHCompositeOutlinerFreshness& Other) const;
+};
+
+/** Fail-closed gate used by selection refreshes; ordinary model refreshes bypass it. */
+class MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerRefreshState final
+{
+public:
+    bool NeedsRebuild(
+        AMHCompositeActor* Actor,
+        const FMHCompositeOutlinerFreshness& CurrentFreshness) const;
+    void RecordRebuild(
+        AMHCompositeActor* Actor,
+        const FMHCompositeOutlinerFreshness& CurrentFreshness,
+        bool bSucceeded);
+    void Reset();
+
+private:
+    TWeakObjectPtr<AMHCompositeActor> BuiltActor;
+    FMHCompositeOutlinerFreshness BuiltFreshness;
+};
+
 /**
  * Testable, non-Slate source-tree and resolved-overlay model. Nested composite
  * assets are admitted lazily when their referencing row is expanded.
