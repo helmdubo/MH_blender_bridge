@@ -4,14 +4,18 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementEvents.h"
+#include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Components/StaticMeshComponent.h"
+#include "Diagnostics/MHSourceOperations.h"
 #include "Editor.h"
 #include "EditorReimportHandler.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
 #include "MHGoldenRoot.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/Material.h"
@@ -28,6 +32,7 @@
 #include "Modules/ModuleManager.h"
 #include "ObjectTools.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/BoxElem.h"
 #include "PhysicsEngine/ConvexElem.h"
@@ -1569,6 +1574,202 @@ UMHCompositeAsset* BuildTargetedPlacementAsset(
     Asset->SourceHash = MHRawPayloadHash(CanonicalBytes);
     Asset->AppliedHash = Asset->SourceHash;
     return Asset;
+}
+
+UMHCompositeAsset* BuildPerfRandomPlacementAsset(
+    FAutomationTestBase& Test,
+    const FString& CompositeName,
+    const FString& FirstMeshName,
+    const FString& SecondMeshName)
+{
+    FMHCompositeDocument Document;
+    FMHCompositeNode& Random = Document.Nodes.AddDefaulted_GetRef();
+    Random.Kind = EMHCompositeNodeKind::Random;
+    FMHCompositeOption& First = Random.Options.AddDefaulted_GetRef();
+    First.Kind = EMHCompositeOptionKind::Mesh;
+    First.Resource = FirstMeshName;
+    First.Weight = 1.0f;
+    FMHCompositeOption& Second = Random.Options.AddDefaulted_GetRef();
+    Second.Kind = EMHCompositeOptionKind::Mesh;
+    Second.Resource = SecondMeshName;
+    Second.Weight = 1.0f;
+
+    TArray<uint8> CanonicalBytes;
+    FString Error;
+    if (!MHWriteCanonicalCompositeV5(Document, CanonicalBytes, Error))
+    {
+        Test.AddError(TEXT("cannot write perf placement composite: ") + Error);
+        return nullptr;
+    }
+    UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(
+        CreatePackage(*(TEXT("/Game/MH/Generated/Composites/") + CompositeName)),
+        FName(*CompositeName),
+        RF_Public | RF_Standalone);
+    if (!MHApplyCompositeV5(*Asset, Document, Error))
+    {
+        Test.AddError(TEXT("cannot apply perf placement composite: ") + Error);
+        return nullptr;
+    }
+    Asset->LogicalName = CompositeName;
+    Asset->SourceRelativePath = CompositeName + TEXT(".composite");
+    Asset->SourceHash = MHRawPayloadHash(CanonicalBytes);
+    Asset->AppliedHash = Asset->SourceHash;
+    return Asset;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHPerformanceInstrumentationCountersTest,
+    "Mimir.V5.Composite.Perf.InstrumentationCounters",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameters)
+{
+    IConsoleVariable* PerfTrace =
+        IConsoleManager::Get().FindConsoleVariable(TEXT("mh.PerfTrace"));
+    if (!TestNotNull(TEXT("mh.PerfTrace cvar exists"), PerfTrace))
+    {
+        return false;
+    }
+    const int32 PreviousTrace = PerfTrace->GetInt();
+    ON_SCOPE_EXIT
+    {
+        PerfTrace->Set(PreviousTrace, ECVF_SetByCode);
+        MHResetPerformanceTraceForTests();
+    };
+
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build())
+    {
+        return false;
+    }
+    UStaticMesh* SecondMesh = Fixture.AddSecondMesh();
+    if (!TestNotNull(TEXT("second all-options mesh"), SecondMesh))
+    {
+        return false;
+    }
+    const FString CompositeName = Fixture.LogicalName + TEXT("_perf");
+    UMHCompositeAsset* PlacementAsset = BuildPerfRandomPlacementAsset(
+        *this,
+        CompositeName,
+        Fixture.LogicalName,
+        SecondMesh->GetName());
+    if (!TestNotNull(TEXT("perf random composite"), PlacementAsset))
+    {
+        return false;
+    }
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("perf placement world"), World))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT
+    {
+        World->DestroyWorld(true);
+        PlacementAsset->ClearFlags(RF_Public | RF_Standalone);
+        PlacementAsset->MarkAsGarbage();
+    };
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("perf placement actor"), Actor))
+    {
+        return false;
+    }
+    Actor->SetAutoSeed(false);
+    Actor->SetSeed(7);
+    Actor->SetCompositeAsset(PlacementAsset);
+
+    bool bPassed = true;
+    PerfTrace->Set(0, ECVF_SetByCode);
+    MHResetPerformanceTraceForTests();
+    {
+        FMHMapLoadInitialBuildScope Scope;
+        Actor->RebuildComposite();
+        Scope.Complete(*Actor);
+    }
+    MHFlushMapLoadPerfReport();
+    bPassed &= TestEqual(
+        TEXT("trace zero emits no map-load report"),
+        MHGetMapLoadPerfReportForTests().EmittedReports,
+        0ull);
+
+    PerfTrace->Set(1, ECVF_SetByCode);
+    MHResetPerformanceTraceForTests();
+    MHResetPlacementStageMetrics();
+    MHResetDefinitionCacheMetrics();
+    MHResetPlacementMutationMetrics();
+    if (GEditor != nullptr)
+    {
+        if (UMHCompositeDefinitionSubsystem* Definitions =
+                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
+        {
+            Definitions->InvalidateAllDefinitions();
+        }
+    }
+    {
+        FMHMapLoadInitialBuildScope Scope;
+        Actor->RebuildComposite();
+        Scope.Complete(*Actor);
+    }
+    MHFlushMapLoadPerfReport();
+    const FMHMapLoadPerfReport MapReport = MHGetMapLoadPerfReportForTests();
+    bPassed &= TestEqual(TEXT("all-options unique meshes"), MapReport.AllOptionUniqueMeshes, 2ull);
+    bPassed &= TestEqual(TEXT("selected unique meshes"), MapReport.SelectedUniqueMeshes, 1ull);
+    bPassed &= TestTrue(
+        TEXT("all-options exceeds selected meshes"),
+        MapReport.AllOptionUniqueMeshes > MapReport.SelectedUniqueMeshes);
+    bPassed &= TestTrue(TEXT("BuildAppliedGraph calls are captured"), MapReport.BuildAppliedGraphMs >= 0.0 &&
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls > 0);
+    bPassed &= TestTrue(TEXT("ResolveCompositePlan calls are captured"),
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::ResolveCompositePlan).Calls > 0);
+    bPassed &= TestTrue(TEXT("CompilePlacement calls are captured"),
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::CompilePlacement).Calls > 0);
+    bPassed &= TestEqual(TEXT("trace one emits one map-load report"), MapReport.EmittedReports, 1ull);
+
+    MHResetPerformanceTraceForTests();
+    FMHSourceAnalysis Analysis;
+    FString Error;
+    bPassed &= TestTrue(
+        TEXT("instrumented manual source scan succeeds"),
+        MHScanSourcesOperation(Fixture.Source.SourceRoot, Analysis, Error));
+    if (!Error.IsEmpty())
+    {
+        AddError(Error);
+    }
+    const FMHStartupScanPerfReport ScanReport = MHGetStartupScanPerfReportForTests();
+    bPassed &= TestEqual(TEXT("manual scan records one full scan"), ScanReport.FullScanCountDelta, 1ll);
+    bPassed &= TestEqual(TEXT("manual scan uses two snapshot passes"), ScanReport.ScanPasses, 2ull);
+    bPassed &= TestEqual(TEXT("trace one emits one scan report"), ScanReport.EmittedReports, 1ull);
+
+    MHResetPerformanceTraceForTests();
+    UMHSourceImporter* Importer = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHSourceImporter>()
+        : nullptr;
+    if (!TestNotNull(TEXT("source importer subsystem"), Importer))
+    {
+        return false;
+    }
+    TArray<FString> Warnings;
+    Error.Reset();
+    bPassed &= TestTrue(
+        TEXT("instrumented targeted reimport succeeds"),
+        Importer->ReimportStaticMesh(Fixture.Mesh, Warnings, Error));
+    if (!Error.IsEmpty())
+    {
+        AddError(Error);
+    }
+    const FMHReimportPerfReport ReimportReport = MHGetReimportPerfReportForTests();
+    bPassed &= TestEqual(
+        TEXT("targeted reimport records current full scan"),
+        ReimportReport.FullScanCountDelta,
+        1ll);
+    bPassed &= TestEqual(
+        TEXT("targeted reimport records no incremental paths"),
+        ReimportReport.IncrementalPaths,
+        0ull);
+    bPassed &= TestEqual(
+        TEXT("trace one emits one reimport report"),
+        ReimportReport.EmittedReports,
+        1ull);
+    return bPassed;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
