@@ -45,6 +45,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHMaterialDocumentExportResult
 {
     int32 ExportedCount = 0;
     bool bCancelled = false;
+    TArray<FString> ExportedPaths;
     TArray<FMHMaterialDocumentExportFailure> FailedWrites;
 };
 

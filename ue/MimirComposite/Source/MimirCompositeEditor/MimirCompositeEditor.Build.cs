@@ -28,6 +28,7 @@ public class MimirCompositeEditor : ModuleRules
                 "AssetTools",
                 "AssetRegistry",
                 "ContentBrowser",
+                "DesktopPlatform",
                 "DirectoryWatcher",
                 "InputCore",
                 "Json",
