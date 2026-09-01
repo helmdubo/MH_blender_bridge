@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "GameFramework/Actor.h"
 #include "Misc/Paths.h"
@@ -73,6 +74,24 @@ FString OutlinerOptionLabel(const FMHCompositeOption& Option)
 
 namespace UE::MimirComposite
 {
+
+AMHCompositeActor* MHResolveCompositeOutlinerActor(
+    const TArray<UObject*>& SelectedActors,
+    const TArray<UInstancedStaticMeshComponent*>& SelectedInstances)
+{
+    (void)SelectedInstances;
+    AMHCompositeActor* Actor = nullptr;
+    int32 CompositeCount = 0;
+    for (UObject* Object : SelectedActors)
+    {
+        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Object))
+        {
+            Actor = Composite;
+            ++CompositeCount;
+        }
+    }
+    return CompositeCount == 1 ? Actor : nullptr;
+}
 
 FMHCompositeOutlinerModel::FMHCompositeOutlinerModel(FAssetResolver InAssetResolver)
     : AssetResolver(MoveTemp(InAssetResolver))

@@ -582,22 +582,28 @@ private:
 
     void RefreshSelectedActor()
     {
-        AMHCompositeActor* Actor = nullptr;
-        int32 CompositeCount = 0;
+        TArray<UObject*> SelectedActors;
         if (GEditor != nullptr && GEditor->GetSelectedActors() != nullptr)
         {
-            TArray<UObject*> SelectedActors;
             GEditor->GetSelectedActors()->GetSelectedObjects(SelectedActors);
-            for (UObject* Object : SelectedActors)
+        }
+        TArray<UInstancedStaticMeshComponent*> SelectedInstances;
+        if (GEditor != nullptr)
+        {
+            if (const UTypedElementSelectionSet* SelectionSet =
+                    GLevelEditorModeTools().GetEditorSelectionSet())
             {
-                if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Object))
+                for (const FTypedElementHandle& Handle : SelectionSet->GetSelectedElementHandles())
                 {
-                    Actor = Composite;
-                    ++CompositeCount;
+                    const FSMInstanceManager Instance =
+                        SMInstanceElementDataUtil::GetSMInstanceFromHandle(Handle, true);
+                    if (Instance && Instance.GetISMComponent() != nullptr)
+                        SelectedInstances.Add(Instance.GetISMComponent());
                 }
             }
         }
-        AMHCompositeActor* NextActor = CompositeCount == 1 ? Actor : nullptr;
+        AMHCompositeActor* NextActor =
+            MHResolveCompositeOutlinerActor(SelectedActors, SelectedInstances);
         if (CurrentActor.Get() != NextActor)
         {
             if (CurrentActor.IsValid()) CurrentActor->ReleaseResolvedDebugPlan();

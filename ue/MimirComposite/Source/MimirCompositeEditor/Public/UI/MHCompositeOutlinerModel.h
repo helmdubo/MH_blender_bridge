@@ -7,6 +7,7 @@
 
 class AMHCompositeActor;
 class UObject;
+class UInstancedStaticMeshComponent;
 class USceneComponent;
 
 namespace UE::MimirComposite
@@ -69,6 +70,11 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerNavigation
     FString SourceFilepath;
     TWeakObjectPtr<UObject> Asset;
 };
+
+/** Resolve the sole composite represented by the editor's current selection. */
+MIMIRCOMPOSITEEDITOR_API AMHCompositeActor* MHResolveCompositeOutlinerActor(
+    const TArray<UObject*>& SelectedActors,
+    const TArray<UInstancedStaticMeshComponent*>& SelectedInstances);
 
 /**
  * Testable, non-Slate source-tree and resolved-overlay model. Nested composite
