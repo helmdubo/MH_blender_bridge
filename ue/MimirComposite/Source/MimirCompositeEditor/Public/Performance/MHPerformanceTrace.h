@@ -83,6 +83,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHReimportPerfReport
 };
 
 MIMIRCOMPOSITEEDITOR_API int32 MHGetPerfTraceLevel();
+MIMIRCOMPOSITEEDITOR_API bool MHIsSourceScanPerfActive();
+MIMIRCOMPOSITEEDITOR_API bool MHIsReimportPerfActive();
 MIMIRCOMPOSITEEDITOR_API void MHResetPerformanceTraceForTests();
 MIMIRCOMPOSITEEDITOR_API FMHMapLoadPerfReport MHGetMapLoadPerfReportForTests();
 MIMIRCOMPOSITEEDITOR_API FMHStartupScanPerfReport MHGetStartupScanPerfReportForTests();
@@ -91,7 +93,7 @@ MIMIRCOMPOSITEEDITOR_API FMHReimportPerfReport MHGetReimportPerfReportForTests()
 class MIMIRCOMPOSITEEDITOR_API FMHMapLoadInitialBuildScope final
 {
 public:
-    FMHMapLoadInitialBuildScope();
+    explicit FMHMapLoadInitialBuildScope(const AMHCompositeActor& Actor);
     ~FMHMapLoadInitialBuildScope();
     void Complete(const AMHCompositeActor& Actor);
 
@@ -110,7 +112,7 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordMapLoadSelectedPlan(
     const FMHResolvedCompositePlan& Plan);
 MIMIRCOMPOSITEEDITOR_API void MHRecordMapLoadCompilingMesh(
     const FMHResourceKey& Key,
-    const FString& ObjectPath);
+    const UObject& Object);
 MIMIRCOMPOSITEEDITOR_API void MHFlushMapLoadPerfReport();
 
 class MIMIRCOMPOSITEEDITOR_API FMHSourceScanPerfScope final
@@ -144,6 +146,7 @@ class MIMIRCOMPOSITEEDITOR_API FMHReimportPerfScope final
 public:
     FMHReimportPerfScope();
     ~FMHReimportPerfScope();
+    bool IsActive() const { return Impl.IsValid(); }
     void SetResourceKey(const FMHResourceKey& Key);
     void AddAnalysisServicesCycles(uint64 Cycles);
     void AddImportBuildCycles(uint64 Cycles);

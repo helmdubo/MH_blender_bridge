@@ -26,6 +26,7 @@
 #include "Misc/Paths.h"
 #include "Misc/ScopedSlowTask.h"
 #include "Modules/ModuleManager.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHSourceComposition.h"
 #include "Source/MHSourceImportBatch.h"
@@ -744,7 +745,11 @@ bool UMHSourceImporter::RunStartupPlan()
     // therefore no longer scales with the amount of pending source work.
     FMHSourceAnalysis Analysis;
     FString Error;
-    if (!MHScanSourcesOperation(Settings->GetSourceRootPath(), Analysis, Error))
+    if (!MHScanSourcesOperation(
+            Settings->GetSourceRootPath(),
+            Analysis,
+            Error,
+            EMHPerfScanTrigger::Startup))
     {
         FMessageLog(TEXT("Mimir")).Error(FText::Format(
             INVTEXT("Startup source freshness scan failed: {0}"),
@@ -1113,6 +1118,8 @@ bool UMHSourceImporter::ReimportStaticMesh(
     TArray<FString>& OutWarnings,
     FString& OutError)
 {
+    FMHReimportPerfScope PerfScope;
+    const bool bPerfTrace = PerfScope.IsActive();
     OutWarnings.Reset();
     OutError.Reset();
     if (!IsInGameThread() || StaticMesh == nullptr)
@@ -1129,6 +1136,7 @@ bool UMHSourceImporter::ReimportStaticMesh(
     FMHResourceKey MeshKey;
     MeshKey.Kind = EMHResourceKind::StaticMesh;
     MeshKey.LogicalName = Data->LogicalName;
+    PerfScope.SetResourceKey(MeshKey);
     if (!MeshKey.IsCanonical())
     {
         OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: managed mesh receipt has a noncanonical logical name");
@@ -1172,7 +1180,12 @@ bool UMHSourceImporter::ReimportStaticMesh(
     }
 
     FMHSourceAnalysisServices Services;
-    if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
+    const uint64 AnalysisStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+    const bool bAnalysisReady =
+        MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError);
+    if (bPerfTrace)
+        PerfScope.AddAnalysisServicesCycles(FPlatformTime::Cycles64() - AnalysisStart);
+    if (!bAnalysisReady)
     {
         return false;
     }
@@ -1206,11 +1219,14 @@ bool UMHSourceImporter::ReimportStaticMesh(
     {
         Batch = MakeUnique<FMHSourceImportBatchContext>();
     }
+    const uint64 ImportStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
     FMHStaticMeshOperationResult Result = MHImportStaticMeshV4(
         Entry,
         *Services.Resolver,
         SourceRoot,
         true);
+    if (bPerfTrace)
+        PerfScope.AddImportBuildCycles(FPlatformTime::Cycles64() - ImportStart);
     OutWarnings = MoveTemp(Result.Warnings);
     OutError = MoveTemp(Result.Error);
     if (!Result.Succeeded())
@@ -1233,7 +1249,11 @@ bool UMHSourceImporter::ReimportStaticMesh(
     }
 
     TMap<FMHResourceKey, FString> CompilationErrors;
-    if (!Batch->FinishCompilation(CompilationErrors))
+    const uint64 CompilationStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+    const bool bCompilationSucceeded = Batch->FinishCompilation(CompilationErrors);
+    if (bPerfTrace)
+        PerfScope.AddCompileWaitCycles(FPlatformTime::Cycles64() - CompilationStart);
+    if (!bCompilationSucceeded)
     {
         OutError = CompilationErrors.FindRef(Entry.Key);
         if (OutError.IsEmpty())
@@ -1242,11 +1262,19 @@ bool UMHSourceImporter::ReimportStaticMesh(
         }
         return false;
     }
-    if (!Batch->SavePackages(OutError))
+    const uint64 SaveStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+    const bool bSaveSucceeded = Batch->SavePackages(OutError);
+    if (bPerfTrace)
+        PerfScope.AddSavePackagesCycles(FPlatformTime::Cycles64() - SaveStart);
+    if (!bSaveSucceeded)
     {
         return false;
     }
-    return Batch->CommitProjectionAndNotifications(SourceRoot, OutError);
+    const uint64 ProjectionStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+    const bool bCommitted = Batch->CommitProjectionAndNotifications(SourceRoot, OutError);
+    if (bPerfTrace)
+        PerfScope.AddProjectionCycles(FPlatformTime::Cycles64() - ProjectionStart);
+    return bCommitted;
 }
 
 bool UMHSourceImporter::ReimportMaterial(

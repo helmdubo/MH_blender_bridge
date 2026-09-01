@@ -5,6 +5,7 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositePlacementMetrics.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "GameFramework/Actor.h"
@@ -271,7 +272,11 @@ struct FAppliedPlanBuilder
         TArray<UStaticMesh*> Compiling;
         for (const FDeferredMesh& Row : DeferredMeshes)
         {
-            if (Row.Mesh->IsCompiling()) Compiling.Add(Row.Mesh);
+            if (Row.Mesh->IsCompiling())
+            {
+                Compiling.Add(Row.Mesh);
+                MHRecordMapLoadCompilingMesh(Row.Key, *Row.Mesh);
+            }
         }
         if (!Compiling.IsEmpty())
         {

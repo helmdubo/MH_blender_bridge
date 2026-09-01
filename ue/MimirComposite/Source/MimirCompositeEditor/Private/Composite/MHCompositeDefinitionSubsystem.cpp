@@ -162,10 +162,12 @@ TSharedPtr<FMHCompositeDefinitionEntry> UMHCompositeDefinitionSubsystem::GetOrBu
             RemoveDefinitionByKey(Key);
             break;
         }
+        MHRecordDefinitionCacheHit();
         OutDependencies = Entry->Dependencies;
         return Entry;
     }
 
+    MHRecordDefinitionCacheMiss();
     const uint64 AdmissionSerial = InvalidationSerial;
     TSharedRef<FMHRandomSourceGraph> Graph = MakeShared<FMHRandomSourceGraph>();
     if (!MHBuildAppliedCompositeGraph(Root, Settings, *Graph, OutDependencies, OutError))

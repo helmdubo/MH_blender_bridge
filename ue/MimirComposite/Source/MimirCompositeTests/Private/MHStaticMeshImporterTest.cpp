@@ -1681,7 +1681,7 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
     PerfTrace->Set(0, ECVF_SetByCode);
     MHResetPerformanceTraceForTests();
     {
-        FMHMapLoadInitialBuildScope Scope;
+        FMHMapLoadInitialBuildScope Scope(*Actor);
         Actor->RebuildComposite();
         Scope.Complete(*Actor);
     }
@@ -1689,6 +1689,35 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
     bPassed &= TestEqual(
         TEXT("trace zero emits no map-load report"),
         MHGetMapLoadPerfReportForTests().EmittedReports,
+        0ull);
+    FMHSourceAnalysis OffAnalysis;
+    FString OffError;
+    bPassed &= TestTrue(
+        TEXT("trace-zero source scan still succeeds"),
+        MHScanSourcesOperation(
+            Fixture.Source.SourceRoot,
+            OffAnalysis,
+            OffError,
+            EMHPerfScanTrigger::Startup));
+    bPassed &= TestEqual(
+        TEXT("trace zero emits no scan report"),
+        MHGetStartupScanPerfReportForTests().EmittedReports,
+        0ull);
+    UMHSourceImporter* OffImporter = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHSourceImporter>()
+        : nullptr;
+    if (!TestNotNull(TEXT("trace-zero source importer subsystem"), OffImporter))
+    {
+        return false;
+    }
+    TArray<FString> OffWarnings;
+    OffError.Reset();
+    bPassed &= TestTrue(
+        TEXT("trace-zero targeted reimport still succeeds"),
+        OffImporter->ReimportStaticMesh(Fixture.Mesh, OffWarnings, OffError));
+    bPassed &= TestEqual(
+        TEXT("trace zero emits no reimport report"),
+        MHGetReimportPerfReportForTests().EmittedReports,
         0ull);
 
     PerfTrace->Set(1, ECVF_SetByCode);
@@ -1705,7 +1734,7 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
         }
     }
     {
-        FMHMapLoadInitialBuildScope Scope;
+        FMHMapLoadInitialBuildScope Scope(*Actor);
         Actor->RebuildComposite();
         Scope.Complete(*Actor);
     }
@@ -1729,12 +1758,17 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
     FString Error;
     bPassed &= TestTrue(
         TEXT("instrumented manual source scan succeeds"),
-        MHScanSourcesOperation(Fixture.Source.SourceRoot, Analysis, Error));
+        MHScanSourcesOperation(
+            Fixture.Source.SourceRoot,
+            Analysis,
+            Error,
+            EMHPerfScanTrigger::Startup));
     if (!Error.IsEmpty())
     {
         AddError(Error);
     }
     const FMHStartupScanPerfReport ScanReport = MHGetStartupScanPerfReportForTests();
+    bPassed &= TestEqual(TEXT("startup scan trigger"), ScanReport.Trigger, FString(TEXT("startup")));
     bPassed &= TestEqual(TEXT("manual scan records one full scan"), ScanReport.FullScanCountDelta, 1ll);
     bPassed &= TestEqual(TEXT("manual scan uses two snapshot passes"), ScanReport.ScanPasses, 2ull);
     bPassed &= TestEqual(TEXT("trace one emits one scan report"), ScanReport.EmittedReports, 1ull);
