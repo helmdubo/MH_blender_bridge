@@ -79,18 +79,26 @@ AMHCompositeActor* MHResolveCompositeOutlinerActor(
     const TArray<UObject*>& SelectedActors,
     const TArray<UInstancedStaticMeshComponent*>& SelectedInstances)
 {
-    (void)SelectedInstances;
     AMHCompositeActor* Actor = nullptr;
-    int32 CompositeCount = 0;
     for (UObject* Object : SelectedActors)
     {
         if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Object))
         {
+            if (Actor != nullptr && Actor != Composite) return nullptr;
             Actor = Composite;
-            ++CompositeCount;
         }
     }
-    return CompositeCount == 1 ? Actor : nullptr;
+    if (Actor != nullptr) return Actor;
+
+    for (UInstancedStaticMeshComponent* Instance : SelectedInstances)
+    {
+        if (!IsValid(Instance)) continue;
+        AMHCompositeActor* Owner = Cast<AMHCompositeActor>(Instance->GetOwner());
+        if (Owner == nullptr) continue;
+        if (Actor != nullptr && Actor != Owner) return nullptr;
+        Actor = Owner;
+    }
+    return Actor;
 }
 
 FMHCompositeOutlinerModel::FMHCompositeOutlinerModel(FAssetResolver InAssetResolver)
