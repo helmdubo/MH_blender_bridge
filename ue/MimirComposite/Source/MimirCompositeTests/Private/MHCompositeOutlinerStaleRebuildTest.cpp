@@ -54,6 +54,9 @@ bool FMHCompositeOutlinerStaleRebuildSkipTest::RunTest(const FString& Parameters
 
     UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
     AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    AMHCompositeActor* OtherActor = World->SpawnActor<AMHCompositeActor>();
+    bPassed &= TestFalse(TEXT("actor without compact signatures stays incomplete"),
+        FMHCompositeOutlinerFreshness::Capture(*Actor).IsComplete());
     FMHCompositeOutlinerRefreshState State;
     int32 RebuildCount = 0;
     const auto Refresh = [&]()
@@ -66,6 +69,8 @@ bool FMHCompositeOutlinerStaleRebuildSkipTest::RunTest(const FString& Parameters
     Refresh();
     bPassed &= TestEqual(TEXT("two unchanged selection refreshes rebuild once"),
         RebuildCount, 1);
+    bPassed &= TestTrue(TEXT("different actor identity forces a rebuild"),
+        State.NeedsRebuild(OtherActor, Baseline));
 
     State.RecordRebuild(Actor, Baseline, false);
     bPassed &= TestTrue(TEXT("failed rebuild invalidates the skip state"),
@@ -74,6 +79,7 @@ bool FMHCompositeOutlinerStaleRebuildSkipTest::RunTest(const FString& Parameters
         State.NeedsRebuild(Actor, Empty));
 
     Actor->Destroy();
+    OtherActor->Destroy();
     World->DestroyWorld(false);
     return bPassed;
 }

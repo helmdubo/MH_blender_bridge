@@ -628,7 +628,9 @@ private:
         const FMHCompositeOutlinerFreshness BuiltFreshness = CurrentActor.IsValid()
             ? FMHCompositeOutlinerFreshness::Capture(*CurrentActor)
             : FMHCompositeOutlinerFreshness();
-        RefreshState.RecordRebuild(CurrentActor.Get(), BuiltFreshness, bBuilt);
+        const bool bFreshBuild = bBuilt && CurrentActor.IsValid() &&
+            CurrentActor->HasResidentResolvedDebugPlan();
+        RefreshState.RecordRebuild(CurrentActor.Get(), BuiltFreshness, bFreshBuild);
         if (!bBuilt)
         {
             if (HeaderText.IsValid()) HeaderText->SetText(LOCTEXT("NoCompositeSelected", "Select one MH Composite actor"));

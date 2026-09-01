@@ -134,9 +134,8 @@ bool FMHCompositeOutlinerRefreshState::NeedsRebuild(
     AMHCompositeActor* Actor,
     const FMHCompositeOutlinerFreshness& CurrentFreshness) const
 {
-    (void)Actor;
-    (void)CurrentFreshness;
-    return true;
+    return !IsValid(Actor) || BuiltActor.Get() != Actor ||
+        !BuiltFreshness.Matches(CurrentFreshness);
 }
 
 void FMHCompositeOutlinerRefreshState::RecordRebuild(
