@@ -5,6 +5,8 @@
 #include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Editor.h"
 #include "Engine/World.h"
+#include "HAL/PlatformTime.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "UObject/UObjectIterator.h"
 
 namespace UE::MimirComposite
@@ -50,6 +52,7 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
     {
         return;
     }
+    MHRecordReimportNotifiedResource(Key);
 
 #if WITH_DEV_AUTOMATION_TESTS
     if (GGeneratedResourceChangedObserverForTests)
@@ -77,7 +80,18 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         {
             continue;
         }
-        Actor->RebuildComposite();
+        if (MHIsReimportPerfActive())
+        {
+            const uint64 RebuildStart = FPlatformTime::Cycles64();
+            Actor->RebuildComposite();
+            MHRecordReimportActorRebuild(
+                *Actor,
+                FPlatformTime::Cycles64() - RebuildStart);
+        }
+        else
+        {
+            Actor->RebuildComposite();
+        }
     }
 }
 

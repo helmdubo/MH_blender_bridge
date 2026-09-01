@@ -53,6 +53,16 @@ FMHDefinitionCacheMetrics MHGetDefinitionCacheMetrics()
     return GMHDefinitionCacheMetrics;
 }
 
+void MHRecordDefinitionCacheHit()
+{
+    ++GMHDefinitionCacheMetrics.Hits;
+}
+
+void MHRecordDefinitionCacheMiss()
+{
+    ++GMHDefinitionCacheMetrics.Misses;
+}
+
 void MHRecordDefinitionClosureHitBuild()
 {
     ++GMHDefinitionCacheMetrics.ClosureHitBuilds;

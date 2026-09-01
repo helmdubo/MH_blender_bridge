@@ -5,10 +5,13 @@
 #include "Geometry/MHSceneIR.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
+#include "HAL/PlatformTime.h"
 #include "Material/MHMaterialProtocol.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "SQLiteDatabase.h"
@@ -457,8 +460,15 @@ public:
     {
         OutResult = FMHProjectIndexUpdateResult();
         TSet<FMHResourceKey> CandidateKeysBefore;
-        if (!EnsureOpen(OutError) ||
-            !ReadCandidateKeys(*Database, CandidateKeysBefore, OutError))
+        const bool bPerfTrace = MHIsSourceScanPerfActive();
+        const uint64 InitialSQLiteStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+        const bool bReady = EnsureOpen(OutError) &&
+            ReadCandidateKeys(*Database, CandidateKeysBefore, OutError);
+        if (bPerfTrace)
+        {
+            MHRecordSourceScanSQLite(FPlatformTime::Cycles64() - InitialSQLiteStart);
+        }
+        if (!bReady)
         {
             return false;
         }
@@ -467,6 +477,14 @@ public:
         {
             return false;
         }
+        const uint64 SQLiteStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+        ON_SCOPE_EXIT
+        {
+            if (bPerfTrace)
+            {
+                MHRecordSourceScanSQLite(FPlatformTime::Cycles64() - SQLiteStart);
+            }
+        };
         TArray<FGeneratedRow> GeneratedRows;
         BuildGeneratedRows(Claims, GeneratedRows);
         const TSet<FMHResourceKey> PreviousPendingOrphanRebinds =
@@ -502,6 +520,7 @@ public:
         }
         Generation = NextGeneration;
         ++FullScanCount;
+        MHRecordFullScanCompleted();
         ConsumeMatchingTokens(Candidates, NextGeneration - 1, OutResult.SessionEvents);
         OutResult.Generation = Generation;
         return true;
@@ -1235,6 +1254,8 @@ private:
         const int64 SizeBefore = IFileManager::Get().FileSize(*AbsolutePath);
         const FDateTime TimeBefore = IFileManager::Get().GetTimeStamp(*AbsolutePath);
         TArray<uint8> Bytes;
+        const bool bPerfTrace = MHIsSourceScanPerfActive();
+        const uint64 IOHashStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
         const bool bRead = SizeBefore >= 0 && FFileHelper::LoadFileToArray(Bytes, *AbsolutePath);
         const int64 SizeAfter = IFileManager::Get().FileSize(*AbsolutePath);
         const FDateTime TimeAfter = IFileManager::Get().GetTimeStamp(*AbsolutePath);
@@ -1242,6 +1263,8 @@ private:
         OutCandidate.MTimeTicks = TimeAfter.GetTicks();
         if (!bRead)
         {
+            if (bPerfTrace)
+                MHRecordSourceScanIOHash(FPlatformTime::Cycles64() - IOHashStart, false);
             OutCandidate.ParseStatus = ECandidateParseStatus::Unreadable;
             OutCandidate.Diagnostic = TEXT("MH_E_SOURCE_INDEX_INVALID: cannot read source payload");
             return true;
@@ -1249,15 +1272,20 @@ private:
         if (SizeBefore != SizeAfter || TimeBefore != TimeAfter ||
             static_cast<int64>(Bytes.Num()) != SizeAfter)
         {
+            if (bPerfTrace)
+                MHRecordSourceScanIOHash(FPlatformTime::Cycles64() - IOHashStart, false);
             OutError = FString::Printf(
                 TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload changed during scan: %s"),
                 *AbsolutePath);
             return false;
         }
         OutCandidate.RawHash = MHRawPayloadHash(Bytes);
+        if (bPerfTrace)
+            MHRecordSourceScanIOHash(FPlatformTime::Cycles64() - IOHashStart, true);
         OutCandidate.ParseStatus = ECandidateParseStatus::Ok;
 
         FString ParseError;
+        const uint64 ParseStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
         if (Key.Kind == EMHResourceKind::StaticMesh)
         {
             FMHSceneIR Scene;
@@ -1338,6 +1366,16 @@ private:
                 OutCandidate.Diagnostic = ParseError;
             }
         }
+        if (bPerfTrace && (Key.Kind == EMHResourceKind::StaticMesh ||
+            Key.Kind == EMHResourceKind::Material ||
+            Key.Kind == EMHResourceKind::Composite ||
+            Key.Kind == EMHResourceKind::PlacementProfile))
+        {
+            MHRecordSourceScanParse(
+                Key,
+                OutCandidate.RelativePath,
+                FPlatformTime::Cycles64() - ParseStart);
+        }
         return true;
     }
 
@@ -1345,11 +1383,21 @@ private:
     {
         TArray<FString> FirstPaths;
         TArray<FString> ConfirmedPaths;
-        if (!EnumerateKnownPaths(FirstPaths, OutError))
+        const bool bPerfTrace = MHIsSourceScanPerfActive();
+        const uint64 FirstEnumerationStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+        const bool bFirstEnumerated = EnumerateKnownPaths(FirstPaths, OutError);
+        if (bPerfTrace)
+        {
+            MHRecordSourceScanEnumeration(
+                FPlatformTime::Cycles64() - FirstEnumerationStart,
+                FirstPaths.Num());
+        }
+        if (!bFirstEnumerated)
         {
             return false;
         }
         TArray<FScannedCandidate> First;
+        if (bPerfTrace) MHRecordSourceScanPass();
         for (const FString& Path : FirstPaths)
         {
             FScannedCandidate Candidate;
@@ -1358,9 +1406,24 @@ private:
             {
                 return false;
             }
-            if (bRecognized) First.Add(MoveTemp(Candidate));
+            if (bRecognized)
+            {
+                if (bPerfTrace && Candidate.Size > 0)
+                {
+                    MHRecordSourceScanEnumeratedBytes(static_cast<uint64>(Candidate.Size));
+                }
+                First.Add(MoveTemp(Candidate));
+            }
         }
-        if (!EnumerateKnownPaths(ConfirmedPaths, OutError) || ConfirmedPaths != FirstPaths)
+        const uint64 ConfirmedEnumerationStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+        const bool bConfirmedEnumerated = EnumerateKnownPaths(ConfirmedPaths, OutError);
+        if (bPerfTrace)
+        {
+            MHRecordSourceScanEnumeration(
+                FPlatformTime::Cycles64() - ConfirmedEnumerationStart,
+                ConfirmedPaths.Num());
+        }
+        if (!bConfirmedEnumerated || ConfirmedPaths != FirstPaths)
         {
             if (OutError.IsEmpty())
             {
@@ -1370,6 +1433,7 @@ private:
         }
 
         OutCandidates.Reset();
+        if (bPerfTrace) MHRecordSourceScanPass();
         for (const FString& Path : ConfirmedPaths)
         {
             FScannedCandidate Candidate;

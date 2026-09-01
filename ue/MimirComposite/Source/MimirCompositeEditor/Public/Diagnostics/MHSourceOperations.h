@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "Source/MHSourceAnalyzer.h"
 
 class UMHCompositeSettings;
@@ -13,7 +14,8 @@ namespace UE::MimirComposite
 MIMIRCOMPOSITEEDITOR_API bool MHScanSourcesOperation(
     const FString& SourceRoot,
     FMHSourceAnalysis& OutAnalysis,
-    FString& OutError);
+    FString& OutError,
+    EMHPerfScanTrigger Trigger = EMHPerfScanTrigger::Automatic);
 
 /** Name-domain diagnostics only; other payload errors do not change this result. */
 MIMIRCOMPOSITEEDITOR_API bool MHValidateNamesOperation(

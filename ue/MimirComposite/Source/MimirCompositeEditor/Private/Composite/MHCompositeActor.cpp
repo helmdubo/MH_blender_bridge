@@ -4,6 +4,7 @@
 #include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositePlacementMetrics.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
@@ -589,11 +590,13 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     TSharedRef<FMHResolvedCompositePlan> CandidatePlan = MakeShared<FMHResolvedCompositePlan>();
     if (Error.IsEmpty() && CandidateGraph.IsValid())
     {
+        MHRecordMapLoadGraph(Name, *CandidateGraph);
         bool bResolved = false;
         {
             FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
             bResolved = MHResolveCompositePlan(*CandidateGraph, Seed, AppearanceSeed, *CandidatePlan, Error);
         }
+        if (bResolved) MHRecordMapLoadSelectedPlan(*CandidatePlan);
         if (!bResolved && !Error.StartsWith(TEXT("MH_E_")))
             Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
         if (Error.IsEmpty()) MHValidateResolvedPlacementTransforms(*CandidatePlan, GetActorTransform(), Error);
@@ -862,7 +865,9 @@ void AMHCompositeActor::PostRegisterAllComponents()
     // it runs on every PostEditMove and must never become a full rebuild.
     if (!bNeedsInitialPlacementBuild) return;
     bNeedsInitialPlacementBuild = false;
+    UE::MimirComposite::FMHMapLoadInitialBuildScope PerfScope(*this);
     RebuildComposite();
+    PerfScope.Complete(*this);
 }
 
 void AMHCompositeActor::PostDuplicate(const EDuplicateMode::Type DuplicateMode)

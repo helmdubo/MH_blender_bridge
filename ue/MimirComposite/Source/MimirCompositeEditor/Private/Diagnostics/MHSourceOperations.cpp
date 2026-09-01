@@ -171,8 +171,10 @@ void SortAnalysis(FMHSourceAnalysis& Analysis)
 bool MHScanSourcesOperation(
     const FString& SourceRoot,
     FMHSourceAnalysis& OutAnalysis,
-    FString& OutError)
+    FString& OutError,
+    const EMHPerfScanTrigger Trigger)
 {
+    FMHSourceScanPerfScope PerfScope(Trigger);
     FMHSourceAnalysisServices Services;
     if (!CreateServices(SourceRoot, Services, OutAnalysis, OutError))
     {

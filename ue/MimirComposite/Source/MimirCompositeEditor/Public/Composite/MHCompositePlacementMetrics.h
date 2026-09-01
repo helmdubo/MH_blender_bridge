@@ -39,6 +39,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHPlacementStageMetrics
 /** Non-serialized physical work counters for the shared definition cache. */
 struct MIMIRCOMPOSITEEDITOR_API FMHDefinitionCacheMetrics
 {
+    uint64 Hits = 0;
+    uint64 Misses = 0;
     uint64 ClosureHitBuilds = 0;
     uint64 EndpointResolves = 0;
     uint64 EndpointHits = 0;
@@ -102,6 +104,8 @@ MIMIRCOMPOSITEEDITOR_API FMHPlacementStageMetrics MHGetPlacementStageMetrics();
 MIMIRCOMPOSITEEDITOR_API const TCHAR* MHPlacementStageLabel(EMHPlacementStage Stage);
 MIMIRCOMPOSITEEDITOR_API void MHResetDefinitionCacheMetrics();
 MIMIRCOMPOSITEEDITOR_API FMHDefinitionCacheMetrics MHGetDefinitionCacheMetrics();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionCacheHit();
+MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionCacheMiss();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionClosureHitBuild();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointResolve();
 MIMIRCOMPOSITEEDITOR_API void MHRecordDefinitionEndpointHit();
