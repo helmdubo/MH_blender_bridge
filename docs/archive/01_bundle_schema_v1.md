@@ -1,0 +1,783 @@
+> HISTORY. Не норматив. Модель заменена docs/16_recipe_model.md (2026-09-02).
+
+# 01 — Source Files Schema: Composite v1 + Manifest v2 (SPEC)
+
+> **SUPERSEDED BY SOURCE PROTOCOL V4.** Документ целиком не является активным
+> контрактом или implementation input. Действующий норматив —
+> [`08_source_protocol_v4_plan.md`](08_source_protocol_v4_plan.md); body ниже
+> сохранён только как история прежних bundle/source-схем.
+
+> **HISTORICAL EVIDENCE ONLY / SUPERSEDED BY CLEAN SOURCES v2.** Весь body ниже,
+> включая собственные `Статус`, schemas, filenames и transaction rules,
+> не является active contract или implementation input. Нормативно:
+> `05_source_schema_v1.md` (несмотря на historical filename),
+> `ADR_V2_passport_first.md`, `04_source_workflows.md`.
+> `export_manifest.json`, Bundle Export, uid8, inline `materials[]`,
+> `external_dependencies`, ownership rows и manifest markers запрещены в v2
+> production. Этот файл разрешён только как исследовательская история; даже
+> migration reader реализуется по активному §12, а не копированием body ниже.
+
+Статус: формат `*.composite` **зафиксирован как schema_version = 1**.
+`export_manifest.json` повышен до **schema_version = 2** по D31: материальные
+записи получили `content_hash`, необходимый для D25. Это единственная
+миграция v1→v2; после неё любое on-disk изменение снова требует
+повышения версии и migration-заметки.
+`mh.validation_report` также v2: в нём появился отдельный неблокирующий
+массив `warnings`. Формат `mh.diff_report` остаётся v1.
+
+Принцип №1 (проверяется каждым решением): **Identity = адрес, а не имя и не порядок.**
+Ни rename, ни перестановка узлов в файле, ни добавление параметра, ни апгрейд движка
+не меняют ничего, кроме того, что изменил человек.
+
+## 1. Структура каталога исходников
+
+```
+Building_A/
+├─ export_manifest.json                    # СЛУЖЕБНЫЙ, скрытый от пользователя, пишется ПОСЛЕДНИМ
+├─ building_a__3c1a9b2e.composite          # 1 файл = 1 composite definition (JSON внутри)
+├─ window_set_a__f53d93af.composite
+└─ meshes/
+   ├─ wall_a__2db5574c.mesh.fbx            # 1 файл = 1 mesh resource
+   └─ window_a__5839a2e1.mesh.fbx
+```
+
+Имя файла ресурса: `<sanitized_name>__<uid8>` + расширение (`.composite` / `.mesh.fbx`),
+единообразно для мешей и композитов — правила §10.
+
+### 1.1 Протокол атомарности экспорта
+
+Модель: **per-file атомарность + pending manifest как fail-closed marker**.
+(«Замена каталога целиком» отвергнута: на Windows она конфликтует с открытыми
+watcher'ом файлами и противоречит правилу «неизменённое не перезаписывается».)
+
+Порядок экспорта:
+
+1. Вся семантическая модель, все composite documents, их hash и новый manifest
+   вычисляются и валидируются **до первой записи** в каталог назначения.
+2. Подготовленный manifest атомарно записывается как
+   `export_manifest.json.tmp`. Пока этот marker существует, UE не читает даже
+   старый стабильный manifest в этом каталоге.
+3. Изменённые и новые файлы пишутся рядом с целевым путём как `<имя>.tmp`,
+   затем per-file rename поверх целевого имени (атомарный на одном томе).
+4. Неизменённые файлы (по content_hash) не переэкспортируются и **не трогаются вовсе**.
+5. После успешной записи всех payload prepared marker атомарно переименовывается
+   в `export_manifest.json`. Исчезновение marker + rename manifest — commit event
+   для UE watcher. Если semantic manifest совпал, payload не ремонтировался и
+   marker от прошлого crash отсутствует, manifest также не трогается. Report
+   различает `manifest_changed` и физический `manifest_written`.
+6. Удаление — строго по разности манифестов: удаляется множество путей
+   `sources(предыдущий манифест) − sources(новый манифест)`, вычисленное из двух
+   манифестов, **никогда не обход каталога**. Экспортер не имеет права трогать
+   файлы, которых сам не записывал (заметки пользователя, `.bak` и прочее в
+   bundle-каталоге неприкосновенны). Нет предыдущего манифеста — ничего не
+   удаляем. Удаление выполняется **после** успешной записи нового манифеста.
+
+Контракт UE-стороны: при наличии `export_manifest.json.tmp` каталог считается
+`export in progress` и не импортируется; в отсутствие marker доверять только
+стабильному manifest и игнорировать не перечисленные в нём файлы. Отсутствие
+валидного manifest = UE не импортирует каталог.
+
+Recovery: payload `*.tmp` зачищаются следующим экспортом, но pending manifest
+намеренно сохраняется как fail-closed marker и заменяется только следующим
+успешным экспортом. Watcher UE подписан на stable manifest rename с debounce;
+startup scan обязан сначала проверить отсутствие pending marker.
+
+## 2. export_manifest.json
+
+```json
+{
+  "schema": "mh.bundle_manifest",
+  "schema_version": 2,
+  "exporter_version": "0.2.0",
+  "bundle_uid": "11db2600-1a7d-4808-bfa7-0d7b5c71a78c",
+  "bundle_name": "Building_A",
+  "source": { "blend_file": "Building_A.blend" },
+  "resources": [
+    {
+      "uid": "2db5574c-3aca-43cc-9ab5-8242403e18cd",
+      "kind": "static_mesh",
+      "name": "wall_a",
+      "source": "meshes/wall_a__2db5574c.mesh.fbx",
+      "content_hash": "xxh3:9f2c..."
+    },
+    {
+      "uid": "f53d93af-94c3-472f-98d0-ff36eb93c417",
+      "kind": "composite",
+      "name": "window_set_a",
+      "source": "window_set_a__f53d93af.composite",
+      "content_hash": "xxh3:aa01..."
+    }
+  ],
+  "external_dependencies": [
+    { "uid": "e3ba6783-...", "kind": "composite", "name": "lamp_a" }
+  ],
+  "materials": []
+}
+```
+
+Правила:
+- `content_hash` для mesh — по детерминированной бинарной сериализации evaluated mesh
+  (точный формат — §9), НЕ по байтам FBX.
+- `content_hash` для composite — по канон-форме JSON (точные правила — §8).
+- Формат значения hash — `xxh3:` + 16 hex lowercase (§8.3).
+- `external_dependencies` — UID'ы, на которые ссылаются composites, но которых нет в этом
+  bundle. Сортировка — по uid. `resources` также сортируются по uid — манифест диффабелен.
+- Hash — это fast-path фильтр «смотреть ли внутрь», а не источник diff-операций:
+  операции (§7) всегда вычисляются структурным сравнением распарсенных данных.
+- У записи ресурса (mesh / composite) — **optional bag `properties`** (QUESTION-9,
+  pre-freeze поправка): asset-level свойства — `role`, будущие `render.*` уровня
+  ассета. Passthrough-правила те же, что у узловых bag'ов (§3); входит в канон-форму;
+  изменение — существующий флаг `UPDATE_PROPERTIES` resource-пространства (§7.2).
+  Авторинг: `mh_p_*` с КОЛЛЕКЦИИ-ресурса. Разведение уровней: ресурсные properties =
+  свойства ассета (применяются при импорте геометрии, до и независимо от placements —
+  ресурс без единого размещения тоже импортируется правильно); узловые properties =
+  placement-level, при компиляции дополняют/уточняют ресурсные. Наследование
+  ресурсных свойств в узлы ЗАПРЕЩЕНО — дублирование создаёт рассинхрон.
+
+Резерв LOD (D13; v1-схема, post-MVP реализация) — optional-поля mesh-ресурса:
+
+```json
+{
+  "uid": "2db5574c-...", "kind": "static_mesh", "name": "wall_a",
+  "source": "meshes/wall_a__2db5574c.mesh.fbx",
+  "content_hash": "xxh3:...",
+  "lod_policy": "generated",
+  "lods": [
+    { "level": 1, "source": "meshes/wall_a__2db5574c.lod1.mesh.fbx", "content_hash": "xxh3:..." }
+  ]
+}
+```
+
+- базовый `source` — всегда LOD0; `lods[]` — только уровни 1+ (отдельные FBX,
+  добавляемые в существующий SM при импорте);
+- `lod_policy: "authored" | "generated" | "nanite"`, default `"generated"`;
+- screen sizes и reduction settings — resolved-свойства UE-стороны, в bundle
+  не входят и не резервируются.
+
+Резерв kind (D29): `"skeletal_mesh"` — валидное значение kind ресурса, в MVP не
+реализуется; сериализация скелетки потребует отдельного тега `mh.skelser:1`
+(§9 остаётся static-only).
+
+### 2.1 Секция `materials` (D22)
+
+Материал — ресурс с UID; записи сортируются по uid; отдельного materials.json нет.
+Манифест — единственная точка коммита всей транзакции экспорта.
+
+```json
+{
+  "uid": "<uuid>", "kind": "material", "name": "m_stucco_concrete",
+  "shader_class": "rendinst_perlin_layered",
+  "params": { "mask_gamma": [0.1, 1.0, 1.0, 1.0], "micro_detail_layer": 0 },
+  "textures": { "tex0": "manmade_common/textures/whitewash_plain_a_tex_d.tif" },
+  "content_hash": "xxh3:0123456789abcdef"
+}
+```
+
+Правила:
+- Blender-источник — `Material.dagormat`: `shader_class`, `optional`, `sides`,
+  `textures`. `sides` сериализуется в `params`; пустые texture slots
+  опускаются. Node tree не используется как metadata-источник.
+- Если dagormat отсутствует или `shader_class` пуст, пишется
+  `rendinst_simple` с пустыми `params` и `textures`.
+- `content_hash` = XXH3-64 от канон-формы
+  `{shader_class, params, textures}`. UID/name/kind исключены: rename
+  материала не считается изменением его properties.
+- Канон material payload использует тот же compact JSON/сортировку
+  UTF-8 ключей/NFC, что §8. Все числа внутри `params` и `textures`
+  рекурсивно квантуются с p=6; bool/null не квантуются, порядок
+  массивов сохраняется. В manifest записывается то же нормализованное
+  представление `q / 10^6`, которое хешируется: например, `16.3710003`
+  записывается как `16.371`, поэтому disk/hash/diff не расходятся.
+- `shader_class` → Master-материал по пути `<master_root>/<shader_class>`
+  (настройка проекта UE; alias-словарь, default пустой). Реестр — D28:
+  генерируется UE-плагином из папки master_root; неизвестный shader_class
+  на экспорте — warning, отсутствующий Master на импорте — ошибка материала
+  в diff-отчёте, не блокирующая остальные ресурсы.
+- `params`: скаляр → scalar param, массив 4 float → vector param (LinearColor);
+  имена параметров = ключи как есть. `sides` и незнакомые ключи — passthrough
+  в params (принцип broken_properties).
+- Пустые tex-слоты не пишутся.
+- Пути текстур — относительные под `texture_root`, forward slashes; путь вне
+  root — ошибка `MH_E_TEXTURE_OUTSIDE_ROOT`.
+- У mesh-ресурса появляется таблица связи (НЕ парсинг имён из FBX):
+  `material_slots: [{ "slot_name": "...", "material_uid": "<uuid>" }]` —
+  порядок первого вхождения: ObjectUID, затем slot index;
+  повторный MaterialUID не дублируется. В UE связь ключуется
+  `slot_name`, а не ordinal-позицией в этом сводном массиве.
+- Пустой material slot → `MH_E_EMPTY_MATERIAL_SLOT`; одинаковый
+  `slot_name` для разных MaterialUID → `MH_E_MATERIAL_SLOT_CONFLICT`.
+- Rename материала даёт material `RENAME`; для каждого mesh, где
+  изменился FBX slot name, дополнительно ожидаются `UPDATE_GEOMETRY`
+  и `UPDATE_PROPERTIES` с переэкспортом FBX.
+
+Минимальный читаемый Blender-аддоном registry:
+
+```json
+{
+  "schema": "mh.registry",
+  "schema_version": 1,
+  "shader_classes": ["rendinst_simple", "rendinst_perlin_layered"]
+}
+```
+
+Дополнительные top-level секции допускаются. Незаданный registry отключает
+проверку без warning; заданный, но нечитаемый/невалидный даёт
+`MH_W_REGISTRY_INVALID` и не блокирует экспорт.
+
+### 2.2 Зеркалирование путей (D27)
+
+Bundle-каталоги живут в дереве `source_root` (настройка аддона). Целевой путь
+UE **вычисляется, не хранится**: `content_root` (настройка проекта UE) +
+относительный путь каталога источника + имя ассета (префиксы SM_/MI_/T_/CA_ —
+настройка проекта с этими дефолтами). Перемещение источника между папками при
+том же UID = операция `MOVE` в диффе (§7.2), не REMOVE+CREATE. Коллизия имён
+двух ресурсов в одном целевом каталоге — ошибка Analyzer'а
+(`MH_E_TARGET_NAME_COLLISION`), никаких молчаливых суффиксов.
+
+## 3. Файл `*.composite`
+
+```json
+{
+  "schema": "mh.composite",
+  "schema_version": 1,
+  "uid": "f53d93af-94c3-472f-98d0-ff36eb93c417",
+  "name": "window_set_a",
+  "nodes": [
+    {
+      "node_uid": "6866f569-4d42-472f-a676-a836a3df18ec",
+      "parent_uid": null,
+      "kind": "mesh",
+      "display_name": "window_a.001",
+      "resource_uid": "5839a2e1-....",
+      "local_transform": {
+        "translation_cm": [0.0, 45.0, 210.0],
+        "rotation_quat":  [0.0, 0.0, 0.0, 1.0],
+        "scale":          [1.0, 1.0, 1.0]
+      },
+      "properties": { }
+    },
+    {
+      "node_uid": "a0ccf18c-....",
+      "parent_uid": null,
+      "kind": "composite_ref",
+      "display_name": "lamp",
+      "resource_uid": "e3ba6783-....",
+      "local_transform": { "...": "..." }
+    }
+  ]
+}
+```
+
+Правила:
+- **Flat node table**, иерархия через `parent_uid` (null = корень). Порядок узлов в массиве
+  семантики НЕ несёт; экспортер сортирует по node_uid для стабильных диффов.
+- `kind` в v1: `group | mesh | composite_ref`. Зарезервированы (валидны в схеме, MVP-компилятор
+  выдаёт warning-заглушку): `variant_set | variant | actor`.
+- Трансформы — **уже в UE-конвенции**: сантиметры, Z-up, left-handed, кватернион (x,y,z,w).
+  Конвертацию выполняет Blender-аддон (Decision D12); формула и ограничения — §11.
+- `properties` — открытый bag `строка → значение`. Неизвестные ключи сохраняются и
+  транспортируются (принцип broken_properties из dag4blend). Known-ключи v1:
+  `role: string` (например "decal"), резерв: `render.*`, `collision.*`.
+  Bag узла — **placement-level**; asset-level свойства (в т.ч. `role` ресурса)
+  живут на записи ресурса в манифесте (§2, QUESTION-9) и в узлы не наследуются.
+
+### Зарезервированные поля (v1 схема, post-MVP реализация)
+
+```json
+{
+  "kind": "variant_set",
+  "variants": [
+    { "resource_uid": "...", "weight": 1.0 },
+    { "resource_uid": "...", "weight": 1.0 }
+  ],
+  "seed_policy": "inherit",
+  "seed_salt": 0
+}
+```
+```json
+{
+  "kind": "actor",
+  "actor_resource_uid": "c38bf56d-....",
+  "cached_soft_class_path": "/Game/Gameplay/BP_PhysicsDoor"
+}
+```
+
+## 4. UID-правила (Blender-аддон)
+
+| Событие в Blender | Поведение UID |
+|---|---|
+| Переименование объекта/меша/коллекции | все UID сохраняются |
+| Новый placement того же Mesh datablock | новый node_uid, старый resource_uid |
+| Linked duplicate (Alt+D) | общий resource_uid, новый node_uid |
+| Make Single User | НОВЫЙ resource_uid |
+| Ctrl+D (копия объекта) | Blender копирует props → дубликат node_uid → **экспорт падает**, Fix-кнопка переназначает |
+| Collection Instance на composite | новый node_uid, тот же composite uid |
+| Перенос узла к другому родителю | тот же node_uid, меняется parent_uid |
+
+Хранение: `obj['mh_uid']` (node), `mesh['mh_uid']` (resource), `collection['mh_uid']`
+(resource/composite). Назначение — lazy при Validate/Export. UUID4, lowercase, дефисы.
+
+Разъяснение ролей двух «resource»-UID у mesh-ресурса:
+
+- **`collection['mh_uid']`** — публичный `resource_uid`: единица экспорта
+  (одна GEOMETRY-коллекция = один FBX = один UStaticMesh). Именно он стоит в
+  манифесте (`resources[].uid`) и в `resource_uid` узлов-placement'ов.
+- **`mesh['mh_uid']`** (datablock) и `obj['mh_uid']` объектов внутри коллекции —
+  внутренняя identity: порядок сериализации multi-object коллекций (§9.2) и
+  арбитраж Make Single User (§4.1). В манифест v1 не попадают.
+
+### 4.1 Дубликаты UID: детект и арбитраж
+
+Blender копирует custom props при любом дублировании, поэтому дубликаты UID — штатная
+ситуация, а не порча данных. Молчаливый дубликат отравляет все диффы (риск R3),
+поэтому правила жёсткие:
+
+**NodeUID (два объекта с одним `mh_uid`).** Экспорт падает, кнопка Fix переназначает
+новый UID всем, кроме одного. Выбор «оригинала» не определим из Blender-данных —
+Fix оставляет UID произвольному одному (для UE любой вариант корректен: остальные
+станут CREATE).
+
+**ResourceUID (два разных mesh datablock с одним `mh_uid`)** — то, что физически
+происходит при Make Single User: Blender копирует datablock вместе с props.
+Арбитраж по последнему манифесту:
+1. Считаем content_hash обоих datablock'ов.
+2. Чей hash совпадает с записанным в манифесте для этого UID — тот легитимный
+   владелец; остальным Fix выдаёт новые UID.
+3. Манифеста нет, или изменились оба — экспорт падает с ручным выбором
+   («кто из них оригинал»).
+
+**CollectionUID (Ctrl+D коллекции-ресурса/композита).** Тот же арбитраж на уровне
+`collection['mh_uid']`, но Fix обязан **каскадно** переназначить и все `mh_uid`
+объектов внутри коллекции-дубликата. Эвристика «дубликат — тот, у кого имя с
+суффиксом `.001`» допустима как pre-выбор в диалоге, но не как молчаливое решение.
+
+**Целостность node table.** `parent_uid`, указывающий на несуществующий узел, и цикл
+parent-цепочки внутри одного файла — hard error валидации экспорта. UE-импорт делает
+дублирующую проверку: файл могли править руками.
+
+## 5. Random (спецификация зафиксирована, реализация post-MVP)
+
+```
+NodePathUID  = Hash(node_uid_0, node_uid_1, ..., node_uid_N)   # путь от корня definition
+OccurrenceUID = Hash(PlacementUID, NodePathUID)
+RandomValue   = Hash(RngSchemaVersion, PlacementUID, OccurrenceUID, RandomChannelID, UserSeed)
+```
+- Hash: xxHash64 (или xxh3) по байтовой конкатенации; НЕ HashCombine UE (нестабилен между версиями).
+- Кодирование входов конкатенации (однозначно, как в §9.1): UUID — строка 36 байт
+  ASCII (lowercase, с дефисами); целые (`RngSchemaVersion`, `UserSeed`, `seed_salt`) —
+  uint64 little-endian фиксированной ширины; строки (`RandomChannelID`) —
+  uint32 длина + байты UTF-8.
+- `RandomChannelID` — закрытый реестр: `variant_selection, offset_x, offset_y, offset_z,
+  rotation_yaw, rotation_pitch, rotation_roll, scale_uniform, scale_y`. Расширение реестра —
+  через schema_version заметку. Свободные строки запрещены.
+- Инварианты (тестируются): добавление нового канала не меняет значения других каналов;
+  перестановка узлов в JSON не меняет ничего; rename не меняет ничего; reroll меняет только
+  UserSeed; `seed_policy=independent` отвязывает поддерево от PlacementUID (использует seed_salt).
+- Выбор варианта по весам: накопительные диапазоны в порядке сортировки variants по
+  resource_uid (стабильный порядок); добавление варианта добавляет диапазон в конец.
+
+## 6. Валидация (Blender Export / UE Import)
+
+Blender (блокирует экспорт): дубликаты node_uid / resource_uid / collection uid
+(детект и Fix — §4.1); циклы composite-ссылок (DFS, вывод цепочки A→B→A);
+`parent_uid` на несуществующий узел; цикл parent-цепочки в node table;
+Empty с instance_collection без mh_uid на коллекции; пустая коллекция-ресурс;
+composite-коллекция с под-коллекциями (плоскость как в dag4blend);
+NaN/Inf в квантуемых полях (§8.2); отрицательный или нулевой scale узла (§11);
+коллизия uid8 в именах файлов (§10).
+
+UE (Analyzer, блокирует импорт затронутых композитов, не всего bundle): цикл в объединённом
+графе (импортируемые + существующие ассеты) через топосортировку; неизвестный schema_version;
+дубликат UID с другим bundle-владельцем; `parent_uid` на несуществующий узел и цикл
+parent-цепочки (повторная проверка — файл могли править руками).
+
+UE (Compiler, никогда не крэшит): стек CompositeUID → error-заглушка + Message Log;
+лимит глубины 64; неразрешённый resource_uid → warning-заглушка.
+
+Замечание по циклам (проверено на Blender 4.5): внутри одного .blend настоящий
+цикл `instance_collection` неперсистируем — depsgraph падает при сохранении
+независимо от `instance_type`, а UI не даёт его создать. Циклы приходят только
+через cross-bundle ссылки (registry) и ручную правку `.composite` — поэтому
+негативная фикстура цикла (`golden/fixtures/composite_cycle/`) — уровня bundle,
+и Blender-валидатор ловит цикл по registry ДО материализации в Blender-данных.
+
+### 6.1 Реестр машинных кодов
+
+Коды стабильны (это API отчётов и тестов); расширение реестра — через
+schema_version-заметку. `MH_E_*` блокирует, `MH_W_*` — предупреждение.
+
+| Код | Где проверяется | Условие |
+|---|---|---|
+| `MH_E_DUPLICATE_NODE_UID` | Blender export; UE import | два узла/объекта с одним node_uid |
+| `MH_E_DUPLICATE_RESOURCE_UID` | Blender export; UE import | два datablock'а/коллекции с одним resource_uid (§4.1) |
+| `MH_E_COMPOSITE_CYCLE` | Blender export; UE import; UE compiler | цикл composite-ссылок |
+| `MH_E_DANGLING_PARENT` | Blender export; UE import | `parent_uid` вне node table |
+| `MH_E_PARENT_CYCLE` | Blender export; UE import | цикл parent-цепочки в node table |
+| `MH_E_MISSING_COLLECTION_UID` | Blender export | instance_collection без `mh_uid` |
+| `MH_E_EMPTY_RESOURCE_COLLECTION` | Blender export | пустая коллекция-ресурс |
+| `MH_E_NESTED_COMPOSITE_COLLECTION` | Blender export | под-коллекции в composite-коллекции |
+| `MH_E_NAN_INF_VALUE` | Blender export | NaN/Inf в квантуемом поле (§8.2) |
+| `MH_E_INVALID_SCALE` | Blender export | scale ≤ 0 по любой оси (§11) |
+| `MH_E_UID8_COLLISION` | Blender export | коллизия uid8 в именах файлов (§10) |
+| `MH_E_NON_ASCII_RESOURCE_NAME` | Blender export | имя ресурса/композита/bundle вне `[A-Za-z0-9_ -]` (§10) |
+| `MH_E_UNKNOWN_SCHEMA_VERSION` | UE import | schema_version не поддержан |
+| `MH_E_FOREIGN_UID_OWNER` | UE import | UID уже принадлежит другому bundle |
+| `MH_E_NAME_MISMATCH` | UE import | `name` ресурса в манифесте ≠ `name` внутри `.composite` (файл правили руками) |
+| `MH_E_TEXTURE_OUTSIDE_ROOT` | Blender export | путь текстуры вне `texture_root` (§2.1, D23/D27) |
+| `MH_E_EMPTY_MATERIAL_SLOT` | Blender export | в mesh-ресурсе есть material slot без Material |
+| `MH_E_MATERIAL_SLOT_CONFLICT` | Blender export | один `slot_name` в mesh-ресурсе ссылается на разные MaterialUID |
+| `MH_E_INVALID_MATERIAL_VALUE` | Blender export | material payload не JSON-совместим или ключи конфликтуют после NFC |
+| `MH_E_TARGET_NAME_COLLISION` | UE import | два ресурса дают одно имя ассета в одном целевом каталоге (§2.2, D27) |
+| `MH_W_RESOURCE_FAR_FROM_ORIGIN` | Blender export (warning) | bbox коллекции-ресурса далеко от origin (§9.3) |
+| `MH_W_UNKNOWN_SHADER_CLASS` | Blender export (warning) | `shader_class` нет в прочитанном registry |
+| `MH_W_REGISTRY_INVALID` | Blender export (warning) | registry не читается или не соответствует схеме |
+
+### 6.2 Машинный формат отчёта валидации
+
+Как и у диффов (§7.3), машинный формат первичен; текст в логе генерируется из него.
+В этом же формате записаны `golden/expected_errors/*.json` — спецификация
+негативных тестов этапа B.
+
+```json
+{
+  "schema": "mh.validation_report",
+  "schema_version": 2,
+  "errors": [
+    {
+      "code": "MH_E_DUPLICATE_NODE_UID",
+      "subjects": ["6866f569-4d42-472f-a676-a836a3df18ec"],
+      "message": "два объекта с одним mh_uid: 'window_1', 'window_1.001'"
+    }
+  ],
+  "warnings": []
+}
+```
+
+- `subjects` — UID'ы затронутых сущностей, отсортированы побайтово; если UID
+  неприменим — стабильный идентификатор контекста (путь файла).
+- `message` — человекочитаемый, в тестовое сравнение НЕ входит: expected_errors
+  сравниваются по множеству пар (code, subjects).
+- `warnings` имеет тот же формат строк, но `MH_W_*` не меняет
+  `ok` и не блокирует запись файлов.
+
+## 7. Диффы (контракт reimport)
+
+### 7.1 Ключевание
+
+Дифф живёт в двух пространствах, оба ключуются UID'ами:
+
+- **resource-операции** — по `resource_uid` (меши, композиты как ресурсы bundle);
+- **node-операции** — по `node_uid` в контексте композита-владельца
+  (один node_uid уникален внутри composite, не глобально).
+
+### 7.2 Операции — множество ортогональных флагов
+
+Операции на сущности — не взаимоисключающий enum, а **множество флагов**:
+`wall_a: {RENAME, UPDATE_GEOMETRY}`, `node 6866…: {REPARENT, UPDATE_TRANSFORM}`.
+Исключительны только `CREATE` и `REMOVE` — каждый несовместим с любым другим флагом.
+`UNCHANGED` = пустое множество (в отчёте такая сущность не перечисляется).
+
+| Флаг | Пространство | Смысл |
+|---|---|---|
+| `CREATE` | оба | UID появился |
+| `REMOVE` | оба | UID исчез |
+| `RENAME` | оба | изменилось display-имя (`name` / `display_name`) |
+| `UPDATE_GEOMETRY` | resource (mesh) | изменился mesh content_hash (§9) |
+| `UPDATE_TRANSFORM` | node | изменился `local_transform` (сравнение квантованных целых) |
+| `UPDATE_PROPERTIES` | оба | изменился bag `properties` |
+| `REPARENT` | node | изменился `parent_uid` |
+| `UPDATE_RESOURCE` | node | узел ссылается на другой `resource_uid` (например, Make Single User перевесил placement на новый ресурс) |
+| `UPDATE_KIND` | node | изменился `kind` узла при живом node_uid (замена mesh-placement на composite_ref и т.п.; почти всегда вместе с UPDATE_RESOURCE) |
+| `MOVE` | resource | каталог источника сменился при том же UID (D27) → перемещение ассета в Content Browser |
+| `LOCAL_EDIT` | resource | только UE-Analyzer с Ledger (D25): ресурс правили руками в UE, источник не менялся |
+| `CONFLICT` | resource | только UE-Analyzer с Ledger (D25): разошлись и источник, и UE-копия |
+| `EXTERNAL_UNRESOLVED` | resource | ссылка на UID вне bundle, не разрешимая на момент импорта |
+
+`LOCAL_EDIT` и `CONFLICT` вычислимы только трёхсторонним сравнением
+base/theirs/ours (D25) — эталонный `tools/diff_bundles.py`, сравнивающий два
+bundle без Ledger'а, их **никогда не эмитит**.
+
+Смена `kind` — НЕ REMOVE+CREATE: UID жив — сущность та же (принцип №1).
+
+CREATE/REMOVE композита-ресурса **не перечисляет** его узлы в `nodes`: они
+подразумеваются операцией ресурса. Секция `nodes` содержит только изменения
+внутри композитов, существующих в обеих сравниваемых версиях.
+
+### 7.3 Формат отчёта
+
+Машинный формат первичен — **JSON**; человекочитаемое представление генерируется из него.
+Тот же формат обязан печатать UE-Analyzer, и в нём же записаны
+`golden/expected_diffs/*.json` — тест этапа C буквально сравнивает два JSON.
+
+```json
+{
+  "schema": "mh.diff_report",
+  "schema_version": 1,
+  "resources": {
+    "2db5574c-3aca-43cc-9ab5-8242403e18cd": ["RENAME", "UPDATE_GEOMETRY"]
+  },
+  "nodes": {
+    "f53d93af-94c3-472f-98d0-ff36eb93c417": {
+      "6866f569-4d42-472f-a676-a836a3df18ec": ["UPDATE_TRANSFORM"]
+    }
+  }
+}
+```
+
+- `nodes` ключуется `composite_uid` → `node_uid` → флаги.
+- Флаги внутри массива — в фиксированном порядке таблицы 7.2 (для стабильного сравнения).
+- Сущности с пустым множеством флагов не включаются: пустой дифф =
+  `{"resources": {}, "nodes": {}}`.
+
+Повторный импорт неизменённого bundle → пустой дифф, ноль пересозданных ассетов —
+это приёмочный тест всего пайплайна.
+
+## 8. Канонизация и content_hash
+
+Раздел решает задачу: hash обязаны одинаково вычислять две независимые реализации
+(Python-аддон и C++-плагин UE). Строковые представления float непереносимы между языками
+и версиями рантаймов, поэтому канон-форма не содержит float вообще.
+
+### 8.1 Два представления, одно значение
+
+| Представление | Назначение | Формат |
+|---|---|---|
+| On-disk `*.composite` | git-дифф, чтение человеком | pretty-printed JSON: отступ 2 пробела, ключи в фиксированном порядке схемы (8.4), узлы отсортированы по `node_uid`, UTF-8 без BOM, LF, завершающий перевод строки |
+| Канон-форма | вход хеш-функции | компактный JSON без whitespace, ключи отсортированы побайтово (UTF-8), все квантуемые числа — масштабированные целые (8.2) |
+
+`content_hash` считается **не по байтам файла**, а по канон-форме, которую каждая сторона
+строит из распарсенных данных. Переформатирование файла, порядок узлов в массиве и
+prettify на hash не влияют. Hash покрывает весь документ (включая `name`): неравенство
+hash означает только «смотреть внутрь», конкретные операции определяет структурный diff (§7).
+
+### 8.2 Квантование чисел
+
+Все continuous-величины квантуются на экспорте, **до записи в файл**:
+
+```
+q(value, p) = round_half_even(value * 10^p)   -> целое
+```
+
+| Класс поля | p | Точность |
+|---|---|---|
+| `translation_cm` | 3 | 0.001 см |
+| `rotation_quat` | 6 | 1e-6 |
+| `scale` | 6 | 1e-6 |
+| `weight` (variants) | 4 | 1e-4 |
+| числа в `properties` | 6 | 1e-6 |
+
+В on-disk файл попадают уже квантованные значения (десятичная запись `q / 10^p`),
+в канон-форму — сами целые `q`. Следствия:
+
+- файл, канон-форма и hash всегда согласованы между собой;
+- файл, перечитанный и переэкспортированный без изменений, даёт тот же hash —
+  идемпотентность, приёмочный тест канон-библиотеки;
+- вопрос «изменился ли transform» — сравнение целых, без эпсилон-логики.
+
+`round_half_even` (banker's rounding) выбран как режим, одинаково определённый в Python
+(`round`) и C++ (`std::nearbyint` при округлении к ближайшему чётному IEEE-754).
+NaN/Inf в любом квантуемом поле — ошибка валидации экспорта (§6).
+
+### 8.3 Хеш-функция и формат записи
+
+- Алгоритм: XXH3-64 по байтам канон-формы.
+- Запись в манифесте: `"xxh3:" + 16 hex lowercase`, пример: `xxh3:9f2c01ab34cd56ef`.
+- Для mesh-ресурсов вход хеша — бинарная сериализация §9 (не JSON).
+- Кросс-реализационные тест-векторы (вход → байты канон-формы → hash) живут в
+  `golden/canonical_vectors.json`; обе реализации обязаны их проходить.
+
+### 8.4 Правила канон-формы JSON
+
+- Ключи объектов — в порядке побайтовой сортировки UTF-8. (Фиксированный порядок ключей
+  on-disk формата — человекочитаемое соглашение: `schema, schema_version, uid, name, nodes`;
+  в узле: `node_uid, parent_uid, kind, display_name, resource_uid, local_transform,
+  properties`, прочие known-поля — за ними, unknown — по алфавиту в конце.)
+- Без whitespace: `{"a":1,"b":[2,3]}`.
+- Все строки нормализуются в **Unicode NFC** до сериализации — и на входе канон-формы,
+  и при записи on-disk файлов. Иначе NFD-написание из macOS-пайплайна даёт другой hash
+  при неотличимом на глаз имени — фантомный дифф ровно того класса, против которого
+  строилась канонизация. Ключи объектов нормализуются ДО вычисления порядка сортировки.
+  Если два разных ключа одного объекта схлопываются в один после NFC (достижимо ручной
+  правкой `properties`) — это ошибка канонизации (обе реализации обязаны падать,
+  а не молча терять один из ключей).
+- Строки — UTF-8; экранируются только обязательные символы: `"` как `\"`, `\` как `\\`,
+  управляющие < 0x20 как `\u00xx` (hex lowercase). Не-ASCII символы НЕ экранируются.
+- Целые — десятичные, без `+`, без ведущих нулей; `-0` нормализуется в `0`.
+- Квантованные числа — целые `q` из 8.2. Появление неквантованного float в
+  канон-форме — ошибка реализации, а не данных.
+- Числа в позициях, не перечисленных в 8.2 (unknown-ключи, ручные правки файла),
+  квантуются с дефолтным экспонентом p=6 — чтобы `2` и `2.0` не могли дать разные
+  хеши. Исключение — closed-list полей схемы, являющихся точными целыми:
+  `schema_version`, `seed_salt` — они проходят в канон-форму как есть
+  (квантование сломало бы их роль точного входа §5). Расширение списка —
+  только через schema_version-заметку; C++-реализация обязана зеркалить и
+  дефолт, и список.
+- `null` сериализуется как `null`; отсутствующее optional-поле не сериализуется вовсе.
+  Экспортер обязан писать все known-поля узла явно (включая `parent_uid: null`),
+  поэтому неоднозначность absent-vs-null возможна только у unknown-ключей `properties` —
+  там правило: ключ со значением `null` и отсутствующий ключ — разные вещи, оба
+  транспортируются как есть.
+- Массив `nodes` в канон-форме отсортирован по `node_uid` (побайтовое сравнение строк UID).
+- Булевы — `true` / `false`. UID — строка UUID lowercase с дефисами.
+
+## 9. Сериализация mesh для content_hash
+
+Вход — evaluated mesh (после модификаторов) каждого объекта коллекции-ресурса,
+**в метрах Blender, ДО cm-конверсии**: канонический FBX-экспорт масштабирует
+геометрию ×100 временным контекст-менеджером
+(`_temporary_ue_centimeter_export_state`, reference/studio_scripts), и hash
+обязан считаться по авторскому состоянию, а не по временно изменённому.
+Выход — байтовый поток → XXH3-64 → `xxh3:...` в манифесте.
+Сериализация — static-only; skeletal (D29) получит отдельный тег `mh.skelser:1`.
+
+### 9.1 Общие правила кодирования
+
+- little-endian, фиксированные ширины;
+- counts и индексы — uint32;
+- квантованные значения — int64 (`q` по правилу §8.2, `p` указан per-поле ниже);
+- строки — uint32 длина в байтах + байты UTF-8;
+- поток начинается с тега версии сериализации — строки `mh.meshser:1`.
+  Любое изменение перечня или порядка полей = новый тег; смена тега легально
+  меняет все mesh-хеши (полный реэкспорт геометрии, диффы честно скажут UPDATE_GEOMETRY).
+
+### 9.2 Порядок объектов в коллекции-ресурсе
+
+Коллекция-ресурс может содержать несколько объектов. Объекты сериализуются в порядке
+побайтовой сортировки их `mh_uid` — единственного ключа, устойчивого к rename.
+Известное следствие: переназначение `mh_uid` объекта (например, оператором Fix при
+дубликатах) может изменить порядок сериализации и, значит, hash — принимается как
+редкий ложноположительный UPDATE_GEOMETRY (см. QUESTIONS).
+
+### 9.3 Поля per-object (строго в этом порядке)
+
+1. Трансформ объекта в resource-space: матрица 4×4 row-major, 16 значений q(p=6).
+   У Blender-коллекций нет собственного трансформа, поэтому **resource-space =
+   world-space сцены GEOMETRY** (matrix_world объекта). Авторинг-конвенция,
+   одинаково понимаемая обеими сторонами: ресурс авторится вокруг origin;
+   **pivot будущего UStaticMesh = origin resource-space**. Следствие: сдвиг
+   объектов коллекции целиком меняет и hash, и pivot ассета — осознанно.
+   Валидация экспорта предупреждает (`MH_W_RESOURCE_FAR_FROM_ORIGIN`), если
+   bounding box коллекции далеко от origin — типовая авторская ошибка.
+2. Vertex positions: count, затем per-vertex x, y, z — q(p=4)
+   (локальное пространство объекта, метры Blender, после модификаторов).
+3. Polygons: count, затем per-polygon: count вершин + vertex-индексы в порядке обхода
+   + `material_index` (uint32 — номер material slot полигона). Индекс обязан быть в
+   хеше: перекраска граней с одного слота на другой меняет section-разбивку будущего
+   UStaticMesh и обязана давать UPDATE_GEOMETRY, при том что ни вершины, ни имена
+   слотов не изменились. Порядок полигонов и вершин — как в mesh datablock
+   (для неизменённых данных стабилен).
+4. Custom split normals: uint8 флаг наличия; при наличии — per-loop x, y, z — q(p=4).
+5. Шейдинг: per-polygon `use_smooth` (uint8), затем sharp edges — count + пары
+   vertex-индексов (меньший индекс первым, пары отсортированы лексикографически).
+6. UV-слои: count, слои в порядке побайтовой сортировки имён; на слой — имя,
+   затем per-loop u, v — q(p=6). Имя слоя — часть контента: rename слоя легитимно
+   меняет hash (UE-материалы адресуют UV-каналы).
+7. Color attributes: count, в порядке побайтовой сортировки имён; на атрибут — имя,
+   domain (строка: `POINT` / `CORNER`), тип (строка, имя типа Blender),
+   затем значения по компонентам — q(p=4).
+8. Material slot names: count + имена в порядке слотов (порядок слотов — семантика:
+   он определяет material index полигонов).
+
+### 9.4 Анти-требования
+
+- Имя объекта и имя mesh datablock НЕ входят в hash никогда — rename не меняет геометрию.
+- Прочие generic-атрибуты, vertex groups, shape keys в v1 НЕ хешируются: их изменение
+  не детектится как UPDATE_GEOMETRY (расширение перечня = bump тега `mh.meshser`,
+  см. QUESTIONS).
+
+## 10. Имена файлов внутри bundle
+
+Схема имени файла ресурса: `<sanitized_name>__<uid8>` + расширение
+(`.mesh.fbx` для мешей, `.composite` для композитов — симметрично, чтобы коллизии
+display-имён не влияли на файловую систему).
+
+- `uid8` — первые 8 hex-символов UID (первый блок UUID до дефиса), lowercase.
+- **ASCII-валидация имён (до санитизации).** Имена ресурсов, композитов и bundle
+  обязаны состоять из `[A-Za-z0-9_ -]`; иначе экспорт падает с
+  `MH_E_NON_ASCII_RESOURCE_NAME` («переименуйте ресурс»). Без транслитерации:
+  транслит-таблица — ещё один вечный контракт в двух реализациях, а имена ресурсов
+  становятся именами UE-пакетов, где не-ASCII — источник проблем в движке и VCS.
+  Не-ASCII (в т.ч. кириллица) остаётся легальной в `display_name` узлов и значениях
+  `properties` — они в файлы и пакеты не попадают.
+- Санитизация валидированного имени:
+  1. lowercase;
+  2. каждый символ вне `[a-z0-9_]` (т.е. пробел и дефис) → `_`;
+  3. последовательности `_` схлопываются в один;
+  4. пустой результат → `unnamed`;
+  5. зарезервированные имена Windows (`con`, `prn`, `aux`, `nul`,
+     `com1`–`com9`, `lpt1`–`lpt9`; проверка — по уже санитизированной строке:
+     `con` → `_con`, но `con 1` → `con_1` не зарезервировано) → префикс `_`.
+- Имя каталога экспорта (`<name>`, без обязательного суффикса)
+  подчинено тем же правилам: ASCII-валидация + санитизация `<name>`.
+- Уникальность имени файла гарантирует `uid8`, а не display-имя.
+- Коллизия `uid8` двух разных UID внутри одного bundle (вероятность ~10⁻⁹ на пару):
+  экспорт падает с требованием перегенерировать UID одного из ресурсов.
+  Схему имени НЕ расширяем: детерминированность имени файла ценнее.
+- Rename ресурса меняет имя файла (`source` в манифесте), но не UID: для UE это
+  RENAME, не REMOVE+CREATE. Старый файл удаляется по протоколу §1 (после манифеста).
+
+## 11. Конвенция трансформов Blender → UE
+
+Формула конверсии (Blender RH Z-up, метры → UE LH Z-up, сантиметры; отражение через
+XZ-плоскость, т.е. негация Y):
+
+```
+pos_UE   = ( x * 100,  -y * 100,  z * 100 )       # см
+quat_UE  = ( -qx,  qy,  -qz,  qw )                # (x, y, z, w)
+scale_UE = ( sx,  sy,  sz )
+```
+
+**Статус формулы: ПОДТВЕРЖДЕНА** — R1-тест пройден (UE 5.7, мировая дельта контрольной
+вершины 0.0003 см при допуске 0.1; docs/RISK_RESULTS.md). Настройки FBX-экспорта
+геометрии обязаны давать **ту же** конвенцию, что и формула для placement-трансформов
+(подтверждено тем же тестом). Постоянный арбитр — автоматизированная проверка первого
+коммита этапа C на той же фикстуре (`golden/fixtures/axis/`).
+
+**Примечание (R1-находка, не «чинить» экспортер).** Формула описывает **сквозное**
+отображение Blender→UE, а НЕ содержимое FBX-файла. При канонических настройках
+(`use_space_transform=True`, без bake) файл несёт Blender-координаты с декларацией
+осей — Y в файле положительный; негацию Y выполняет **UE-импортер** при конверсии
+сцены. Это корректное поведение выбранной связки настроек. Двухэтапная диагностика R1
+(локальное пространство отдельно, мировое отдельно) — постоянная часть процедуры:
+обязательна при любой смене geometry backend.
+
+Правила значений:
+
+- **Кватернион**: нормализация → квантование (p=6, §8.2) → канонизация знака на
+  квантованных целых: если `qw < 0`, либо `qw == 0` и первая ненулевая компонента из
+  `(qx, qy, qz)` отрицательна — негируются все четыре компоненты. Без этого `q` и `-q`
+  (один и тот же поворот) дают разные хеши. В файл попадает уже канонизированное значение.
+- **Negative scale — запрещён в v1** (ошибка валидации с текстом «зеркальте геометрию,
+  не placement»). Зеркальные инстансы — реальная потребность, но их корректная компиляция
+  (winding, нормали, инстансинг) — отдельная post-MVP задача; честнее запретить, чем
+  молча испортить. Нулевой scale по любой оси — тоже ошибка (вырожденная матрица).
+- **NaN/Inf** в любой компоненте — ошибка валидации.
+- `translation_cm` — p=3, `scale` — p=6 (§8.2).
+
+## 12. Текстуры (D23, D27)
+
+Текстуры — третий вид исходников, идентичность = **относительный путь под
+`texture_root`** (forward slashes), БЕЗ UID — явное исключение из D3: носителя
+для UID у файла текстуры нет; rename/перемещение текстуры = REMOVE+CREATE
+с warning'ом в отчёте. Общая текстурная библиотека: bundle текстуры НЕ копирует,
+ссылается путями. Один файл = один Texture2D на проект; путь в Content Browser —
+зеркало пути под root (D27).
+
+Суффикс-правила UE Texture Builder (канон — reference/studio_scripts):
+
+| Суффикс имени | sRGB | Compression |
+|---|---|---|
+| `_tex_d` \| `_d` | true | TC_DEFAULT |
+| `_tex_n` \| `_n` | false (linear) | TC_BC7 |
+| `_tex_m` \| `_m` | true | TC_DEFAULT |
+
+Абсолютные пути в legacy-метаданных нормализуются аддоном под `texture_root`
+на экспорте; путь вне root — `MH_E_TEXTURE_OUTSIDE_ROOT`. Для однократной
+миграции пользователь задаёт `Old Texture Root (Remap)` и новый `Texture Root`,
+затем явно запускает `Remap Old Texture Root`: оператор с подтверждением и Undo
+переписывает только абсолютные `Material.dagormat.textures.*` внутри старого
+корня. Операция двухфазная: сначала preflight всех путей, затем применение с
+rollback при ошибке. Относительные/`//`, пути другого platform-style, вне корня
+и на чужом drive не меняются; linked/read-only материалы пропускаются и входят
+в отдельный счётчик. Повторный запуск идемпотентен, итог пишется в
+`mh_export_log` (D27).
