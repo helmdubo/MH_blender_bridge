@@ -4,6 +4,7 @@
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/SceneComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
@@ -105,7 +106,13 @@ int32 LifecycleLeafCount(const AMHCompositeActor& Actor)
 {
     int32 Count = 0;
     for (UActorComponent* Component : Actor.GetDerivedComponents())
-        if (Cast<UStaticMeshComponent>(Component) != nullptr) ++Count;
+    {
+        if (const UInstancedStaticMeshComponent* Bucket =
+                Cast<UInstancedStaticMeshComponent>(Component))
+            Count += Bucket->GetInstanceCount();
+        else if (Cast<UStaticMeshComponent>(Component) != nullptr)
+            ++Count;
+    }
     return Count;
 }
 } // namespace
@@ -258,9 +265,10 @@ bool FMHPlacementLifecycleDesyncTest::RunTest(const FString& Parameters)
         BeforeHandles.Add(Handle != nullptr ? Handle->GetComponentTransform() : FTransform::Identity);
 
     const TArray<TObjectPtr<USceneComponent>> NoLeaves;
+    const TArray<FMHCompositeLeafMaterialization> NoMaterializations;
     FString DesyncError;
     const bool bUpdated = MHUpdateCompositePlacementBasis(*ForeignBasis, *Plan, *Root,
-        Actor->GetTopLevelPlacementComponents(), NoLeaves, DesyncError);
+        Actor->GetTopLevelPlacementComponents(), NoLeaves, NoMaterializations, DesyncError);
     AddInfo(TEXT("desynchronized basis update returned: ") +
         FString(bUpdated ? TEXT("true") : TEXT("false")) + TEXT(" / ") +
         (DesyncError.IsEmpty() ? TEXT("<no diagnostic>") : DesyncError));
@@ -415,17 +423,30 @@ bool FMHPlacementAppearanceTransportTest::RunTest(const FString& Parameters)
     const auto ChannelsMatchPlan = [&](const TCHAR* What) -> bool
     {
         const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
-        const TArray<TObjectPtr<USceneComponent>>& Leaves = Actor->GetLeafPlacementComponents();
+        const TArray<FMHCompositeLeafMaterialization>& Leaves = Actor->GetLeafMaterializations();
         if (Plan == nullptr || Leaves.Num() != Plan->Leaves.Num()) return false;
         for (int32 Index = 0; Index < Leaves.Num(); ++Index)
         {
-            const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Leaves[Index]);
-            if (Mesh == nullptr) return false;
-            const TArray<float>& Data = Mesh->GetCustomPrimitiveData().Data;
+            const FMHCompositeLeafMaterialization& Row = Leaves[Index];
             for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
             {
-                if (!Data.IsValidIndex(Base + Channel) ||
-                    Data[Base + Channel] != Plan->Leaves[Index].AppearanceChannels[Channel])
+                float Value = 0.0f;
+                bool bHasValue = false;
+                if (const UInstancedStaticMeshComponent* Bucket =
+                        Cast<UInstancedStaticMeshComponent>(Row.Component))
+                {
+                    const int32 DataIndex =
+                        Row.InstanceIndex * Bucket->NumCustomDataFloats + Base + Channel;
+                    bHasValue = Bucket->PerInstanceSMCustomData.IsValidIndex(DataIndex);
+                    if (bHasValue) Value = Bucket->PerInstanceSMCustomData[DataIndex];
+                }
+                else if (const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Row.Component))
+                {
+                    const TArray<float>& Data = Mesh->GetCustomPrimitiveData().Data;
+                    bHasValue = Data.IsValidIndex(Base + Channel);
+                    if (bHasValue) Value = Data[Base + Channel];
+                }
+                if (!bHasValue || Value != Plan->Leaves[Index].AppearanceChannels[Channel])
                 {
                     AddError(FString::Printf(TEXT("%s: leaf %d channel %d mismatch"), What, Index, Channel));
                     return false;
@@ -437,14 +458,20 @@ bool FMHPlacementAppearanceTransportTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("channels transported on first build"), ChannelsMatchPlan(TEXT("initial")));
 
     const TArray<TObjectPtr<USceneComponent>> Before = Actor->GetLeafPlacementComponents();
-    const float FirstBefore = CastChecked<UStaticMeshComponent>(Before[0].Get())
-        ->GetCustomPrimitiveData().Data[Base];
+    const FMHCompositeLeafMaterialization BeforeFirst = Actor->GetLeafMaterializations()[0];
+    const UInstancedStaticMeshComponent* BeforeBucket =
+        CastChecked<UInstancedStaticMeshComponent>(BeforeFirst.Component.Get());
+    const float FirstBefore = BeforeBucket->PerInstanceSMCustomData[
+        BeforeFirst.InstanceIndex * BeforeBucket->NumCustomDataFloats + Base];
     Actor->SetAppearanceSeed(Actor->GetAppearanceSeed() + 1);
     bPassed &= TestTrue(TEXT("channels refreshed after appearance reseed"), ChannelsMatchPlan(TEXT("reseed")));
     bPassed &= TestTrue(TEXT("the same component objects survived the reseed"),
         Before == Actor->GetLeafPlacementComponents());
-    const float FirstAfter = CastChecked<UStaticMeshComponent>(Before[0].Get())
-        ->GetCustomPrimitiveData().Data[Base];
+    const FMHCompositeLeafMaterialization& AfterFirst = Actor->GetLeafMaterializations()[0];
+    const UInstancedStaticMeshComponent* AfterBucket =
+        CastChecked<UInstancedStaticMeshComponent>(AfterFirst.Component.Get());
+    const float FirstAfter = AfterBucket->PerInstanceSMCustomData[
+        AfterFirst.InstanceIndex * AfterBucket->NumCustomDataFloats + Base];
     bPassed &= TestNotEqual(TEXT("the tint value actually moved"), FirstBefore, FirstAfter);
     Actor->Destroy();
     World->DestroyWorld(false);

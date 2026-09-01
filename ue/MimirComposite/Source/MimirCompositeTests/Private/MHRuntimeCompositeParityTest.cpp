@@ -9,6 +9,7 @@
 #include "Composite/MHRuntimeCompositeActor.h"
 #include "Composite/MHRuntimeCompositeInput.h"
 #include "Components/ActorComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Containers/StringConv.h"
 #include "Diagnostics/MHReaderOutputPath.h"
@@ -438,16 +439,38 @@ bool RecordEditor(FAutomationTestBase& Test, const AMHCompositeActor& Actor,
 {
     const FMHResolvedCompositePlan* Plan = Actor.GetResolvedPlan();
     if (!Test.TestNotNull(TEXT("editor placement has a plan"), Plan)) return false;
+    const TArray<FMHCompositeLeafMaterialization>& Materializations =
+        Actor.GetLeafMaterializations();
+    if (!Test.TestEqual(TEXT("editor materialization stays plan-aligned"),
+        Materializations.Num(), Plan->Leaves.Num())) return false;
     TArray<TObjectPtr<USceneComponent>> Components;
-    for (const FMHResolvedCompositeLeaf& Leaf : Plan->Leaves)
+    TArray<TObjectPtr<UInstancedStaticMeshComponent>> InstanceTransformProxies;
+    for (int32 LeafIndex = 0; LeafIndex < Plan->Leaves.Num(); ++LeafIndex)
     {
-        const FName Key(*FString::Printf(TEXT("MH.Leaf:%s:%d:%s"), *Leaf.Origin, static_cast<int32>(Leaf.Kind), *Leaf.Resource));
-        USceneComponent* Found = nullptr;
-        for (UActorComponent* Component : Actor.GetDerivedComponents())
+        const FMHCompositeLeafMaterialization& Materialization = Materializations[LeafIndex];
+        if (!Materialization.IsInstanced())
         {
-            if (IsValid(Component) && Component->ComponentTags.Contains(Key)) Found = Cast<USceneComponent>(Component);
+            Components.Add(Materialization.Component);
+            continue;
         }
-        Components.Add(Found);
+
+        const UInstancedStaticMeshComponent* Bucket =
+            Cast<UInstancedStaticMeshComponent>(Materialization.Component.Get());
+        FTransform InstanceWorld;
+        if (!Test.TestNotNull(TEXT("editor parity ISM bucket"), Bucket) ||
+            !Test.TestTrue(TEXT("editor parity instance transform exists"),
+                Bucket->GetInstanceTransform(Materialization.InstanceIndex, InstanceWorld, true)))
+        {
+            return false;
+        }
+        // MHBuildCompositePlanReport intentionally remains runtime-only and
+        // component-shaped. Feed it a test-only proxy carrying the exact ISM
+        // instance world matrix; no production transport or signature changes.
+        UInstancedStaticMeshComponent* Proxy =
+            NewObject<UInstancedStaticMeshComponent>(GetTransientPackage());
+        Proxy->SetWorldTransform(InstanceWorld);
+        InstanceTransformProxies.Add(Proxy);
+        Components.Add(Proxy);
     }
     TSharedPtr<FJsonObject> Report;
     FString Error;

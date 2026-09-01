@@ -405,7 +405,7 @@ bool FMHDefinitionMetricsSyntheticTest::RunTest(const FString& Parameters)
         *this, *Fixture.Root, PlacementCount, Metrics, WallMilliseconds);
     AddInfo(DefinitionMetricsLine(TEXT("synthetic100"), PlacementCount, WallMilliseconds, Metrics));
     bPassed &= DefinitionMetricsCommonAssertions(
-        *this, Metrics, PlacementCount, PlacementCount * TopLevelNodes * 2);
+        *this, Metrics, PlacementCount, PlacementCount * (TopLevelNodes + 1));
     return bPassed;
 }
 
@@ -425,7 +425,7 @@ bool FMHDefinitionMetricsGaz53Test::RunTest(const FString& Parameters)
     bool bPassed = DefinitionMetricsPlaceActors(
         *this, *Fixture.Root, PlacementCount, Metrics, WallMilliseconds);
     AddInfo(DefinitionMetricsLine(TEXT("gaz53_two_placements"), PlacementCount, WallMilliseconds, Metrics));
-    bPassed &= DefinitionMetricsCommonAssertions(*this, Metrics, PlacementCount, 8);
+    bPassed &= DefinitionMetricsCommonAssertions(*this, Metrics, PlacementCount, 6);
     return bPassed;
 }
 

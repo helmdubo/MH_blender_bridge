@@ -1,8 +1,13 @@
 #include "UI/MHCompositeOutliner.h"
 
 #include "Composite/MHCompositeActor.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
+#include "EditorModeManager.h"
+#include "Elements/Framework/EngineElementsLibrary.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
+#include "Elements/SMInstance/SMInstanceElementData.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -173,6 +178,15 @@ public:
             SharedThis(this), &SMHCompositeOutliner::EditorSelectionChanged);
         SelectObjectHandle = USelection::SelectObjectEvent.AddSP(
             SharedThis(this), &SMHCompositeOutliner::EditorSelectionChanged);
+        if (GEditor != nullptr)
+        {
+            if (UTypedElementSelectionSet* SelectionSet =
+                    GLevelEditorModeTools().GetEditorSelectionSet())
+            {
+                TypedSelectionChangedHandle = SelectionSet->OnChanged().AddSP(
+                    SharedThis(this), &SMHCompositeOutliner::TypedSelectionChanged);
+            }
+        }
         RefreshSelectedActor();
     }
 
@@ -187,6 +201,14 @@ public:
         }
         USelection::SelectionChangedEvent.Remove(SelectionChangedHandle);
         USelection::SelectObjectEvent.Remove(SelectObjectHandle);
+        if (GEditor != nullptr)
+        {
+            if (UTypedElementSelectionSet* SelectionSet =
+                    GLevelEditorModeTools().GetEditorSelectionSet())
+            {
+                SelectionSet->OnChanged().Remove(TypedSelectionChangedHandle);
+            }
+        }
     }
 
 private:
@@ -262,6 +284,23 @@ private:
         if (!Item.IsValid() || SelectInfo == ESelectInfo::Direct || GEditor == nullptr) return;
         USceneComponent* Component = Item->PlacementComponent.Get();
         if (!IsValid(Component)) return;
+        if (Item->PlacementInstanceIndex != INDEX_NONE)
+        {
+            UInstancedStaticMeshComponent* Bucket =
+                Cast<UInstancedStaticMeshComponent>(Component);
+            UTypedElementSelectionSet* SelectionSet =
+                GLevelEditorModeTools().GetEditorSelectionSet();
+            if (Bucket == nullptr || SelectionSet == nullptr) return;
+            const FTypedElementHandle Handle =
+                UEngineElementsLibrary::AcquireEditorSMInstanceElementHandle(
+                    Bucket, Item->PlacementInstanceIndex);
+            if (!Handle) return;
+            CurrentActor->SelectPlacementLeaf(Component, Item->PlacementInstanceIndex);
+            const TArray<FTypedElementHandle> Selection{Handle};
+            SelectionSet->SetSelection(Selection, FTypedElementSelectionOptions());
+            GEditor->RedrawLevelEditingViewports();
+            return;
+        }
         USelection* Components = GEditor->GetSelectedComponents();
         if (Components == nullptr) return;
         Components->BeginBatchSelectOperation();
@@ -270,6 +309,7 @@ private:
         Components->EndBatchSelectOperation(true);
         GEditor->NoteSelectionChange();
         GEditor->RedrawLevelEditingViewports();
+        CurrentActor->SelectPlacementLeaf(Component);
     }
 
     TSharedPtr<SWidget> OpenContextMenu()
@@ -504,6 +544,26 @@ private:
         }
     }
 
+    void TypedSelectionChanged(const UTypedElementSelectionSet* SelectionSet)
+    {
+        if (!CurrentActor.IsValid() || SelectionSet == nullptr || !TreeView.IsValid()) return;
+        for (const FTypedElementHandle& Handle : SelectionSet->GetSelectedElementHandles())
+        {
+            const FSMInstanceManager Instance =
+                SMInstanceElementDataUtil::GetSMInstanceFromHandle(Handle, true);
+            if (!Instance) continue;
+            UInstancedStaticMeshComponent* Component = Instance.GetISMComponent();
+            if (Component == nullptr || Component->GetOwner() != CurrentActor.Get()) continue;
+            CurrentActor->SelectPlacementLeaf(Component, Instance.GetISMInstanceIndex());
+            if (TSharedPtr<FMHCompositeOutlinerItem> Item =
+                    Model.FindForInstance(Component, Instance.GetISMInstanceIndex()))
+            {
+                RevealItem(Item);
+            }
+            return;
+        }
+    }
+
     void RevealItem(const TSharedPtr<FMHCompositeOutlinerItem>& Item)
     {
         if (!Item.IsValid() || !TreeView.IsValid()) return;
@@ -599,6 +659,7 @@ private:
     FDelegateHandle ComponentsEditedHandle;
     FDelegateHandle SelectionChangedHandle;
     FDelegateHandle SelectObjectHandle;
+    FDelegateHandle TypedSelectionChangedHandle;
     bool bRefreshPending = false;
 };
 

@@ -88,6 +88,7 @@ bool FMHCompositeOutlinerModel::Build(
     Roots.Reset();
     ItemsByPath.Reset();
     ItemsByComponent.Reset();
+    ItemsByInstance.Reset();
     ComponentsByPath.Reset();
     MissingEndpointPaths.Reset();
     FString Error;
@@ -115,18 +116,22 @@ bool FMHCompositeOutlinerModel::BuildFromActor(AMHCompositeActor& Actor)
     if (Asset == nullptr || !Build(*Asset, Plan, Actor.GetLastPlacementError())) return false;
     if (Plan == nullptr) return true;
 
-    const TArray<TObjectPtr<USceneComponent>>& Leaves = Actor.GetLeafPlacementComponents();
+    const TArray<FMHCompositeLeafMaterialization>& Leaves = Actor.GetLeafMaterializations();
     for (int32 Index = 0; Index < Plan->Leaves.Num(); ++Index)
     {
         const FString& Path = Plan->Leaves[Index].Origin;
-        USceneComponent* Component = Leaves.IsValidIndex(Index) ? Leaves[Index].Get() : nullptr;
-        if (IsValid(Component)) ComponentsByPath.Add(Path, Component);
+        const FMHCompositeLeafMaterialization* Row =
+            Leaves.IsValidIndex(Index) ? &Leaves[Index] : nullptr;
+        USceneComponent* Component = Row != nullptr ? Row->Component.Get() : nullptr;
+        if (IsValid(Component))
+            ComponentsByPath.Add(Path, {Component, Row->InstanceIndex, Row->ResolvedNodeIndex});
         else MissingEndpointPaths.Add(Path);
     }
     const TArray<TObjectPtr<USceneComponent>>& Handles = Actor.GetTopLevelPlacementComponents();
     for (int32 Index = 0; Index < Roots.Num() && Index < Handles.Num(); ++Index)
     {
-        if (IsValid(Handles[Index])) ComponentsByPath.FindOrAdd(Roots[Index]->NodePath, Handles[Index]);
+        if (IsValid(Handles[Index]))
+            ComponentsByPath.FindOrAdd(Roots[Index]->NodePath, {Handles[Index], INDEX_NONE, INDEX_NONE});
     }
     for (const TPair<FString, TSharedPtr<FMHCompositeOutlinerItem>>& Pair : ItemsByPath)
         BindComponentToItem(Pair.Value);
@@ -251,9 +256,9 @@ TSharedPtr<FMHCompositeOutlinerItem> FMHCompositeOutlinerModel::FindForComponent
     if (Found != nullptr) return Found->Pin();
 
     FString DesiredPath;
-    for (const TPair<FString, TWeakObjectPtr<USceneComponent>>& Pair : ComponentsByPath)
+    for (const TPair<FString, FPlacementRow>& Pair : ComponentsByPath)
     {
-        if (Pair.Value.Get() == Component)
+        if (Pair.Value.Component.Get() == Component && Pair.Value.InstanceIndex == INDEX_NONE)
         {
             DesiredPath = Pair.Key;
             break;
@@ -265,6 +270,28 @@ TSharedPtr<FMHCompositeOutlinerItem> FMHCompositeOutlinerModel::FindForComponent
     // composite borders that contain the requested path; unrelated definitions
     // stay unloaded.
     return FindByNodePath(DesiredPath);
+}
+
+TSharedPtr<FMHCompositeOutlinerItem> FMHCompositeOutlinerModel::FindForInstance(
+    const USceneComponent* Component, const int32 InstanceIndex)
+{
+    const TMap<int32, TWeakPtr<FMHCompositeOutlinerItem>>* ByIndex =
+        ItemsByInstance.Find(Component);
+    if (ByIndex != nullptr)
+    {
+        if (const TWeakPtr<FMHCompositeOutlinerItem>* Found = ByIndex->Find(InstanceIndex))
+            return Found->Pin();
+    }
+    FString DesiredPath;
+    for (const TPair<FString, FPlacementRow>& Pair : ComponentsByPath)
+    {
+        if (Pair.Value.Component.Get() == Component && Pair.Value.InstanceIndex == InstanceIndex)
+        {
+            DesiredPath = Pair.Key;
+            break;
+        }
+    }
+    return DesiredPath.IsEmpty() ? nullptr : FindByNodePath(DesiredPath);
 }
 
 FString FMHCompositeOutlinerModel::GetCopyName(const FMHCompositeOutlinerItem& Item) const
@@ -469,12 +496,17 @@ void FMHCompositeOutlinerModel::BindComponentToItem(
 {
     if (!Item.IsValid()) return;
     Item->PlacementComponent.Reset();
-    if (const TWeakObjectPtr<USceneComponent>* Found = ComponentsByPath.Find(Item->NodePath))
+    Item->PlacementInstanceIndex = INDEX_NONE;
+    Item->ResolvedNodeIndex = INDEX_NONE;
+    if (const FPlacementRow* Found = ComponentsByPath.Find(Item->NodePath))
     {
-        if (USceneComponent* Component = Found->Get())
+        if (USceneComponent* Component = Found->Component.Get())
         {
             Item->PlacementComponent = Component;
-            ItemsByComponent.Add(Component, Item);
+            Item->PlacementInstanceIndex = Found->InstanceIndex;
+            Item->ResolvedNodeIndex = Found->ResolvedNodeIndex;
+            if (Found->InstanceIndex == INDEX_NONE) ItemsByComponent.Add(Component, Item);
+            else ItemsByInstance.FindOrAdd(Component).Add(Found->InstanceIndex, Item);
         }
     }
     Item->bMissingEndpoint |= MissingEndpointPaths.Contains(Item->NodePath);

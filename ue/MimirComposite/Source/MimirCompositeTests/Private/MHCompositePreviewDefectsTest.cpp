@@ -3,6 +3,7 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "Engine/Selection.h"
@@ -140,13 +141,28 @@ bool FMHReviewMainTopLevelGrouping::RunTest(const FString& Parameters)
     Actor->SetCompositeAsset(Fixture.Asset);
     bool bPassed = TestNotNull(TEXT("applied plan is usable"), Actor->GetResolvedPlan());
     UStaticMeshComponent* Leaf = ReviewPreviewRegressionLeaf(*Actor);
-    if (TestNotNull(TEXT("mesh leaf exists"), Leaf) && Actor->GetTopLevelComponents().Num() > 0)
+    const TArray<FMHCompositeLeafMaterialization>& Materializations =
+        Actor->GetLeafMaterializations();
+    if (TestNotNull(TEXT("mesh leaf exists"), Leaf) &&
+        TestEqual(TEXT("one plan-aligned leaf mapping exists"), Materializations.Num(), 1) &&
+        Actor->GetTopLevelComponents().Num() > 0)
     {
-        bPassed &= TestTrue(TEXT("leaf is attached under its top-level handle, not flattened under actor root"),
-            Leaf->GetAttachParent() != Actor->GetRootComponent() &&
-            Leaf->IsAttachedTo(Actor->GetTopLevelComponents()[0]));
-        AddInfo(FString::Printf(TEXT("top-level grouping leaf-parent=%s actor-root=%s editor-only=%d"),
-            *GetNameSafe(Leaf->GetAttachParent()), *GetNameSafe(Actor->GetRootComponent()), Actor->IsEditorOnly()));
+        const FMHCompositeLeafMaterialization& Mapping = Materializations[0];
+        UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Leaf);
+        bPassed &= TestNotNull(TEXT("static leaf is materialized by an ISM bucket"), Bucket);
+        bPassed &= TestTrue(TEXT("leaf mapping identifies an ISM instance"), Mapping.IsInstanced());
+        bPassed &= TestEqual(TEXT("leaf mapping points at the bucket"), Mapping.Component.Get(),
+            static_cast<USceneComponent*>(Bucket));
+        bPassed &= TestTrue(TEXT("leaf mapping retains its source hierarchy path"),
+            Mapping.NodePath.Contains(TEXT("/children[0]")));
+        bPassed &= TestTrue(TEXT("instance selection maps back to the leaf path"),
+            Actor->SelectPlacementLeaf(Bucket, Mapping.InstanceIndex));
+        bPassed &= TestEqual(TEXT("selected instance preserves logical top-level grouping"),
+            Actor->GetSelectedPlacementLeafPath(), Mapping.NodePath);
+        AddInfo(FString::Printf(
+            TEXT("top-level grouping bucket-parent=%s actor-root=%s instance=%d path=%s editor-only=%d"),
+            *GetNameSafe(Leaf->GetAttachParent()), *GetNameSafe(Actor->GetRootComponent()),
+            Mapping.InstanceIndex, *Mapping.NodePath, Actor->IsEditorOnly()));
     }
     Actor->Destroy();
     World->DestroyWorld(false);

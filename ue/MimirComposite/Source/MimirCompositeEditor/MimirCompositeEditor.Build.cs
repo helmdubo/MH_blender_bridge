@@ -39,6 +39,7 @@ public class MimirCompositeEditor : ModuleRules
                 "SlateCore",
                 "SQLiteCore",
                 "ToolMenus",
+                "TypedElementFramework",
                 "TypedElementRuntime",
                 "UnrealEd",
                 "WorkspaceMenuStructure"
