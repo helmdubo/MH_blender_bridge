@@ -36,7 +36,7 @@ struct FMHISMMaterializationFixture
         }
     }
 
-    bool Build(const int32 LeafCount)
+    bool Build(const int32 LeafCount, const bool bRandomLeaves = false)
     {
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
         const FString MeshName = TEXT("u5_ism_mesh_") + Suffix;
@@ -60,8 +60,19 @@ struct FMHISMMaterializationFixture
         for (int32 Index = 0; Index < LeafCount; ++Index)
         {
             FMHCompositeNode& Leaf = Document.Nodes.AddDefaulted_GetRef();
-            Leaf.Kind = EMHCompositeNodeKind::Mesh;
-            Leaf.Resource = MeshName;
+            Leaf.Kind = bRandomLeaves
+                ? EMHCompositeNodeKind::Random : EMHCompositeNodeKind::Mesh;
+            if (bRandomLeaves)
+            {
+                FMHCompositeOption& Option = Leaf.Options.AddDefaulted_GetRef();
+                Option.Kind = EMHCompositeOptionKind::Mesh;
+                Option.Resource = MeshName;
+                Option.Weight = 1.0f;
+            }
+            else
+            {
+                Leaf.Resource = MeshName;
+            }
             Leaf.Transform.TranslationCm = FVector(25.0 * Index, 0.0, 0.0);
         }
         FString Error;
@@ -174,6 +185,93 @@ bool FMHCompositeISMBucketMaterializationTest::RunTest(const FString& Parameters
         bPassed &= TestEqual(TEXT("Edit Mode exit returns the leaf to its bucket"),
             InstancedAfterEdit, LeafCount);
     }
+
+    Actor->Destroy();
+    World->DestroyWorld(false);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHCompositeCompactResolvedStateTest,
+    "Mimir.V5.Composite.CompactResolvedState.LazyDebugPlan",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositeCompactResolvedStateTest::RunTest(const FString& Parameters)
+{
+    FMHISMMaterializationFixture Fixture(*this);
+    if (!Fixture.Build(12, true)) return false;
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    Actor->SetAutoSeed(false);
+    Actor->SetAutoAppearanceSeed(false);
+    Actor->SetSeed(1729);
+    Actor->SetAppearanceSeed(2718);
+    Actor->SetCompositeAsset(Fixture.Composite);
+
+    bool bPassed = TestFalse(TEXT("ordinary placement retains no full debug plan"),
+        Actor->HasResidentResolvedDebugPlan());
+    bPassed &= TestFalse(TEXT("compact state retains no draws, decisions, or preimages"),
+        Actor->HasCompactResolvedDiagnostics());
+    bPassed &= TestEqual(TEXT("compact state keeps every materialized leaf"),
+        Actor->GetCompactResolvedLeafCount(), 12);
+    bPassed &= TestEqual(TEXT("compact state keeps selected option indices"),
+        Actor->GetCompactSelectedOptionCount(), 12);
+
+    const FString ResolvedSignature = Actor->GetCompactResolvedSignature();
+    const FString AppearanceSignature = Actor->GetCompactAppearanceSignature();
+    const FString PlacementSignature = Actor->GetCompactPlacementSignature();
+    const FMHResolvedCompositePlan* Debug = Actor->GetResolvedPlan();
+    bPassed &= TestNotNull(TEXT("explicit inspection lazily materializes the full debug plan"), Debug);
+    if (Debug != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("lazy plan contains the layout diagnostic trace"),
+            !Debug->Decisions.IsEmpty() && !Debug->Draws.IsEmpty() &&
+            !Debug->SignaturePreimage.IsEmpty());
+        bPassed &= TestTrue(TEXT("lazy plan contains appearance trace"),
+            !Debug->Appearance.Draws.IsEmpty() &&
+            !Debug->Appearance.SignaturePreimage.IsEmpty());
+        bPassed &= TestEqual(TEXT("lazy plan preserves the resolved signature"),
+            Debug->ResolvedSignature, ResolvedSignature);
+        bPassed &= TestEqual(TEXT("lazy plan preserves the appearance signature"),
+            Debug->Appearance.AppearanceSignature, AppearanceSignature);
+        bPassed &= TestEqual(TEXT("lazy plan preserves the placement signature"),
+            Debug->PlacementSignature, PlacementSignature);
+    }
+    bPassed &= TestTrue(TEXT("debug plan is resident after explicit inspection"),
+        Actor->HasResidentResolvedDebugPlan());
+    const FMHResolvedCompositePlan FirstDebug = Debug != nullptr
+        ? *Debug : FMHResolvedCompositePlan();
+    Actor->ReleaseResolvedDebugPlan();
+    bPassed &= TestFalse(TEXT("unleased debug plan is freed after inspection"),
+        Actor->HasResidentResolvedDebugPlan());
+    const FMHResolvedCompositePlan* RebuiltDebug = Actor->GetResolvedPlan();
+    bPassed &= TestNotNull(TEXT("debug plan can be reconstructed again"), RebuiltDebug);
+    if (RebuiltDebug != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("lazy reconstruction preserves layout preimage bytes"),
+            RebuiltDebug->SignaturePreimage == FirstDebug.SignaturePreimage);
+        bPassed &= TestTrue(TEXT("lazy reconstruction preserves appearance preimage bytes"),
+            RebuiltDebug->Appearance.SignaturePreimage ==
+                FirstDebug.Appearance.SignaturePreimage);
+        bPassed &= TestEqual(TEXT("lazy reconstruction preserves decision count"),
+            RebuiltDebug->Decisions.Num(), FirstDebug.Decisions.Num());
+        for (int32 Index = 0; Index < RebuiltDebug->Decisions.Num() &&
+             FirstDebug.Decisions.IsValidIndex(Index); ++Index)
+        {
+            bPassed &= TestEqual(TEXT("lazy reconstruction preserves decision path"),
+                RebuiltDebug->Decisions[Index].NodePath,
+                FirstDebug.Decisions[Index].NodePath);
+            bPassed &= TestEqual(TEXT("lazy reconstruction preserves selected option"),
+                RebuiltDebug->Decisions[Index].OptionIndex,
+                FirstDebug.Decisions[Index].OptionIndex);
+        }
+    }
+    Actor->ReleaseResolvedDebugPlan();
+    Actor->RetainResolvedDebugPlan();
+    bPassed &= TestNotNull(TEXT("an Outliner-style lease rebuilds the debug plan"),
+        Actor->GetResolvedPlan());
+    Actor->ReleaseResolvedDebugPlan();
+    bPassed &= TestFalse(TEXT("closing the last inspection lease frees the debug plan"),
+        Actor->HasResidentResolvedDebugPlan());
 
     Actor->Destroy();
     World->DestroyWorld(false);
