@@ -1,6 +1,7 @@
 # S0 — инкрементальный Project Resource Index
 
-Статус: **READY FOR REVIEW**. Full scan переведён на один snapshot-проход;
+Статус: **STOP — OPEN-S0-1** после возврата PR #73. Исходная подача перевела
+full scan на один snapshot-проход;
 неизменные `ok`-кандидаты переиспользуют сохранённый fingerprint и dependency
 edges без чтения payload, а изменённый payload проходит прежний read/hash/parse.
 
@@ -103,11 +104,71 @@ Red-тест
 
 Удалённые тесты: **нет**.
 
-## 6. OPEN-вопросы
+## 6. Возврат 1: racy fingerprint
 
-Нет.
+Возврат близнеца: `5a17389` добавляет неизменяемый red-тест
+`Mimir.V5.Source.Index.IncrementalScanRehashesSameSecondChange`, `e127843`
+добавляет нормативное окно `RacyWindow = 2 s`. Fail-closed реализация окна —
+коммит `38d6cbc`: кандидат с `mtime > UtcNow - 2 s` не переиспользуется и
+проходит прежний read/hash/parse.
 
-## 7. Трекер
+RED2 на `e127843`: лог
+`E:\MimirComposite_S0_External_20260902\Saved\Logs\S0_RETURN1_RED_TEST.log`,
+строки 1077–1086:
+
+```text
+1077: MH_PERF_STARTUP_SCAN ... hashed_files=2 reused_fingerprints=0
+1078: MH_PERF_STARTUP_SCAN ... hashed_files=0 reused_fingerprints=2
+1079: Test Completed. Result={Fail} Name={IncrementalScanRehashesSameSecondChange}
+1084: same-second: hashed_files=0 reused=2
+1085: Expected 'same-second rescan sees the rewritten payload' ... old hash remained.
+1086: Expected 'same-second rescan hashes the fresh payload' to be true.
+```
+
+GREEN2 на `38d6cbc`: лог
+`E:\MimirComposite_S0_External_20260902\Saved\Logs\S0_RETURN1_GREEN_TEST.log`,
+строки 1078–1083:
+
+```text
+1078: MH_PERF_STARTUP_SCAN ... hashed_files=2 reused_fingerprints=0
+1079: MH_PERF_STARTUP_SCAN ... hashed_files=2 reused_fingerprints=0
+1080: Test Completed. Result={Success} Name={IncrementalScanRehashesSameSecondChange}
+1083: same-second: hashed_files=2 reused=0
+```
+
+После этого обязательный прежний тест
+`Mimir.V5.Source.Index.IncrementalScanSkipsUnchangedHashes` дал регрессию:
+`S0_RETURN1_GREEN_UNCHANGED_TEST.log:1082` — `Result={Fail}`;
+`:1088` — unchanged ожидал 0 hashes, получил 3; `:1091` — changed ожидал 1,
+получил 3. В тесте нет заявленной контрактом паузы перед unchanged-rescan:
+единственный `FPlatformProcess::Sleep(0.05f)` расположен после этого assert'а,
+перед записью changed payload, и сам меньше окна 2 s.
+
+По прямому правилу дополнения контракта («если окно ломает этот сценарий —
+STOP + OPEN, тест не менять») остановлены и **не запускались**: три отдельных
+`CrashBetweenPassesRetries`, smoke через `-dpcvars`, полный suite 178/178,
+force-unity и StrictIncludes. Non-unity/no-PCH build реализации прошёл:
+`S0_RETURN1_GREEN_BUILD_NONUNITY.log:19` — `Result: Succeeded`.
+
+## 7. OPEN-вопросы
+
+### OPEN-S0-1
+
+- **Контекст:** норма возврата требует всегда хэшировать кандидата, если
+  `now - mtime < 2 s`. Неизменяемый acceptance-тест выполняет cold и unchanged
+  scans подряд без паузы, одновременно требуя `hashed_files == 0`; его
+  `Sleep(0.05)` находится позже. Строгая реализация нормы закономерно даёт
+  `hashed_files == 3`.
+- **Вопрос:** близнец должен обновить red-тест паузой не меньше `RacyWindow`
+  перед unchanged-rescan (сохранив ожидание 0), либо acceptance должен разрешить
+  хэширование fresh unchanged candidates? Без одного из этих нормативных
+  изменений оба требования несовместимы.
+- **Временное fail-closed правило:** сохранить строгий `RacyWindow = 2 s`, не
+  переиспользовать fresh candidates, не ослаблять реализацию ради старого
+  assert'а и не менять тест вне закрытого списка.
+- **Статус:** **OPEN; блокирует acceptance и обновление PR как готового к review.**
+
+## 8. Трекер
 
 Строка S0 переведена из `READY` в `IN REVIEW`; merge и перевод в `MERGED`
 остаётся за Lead после проверки PR.
