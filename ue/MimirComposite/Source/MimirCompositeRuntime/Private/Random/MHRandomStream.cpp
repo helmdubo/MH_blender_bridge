@@ -806,16 +806,17 @@ bool MHBuildRandomSourceClosure(
     return true;
 }
 
-bool MHResolveCompositePlan(
+bool MHResolveCompositeLayout(
     const FMHRandomSourceGraph& Graph,
     const int32 Seed,
-    const int32 AppearanceSeed,
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError)
 {
+    // Preview plane: the layout walk never touches the source closure. The
+    // draw order, the weighted selection and the transform math below are the
+    // frozen reference; only the closure build moved to MHBuildCompositeProof.
     OutPlan = FMHResolvedCompositePlan();
     OutPlan.Seed = Seed;
-    if (!MHBuildRandomSourceClosure(Graph, OutPlan.Closure, OutError)) return false;
     TSet<FString> SelectedSeen;
 
     TFunction<void(const FString&)> AddSelected = [&](const FString& Value)
@@ -1041,7 +1042,31 @@ bool MHResolveCompositePlan(
     // keyed by the root composite's own canonical NodePath prefix.
     Root.BoundaryPath = Graph.RootComposite;
     if (!WalkComposite(Graph.RootComposite, Identity, FMatrix::Identity, Graph.RootComposite, Root)) return false;
+    return true;
+}
+
+bool MHResolveCompositePlan(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
+    // Reference resolver = Layout -> Appearance -> Proof (Recipe Model v2 §3.3).
+    // Same draws, same math, same signatures as before the phase split; the
+    // closure is now built after the walk, which never read it.
+    if (!MHResolveCompositeLayout(Graph, Seed, OutPlan, OutError)) return false;
     MHResolveCompositeAppearance(OutPlan, AppearanceSeed);
+    return MHBuildCompositeProof(Graph, OutPlan, OutError);
+}
+
+bool MHBuildCompositeProof(
+    const FMHRandomSourceGraph& Graph,
+    FMHResolvedCompositePlan& Plan,
+    FString& OutError)
+{
+    if (!MHBuildRandomSourceClosure(Graph, Plan.Closure, OutError)) return false;
+    MHRefreshResolvedCompositeSignature(Plan);
     return true;
 }
 

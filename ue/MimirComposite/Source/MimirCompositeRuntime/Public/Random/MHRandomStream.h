@@ -250,6 +250,27 @@ MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositePlan(
     FString& OutError);
 
 /**
+ * Preview plane (Recipe Model v2 §3.3): the layout stage alone — decisions,
+ * draws, nodes, leaves and selected dependencies from Seed. Never builds the
+ * source closure, never needs RawHashes, never computes signatures.
+ */
+MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositeLayout(
+    const FMHRandomSourceGraph& Graph,
+    int32 Seed,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError);
+
+/**
+ * Proof plane: full source closure (RawHashes -> ClosureHash) and the three
+ * signatures over an already resolved layout and appearance. The reference
+ * MHResolveCompositePlan is Layout -> Appearance -> Proof.
+ */
+MIMIRCOMPOSITERUNTIME_API bool MHBuildCompositeProof(
+    const FMHRandomSourceGraph& Graph,
+    FMHResolvedCompositePlan& Plan,
+    FString& OutError);
+
+/**
  * Appearance stage over an already resolved layout: exactly
  * MH_APPEARANCE_CHANNELS NextU32 draws per leaf from
  * MHMakeNodeRandomStream(AppearanceSeed, Boundary(leaf)), no gaps.

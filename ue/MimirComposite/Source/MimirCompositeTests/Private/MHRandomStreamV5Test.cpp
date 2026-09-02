@@ -529,4 +529,108 @@ bool FMHInlinePlacementParityTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHResolverPhasesParityTest,
+    "Mimir.V5.Composite.Recipe.ResolverPhasesParity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHResolverPhasesParityTest::RunTest(const FString& Parameters)
+{
+    // Recipe Model v2 §3.3: Layout -> Appearance -> Proof must reproduce the
+    // reference resolver bit for bit on the golden fixture, and Layout must
+    // succeed without any raw payload hash (the preview plane never has them).
+    FString GoldenRoot;
+    if (!ResolveGoldenRoot(*this, GoldenRoot)) return false;
+    TArray<uint8> Bytes;
+    if (!FFileHelper::LoadFileToArray(Bytes, *FPaths::Combine(GoldenRoot, TEXT("v5/random_stream_1_vectors.json"))))
+    {
+        AddError(TEXT("cannot read shared random_stream_1_vectors.json"));
+        return false;
+    }
+    TSharedPtr<FJsonValue> RootValue;
+    if (!MHParseJsonUtf8(Bytes, RootValue).bSuccess || !RootValue.IsValid() || RootValue->Type != EJson::Object) return false;
+    const TSharedPtr<FJsonObject> Root = RootValue->AsObject();
+    FMHRandomSourceGraph Graph;
+    if (!ReadFixture(Root, Graph))
+    {
+        AddError(TEXT("shared resolver fixture is malformed"));
+        return false;
+    }
+    const TArray<TSharedPtr<FJsonValue>>* Plans = nullptr;
+    if (!Root->TryGetArrayField(TEXT("plan_vectors"), Plans) || Plans == nullptr) return false;
+
+    // The signature preimages are the canonical byte form of the whole plan
+    // (seed, closure hash, decisions, leaves; appearance draws), so byte
+    // equality of both preimages plus the three signatures is exact parity.
+    const auto SamePlan = [this](const FString& Label, const FMHResolvedCompositePlan& A, const FMHResolvedCompositePlan& B)
+    {
+        bool bSame = TestTrue(*(Label + TEXT(": layout preimage")), A.SignaturePreimage == B.SignaturePreimage);
+        bSame &= TestTrue(*(Label + TEXT(": appearance preimage")), A.Appearance.SignaturePreimage == B.Appearance.SignaturePreimage);
+        bSame &= TestEqual(*(Label + TEXT(": closure hash")), A.Closure.ClosureHash, B.Closure.ClosureHash);
+        bSame &= TestEqual(*(Label + TEXT(": resolved signature")), A.ResolvedSignature, B.ResolvedSignature);
+        bSame &= TestEqual(*(Label + TEXT(": appearance signature")), A.Appearance.AppearanceSignature, B.Appearance.AppearanceSignature);
+        bSame &= TestEqual(*(Label + TEXT(": placement signature")), A.PlacementSignature, B.PlacementSignature);
+        bSame &= TestEqual(*(Label + TEXT(": nodes")), A.Nodes.Num(), B.Nodes.Num());
+        bSame &= TestEqual(*(Label + TEXT(": draws")), A.Draws.Num(), B.Draws.Num());
+        bSame &= TestTrue(*(Label + TEXT(": selected dependencies")), A.SelectedDependencies == B.SelectedDependencies);
+        bSame &= TestEqual(*(Label + TEXT(": leaves")), A.Leaves.Num(), B.Leaves.Num());
+        for (int32 Index = 0; Index < FMath::Min(A.Leaves.Num(), B.Leaves.Num()); ++Index)
+        {
+            bSame &= TestTrue(*FString::Printf(TEXT("%s: leaf %d world matrix"), *Label, Index), A.Leaves[Index].WorldMatrix == B.Leaves[Index].WorldMatrix);
+        }
+        return bSame;
+    };
+
+    FMHRandomSourceGraph HashlessGraph = Graph;
+    HashlessGraph.RawHashes.Empty();
+
+    bool bPassed = true;
+    for (const TSharedPtr<FJsonValue>& PlanValue : *Plans)
+    {
+        int32 Seed = 0;
+        if (!ReadInt32(PlanValue->AsObject(), TEXT("seed"), Seed)) return false;
+        const FString Label = FString::Printf(TEXT("seed %d"), Seed);
+        FString Error;
+
+        FMHResolvedCompositePlan Reference;
+        bPassed &= TestTrue(*(Label + TEXT(": reference resolves")), MHResolveCompositePlan(Graph, Seed, Seed, Reference, Error));
+
+        FMHResolvedCompositePlan Phased;
+        bPassed &= TestTrue(*(Label + TEXT(": layout stage resolves")), MHResolveCompositeLayout(Graph, Seed, Phased, Error));
+        MHResolveCompositeAppearance(Phased, Seed);
+        bPassed &= TestTrue(*(Label + TEXT(": proof stage builds")), MHBuildCompositeProof(Graph, Phased, Error));
+        bPassed &= SamePlan(Label + TEXT(": phased vs reference"), Phased, Reference);
+
+        // Preview plane: no hashes at all.
+        FMHResolvedCompositePlan Preview;
+        Error.Reset();
+        const bool bLayoutWithoutHashes = MHResolveCompositeLayout(HashlessGraph, Seed, Preview, Error);
+        bPassed &= TestTrue(*(Label + TEXT(": layout needs no raw payload hashes")), bLayoutWithoutHashes);
+        if (bLayoutWithoutHashes)
+        {
+            MHResolveCompositeAppearance(Preview, Seed);
+            bPassed &= TestEqual(*(Label + TEXT(": hashless decisions")), Preview.Decisions.Num(), Reference.Decisions.Num());
+            bPassed &= TestEqual(*(Label + TEXT(": hashless leaves")), Preview.Leaves.Num(), Reference.Leaves.Num());
+            for (int32 Index = 0; Index < FMath::Min(Preview.Leaves.Num(), Reference.Leaves.Num()); ++Index)
+            {
+                bPassed &= TestTrue(*FString::Printf(TEXT("%s: hashless leaf %d world matrix"), *Label, Index),
+                    Preview.Leaves[Index].WorldMatrix == Reference.Leaves[Index].WorldMatrix);
+                bPassed &= TestEqual(*FString::Printf(TEXT("%s: hashless leaf %d resource"), *Label, Index),
+                    Preview.Leaves[Index].Resource, Reference.Leaves[Index].Resource);
+                for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+                {
+                    bPassed &= TestEqual(*FString::Printf(TEXT("%s: hashless leaf %d channel %d"), *Label, Index, Channel),
+                        Preview.Leaves[Index].AppearanceChannels[Channel], Reference.Leaves[Index].AppearanceChannels[Channel]);
+                }
+            }
+            bPassed &= TestTrue(*(Label + TEXT(": hashless selected dependencies")),
+                Preview.SelectedDependencies == Reference.SelectedDependencies);
+            Error.Reset();
+            bPassed &= TestFalse(*(Label + TEXT(": proof refuses a hashless closure")), MHBuildCompositeProof(HashlessGraph, Preview, Error));
+            bPassed &= TestTrue(*(Label + TEXT(": proof names the missing hash")), Error.Contains(TEXT("raw payload hash")));
+        }
+    }
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests
