@@ -7,6 +7,7 @@
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
+#include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/StaticMeshComponent.h"
 #include "Diagnostics/MHSourceOperations.h"
@@ -1746,8 +1747,10 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
     bPassed &= TestTrue(
         TEXT("all-options exceeds selected meshes"),
         MapReport.AllOptionUniqueMeshes > MapReport.SelectedUniqueMeshes);
-    bPassed &= TestTrue(TEXT("BuildAppliedGraph calls are captured"), MapReport.BuildAppliedGraphMs >= 0.0 &&
-        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls > 0);
+    // R2b-2: the preview plane builds no applied graph; the stage stays
+    // instrumented for the proof plane and must read zero here.
+    bPassed &= TestTrue(TEXT("BuildAppliedGraph is instrumented and idle in preview"), MapReport.BuildAppliedGraphMs == 0.0 &&
+        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls == 0);
     bPassed &= TestTrue(TEXT("ResolveCompositePlan calls are captured"),
         MHGetPlacementStageMetrics().Get(EMHPlacementStage::ResolveCompositePlan).Calls > 0);
     bPassed &= TestTrue(TEXT("CompilePlacement calls are captured"),
@@ -1881,6 +1884,11 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     {
         if (GEditor != nullptr)
         {
+            // R2b-2: the preview caches compiled recipes; a cold pass forgets them too.
+            if (UMHCompiledRecipeRegistry* Recipes = UMHCompiledRecipeRegistry::Get())
+            {
+                Recipes->InvalidateAll();
+            }
             if (UMHCompositeDefinitionSubsystem* Definitions =
                     GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
             {
@@ -1928,8 +1936,9 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     InvalidateDefinitions();
     InvalidateEndpoints();
     const FMHMapLoadPerfReport Cold = BuildActor(*First);
-    // Root composite plus every mesh option: the closure resolves all of them.
-    const uint64 UniqueEndpointKeys = Cold.AllOptionUniqueMeshes + 1ull;
+    // R2b-2: the preview resolves the root composite plus the SELECTED meshes
+    // only; unselected options are never resolved (the proof plane does that).
+    const uint64 UniqueEndpointKeys = Cold.SelectedUniqueMeshes + 1ull;
     bPassed &= TestEqual(TEXT("cold build emits one map-load report"), Cold.EmittedReports, 1ull);
     bPassed &= TestTrue(TEXT("cold build misses the definition cache"), Cold.DefinitionCacheMisses >= 1ull);
     bPassed &= TestTrue(

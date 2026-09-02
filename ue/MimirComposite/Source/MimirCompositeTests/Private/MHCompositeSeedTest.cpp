@@ -1,6 +1,7 @@
 #include "MHGoldenRoot.h"
 
 #include "Canonical/MHCanonical.h"
+#include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementEvents.h"
@@ -104,6 +105,19 @@ bool SeedTestTraceEqual(const FMHResolvedCompositePlan& A, const FMHResolvedComp
             Left.Unit != Right.Unit || Left.Sample != Right.Sample) return false;
     }
     return true;
+}
+
+// R2b-2: the preview plane publishes no signature, so "same result" is asserted
+// as shadow parity of decisions/draws/nodes/leaves/appearance instead.
+bool SeedTestShadowParity(
+    FAutomationTestBase& Test, const TCHAR* What,
+    const FMHResolvedCompositePlan& Reference, const FMHResolvedCompositePlan& Preview)
+{
+    TArray<FString> Mismatches;
+    const bool bParity = MHCompareRecipeShadowParity(Reference, Preview, Mismatches);
+    FString Label(What);
+    if (!Mismatches.IsEmpty()) Label += TEXT(": ") + FString::Join(Mismatches, TEXT("; "));
+    return Test.TestTrue(Label, bParity && Mismatches.IsEmpty());
 }
 
 struct FSeedTestComponentSnapshot
@@ -467,10 +481,15 @@ bool FMHCompositeSeedDeterminismTest::RunTest(const FString& Parameters)
     AMHCompositeActor* Other = Fixture.Spawn(Root, 200);
     if (First == nullptr || Equal == nullptr || Other == nullptr || First->GetResolvedPlan() == nullptr ||
         Equal->GetResolvedPlan() == nullptr || Other->GetResolvedPlan() == nullptr) return false;
+    // R2b-2: preview signatures are empty, so equal seeds are compared by plan
+    // content; the content includes appearance channels, so the appearance
+    // seeds (auto-rolled on spawn) are aligned first.
+    Equal->SetAppearanceSeed(First->GetAppearanceSeed());
+    if (Equal->GetResolvedPlan() == nullptr) return false;
     const FMHResolvedCompositePlan Before = *First->GetResolvedPlan();
-    TestEqual(TEXT("equal placement seeds give equal signatures"), Before.ResolvedSignature, Equal->GetResolvedPlan()->ResolvedSignature);
+    SeedTestShadowParity(*this, TEXT("equal placement seeds give equal plan content"), Before, *Equal->GetResolvedPlan());
     TestTrue(TEXT("equal placement seeds give byte-identical traces"), SeedTestTraceEqual(Before, *Equal->GetResolvedPlan()));
-    TestNotEqual(TEXT("seed 200 gives a different signature"), Before.ResolvedSignature, Other->GetResolvedPlan()->ResolvedSignature);
+    // R2b-2: seed separation is observed on the trace; the preview publishes no signature.
     TestFalse(TEXT("seed 200 gives different nested/profile trace"), SeedTestTraceEqual(Before, *Other->GetResolvedPlan()));
     TestTrue(TEXT("nested random and profile consume draws"), Before.Decisions.Num() == 1 && Before.Draws.Num() == 7);
     TestEqual(TEXT("root local profile dominates child-only seed effect"), First->GetSeedAffectsResult(), EMHCompositeSeedEffect::Transform);
@@ -482,9 +501,11 @@ bool FMHCompositeSeedDeterminismTest::RunTest(const FString& Parameters)
         MHBuildAppliedCompositeGraph(*Root, *GetDefault<UMHCompositeSettings>(), AppliedGraph, Dependencies, Error));
     FMHResolvedCompositePlan Direct;
     if (!TestTrue(TEXT("one shared resolver reproduces actor plan"), MHResolveCompositePlan(AppliedGraph, 100, First->GetAppearanceSeed(), Direct, Error))) return false;
-    TestEqual(TEXT("actor signature equals shared resolver signature"), Before.ResolvedSignature, Direct.ResolvedSignature);
+    // R2b-2: the actor preview matches the shared resolver in content, not in signature.
+    SeedTestShadowParity(*this, TEXT("actor plan matches shared resolver plan"), Direct, Before);
     TestTrue(TEXT("actor trace equals shared resolver trace"), SeedTestTraceEqual(Before, Direct));
-    TestEqual(TEXT("read-only derived signature reflects the plan"), SeedTestSignature(*First), Before.ResolvedSignature);
+    // R2b-2: the preview plane never publishes a derived signature.
+    TestTrue(TEXT("read-only derived signature stays empty on the preview plane"), SeedTestSignature(*First).IsEmpty());
 
     const FSeedTestComponentSnapshot Components(*First);
     First->SetActorTransform(FTransform(FRotator(0.0, 90.0, 0.0), FVector(1000.0, 200.0, 50.0), FVector(2.0)));
@@ -492,7 +513,8 @@ bool FMHCompositeSeedDeterminismTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("moved actor retains a valid plan"), First->GetResolvedPlan())) return false;
     Components.Check(*this, *First, false);
     TestEqual(TEXT("moving actor does not change seed"), First->GetSeed(), 100);
-    TestEqual(TEXT("moving actor does not change signature"), First->GetResolvedPlan()->ResolvedSignature, Before.ResolvedSignature);
+    // R2b-2: the move keeps the same resident preview plan content, not a signature.
+    SeedTestShadowParity(*this, TEXT("moving actor does not change plan content"), Before, *First->GetResolvedPlan());
     TestTrue(TEXT("moving actor does not consume new draws"), SeedTestTraceEqual(Before, *First->GetResolvedPlan()));
     for (int32 Index = 0; Index < Before.Leaves.Num(); ++Index)
     {
@@ -507,13 +529,26 @@ bool FMHCompositeSeedDeterminismTest::RunTest(const FString& Parameters)
     }
 
     const FString RootRawHash = Root->SourceHash;
+    const uint32 RevisionBeforeProfile = First->GetPreviewRevision();
     RootProfile.OffsetCm[0].Base += 20.0f;
     if (!Fixture.StampProfile(RootProfile) || !Fixture.Apply(*Root, RootDocument, {RootProfile})) return false;
     MHNotifyGeneratedResourceChanged(SeedTestKey(EMHResourceKind::PlacementProfile, RootProfile.LogicalName));
     if (!TestNotNull(TEXT("profile dependency notification rebuilds placement"), First->GetResolvedPlan())) return false;
     TestEqual(TEXT("profile apply does not rewrite composite raw receipt"), Root->SourceHash, RootRawHash);
     TestEqual(TEXT("dependency notification preserves seed"), First->GetSeed(), 100);
-    TestNotEqual(TEXT("profile raw receipt and values change the signature"), First->GetResolvedPlan()->ResolvedSignature, Before.ResolvedSignature);
+    // R2b-2: signatures live on the proof plane; resolve the applied graph again to observe them.
+    FMHRandomSourceGraph ChangedGraph;
+    TSet<FMHResourceKey> ChangedDependencies;
+    FMHResolvedCompositePlan ChangedDirect;
+    if (!TestTrue(TEXT("changed profile still admits an applied graph"),
+            MHBuildAppliedCompositeGraph(*Root, *GetDefault<UMHCompositeSettings>(), ChangedGraph, ChangedDependencies, Error)) ||
+        !TestTrue(TEXT("changed profile resolves on the proof plane"),
+            MHResolveCompositePlan(ChangedGraph, 100, First->GetAppearanceSeed(), ChangedDirect, Error))) return false;
+    TestNotEqual(TEXT("profile raw receipt and values change the proof signature"), ChangedDirect.ResolvedSignature, Direct.ResolvedSignature);
+    TArray<FString> ProfileMismatches;
+    TestFalse(TEXT("profile change refreshes the actor preview plan content"),
+        MHCompareRecipeShadowParity(Before, *First->GetResolvedPlan(), ProfileMismatches));
+    TestTrue(TEXT("profile change advances the preview revision"), First->GetPreviewRevision() > RevisionBeforeProfile);
     return true;
 }
 
@@ -538,29 +573,53 @@ bool FMHCompositeSeedMissingAppliedDependencyTest::RunTest(const FString& Parame
     if (Root == nullptr) return false;
     AMHCompositeActor* Actor = Fixture.Spawn(Root, 100);
     if (Actor == nullptr || Actor->GetResolvedPlan() == nullptr) return false;
-    const FString InitialSignature = Actor->GetResolvedPlan()->ResolvedSignature;
+    // R2b-2: closures and signatures only exist on the proof plane, so the test
+    // rebuilds the applied graph itself instead of reading them off the preview.
+    const auto ProofResolve = [&](FString& OutSignature, FString& OutError) -> bool
+    {
+        OutSignature.Reset();
+        OutError.Reset();
+        FMHRandomSourceGraph Graph;
+        TSet<FMHResourceKey> Dependencies;
+        FMHResolvedCompositePlan Proof;
+        if (!MHBuildAppliedCompositeGraph(*Root, *GetDefault<UMHCompositeSettings>(), Graph, Dependencies, OutError)) return false;
+        if (!MHResolveCompositePlan(Graph, 100, Actor->GetAppearanceSeed(), Proof, OutError)) return false;
+        OutSignature = Proof.ResolvedSignature;
+        return true;
+    };
+    FString InitialSignature;
+    FString ProofError;
+    if (!TestTrue(TEXT("initial applied closure resolves on the proof plane"), ProofResolve(InitialSignature, ProofError))) return false;
     UMHStaticMeshImportData* Receipt = Cast<UMHStaticMeshImportData>(MeshB->GetAssetImportData());
     const FMHResourceKey MissingKey = SeedTestKey(EMHResourceKind::StaticMesh, MeshB->GetName());
     TestTrue(TEXT("unselected option is still a placement dependency"), Actor->DependsOnResource(MissingKey));
     MeshB->SetAssetImportData(nullptr);
     MHNotifyGeneratedResourceChanged(MissingKey);
-    TestNull(TEXT("missing applied dependency exposes no fresh plan"), Actor->GetResolvedPlan());
-    TestTrue(TEXT("missing applied dependency clears derived signature"), SeedTestSignature(*Actor).IsEmpty());
+    // R2b-2: the preview materializes Layout + Appearance and never validates unselected endpoints.
+    TestNotNull(TEXT("missing unselected dependency still exposes a preview plan"), Actor->GetResolvedPlan());
+    TestTrue(TEXT("missing unselected dependency raises no placement error"), Actor->GetLastPlacementError().IsEmpty());
+    TestTrue(TEXT("preview retains the dependency key for healing"), Actor->DependsOnResource(MissingKey));
+    FString BrokenSignature;
+    // R2b-2: the applied-graph refusal moved to the proof plane with the same diagnostic.
+    TestFalse(TEXT("missing applied dependency blocks the proof closure"), ProofResolve(BrokenSignature, ProofError));
     TestTrue(TEXT("unresolved diagnostic names unavailable unselected resource"),
-        Actor->GetLastPlacementError().Contains(MeshB->GetName()) && Actor->GetLastPlacementError().Contains(TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE")));
-    TestTrue(TEXT("failed rebuild retains dependency key for healing"), Actor->DependsOnResource(MissingKey));
-    TestTrue(TEXT("failed rebuild shows a visible diagnostic"), !Actor->GetLastPlacementWarnings().IsEmpty());
+        ProofError.Contains(MeshB->GetName()) && ProofError.Contains(TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE")));
     MeshB->SetAssetImportData(Receipt);
     MHNotifyGeneratedResourceChanged(MissingKey);
     if (!TestNotNull(TEXT("restoring receipt heals same placement"), Actor->GetResolvedPlan())) return false;
-    TestEqual(TEXT("identical closure heals to original signature"), Actor->GetResolvedPlan()->ResolvedSignature, InitialSignature);
+    FString HealedSignature;
+    TestTrue(TEXT("restored receipt resolves the proof closure again"), ProofResolve(HealedSignature, ProofError));
+    TestEqual(TEXT("identical closure heals to original signature"), HealedSignature, InitialSignature);
     TestTrue(TEXT("healing clears error and warnings"), Actor->GetLastPlacementError().IsEmpty() && Actor->GetLastPlacementWarnings().IsEmpty());
 
     const TArray<uint8> ChangedUnselectedPayload = {0x75, 0x6e, 0x73, 0x65, 0x6c};
     Receipt->SourceHash = MHRawPayloadHash(ChangedUnselectedPayload);
     MHNotifyGeneratedResourceChanged(MissingKey);
     if (!TestNotNull(TEXT("unselected dependency change keeps a valid plan"), Actor->GetResolvedPlan())) return false;
-    TestNotEqual(TEXT("unselected source closure hash changes resolved signature"), Actor->GetResolvedPlan()->ResolvedSignature, InitialSignature);
+    FString ChangedSignature;
+    // R2b-2: an unselected-only receipt change is observable on the proof signature only.
+    TestTrue(TEXT("changed unselected receipt still resolves the proof closure"), ProofResolve(ChangedSignature, ProofError));
+    TestNotEqual(TEXT("unselected source closure hash changes resolved signature"), ChangedSignature, InitialSignature);
     TestEqual(TEXT("unselected change does not change placement seed"), Actor->GetSeed(), 100);
     return true;
 }
@@ -589,14 +648,14 @@ bool FMHCompositeSeedShearAdmissionTest::RunTest(const FString& Parameters)
     Document.Nodes[0].Transform.Scale = FVector(2.0, 1.0, 1.0);
     if (!Fixture.Apply(*Root, Document)) return false;
     MHNotifyGeneratedResourceChanged(SeedTestKey(EMHResourceKind::Composite, Root->LogicalName));
+    // R2b-2: the preview publishes no derived signature; the null plan above carries the refusal.
     TestNull(TEXT("sheared source cannot expose a current plan"), Actor->GetResolvedPlan());
-    TestTrue(TEXT("sheared source clears derived signature"), SeedTestSignature(*Actor).IsEmpty());
     TestTrue(TEXT("shear uses registered fail-closed diagnostic"), Actor->GetLastPlacementError().Contains(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM")));
     Before.Check(*this, *Actor);
     Actor->SetActorLocation(FVector(100.0, 0.0, 0.0));
     TestNull(TEXT("ordinary movement cannot heal a rejected applied definition with the cached old plan"), Actor->GetResolvedPlan());
     TestTrue(TEXT("definition rejection remains visible after moving placement"), Actor->GetLastPlacementError().Contains(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM")));
-    TestTrue(TEXT("moving a rejected definition cannot republish an old signature"), SeedTestSignature(*Actor).IsEmpty());
+    // R2b-2: republication of a stale result is observed as the still-null plan above, not as a signature.
     Before.Check(*this, *Actor);
 
     Document.Nodes[0].Transform.Scale = FVector::OneVector;
@@ -632,14 +691,14 @@ bool FMHCompositeSeedMinimalUpdatesTest::RunTest(const FString& Parameters)
     if (NoneAsset == nullptr) return false;
     AMHCompositeActor* NoneActor = Fixture.Spawn(NoneAsset, 100);
     if (NoneActor == nullptr || NoneActor->GetResolvedPlan() == nullptr) return false;
-    const FString NoneSignature = NoneActor->GetResolvedPlan()->ResolvedSignature;
     const FSeedTestComponentSnapshot NoneSnapshot(*NoneActor);
     NoneActor->SetSeed(200);
     TestEqual(TEXT("fixed definition classifies None"), NoneActor->GetSeedAffectsResult(), EMHCompositeSeedEffect::None);
     NoneSnapshot.Check(*this, *NoneActor);
     if (!TestNotNull(TEXT("None seed change keeps current plan"), NoneActor->GetResolvedPlan())) return false;
     TestTrue(TEXT("None without streams remains draw-free"), NoneActor->GetResolvedPlan()->Draws.IsEmpty());
-    TestNotEqual(TEXT("None still updates signature seed field"), NoneActor->GetResolvedPlan()->ResolvedSignature, NoneSignature);
+    // R2b-2: the preview carries no signature; the resident plan records the new seed instead.
+    TestEqual(TEXT("None seed change updates the resident plan seed"), NoneActor->GetResolvedPlan()->Seed, 200);
 
     FMHPlacementProfile VaryingProfile = Fixture.OffsetProfile(Fixture.Name(TEXT("s5_update_profile")), 10.0f, 5.0f);
     FMHCompositeDocument TransformDocument = NoneDocument;
@@ -750,13 +809,16 @@ bool FMHCompositeSeedConstantTraceTest::RunTest(const FString& Parameters)
     if (Actor == nullptr || Actor->GetResolvedPlan() == nullptr) return false;
     const FMHResolvedCompositePlan Before = *Actor->GetResolvedPlan();
     const FSeedTestComponentSnapshot Components(*Actor);
+    const uint32 RevisionBeforeReseed = Actor->GetPreviewRevision();
     Actor->SetSeed(200);
     if (!TestNotNull(TEXT("constant-visual seed change retains valid plan"), Actor->GetResolvedPlan())) return false;
     TestEqual(TEXT("constant random/profile definition classifies None"), Actor->GetSeedAffectsResult(), EMHCompositeSeedEffect::None);
     Components.Check(*this, *Actor);
     TestEqual(TEXT("single selection plus three offset draws remain present"), Actor->GetResolvedPlan()->Draws.Num(), 4);
     TestFalse(TEXT("None shortcut does not preserve stale trace"), SeedTestTraceEqual(Before, *Actor->GetResolvedPlan()));
-    TestNotEqual(TEXT("None shortcut still computes current seed signature"), Before.ResolvedSignature, Actor->GetResolvedPlan()->ResolvedSignature);
+    // R2b-2: the None shortcut is observed as a rebuilt preview at the new seed, not as a signature.
+    TestEqual(TEXT("None shortcut still resolves the current seed"), Actor->GetResolvedPlan()->Seed, 200);
+    TestTrue(TEXT("None shortcut advances the preview revision"), Actor->GetPreviewRevision() > RevisionBeforeReseed);
     FMHRandomSourceGraph Graph;
     TSet<FMHResourceKey> Dependencies;
     FString Error;
@@ -768,7 +830,8 @@ bool FMHCompositeSeedConstantTraceTest::RunTest(const FString& Parameters)
         return false;
     }
     TestTrue(TEXT("constant-visual actor trace matches fresh shared resolution"), SeedTestTraceEqual(Expected, *Actor->GetResolvedPlan()));
-    TestEqual(TEXT("constant-visual actor signature matches fresh shared resolution"), Expected.ResolvedSignature, Actor->GetResolvedPlan()->ResolvedSignature);
+    // R2b-2: the preview has no signature; parity against the proof plan is the equivalence.
+    SeedTestShadowParity(*this, TEXT("constant-visual actor plan matches fresh shared resolution"), Expected, *Actor->GetResolvedPlan());
     return true;
 }
 
@@ -807,9 +870,19 @@ bool FMHCompositeSeedFrozenVectorTest::RunTest(const FString& Parameters)
     AMHCompositeActor* Actor = Fixture.Spawn(Root, 42);
     if (Actor == nullptr || Actor->GetResolvedPlan() == nullptr) return false;
     const FMHResolvedCompositePlan& Plan = *Actor->GetResolvedPlan();
-    TestEqual(TEXT("actor matches ratified resolver signature"), Plan.ResolvedSignature, Expected->GetStringField(TEXT("resolved_signature")));
-    TestTrue(TEXT("actor signature preimage matches ratified bytes"),
-        Plan.SignaturePreimage == SeedTestUtf8Bytes(Expected->GetStringField(TEXT("signature_preimage_utf8"))));
+    // R2b-2: the ratified signature and preimage belong to the proof plane; resolve the applied graph for them.
+    FMHRandomSourceGraph FrozenGraph;
+    TSet<FMHResourceKey> FrozenDependencies;
+    FMHResolvedCompositePlan Proof;
+    FString FrozenError;
+    if (!TestTrue(TEXT("frozen fixture admits an applied graph"),
+            MHBuildAppliedCompositeGraph(*Root, *GetDefault<UMHCompositeSettings>(), FrozenGraph, FrozenDependencies, FrozenError)) ||
+        !TestTrue(TEXT("frozen fixture resolves on the proof plane"),
+            MHResolveCompositePlan(FrozenGraph, 42, Actor->GetAppearanceSeed(), Proof, FrozenError))) return false;
+    TestEqual(TEXT("proof plan matches ratified resolver signature"), Proof.ResolvedSignature, Expected->GetStringField(TEXT("resolved_signature")));
+    TestTrue(TEXT("proof signature preimage matches ratified bytes"),
+        Proof.SignaturePreimage == SeedTestUtf8Bytes(Expected->GetStringField(TEXT("signature_preimage_utf8"))));
+    SeedTestShadowParity(*this, TEXT("actor preview matches the ratified proof plan"), Proof, Plan);
     const TArray<TSharedPtr<FJsonValue>>& Decisions = Expected->GetArrayField(TEXT("decisions"));
     if (!TestEqual(TEXT("ratified decision count"), Plan.Decisions.Num(), Decisions.Num())) return false;
     for (int32 Index = 0; Index < Decisions.Num(); ++Index)
@@ -856,9 +929,8 @@ bool FMHCompositeSeedFrozenVectorTest::RunTest(const FString& Parameters)
         !TestNotNull(TEXT("frozen fixture seed 100 A resolves"), SameA->GetResolvedPlan()) ||
         !TestNotNull(TEXT("frozen fixture seed 100 B resolves"), SameB->GetResolvedPlan()) ||
         !TestNotNull(TEXT("frozen fixture seed 200 resolves"), Different->GetResolvedPlan())) return false;
-    TestEqual(TEXT("ratified fixture 100 placements have equal signatures"), SameA->GetResolvedPlan()->ResolvedSignature, SameB->GetResolvedPlan()->ResolvedSignature);
+    // R2b-2: seed equality and separation are observed on the preview trace, not on signatures.
     TestTrue(TEXT("ratified fixture 100 placements have identical traces"), SeedTestTraceEqual(*SameA->GetResolvedPlan(), *SameB->GetResolvedPlan()));
-    TestNotEqual(TEXT("ratified fixture 200 signature differs"), SameA->GetResolvedPlan()->ResolvedSignature, Different->GetResolvedPlan()->ResolvedSignature);
     TestFalse(TEXT("ratified fixture 200 trace differs"), SeedTestTraceEqual(*SameA->GetResolvedPlan(), *Different->GetResolvedPlan()));
     return true;
 }

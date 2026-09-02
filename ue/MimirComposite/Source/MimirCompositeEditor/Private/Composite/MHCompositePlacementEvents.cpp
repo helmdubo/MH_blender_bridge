@@ -1,6 +1,7 @@
 #include "Composite/MHCompositePlacementEvents.h"
 
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
@@ -74,6 +75,13 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         {
             // Revision++: the prototype re-admits on its next resolve (16 §2.2).
             Registry->Invalidate(Key);
+        }
+        if (UMHCompiledRecipeRegistry* Recipes = GEditor->GetEditorSubsystem<UMHCompiledRecipeRegistry>())
+        {
+            // 16 §4: a composite reimport recompiles that recipe only; an inlined
+            // profile reimport recompiles the recipes carrying it (R2b-2).
+            if (Key.Kind == EMHResourceKind::Composite) Recipes->InvalidateComposite(Key.LogicalName);
+            else if (Key.Kind == EMHResourceKind::PlacementProfile) Recipes->InvalidateProfile(Key.LogicalName);
         }
     }
 

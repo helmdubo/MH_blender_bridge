@@ -1,9 +1,12 @@
 #include "Composite/MHCompositeActor.h"
 
+#include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAppearanceTransport.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositePlacementMetrics.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Composite/MHMaterializeLayout.h"
 #include "Performance/MHPerformanceTrace.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
@@ -190,25 +193,8 @@ const UE::MimirComposite::FMHResolvedCompositePlan* AMHCompositeActor::GetResolv
         CompactResolvedState->Seed != Seed ||
         CompactResolvedState->AppearanceSeed != AppearanceSeed ||
         !LastPlacementError.IsEmpty()) return nullptr;
-    if (ResolvedDebugPlan.IsValid())
-        return ResolvedDebugPlan.Get();
-
-    const FMHRandomSourceGraph* Graph = bPlacementEditMode && EditingGraph.IsSet()
-        ? &EditingGraph.GetValue() : AppliedGraph.Get();
-    if (Graph == nullptr) return nullptr;
-    FString Error;
-    TSharedPtr<const FMHResolvedCompositePlan> Candidate =
-        ResolvePlanFromCompactState(*Graph, Error);
-    if (!Candidate.IsValid())
-    {
-        UE_LOG(LogMHCompositeActor, Warning,
-            TEXT("MH_E_PLACEMENT_STATE_DESYNC: lazy resolved-plan reconstruction failed for %s: %s"),
-            *GetPathName(), *Error);
-        ResolvedDebugPlan.Reset();
-        return nullptr;
-    }
-    ResolvedDebugPlan = MoveTemp(Candidate);
-    return ResolvedDebugPlan.Get();
+    // R2b-2: the preview plan is resident; nothing is re-resolved on read.
+    return ResidentPlan.Get();
 }
 
 void AMHCompositeActor::RetainResolvedDebugPlan() const
@@ -256,36 +242,6 @@ void AMHCompositeActor::StoreCompactResolvedState(
     }
     CompactResolvedState = MoveTemp(State);
     InvalidateResolvedDebugPlan();
-}
-
-TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan>
-AMHCompositeActor::ResolvePlanFromCompactState(
-    const UE::MimirComposite::FMHRandomSourceGraph& Graph, FString& OutError) const
-{
-    using namespace UE::MimirComposite;
-    OutError.Reset();
-    if (!CompactResolvedState.IsSet()) return nullptr;
-    TSharedRef<FMHResolvedCompositePlan> Plan = MakeShared<FMHResolvedCompositePlan>();
-    bool bResolved = false;
-    {
-        // R2b-2 instrumentation: this lazy re-resolve is a full Layout +
-        // Appearance + Proof pass and runs on every basis update. It is
-        // counted under the same stage as the initial resolve so the
-        // "move runs no layout" gate can observe it.
-        FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
-        bResolved = MHResolveCompositePlan(Graph, CompactResolvedState->Seed,
-            CompactResolvedState->AppearanceSeed, *Plan, OutError);
-    }
-    if (!bResolved || !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), OutError))
-        return nullptr;
-    if (Plan->ResolvedSignature != CompactResolvedState->ResolvedSignature ||
-        Plan->Appearance.AppearanceSignature != CompactResolvedState->AppearanceSignature ||
-        Plan->PlacementSignature != CompactResolvedState->PlacementSignature)
-    {
-        OutError = TEXT("signed compact state does not match lazy resolver output");
-        return nullptr;
-    }
-    return Plan;
 }
 
 bool AMHCompositeActor::HasResidentResolvedDebugPlan() const
@@ -349,6 +305,7 @@ void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
         AppliedDefinition.Reset();
         AppliedGraph.Reset();
         CompactResolvedState.Reset();
+        ResidentPlan.Reset();
         InvalidateResolvedDebugPlan();
         bPlanAvailable = false;
     }
@@ -502,6 +459,7 @@ void AMHCompositeActor::ClearDerivedComponents()
     LastPlacementError.Reset();
     ResolvedSignature.Reset();
     CompactResolvedState.Reset();
+    ResidentPlan.Reset();
     InvalidateResolvedDebugPlan();
     AppliedDefinition.Reset();
     AppliedGraph.Reset();
@@ -554,61 +512,71 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     RootKey.LogicalName = Name;
     PlacementDependencies.Add(RootKey);
 
-    TSharedPtr<FMHCompositeDefinitionEntry> CandidateDefinition = AppliedDefinition;
-    TSharedPtr<const FMHRandomSourceGraph> CandidateGraph = AppliedGraph;
+    // Preview plane (Recipe Model v2 §2.1, §2.5, R2b-2): compile the recipe
+    // (cached by asset + RecipeRevision) and materialize the layout. No applied
+    // graph, no closure, no receipt versus Source Root, no definition cache;
+    // the definition-cache counters now report recipe cache hits and misses.
+    TSharedPtr<FMHCompositeDefinitionEntry> CandidateDefinition;
+    TSharedPtr<const FMHRandomSourceGraph> CandidateGraph;
+    TSharedPtr<const FMHResolvedCompositePlan> CandidatePlan;
     FString Error;
-    if (!bSeedOnly || !bPlanAvailable || !CandidateGraph.IsValid())
+    if (Asset == nullptr)
     {
-        TSharedRef<FMHRandomSourceGraph> Graph = MakeShared<FMHRandomSourceGraph>();
-        TSet<FMHResourceKey> Dependencies;
-        if (Asset == nullptr)
-            Error = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:") + Name + TEXT(" has no generated asset");
-        else if (UMHCompositeDefinitionSubsystem* Definitions =
-                     GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>() : nullptr)
+        Error = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:") + Name + TEXT(" has no generated asset");
+    }
+    else if (UMHCompiledRecipeRegistry* Recipes = UMHCompiledRecipeRegistry::Get())
+    {
+        // Identity admission of the root through the endpoint registry (§2.4):
+        // the canonical path must resolve to this very asset. No tag query, no
+        // receipt versus Source Root; that is the proof plane's job.
+        FString AdmissionError;
+        const FMHCompiledRecipe* Recipe = nullptr;
+        if (UMHEndpointPrototypeRegistry::ResolveEndpoint(RootKey, AdmissionError) != Asset)
         {
-            if (TSharedPtr<FMHCompositeDefinitionEntry> Shared =
-                    Definitions->GetOrBuildDefinition(*Asset, *Settings, Dependencies, Error))
-            {
-                CandidateDefinition = MoveTemp(Shared);
-                CandidateGraph = CandidateDefinition->Graph;
-                PlacementDependencies = MoveTemp(Dependencies);
-            }
-            else
-            {
-                // Failed admissions are never cached. Preserve every key the
-                // builder discovered so its existing targeted notification can
-                // retry this actor when a missing dependency appears.
-                PlacementDependencies.Append(Dependencies);
-            }
-        }
-        else if (MHBuildAppliedCompositeGraph(*Asset, *Settings, *Graph, Dependencies, Error))
-        {
-            CandidateDefinition.Reset();
-            CandidateGraph = Graph;
-            PlacementDependencies = MoveTemp(Dependencies);
+            Error = AdmissionError.IsEmpty()
+                ? TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: ") + RootKey.ToString() + TEXT(" does not identify this unique generated asset")
+                : AdmissionError;
         }
         else
         {
-            // Retain previously known keys so restoring an unavailable branch
-            // still notifies this actor, without inventing its missing payload.
-            PlacementDependencies.Append(Dependencies);
+            if (Recipes->Find(*Asset) != nullptr) MHRecordDefinitionCacheHit();
+            else MHRecordDefinitionCacheMiss();
+            Recipe = Recipes->Compile(*Asset, Error);
         }
-    }
-
-    TSharedRef<FMHResolvedCompositePlan> CandidatePlan = MakeShared<FMHResolvedCompositePlan>();
-    if (Error.IsEmpty() && CandidateGraph.IsValid())
-    {
-        MHRecordMapLoadGraph(Name, *CandidateGraph);
-        bool bResolved = false;
+        if (Recipe != nullptr)
         {
-            FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
-            bResolved = MHResolveCompositePlan(*CandidateGraph, Seed, AppearanceSeed, *CandidatePlan, Error);
+            FMHMaterializeResult Materialized;
+            {
+                FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
+                Materialized = MHMaterializeLayout(*Recipe, Seed, AppearanceSeed, GetActorTransform());
+            }
+            if (Materialized.Graph.IsValid())
+            {
+                CandidateGraph = Materialized.Graph;
+                MHRecordMapLoadGraph(Name, *CandidateGraph);
+                // Every graph resource is a retry trigger for the targeted
+                // notification, whether or not this build succeeded.
+                PlacementDependencies.Reset();
+                PlacementDependencies.Add(RootKey);
+                MHCollectRecipeGraphDependencies(*CandidateGraph, PlacementDependencies);
+            }
+            if (Materialized.Succeeded())
+            {
+                CandidatePlan = Materialized.Plan;
+                MHRecordMapLoadSelectedPlan(*CandidatePlan);
+            }
+            else
+            {
+                Error = Materialized.Error;
+            }
         }
-        if (bResolved) MHRecordMapLoadSelectedPlan(*CandidatePlan);
-        if (!bResolved && !Error.StartsWith(TEXT("MH_E_")))
-            Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
-        if (Error.IsEmpty()) MHValidateResolvedPlacementTransforms(*CandidatePlan, GetActorTransform(), Error);
     }
+    else
+    {
+        Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: compiled recipe registry is unavailable");
+    }
+    if (!Error.IsEmpty() && !Error.StartsWith(TEXT("MH_E_")))
+        Error = TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
     LastPlacementWarnings.Reset();
     LastPlacementError = Error;
     if (!Error.IsEmpty())
@@ -624,19 +592,15 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         }
         FMHCompositePlacementCompileResult View;
         const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
-        if (CompactResolvedState.IsSet() && AppliedGraph.IsValid() && AppliedGraph->RootComposite == Name)
+        if (ResidentPlan.IsValid() && AppliedGraph.IsValid() && AppliedGraph->RootComposite == Name)
         {
             const FMHRandomComposite* PreviousRoot = AppliedGraph->Composites.Find(Name);
             if (PreviousRoot != nullptr)
             {
-                FString PreviousError;
-                const TSharedPtr<const FMHResolvedCompositePlan> PreviousPlan =
-                    ResolvePlanFromCompactState(*AppliedGraph, PreviousError);
-                if (PreviousPlan.IsValid())
-                    View = MHCompileCompositePlacementV5(
-                        *this, *PreviousPlan, *PreviousRoot, *Settings, Previous,
-                        AppliedDefinition.Get(),
-                        bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
+                View = MHCompileCompositePlacementV5(
+                    *this, *ResidentPlan, *PreviousRoot, *Settings, Previous,
+                    AppliedDefinition.Get(),
+                    bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
             }
         }
         FMHCompositePlacementCompileResult Marker = MHBuildCompositeDiagnosticView(*this, TEXT("composite:") + Name, Error);
@@ -652,18 +616,17 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         ReportPlacementError();
         return;
     }
-    if (!CandidateGraph.IsValid()) return;
+    if (!CandidateGraph.IsValid() || !CandidatePlan.IsValid()) return;
     const FMHRandomComposite* Root = CandidateGraph->Composites.Find(Name);
     if (Root == nullptr) return;
     const bool bLayoutReseed = bSeedOnly && bPlanAvailable && CompactResolvedState.IsSet() &&
         CompactResolvedState->Seed != CandidatePlan->Seed;
     TSharedPtr<const FMHResolvedCompositePlan> PreviousPlan;
-    if (bLayoutReseed && AppliedGraph.IsValid())
+    if (bLayoutReseed && ResidentPlan.IsValid())
     {
-        FString PreviousError;
-        PreviousPlan = ResolvePlanFromCompactState(*AppliedGraph, PreviousError);
-        if (PreviousPlan.IsValid())
-            RecordMHPlacementReseedComparison(*PreviousPlan, *CandidatePlan);
+        // The previous preview plan is resident: the reseed diff never re-resolves.
+        PreviousPlan = ResidentPlan;
+        RecordMHPlacementReseedComparison(*PreviousPlan, *CandidatePlan);
     }
     SeedAffectsResult = MHClassifyCompositeGraph(*CandidateGraph);
     // None means visual invariance, not absence of random draws. Resolve above
@@ -749,6 +712,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     }
     AppliedDefinition = CandidateDefinition;
     AppliedGraph = CandidateGraph;
+    ResidentPlan = CandidatePlan;
+    ++PreviewRevision;
     StoreCompactResolvedState(*CandidatePlan);
     ResolvedSignature = CandidatePlan->ResolvedSignature;
     bPlanAvailable = true;
@@ -784,8 +749,9 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
     {
         TGuardValue<bool> Guard(bRebuildInProgress, true);
         FString Error;
-        const TSharedPtr<const FMHResolvedCompositePlan> MaterializationPlan =
-            ResolvePlanFromCompactState(*AppliedGraph, Error);
+        // R2b-2: the resident preview plan moves with the actor; no Layout here.
+        const TSharedPtr<const FMHResolvedCompositePlan> MaterializationPlan = ResidentPlan;
+        if (!MaterializationPlan.IsValid()) Error = TEXT("no resident preview plan");
         if (!MaterializationPlan.IsValid() ||
             !MHUpdateCompositePlacementBasis(*this, *MaterializationPlan, *Root,
                 TopLevelPlacementComponents, LeafPlacementComponents,
@@ -961,11 +927,10 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
             bPlanAvailable = false;
             return;
         }
-        // Hash the exact prospective source bytes, without changing the live
-        // asset/receipt. A pure basis move keeps the original applied raw hash.
-        EditingGraph->RawHashes.Add(TEXT("composite:") + EditingGraph->RootComposite, MHRawPayloadHash(ProspectiveBytes));
     }
-    if (!MHResolveCompositePlan(*EditingGraph, Seed, AppearanceSeed, *Plan, Error) ||
+    // Preview plane: the prospective source resolves through Layout +
+    // Appearance only; proof (closure, signatures) is never built here.
+    if (!MHResolvePreviewGraph(*EditingGraph, Seed, AppearanceSeed, *Plan, Error) ||
         !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), Error))
     {
         LastPlacementError = Error;
@@ -992,6 +957,8 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     LastEditHandleTransforms.Reset();
     for (const USceneComponent* Handle : TopLevelPlacementComponents) LastEditHandleTransforms.Add(Handle->GetComponentTransform());
     LastEditBasis = CurrentBasis;
+    ResidentPlan = Plan;
+    ++PreviewRevision;
     StoreCompactResolvedState(*Plan);
     ResolvedSignature = Plan->ResolvedSignature;
     LastPlacementError.Reset();

@@ -118,12 +118,17 @@ bool FMHActorPreviewNoProofOnLoadTest::RunTest(const FString& Parameters)
         Scope.Complete(*Fixture.Actor);
     }
     bool bPassed = TestTrue(TEXT("preview builds without error: ") + Fixture.Actor->GetLastPlacementError(), Fixture.Actor->GetLastPlacementError().IsEmpty());
-    bPassed &= TestTrue(TEXT("leaves materialized"), Fixture.Actor->GetLeafMaterializations().Num() >= 2);
+    // Seed 7 may select the empty option: the fixed anchor leaf is the floor.
+    bPassed &= TestTrue(TEXT("leaves materialized"), Fixture.Actor->GetLeafMaterializations().Num() >= 1);
     const FMHPlacementStageMetrics Stages = MHGetPlacementStageMetrics();
     bPassed &= TestEqual(TEXT("no applied graph (proof plane) on map load"), Stages.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     bPassed &= TestTrue(TEXT("layout ran once"), Stages.Get(EMHPlacementStage::ResolveCompositePlan).Calls >= 1);
+    // The definition-cache counters now report the recipe cache: one miss
+    // (the compile behind SetCompositeAsset) and hits for every later build.
     const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
-    bPassed &= TestEqual(TEXT("definition cache is not consulted"), Cache.Hits + Cache.Misses, 0ull);
+    bPassed &= TestEqual(TEXT("recipe compiled exactly once"), Cache.Misses, 1ull);
+    bPassed &= TestTrue(TEXT("later builds hit the recipe cache"), Cache.Hits >= 1ull);
+    bPassed &= TestEqual(TEXT("no closure build behind a cache hit"), Cache.ClosureHitBuilds, 0ull);
     bPassed &= TestTrue(TEXT("resolved plan is resident"), Fixture.Actor->GetResolvedPlan() != nullptr);
     return bPassed;
 }

@@ -3,6 +3,7 @@
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositeResolvedPlan.h"
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -441,8 +442,26 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         {
             bPassed &= TestEqual(TEXT("random nested plan records one decision"), RandomPreviewPlan->Decisions.Num(), 1);
             bPassed &= TestEqual(TEXT("random nested plan records one selected leaf"), RandomPreviewPlan->Leaves.Num(), 1);
-            bPassed &= TestTrue(TEXT("unselected nested option remains in source closure"),
-                RandomPreviewPlan->Closure.Resources.Contains(TEXT("composite:") + NestedResource));
+            // R2b-2: the preview materializes Layout + Appearance and builds no source
+            // closure; the unselected option is observed on the proof plane instead.
+            bPassed &= TestTrue(TEXT("random nested preview builds no source closure"),
+                RandomPreviewPlan->Closure.Resources.IsEmpty());
+            FMHRandomSourceGraph ClosureGraph;
+            TSet<FMHResourceKey> ClosureDependencies;
+            FString ClosureError;
+            if (TestTrue(TEXT("random nested root admits an applied graph"),
+                    MHBuildAppliedCompositeGraph(*RandomRootAsset, *Settings, ClosureGraph, ClosureDependencies, ClosureError)))
+            {
+                FMHResourceKey UnselectedKey;
+                UnselectedKey.Kind = EMHResourceKind::Composite;
+                UnselectedKey.LogicalName = NestedResource;
+                bPassed &= TestTrue(TEXT("unselected nested option remains in the applied source closure"),
+                    ClosureDependencies.Contains(UnselectedKey));
+            }
+            else
+            {
+                bPassed = false;
+            }
         }
         const FString RandomSourceHash = RandomRootAsset->SourceHash;
         TArray<AActor*> RandomBreakActors;

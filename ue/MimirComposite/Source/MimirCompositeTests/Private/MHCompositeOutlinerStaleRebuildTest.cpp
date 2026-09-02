@@ -12,6 +12,8 @@ FMHCompositeOutlinerFreshness MakeFreshness()
     FMHCompositeOutlinerFreshness Result;
     Result.Seed = 1729;
     Result.AppearanceSeed = 2718;
+    // R2b-2: a built preview is identified by the actor's preview revision.
+    Result.PreviewRevision = 3;
     Result.ResolvedSignature = TEXT("blake3-160:resolved");
     Result.AppearanceSignature = TEXT("blake3-160:appearance");
     Result.PlacementSignature = TEXT("blake3-160:placement");
@@ -41,12 +43,10 @@ bool FMHCompositeOutlinerStaleRebuildSkipTest::RunTest(const FString& Parameters
         [](FMHCompositeOutlinerFreshness& Value) { ++Value.Seed; });
     TestStaleAxis(TEXT("appearance seed invalidates freshness"),
         [](FMHCompositeOutlinerFreshness& Value) { ++Value.AppearanceSeed; });
-    TestStaleAxis(TEXT("resolved signature invalidates freshness"),
-        [](FMHCompositeOutlinerFreshness& Value) { Value.ResolvedSignature += TEXT("x"); });
-    TestStaleAxis(TEXT("appearance signature invalidates freshness"),
-        [](FMHCompositeOutlinerFreshness& Value) { Value.AppearanceSignature += TEXT("x"); });
-    TestStaleAxis(TEXT("placement signature invalidates freshness"),
-        [](FMHCompositeOutlinerFreshness& Value) { Value.PlacementSignature += TEXT("x"); });
+    // R2b-2: the preview plane carries no signatures; a rebuilt preview
+    // (new revision) is the third freshness axis.
+    TestStaleAxis(TEXT("preview revision invalidates freshness"),
+        [](FMHCompositeOutlinerFreshness& Value) { ++Value.PreviewRevision; });
     const FMHCompositeOutlinerFreshness Empty;
     bPassed &= TestFalse(TEXT("two empty states never claim freshness"), Empty.Matches(Empty));
     bPassed &= TestFalse(TEXT("incomplete state never claims freshness"),
@@ -55,7 +55,7 @@ bool FMHCompositeOutlinerStaleRebuildSkipTest::RunTest(const FString& Parameters
     UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
     AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
     AMHCompositeActor* OtherActor = World->SpawnActor<AMHCompositeActor>();
-    bPassed &= TestFalse(TEXT("actor without compact signatures stays incomplete"),
+    bPassed &= TestFalse(TEXT("actor without a built preview stays incomplete"),
         FMHCompositeOutlinerFreshness::Capture(*Actor).IsComplete());
     FMHCompositeOutlinerRefreshState State;
     int32 RebuildCount = 0;

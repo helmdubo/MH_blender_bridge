@@ -343,7 +343,8 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(
             TEXT("unresolved node produces bbox and label view"),
             Actor->GetDerivedComponents().Num() >= 3);
-        bPassed &= TestNull(TEXT("unavailable dependency cannot expose a fresh plan"), Actor->GetResolvedPlan());
+        // R2b-2: a missing selected endpoint materializes a placeholder; the preview plan stays available
+        bPassed &= TestNotNull(TEXT("unavailable dependency still exposes a preview plan"), Actor->GetResolvedPlan());
         bPassed &= TestTrue(
             TEXT("unresolved node reports registered placement warning"),
             Actor->GetLastPlacementWarnings().ContainsByPredicate(

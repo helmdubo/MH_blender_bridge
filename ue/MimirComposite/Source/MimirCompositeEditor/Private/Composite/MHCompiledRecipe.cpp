@@ -243,6 +243,16 @@ bool MHResolveRecipePreview(
     // no signatures; the proof plane runs the full reference wrapper instead.
     FMHRandomSourceGraph Graph;
     if (!MHBuildRecipeGraph(Root, Graph, OutError)) return false;
+    return MHResolvePreviewGraph(Graph, Seed, AppearanceSeed, OutPlan, OutError);
+}
+
+bool MHResolvePreviewGraph(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
     if (!MHResolveCompositeLayout(Graph, Seed, OutPlan, OutError)) return false;
     MHResolveCompositeAppearance(OutPlan, AppearanceSeed);
     // The appearance stage refreshes the signature strings from the preimages;
@@ -585,6 +595,44 @@ void UMHCompiledRecipeRegistry::Invalidate(const UMHCompositeAsset& Asset)
     FEntry& Entry = Entries.FindOrAdd(FObjectKey(&Asset));
     ++Entry.RecipeRevision;
     Entry.bSeedEffectValid = false;
+}
+
+void UMHCompiledRecipeRegistry::InvalidateAll()
+{
+    for (TPair<FObjectKey, FEntry>& Pair : Entries)
+    {
+        ++Pair.Value.RecipeRevision;
+        Pair.Value.bSeedEffectValid = false;
+    }
+}
+
+void UMHCompiledRecipeRegistry::InvalidateComposite(const FString& LogicalName)
+{
+    // Only this asset's recipe; parents keep their handles and are never
+    // recompiled for a child change (§2.1 Dependents rule, §4 first row).
+    for (TPair<FObjectKey, FEntry>& Pair : Entries)
+    {
+        const UMHCompositeAsset* Asset = Cast<UMHCompositeAsset>(Pair.Key.ResolveObjectPtr());
+        if (Asset != nullptr && Asset->LogicalName == LogicalName)
+        {
+            ++Pair.Value.RecipeRevision;
+            Pair.Value.bSeedEffectValid = false;
+        }
+    }
+}
+
+void UMHCompiledRecipeRegistry::InvalidateProfile(const FString& LogicalName)
+{
+    // Profiles are inlined into their composites (10 §6.9): a profile reimport
+    // re-applies those composites, so their recipes recompile.
+    for (TPair<FObjectKey, FEntry>& Pair : Entries)
+    {
+        if (Pair.Value.Recipe.IsValid() && Pair.Value.Recipe->Profiles.Contains(LogicalName))
+        {
+            ++Pair.Value.RecipeRevision;
+            Pair.Value.bSeedEffectValid = false;
+        }
+    }
 }
 
 uint32 UMHCompiledRecipeRegistry::GetRecipeRevision(const UMHCompositeAsset& Asset) const
