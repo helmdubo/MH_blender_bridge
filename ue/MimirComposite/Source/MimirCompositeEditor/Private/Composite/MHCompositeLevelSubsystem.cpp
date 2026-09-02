@@ -235,6 +235,31 @@ bool MHCollectBreakSpecs(
     return true;
 }
 
+bool MHCheckBreakPlanClaims(
+    const UMHCompositeAsset& Root,
+    const FMHResolvedCompositePlan& Plan,
+    FString& OutError)
+{
+    FMHResourceKey RootKey;
+    RootKey.Kind = EMHResourceKind::Composite;
+    RootKey.LogicalName = Root.LogicalName;
+    if (!MHCheckGeneratedAssetClaims(RootKey, OutError)) return false;
+    for (const FString& Resource : Plan.Closure.Resources)
+    {
+        FString KindLabel;
+        FMHResourceKey Key;
+        if (!Resource.Split(TEXT(":"), &KindLabel, &Key.LogicalName) ||
+            !MHResourceKindFromLabel(KindLabel, Key.Kind))
+        {
+            OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: invalid resolved closure resource ") + Resource;
+            return false;
+        }
+        if (Key == RootKey) continue;
+        if (!MHCheckGeneratedAssetClaims(Key, OutError)) return false;
+    }
+    return true;
+}
+
 AActor* MHSpawnBreakSpec(
     const FMHBreakSpawnSpec& Spec,
     ULevel& Level,
@@ -405,6 +430,10 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
             *Key.LogicalName);
         return false;
     }
+    if (!MHCheckGeneratedAssetClaims(Key, OutError))
+    {
+        return false;
+    }
 
     const FString PackageName = FString(MHLevelGeneratedCompositeRoot) + TEXT("/") + Key.LogicalName;
     const FString ObjectPath = PackageName + TEXT(".") + Key.LogicalName;
@@ -436,6 +465,10 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
             continue;
         }
         Dependency.LogicalName = Node.Resource;
+        if (!MHCheckGeneratedAssetClaims(Dependency, OutError))
+        {
+            return false;
+        }
         if (Services.Index->IsImportBlocked(Dependency, OutError))
         {
             return false;
@@ -568,6 +601,16 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
             OutError = Actor->GetLastPlacementError().IsEmpty()
                 ? FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires a current resolved plan for %s"), *Actor->GetPathName())
                 : Actor->GetLastPlacementError() + TEXT(" (Break: ") + Actor->GetPathName() + TEXT(")");
+            Actor->ReleaseResolvedDebugPlan();
+            return false;
+        }
+        const UMHCompositeAsset* Root = Actor->GetCompositeAsset();
+        if (Root == nullptr || !MHCheckBreakPlanClaims(*Root, *ResolvedPlan, OutError))
+        {
+            if (OutError.IsEmpty())
+            {
+                OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break placement has no applied root composite");
+            }
             Actor->ReleaseResolvedDebugPlan();
             return false;
         }

@@ -275,36 +275,14 @@ void UMHEndpointPrototypeRegistry::Admit(const FMHResourceKey& Key, FMHEndpointP
         return;
     }
 
-    // OPEN-R-7 fail-closed rule: one duplicate-claim probe per admission (not
-    // per resolve) until the owner moves duplicate_claim to the proof plane.
-    FARFilter Filter;
-    Filter.TagsAndValues.Add(TEXT("MH.LogicalName"), Key.LogicalName);
-    TArray<FAssetData> Claims;
-    MHRecordEndpointAssetRegistryTagQuery();
-    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssets(Filter, Claims);
-    Claims.RemoveAll([&](const FAssetData& Claim)
+    UObject* Loaded = FindObject<UObject>(nullptr, *Path);
+    if (Loaded == nullptr)
     {
-        FString Kind;
-        FString Name;
-        return !Claim.GetTagValue(TEXT("MH.Kind"), Kind) || Kind != MHResourceKindLabel(Key.Kind) ||
-            !Claim.GetTagValue(TEXT("MH.LogicalName"), Name) || Name != Key.LogicalName;
-    });
-    if (Claims.Num() > 1)
-    {
-        Prototype.AdmissionError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: ") + Key.ToString();
-        return;
-    }
-    if (Claims.Num() == 1 && Claims[0].GetSoftObjectPath().ToString() != Path)
-    {
-        Prototype.AdmissionError = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid generated path for ") + Key.ToString();
-        return;
-    }
-
-    const UObject* Resident = FindObject<UObject>(nullptr, *Path);
-    UObject* Loaded = Claims.Num() == 1 ? Claims[0].GetAsset() : LoadObject<UObject>(nullptr, *Path);
-    if (Resident == nullptr && Loaded != nullptr)
-    {
-        MHRecordEndpointPackageLoadSync();
+        Loaded = LoadObject<UObject>(nullptr, *Path);
+        if (Loaded != nullptr)
+        {
+            MHRecordEndpointPackageLoadSync();
+        }
     }
     if (Loaded == nullptr)
     {

@@ -479,6 +479,15 @@ bool MHBuildRuntimeCompositeInput(const AMHCompositeActor& Placement,
     FMHRandomSourceGraph Graph;
     TSet<FMHResourceKey> Dependencies;
     if (!MHBuildAppliedCompositeGraph(*Asset, *Settings, Graph, Dependencies, OutError)) return false;
+    TArray<FMHResourceKey> ClaimKeys = Dependencies.Array();
+    ClaimKeys.Sort([](const FMHResourceKey& A, const FMHResourceKey& B)
+    {
+        return A.ToString() < B.ToString();
+    });
+    for (const FMHResourceKey& Key : ClaimKeys)
+    {
+        if (!MHCheckGeneratedAssetClaims(Key, OutError)) return false;
+    }
     TArray<FString> Keys;
     if (!MHCollectRuntimeCompositeBindingKeys(Graph, Keys, OutError)) return false;
     FMHRuntimeCompositeInput Input;

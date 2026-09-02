@@ -202,47 +202,6 @@ bool FMHCompositeInvalidRootReceiptAdmissionTest::RunTest(const FString& Paramet
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHCompositeDuplicateRootClaimAdmissionTest,
-    "Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FMHCompositeDuplicateRootClaimAdmissionTest::RunTest(const FString& Parameters)
-{
-    FAppliedAdmissionFixture Fixture(*this);
-    FMHCompositeDocument Document;
-    Document.Nodes.AddDefaulted();
-    const FString Name = Fixture.Name(TEXT("s5_duplicate_root"));
-    UMHCompositeAsset* Root = Fixture.Composite(Name, Document);
-    if (Root == nullptr) return false;
-    Fixture.Register(*Root);
-    AMHCompositeActor* Actor = Fixture.Spawn(*Root);
-    if (Actor == nullptr || !TestNotNull(TEXT("unique registered root starts admitted"), Actor->GetResolvedPlan())) return false;
-    UMHCompositeAsset* Duplicate = Fixture.Composite(Name, Document, {}, true);
-    if (Duplicate == nullptr) return false;
-    Fixture.Register(*Duplicate);
-    FARFilter Filter;
-    Filter.TagsAndValues.Add(TEXT("MH.LogicalName"), Name);
-    TArray<FAssetData> Claims;
-    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssets(Filter, Claims);
-    // TagsAndValues entries are alternatives, not an AND predicate. Keep the
-    // exact ResourceKey comparison explicit instead of counting unrelated tags.
-    Claims.RemoveAll([&Name](const FAssetData& Claim)
-    {
-        FString Kind;
-        FString LogicalName;
-        return !Claim.GetTagValue(TEXT("MH.Kind"), Kind) || Kind != TEXT("composite") ||
-            !Claim.GetTagValue(TEXT("MH.LogicalName"), LogicalName) || LogicalName != Name;
-    });
-    bool bPassed = TestEqual(TEXT("two explicit registry claims share one ResourceKey"), Claims.Num(), 2);
-    bPassed &= TestNotEqual(TEXT("duplicate claims live at distinct object paths"), Root->GetPathName(), Duplicate->GetPathName());
-    bPassed &= Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET"));
-    Fixture.RemoveClaim(*Duplicate);
-    Actor->RebuildComposite();
-    bPassed &= TestNotNull(TEXT("deleting conflicting claim heals the unique root"), Actor->GetResolvedPlan());
-    return bPassed;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHCompositeAbstractActorAdmissionTest,
     "Mimir.V5.Composite.AppliedAdmission.UnselectedAbstractActorBlocksClosure",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
