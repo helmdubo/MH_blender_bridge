@@ -142,7 +142,7 @@ void CollectGraphNodeMeshes(const FMHRandomNode& Node, TSet<FMHResourceKey>& Out
 void LogMapLoadReport(const FMHMapLoadPerfReport& Report)
 {
     UE_LOG(LogMHPerformanceTrace, Display,
-        TEXT("MH_PERF_MAPLOAD composite_actors=%llu root_composites_unique=%llu definition_cache_hits=%llu definition_cache_misses=%llu all_option_composites=%llu all_option_unique_meshes=%llu selected_unique_meshes=%llu all_option_meshes_compiling=%llu selected_meshes_compiling=%llu build_applied_graph_ms=%.3f resolve_composite_plan_ms=%.3f load_endpoints_ms=%.3f wait_static_mesh_compilation_ms=%.3f compile_placement_ms=%.3f register_components_ms=%.3f destroy_retired_components_ms=%.3f components_created=%llu components_reused=%llu components_destroyed=%llu ism_buckets=%llu ism_instances=%llu total_ms=%.3f"),
+        TEXT("MH_PERF_MAPLOAD composite_actors=%llu root_composites_unique=%llu definition_cache_hits=%llu definition_cache_misses=%llu all_option_composites=%llu all_option_unique_meshes=%llu selected_unique_meshes=%llu all_option_meshes_compiling=%llu selected_meshes_compiling=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu build_applied_graph_ms=%.3f resolve_composite_plan_ms=%.3f load_endpoints_ms=%.3f wait_static_mesh_compilation_ms=%.3f compile_placement_ms=%.3f register_components_ms=%.3f destroy_retired_components_ms=%.3f components_created=%llu components_reused=%llu components_destroyed=%llu ism_buckets=%llu ism_instances=%llu total_ms=%.3f"),
         Report.CompositeActors,
         Report.RootCompositesUnique,
         Report.DefinitionCacheHits,
@@ -152,6 +152,11 @@ void LogMapLoadReport(const FMHMapLoadPerfReport& Report)
         Report.SelectedUniqueMeshes,
         Report.AllOptionMeshesCompiling,
         Report.SelectedMeshesCompiling,
+        Report.RegistryLookups,
+        Report.AssetRegistryTagQueries,
+        Report.PackageLoadsSync,
+        Report.IdentityAdmissions,
+        Report.LiveReceiptTagReads,
         Report.BuildAppliedGraphMs,
         Report.ResolveCompositePlanMs,
         Report.LoadEndpointsMs,
@@ -279,6 +284,7 @@ struct FMHMapLoadInitialBuildScope::FImpl
     FMHPlacementStageMetrics StagesBefore;
     FMHDefinitionCacheMetrics DefinitionsBefore;
     FMHPlacementMutationMetrics MutationsBefore;
+    FMHEndpointResolveMetrics EndpointsBefore;
     TSet<const UActorComponent*> PreviousComponents;
     bool bCompleted = false;
 };
@@ -344,6 +350,7 @@ FMHMapLoadInitialBuildScope::FMHMapLoadInitialBuildScope(const AMHCompositeActor
     Impl->StagesBefore = MHGetPlacementStageMetrics();
     Impl->DefinitionsBefore = MHGetDefinitionCacheMetrics();
     Impl->MutationsBefore = MHGetPlacementMutationMetrics();
+    Impl->EndpointsBefore = MHGetEndpointResolveMetrics();
     for (const UActorComponent* Component : Actor.GetDerivedComponents())
     {
         if (IsValid(Component))
@@ -388,6 +395,7 @@ void FMHMapLoadInitialBuildScope::Complete(const AMHCompositeActor& Actor)
     const FMHPlacementStageMetrics StagesAfter = MHGetPlacementStageMetrics();
     const FMHDefinitionCacheMetrics DefinitionsAfter = MHGetDefinitionCacheMetrics();
     const FMHPlacementMutationMetrics MutationsAfter = MHGetPlacementMutationMetrics();
+    const FMHEndpointResolveMetrics EndpointsAfter = MHGetEndpointResolveMetrics();
     ++GMapLoad.Values.CompositeActors;
     if (const UMHCompositeAsset* Asset = Actor.GetCompositeAsset())
     {
@@ -413,6 +421,16 @@ void FMHMapLoadInitialBuildScope::Complete(const AMHCompositeActor& Actor)
         MutationsAfter.CreatedComponents - Impl->MutationsBefore.CreatedComponents;
     GMapLoad.Values.ComponentsDestroyed +=
         MutationsAfter.DestroyedComponents - Impl->MutationsBefore.DestroyedComponents;
+    GMapLoad.Values.RegistryLookups +=
+        EndpointsAfter.RegistryLookups - Impl->EndpointsBefore.RegistryLookups;
+    GMapLoad.Values.AssetRegistryTagQueries +=
+        EndpointsAfter.AssetRegistryTagQueries - Impl->EndpointsBefore.AssetRegistryTagQueries;
+    GMapLoad.Values.PackageLoadsSync +=
+        EndpointsAfter.PackageLoadsSync - Impl->EndpointsBefore.PackageLoadsSync;
+    GMapLoad.Values.IdentityAdmissions +=
+        EndpointsAfter.IdentityAdmissions - Impl->EndpointsBefore.IdentityAdmissions;
+    GMapLoad.Values.LiveReceiptTagReads +=
+        EndpointsAfter.LiveReceiptTagReads - Impl->EndpointsBefore.LiveReceiptTagReads;
     for (const UActorComponent* Component : Actor.GetDerivedComponents())
     {
         if (!IsValid(Component))

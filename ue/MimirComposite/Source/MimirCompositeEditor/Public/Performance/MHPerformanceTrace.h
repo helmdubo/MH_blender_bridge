@@ -29,6 +29,11 @@ struct MIMIRCOMPOSITEEDITOR_API FMHMapLoadPerfReport
     uint64 SelectedUniqueMeshes = 0;
     uint64 AllOptionMeshesCompiling = 0;
     uint64 SelectedMeshesCompiling = 0;
+    uint64 RegistryLookups = 0;
+    uint64 AssetRegistryTagQueries = 0;
+    uint64 PackageLoadsSync = 0;
+    uint64 IdentityAdmissions = 0;
+    uint64 LiveReceiptTagReads = 0;
     double BuildAppliedGraphMs = 0.0;
     double ResolveCompositePlanMs = 0.0;
     double LoadEndpointsMs = 0.0;
