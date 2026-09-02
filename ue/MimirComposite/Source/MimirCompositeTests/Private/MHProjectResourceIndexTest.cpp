@@ -356,6 +356,74 @@ bool FMHProjectIndexIncrementalScanTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProjectIndexRacyFingerprintTest,
+    "Mimir.V5.Source.Index.IncrementalScanRehashesSameSecondChange",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProjectIndexRacyFingerprintTest::RunTest(const FString& Parameters)
+{
+    // S0 racy-fingerprint rule: the stored mtime has one-second resolution in
+    // this pipeline, so a same-size payload rewritten within the same second
+    // is indistinguishable by (size, mtime). Such "fresh" candidates must be
+    // hashed, never reused (found by Mimir.V4.BulkImport.CrashBetweenPassesRetries).
+    IConsoleVariable* PerfTrace = IConsoleManager::Get().FindConsoleVariable(TEXT("mh.PerfTrace"));
+    if (!TestNotNull(TEXT("mh.PerfTrace cvar exists"), PerfTrace)) return false;
+    const int32 PreviousTrace = PerfTrace->GetInt();
+    PerfTrace->Set(1, ECVF_SetByCode);
+    ON_SCOPE_EXIT
+    {
+        PerfTrace->Set(PreviousTrace, ECVF_SetByCode);
+        MHResetPerformanceTraceForTests();
+    };
+
+    FIndexFixture Fixture;
+    const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("textures/brick_d.png"));
+    const FString MaterialPath = FPaths::Combine(Fixture.Root, TEXT("materials/wall.material"));
+    // Two payloads of identical byte length that differ in content.
+    const FString FirstMaterial = TEXT("{\n  \"class\": \"simple_a\",\n  \"textures\": {\n    \"tex0\": \"brick_d\"\n  }\n}\n");
+    const FString SecondMaterial = TEXT("{\n  \"class\": \"simple_b\",\n  \"textures\": {\n    \"tex0\": \"brick_d\"\n  }\n}\n");
+    bool bPassed = TestEqual(TEXT("fixture payloads have equal length"), FirstMaterial.Len(), SecondMaterial.Len());
+    bPassed &= WriteProjectIndexUtf8(TexturePath, TEXT("texture-bytes"));
+    bPassed &= WriteProjectIndexUtf8(MaterialPath, FirstMaterial);
+    const FMHResourceKey MaterialKey = ProjectIndexTestKey(EMHResourceKind::Material, TEXT("wall"));
+
+    const auto Scan = [&](FMHProjectResourceIndex& Index, const TCHAR* Label, FMHStartupScanPerfReport& OutReport)
+    {
+        MHResetPerformanceTraceForTests();
+        FMHProjectIndexUpdateResult Update;
+        FString Error;
+        bool bOk = false;
+        {
+            FMHSourceScanPerfScope Scope(EMHPerfScanTrigger::Manual);
+            bOk = Index.FullScan({}, Update, Error);
+        }
+        if (!Error.IsEmpty()) AddError(FString::Printf(TEXT("%s: %s"), Label, *Error));
+        OutReport = MHGetStartupScanPerfReportForTests();
+        AddInfo(FString::Printf(TEXT("%s: hashed_files=%llu reused=%llu"), Label, OutReport.HashedFiles, OutReport.ReusedFingerprints));
+        return bOk;
+    };
+
+    FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
+    if (!OpenIndex(Index, *this)) return false;
+    FMHStartupScanPerfReport First;
+    bPassed &= TestTrue(TEXT("first scan succeeds"), Scan(Index, TEXT("first"), First));
+    const FString FirstHash = Index.Resolve(MaterialKey).RawHash;
+    bPassed &= TestEqual(TEXT("first scan stores the first payload hash"), FirstHash, FileHash(MaterialPath));
+
+    // Rewrite immediately: same size, same second, different bytes.
+    bPassed &= WriteProjectIndexUtf8(MaterialPath, SecondMaterial);
+    const FString ExpectedHash = FileHash(MaterialPath);
+    bPassed &= TestNotEqual(TEXT("rewritten payload has a different hash"), ExpectedHash, FirstHash);
+
+    FMHStartupScanPerfReport Second;
+    bPassed &= TestTrue(TEXT("same-second rescan succeeds"), Scan(Index, TEXT("same-second"), Second));
+    bPassed &= TestEqual(TEXT("same-second rescan sees the rewritten payload"), Index.Resolve(MaterialKey).RawHash, ExpectedHash);
+    bPassed &= TestTrue(TEXT("same-second rescan hashes the fresh payload"), Second.HashedFiles >= 1ull);
+    Index.Close();
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHProjectIndexRebuildTest,
     "Mimir.V4.ProjectIndex.RebuildAndNormalizedDump",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
