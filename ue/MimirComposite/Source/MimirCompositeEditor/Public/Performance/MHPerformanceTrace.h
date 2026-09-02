@@ -29,6 +29,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHMapLoadPerfReport
     uint64 SelectedUniqueMeshes = 0;
     uint64 AllOptionMeshesCompiling = 0;
     uint64 SelectedMeshesCompiling = 0;
+    // Unique meshes handed to the compilation wait step (R1: selected only).
+    uint64 WaitedMeshes = 0;
     uint64 RegistryLookups = 0;
     uint64 AssetRegistryTagQueries = 0;
     uint64 PackageLoadsSync = 0;
@@ -118,6 +120,7 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordMapLoadSelectedPlan(
 MIMIRCOMPOSITEEDITOR_API void MHRecordMapLoadCompilingMesh(
     const FMHResourceKey& Key,
     const UObject& Object);
+MIMIRCOMPOSITEEDITOR_API void MHRecordMapLoadWaitedMesh(const FMHResourceKey& Key);
 MIMIRCOMPOSITEEDITOR_API void MHFlushMapLoadPerfReport();
 
 class MIMIRCOMPOSITEEDITOR_API FMHSourceScanPerfScope final

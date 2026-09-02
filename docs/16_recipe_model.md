@@ -371,7 +371,7 @@ MHResolveCompositeDefinitionEndpoint
 |---|---|---|
 | скан Asset Registry с tag-фильтром на каждый резолв endpoint'а (первая строка блока) | `UMHEndpointPrototypeRegistry`, детерминированный путь | R0a (реализация → фасад), R0b (символ) |
 | receipt из шести тегов через `FAssetData(&Object)` на живом объекте (вторая строка) | identity-admission по `UMHStaticMeshImportData`, один раз на ключ | R0a |
-| ожидание компиляции мешей в горячем пути (третья строка) | R1: ждать только выбранные; R4: async + заглушки | R1/R4 |
+| ожидание компиляции мешей в горячем пути (третья строка) | R1: closure не ждёт, compiler ждёт только выбранные (`waited_meshes`); R4: async + заглушки, ожидания нет | R1 (символ), R4 (остаток ожидания) |
 | список зависимостей размещения на акторе (четвёртая строка) | обратный индекс `Dependents` в `FMHCompiledRecipe` | R2b |
 | ключ definition-кэша по root + closure (пятая строка) | ключ рецепта = ассет + `AppliedHash`; вложенные по ссылке | R2a |
 | валидация applied-root в горячем пути (шестая строка) | proof-плоскость §2.6 | R2c |

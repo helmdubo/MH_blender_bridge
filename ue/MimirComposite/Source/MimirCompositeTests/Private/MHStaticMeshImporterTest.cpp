@@ -1978,6 +1978,105 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHPerformanceSelectedMeshWaitTest,
+    "Mimir.V5.Composite.Perf.SelectedMeshWait",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPerformanceSelectedMeshWaitTest::RunTest(const FString& Parameters)
+{
+    // Recipe Model R1: the closure keeps loading every option (proof needs
+    // its receipts until R2a), but the compilation wait is handed only the
+    // meshes the seed selected. waited_meshes counts the unique meshes given
+    // to the wait step, independent of whether they happened to be compiling.
+    IConsoleVariable* PerfTrace =
+        IConsoleManager::Get().FindConsoleVariable(TEXT("mh.PerfTrace"));
+    if (!TestNotNull(TEXT("mh.PerfTrace cvar exists"), PerfTrace))
+    {
+        return false;
+    }
+    const int32 PreviousTrace = PerfTrace->GetInt();
+    ON_SCOPE_EXIT
+    {
+        PerfTrace->Set(PreviousTrace, ECVF_SetByCode);
+        MHResetPerformanceTraceForTests();
+    };
+
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build())
+    {
+        return false;
+    }
+    UStaticMesh* SecondMesh = Fixture.AddSecondMesh();
+    if (!TestNotNull(TEXT("second all-options mesh"), SecondMesh))
+    {
+        return false;
+    }
+    UMHCompositeAsset* PlacementAsset = BuildPerfRandomPlacementAsset(
+        *this,
+        Fixture.LogicalName + TEXT("_wait"),
+        Fixture.LogicalName,
+        SecondMesh->GetName());
+    if (!TestNotNull(TEXT("selected-wait random composite"), PlacementAsset))
+    {
+        return false;
+    }
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("selected-wait placement world"), World))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT
+    {
+        World->DestroyWorld(true);
+        PlacementAsset->ClearFlags(RF_Public | RF_Standalone);
+        PlacementAsset->MarkAsGarbage();
+    };
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("selected-wait placement actor"), Actor))
+    {
+        return false;
+    }
+    Actor->SetAutoSeed(false);
+    Actor->SetSeed(7);
+    Actor->SetCompositeAsset(PlacementAsset);
+
+    PerfTrace->Set(1, ECVF_SetByCode);
+    MHResetPerformanceTraceForTests();
+    MHResetPlacementStageMetrics();
+    if (GEditor != nullptr)
+    {
+        if (UMHCompositeDefinitionSubsystem* Definitions =
+                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
+        {
+            Definitions->InvalidateAllDefinitions();
+        }
+    }
+    if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
+    {
+        Registry->InvalidateAll();
+    }
+    {
+        FMHMapLoadInitialBuildScope Scope(*Actor);
+        Actor->RebuildComposite();
+        Scope.Complete(*Actor);
+    }
+    MHFlushMapLoadPerfReport();
+    const FMHMapLoadPerfReport Report = MHGetMapLoadPerfReportForTests();
+    AddInfo(FString::Printf(
+        TEXT("MH_PERF_SELECTED_WAIT all_option_unique_meshes=%llu selected_unique_meshes=%llu waited_meshes=%llu wait_static_mesh_compilation_ms=%.3f"),
+        Report.AllOptionUniqueMeshes, Report.SelectedUniqueMeshes, Report.WaitedMeshes,
+        Report.WaitStaticMeshCompilationMs));
+    bool bPassed = TestEqual(TEXT("cold build emits one map-load report"), Report.EmittedReports, 1ull);
+    bPassed &= TestEqual(TEXT("two mesh options enter the closure"), Report.AllOptionUniqueMeshes, 2ull);
+    bPassed &= TestEqual(TEXT("the seed selects one mesh"), Report.SelectedUniqueMeshes, 1ull);
+    bPassed &= TestEqual(TEXT("only the selected mesh reaches the compilation wait"),
+        Report.WaitedMeshes, Report.SelectedUniqueMeshes);
+    bPassed &= TestTrue(TEXT("unselected options never reach the compilation wait"),
+        Report.WaitedMeshes < Report.AllOptionUniqueMeshes);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHTargetedStaticMeshReimportAdmissionTest,
     "Mimir.V4.StaticMesh.TargetedReimport.Admission",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
