@@ -33,6 +33,16 @@ MH_PERF_ENDPOINTS registry two placements: unique_keys=2 registry_lookups=2 asse
 Expected 'preview makes no Asset Registry tag queries' to be 0, but it was 2.
 ```
 
+## Дополнение red-коммита (ответ на OPEN-R0C-1, близнец 2026-09-02)
+
+Тест `Mimir.V5.Composite.Perf.EndpointCounters` (`MHStaticMeshImporterTest.cpp`)
+закреплял временное правило OPEN-R-7 («один tag-запрос на lookup»), отменённое
+D0b П2. Red-коммит расширен: оба assert'а (cold и warm) теперь требуют
+`asset_registry_tag_queries == 0`. На текущем `main` они красные (запросы ==
+lookups), с реализацией R0c — зелёные. Файл по-прежнему **не входит** в
+закрытый список исполнителя. Исполнителю: `git pull --rebase` локальных
+коммитов на обновлённую ветку, затем продолжить с гейтов. OPEN-R0C-1 закрыт.
+
 ## Задача
 
 1. **Реестр** (`MHEndpointPrototypeRegistry.cpp`, `Admit`): удалить блок

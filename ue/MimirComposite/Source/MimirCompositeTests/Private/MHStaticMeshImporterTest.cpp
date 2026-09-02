@@ -1933,10 +1933,9 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("cold build resolves at least every unique endpoint key"),
         Cold.RegistryLookups >= UniqueEndpointKeys);
-    bPassed &= TestEqual(
-        TEXT("current resolve path queries the Asset Registry by tags once per lookup"),
-        Cold.AssetRegistryTagQueries,
-        Cold.RegistryLookups);
+    // D0b П2 (OPEN-R-7 closed): the preview plane makes no Asset Registry
+    // tag queries; duplicate claims belong to the source and proof planes.
+    bPassed &= TestEqual(TEXT("cold build makes no Asset Registry tag queries"), Cold.AssetRegistryTagQueries, 0ull);
     bPassed &= TestTrue(
         TEXT("cold build admits at least every unique endpoint key"),
         Cold.IdentityAdmissions >= UniqueEndpointKeys);
@@ -1956,10 +1955,7 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("warm build admits fewer endpoints than cold"),
         Warm.IdentityAdmissions < Cold.IdentityAdmissions);
-    bPassed &= TestEqual(
-        TEXT("warm build still queries the Asset Registry once per lookup"),
-        Warm.AssetRegistryTagQueries,
-        Warm.RegistryLookups);
+    bPassed &= TestEqual(TEXT("warm build makes no Asset Registry tag queries"), Warm.AssetRegistryTagQueries, 0ull);
     bPassed &= TestEqual(TEXT("warm build reads no live receipt tags"), Warm.LiveReceiptTagReads, 0ull);
     AddInfo(FString::Printf(
         TEXT("MH_PERF_ENDPOINTS cold: unique_keys=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu; warm: registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu"),
