@@ -3,11 +3,14 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/Texture2D.h"
 #include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
+#include "HAL/PlatformProcess.h"
 #include "MHGoldenRoot.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "Performance/MHPerformanceTrace.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
 #include "Source/MHSourceComposition.h"
@@ -228,6 +231,127 @@ bool FMHProjectIndexPartialTagDiscoveryTest::RunTest(const FString& Parameters)
     FAssetRegistryModule::AssetDeleted(Asset);
     UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.Remove(ExtraTagsHandle);
     Asset->ClearFlags(RF_Public | RF_Standalone);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProjectIndexIncrementalScanTest,
+    "Mimir.V5.Source.Index.IncrementalScanSkipsUnchangedHashes",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProjectIndexIncrementalScanTest::RunTest(const FString& Parameters)
+{
+    // Source line S0: a full scan over an unchanged Source Root reuses the
+    // stored (size, mtime) fingerprints and hashes nothing; one snapshot pass.
+    // The index stays a pure projection: dumps equal a fresh-database rescan.
+    IConsoleVariable* PerfTrace = IConsoleManager::Get().FindConsoleVariable(TEXT("mh.PerfTrace"));
+    if (!TestNotNull(TEXT("mh.PerfTrace cvar exists"), PerfTrace)) return false;
+    const int32 PreviousTrace = PerfTrace->GetInt();
+    PerfTrace->Set(1, ECVF_SetByCode);
+    ON_SCOPE_EXIT
+    {
+        PerfTrace->Set(PreviousTrace, ECVF_SetByCode);
+        MHResetPerformanceTraceForTests();
+    };
+
+    FIndexFixture Fixture;
+    const FString TexturePath = FPaths::Combine(Fixture.Root, TEXT("textures/brick_d.png"));
+    const FString MaterialPath = FPaths::Combine(Fixture.Root, TEXT("materials/wall.material"));
+    const FString SecondMaterialPath = FPaths::Combine(Fixture.Root, TEXT("materials/floor.material"));
+    bool bPassed = WriteProjectIndexUtf8(TexturePath, TEXT("texture-bytes"));
+    bPassed &= WriteProjectIndexUtf8(MaterialPath,
+        TEXT("{\n  \"class\": \"simple\",\n  \"textures\": {\n    \"tex0\": \"brick_d\"\n  }\n}\n"));
+    bPassed &= WriteProjectIndexUtf8(SecondMaterialPath,
+        TEXT("{\n  \"class\": \"simple\",\n  \"textures\": {\n    \"tex0\": \"brick_d\"\n  }\n}\n"));
+    const TArray<FMHResourceKey> Keys = {
+        ProjectIndexTestKey(EMHResourceKind::Material, TEXT("wall")),
+        ProjectIndexTestKey(EMHResourceKind::Material, TEXT("floor")),
+        ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("brick_d"))};
+
+    const auto Scan = [&](FMHProjectResourceIndex& Index, const TCHAR* Label, FMHStartupScanPerfReport& OutReport)
+    {
+        MHResetPerformanceTraceForTests();
+        FMHProjectIndexUpdateResult Update;
+        FString Error;
+        bool bOk = false;
+        {
+            FMHSourceScanPerfScope Scope(EMHPerfScanTrigger::Manual);
+            bOk = Index.FullScan({}, Update, Error);
+        }
+        if (!Error.IsEmpty()) AddError(FString::Printf(TEXT("%s: %s"), Label, *Error));
+        OutReport = MHGetStartupScanPerfReportForTests();
+        AddInfo(FString::Printf(TEXT("%s: enumerated_files=%llu scan_passes=%llu hashed_files=%llu"),
+            Label, OutReport.EnumeratedFiles, OutReport.ScanPasses, OutReport.HashedFiles));
+        return bOk;
+    };
+    const auto Outcomes = [&](FMHProjectResourceIndex& Index)
+    {
+        TArray<FMHResolveOutcome> Result;
+        for (const FMHResourceKey& Key : Keys) Result.Add(Index.Resolve(Key));
+        return Result;
+    };
+    const auto SameOutcomes = [&](const TArray<FMHResolveOutcome>& A, const TArray<FMHResolveOutcome>& B)
+    {
+        if (A.Num() != B.Num()) return false;
+        for (int32 Index = 0; Index < A.Num(); ++Index)
+        {
+            if (A[Index].Status != B[Index].Status || A[Index].PayloadPath != B[Index].PayloadPath ||
+                A[Index].RawHash != B[Index].RawHash || A[Index].CandidatePaths != B[Index].CandidatePaths ||
+                A[Index].Diagnostic != B[Index].Diagnostic) return false;
+        }
+        return true;
+    };
+
+    FString DumpA;
+    FString DumpB;
+    FString DumpC;
+    TArray<FMHResolveOutcome> OutcomesB;
+    TArray<FMHResolveOutcome> OutcomesC;
+    FMHStartupScanPerfReport ReportA;
+    FMHStartupScanPerfReport ReportB;
+    FMHStartupScanPerfReport ReportC;
+    {
+        FMHProjectResourceIndex Index(Fixture.Root, Fixture.DatabasePath);
+        if (!OpenIndex(Index, *this)) return false;
+        FString Error;
+        bPassed &= TestTrue(TEXT("cold scan succeeds"), Scan(Index, TEXT("cold"), ReportA));
+        bPassed &= TestEqual(TEXT("cold scan enumerates three payloads"), ReportA.EnumeratedFiles, 3ull);
+        bPassed &= TestTrue(TEXT("cold scan hashes every payload"), ReportA.HashedFiles >= 3ull);
+        bPassed &= TestTrue(TEXT("cold dump builds"), Index.BuildNormalizedDump(DumpA, Error));
+        const TArray<FMHResolveOutcome> OutcomesA = Outcomes(Index);
+
+        bPassed &= TestTrue(TEXT("unchanged rescan succeeds"), Scan(Index, TEXT("unchanged"), ReportB));
+        bPassed &= TestEqual(TEXT("unchanged rescan is one snapshot pass"), ReportB.ScanPasses, 1ull);
+        bPassed &= TestEqual(TEXT("unchanged rescan hashes nothing"), ReportB.HashedFiles, 0ull);
+        bPassed &= TestTrue(TEXT("unchanged dump builds"), Index.BuildNormalizedDump(DumpB, Error));
+        bPassed &= TestEqual(TEXT("unchanged rescan keeps the projection"), DumpB, DumpA);
+        OutcomesB = Outcomes(Index);
+        bPassed &= TestTrue(TEXT("unchanged rescan keeps resolver outcomes"), SameOutcomes(OutcomesA, OutcomesB));
+
+        // Modify one payload: bytes and mtime change; only that file is hashed.
+        FPlatformProcess::Sleep(0.05f);
+        bPassed &= WriteProjectIndexUtf8(SecondMaterialPath,
+            TEXT("{\n  \"class\": \"simple\",\n  \"twosided\": true,\n  \"textures\": {\n    \"tex0\": \"brick_d\"\n  }\n}\n"));
+        bPassed &= TestTrue(TEXT("changed rescan succeeds"), Scan(Index, TEXT("changed"), ReportC));
+        bPassed &= TestEqual(TEXT("changed rescan hashes exactly the changed payload"), ReportC.HashedFiles, 1ull);
+        bPassed &= TestTrue(TEXT("changed dump builds"), Index.BuildNormalizedDump(DumpC, Error));
+        bPassed &= TestNotEqual(TEXT("changed payload changes the projection"), DumpC, DumpA);
+        OutcomesC = Outcomes(Index);
+        Index.Close();
+    }
+
+    bPassed &= TestTrue(TEXT("cache deletion"), IFileManager::Get().Delete(*Fixture.DatabasePath, false, true, true));
+    {
+        FMHProjectResourceIndex Rebuilt(Fixture.Root, Fixture.DatabasePath);
+        if (!OpenIndex(Rebuilt, *this)) return false;
+        FString DumpD;
+        FString Error;
+        FMHStartupScanPerfReport ReportD;
+        bPassed &= TestTrue(TEXT("fresh rebuild succeeds"), Scan(Rebuilt, TEXT("rebuild"), ReportD));
+        bPassed &= TestTrue(TEXT("rebuild dump builds"), Rebuilt.BuildNormalizedDump(DumpD, Error));
+        bPassed &= TestEqual(TEXT("incremental projection equals a fresh rebuild"), DumpD, DumpC);
+        bPassed &= TestTrue(TEXT("incremental resolver outcomes equal a fresh rebuild"), SameOutcomes(Outcomes(Rebuilt), OutcomesC));
+    }
     return bPassed;
 }
 
