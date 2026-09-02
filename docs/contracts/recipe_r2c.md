@@ -132,15 +132,16 @@ resolver — не трогать.
    паритетом с preview; Stale через provider с `MH_E_STALE_SOURCE`; Missing при
    отсутствующем receipt невыбранного endpoint'а с отказом preflight и
    snapshot; `AuditWorld` без сборки).
-2. Новый тест исполнителя `Mimir.V5.Composite.Proof.SaveWarnsWithoutProof`:
-   `FEditorDelegates::PreSaveWorldWithContext.Broadcast(World, non-cook
-   context)` на мире с placement в состоянии `Unknown` → `BuildAppliedGraph.Calls
-   == 0`, состояние стало `ProofPending`, Message Log «Mimir» получил warning
-   (проверять через `FMessageLog`-listing или счётчик в subsystem'е).
-3. Новый тест исполнителя `Mimir.V5.Composite.Proof.StaleSourceBlocksCookAndSnapshot`:
-   provider даёт другой хэш → `MHValidateRuntimeCompositeWorld` false с
-   `MH_E_STALE_SOURCE`, `MHBuildRuntimeCompositeInput` false; preview актора без
-   ошибки.
+2. `Mimir.V5.Composite.Proof.SaveWarnsWithoutProof` (red-тест близнеца, в
+   ветке): non-cook `PreSaveWorldWithContext` на мире с placement `Unknown` →
+   `BuildAppliedGraph.Calls == 0`, состояние `ProofPending`,
+   `GetLastSaveAuditWarningCount() >= 1`; после `FlushPendingProofs` — `Fresh`,
+   повторный save без warning'ов и без сборок.
+3. `Mimir.V5.Composite.Proof.StaleSourceBlocksCookAndSnapshot` (red-тест
+   близнеца, в ветке): provider даёт другой хэш выбранного меша →
+   `MHValidateRuntimeCompositeWorld` false с `MH_E_STALE_SOURCE` и ключом,
+   `MHBuildRuntimeCompositeInput` false с кодом, кэш `Stale`, preview без ошибки;
+   после снятия provider'а и `InvalidateAll` preflight снова проходит.
 4. Существующие `Mimir.V5.Runtime.*`, `Mimir.Audit.MainBaseline.BuildPreflight*`,
    `Mimir.V5.Composite.AppliedAdmission.*`, `Mimir.V5.Composite.Recipe.*` —
    без изменений и зелёные; число тестов не уменьшилось.
@@ -158,3 +159,29 @@ resolver — не трогать.
 См. `docs/contracts/recipe_r1_1.md` §«Host исполнителя». Работать в отдельном
 клоне/worktree на ветке `recipe/r2c-exit-points`; никогда не делать `git pull`
 чужой ветки, стоя на `main`; никогда не пушить `main`; один PR среза.
+
+## Ответ на OPEN-R2C-1 (близнец, 2026-09-03): red-тесты пишет близнец
+
+Находка исполнителя верна: Acceptance 2–3 требовали тесты, которых в ветке не
+было, при запрете менять тесты. По правилу программы (KICKOFF v2, матрица
+делегирования) red-тесты пишет близнец, и они уже в ветке — коммит
+`4b38f7a` поверх `b0c5ebb`:
+
+- `Mimir.V5.Composite.Proof.SaveWarnsWithoutProof` и
+  `Mimir.V5.Composite.Proof.StaleSourceBlocksCookAndSnapshot` добавлены в
+  `MHProofCacheTest.cpp`;
+- в API `UMHProofCacheSubsystem` добавлен один наблюдаемый счётчик
+  `GetLastSaveAuditWarningCount()` (private `LastSaveAuditWarningCount`): хук
+  PreSaveWorld вне cook обязан выставлять его = числу не-`Fresh` placement'ов
+  аудита (и 0, когда warning'ов нет).
+
+Закрытый список файлов не меняется: тесты по-прежнему не трогать. Acceptance
+2–3 переформулированы под существующие тесты. RED-лог:
+`E:\MimirComposite_R_M0_20260902\Saved\Logs\R2C_RED3_TEST.log`, строки 1080/1098/1109 — `Result={Fail}` для
+`BuildPreflightFullClosure`, `SaveWarnsWithoutProof`,
+`StaleSourceBlocksCookAndSnapshot`; падают только утверждения на заглушке
+(`save schedules the missing proof`, `save warned…`, `deferred proof became
+Fresh`, `stale source refuses cook preflight/snapshot`, `cache reports Stale`);
+«save builds no proof» и «fresh world passes preflight» уже зелёные.
+
+OPEN-R2C-1: закрыт.
