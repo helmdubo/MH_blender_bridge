@@ -4,6 +4,7 @@
 #include "Geometry/MHFbxSceneTranslator.h"
 #include "Geometry/MHSceneIR.h"
 #include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformTime.h"
 #include "Material/MHMaterialProtocol.h"
@@ -24,6 +25,15 @@ namespace
 {
 
 constexpr const TCHAR* ProjectIndexTag = TEXT("mh.project_index:4");
+// File mtimes can be stored at one-second resolution. Rehash candidates younger
+// than this window so a same-size, same-second rewrite cannot reuse a stale hash.
+constexpr int64 SourceIndexRacyWindowTicks = 2 * ETimespan::TicksPerSecond;
+
+TAutoConsoleVariable<int32> CVarMHSourceIndexVerifyHashes(
+    TEXT("mh.SourceIndex.VerifyHashes"),
+    0,
+    TEXT("Verify cached source fingerprints by hashing unchanged files."),
+    ECVF_Default);
 
 enum class ECandidateParseStatus : uint8
 {
@@ -64,6 +74,7 @@ struct FScannedCandidate
     ECandidateParseStatus ParseStatus = ECandidateParseStatus::Unreadable;
     FString Diagnostic;
     TArray<FIndexedDependency> Dependencies;
+    bool bStaleFingerprint = false;
 };
 
 struct FGeneratedRow
@@ -510,6 +521,7 @@ public:
             !ReadCandidateKeys(*Database, CandidateKeysAfter, OutError) ||
             !RecomputeDerivedState(
                 CandidateKeyTransitions(CandidateKeysBefore, CandidateKeysAfter),
+                &Candidates,
                 OutError) ||
             !WriteGeneration(NextGeneration, OutError) ||
             !CommitTransaction(OutError))
@@ -610,6 +622,7 @@ public:
             !ReadCandidateKeys(*Database, CandidateKeysAfter, OutError) ||
             !RecomputeDerivedState(
                 CandidateKeyTransitions(CandidateKeysBefore, CandidateKeysAfter),
+                nullptr,
                 OutError) ||
             !WriteGeneration(NextGeneration, OutError) ||
             !CommitTransaction(OutError))
@@ -641,7 +654,7 @@ public:
         }
         if (!Execute(TEXT("DELETE FROM GeneratedAssets;"), OutError) ||
             !InsertGeneratedRows(Rows, NextGeneration, OutError) ||
-            !RecomputeDerivedState(FCandidateKeyTransitions(), OutError) ||
+            !RecomputeDerivedState(FCandidateKeyTransitions(), nullptr, OutError) ||
             !WriteGeneration(NextGeneration, OutError) ||
             !CommitTransaction(OutError))
         {
@@ -1379,30 +1392,206 @@ private:
         return true;
     }
 
-    bool ScanFullSnapshot(TArray<FScannedCandidate>& OutCandidates, FString& OutError) const
+    bool LoadReusableCandidate(
+        const FString& RelativePath,
+        const FMHResourceKey& ExpectedKey,
+        const int64 Size,
+        const int64 MTimeTicks,
+        FScannedCandidate& OutCandidate,
+        bool& bOutFound,
+        FString& OutError) const
     {
-        TArray<FString> FirstPaths;
-        TArray<FString> ConfirmedPaths;
+        OutCandidate = FScannedCandidate();
+        bOutFound = false;
         const bool bPerfTrace = MHIsSourceScanPerfActive();
-        const uint64 FirstEnumerationStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
-        const bool bFirstEnumerated = EnumerateKnownPaths(FirstPaths, OutError);
-        if (bPerfTrace)
+        const uint64 SQLiteStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+        ON_SCOPE_EXIT
         {
-            MHRecordSourceScanEnumeration(
-                FPlatformTime::Cycles64() - FirstEnumerationStart,
-                FirstPaths.Num());
+            if (bPerfTrace)
+            {
+                MHRecordSourceScanSQLite(FPlatformTime::Cycles64() - SQLiteStart);
+            }
+        };
+
+        FSQLitePreparedStatement CandidateStatement = Database->PrepareStatement(
+            TEXT("SELECT COALESCE(kind,''),COALESCE(name,''),COALESCE(raw_hash,''),diagnostic "
+                 "FROM ResourceCandidates WHERE path=?1 AND size=?2 AND mtime=?3 "
+                 "AND parse_status='ok';"));
+        if (!CandidateStatement.IsValid() ||
+            !CandidateStatement.SetBindingValueByIndex(1, RelativePath) ||
+            !CandidateStatement.SetBindingValueByIndex(2, Size) ||
+            !CandidateStatement.SetBindingValueByIndex(3, MTimeTicks))
+        {
+            OutError = Database->GetLastError();
+            return false;
         }
-        if (!bFirstEnumerated)
+        const ESQLitePreparedStatementStepResult CandidateStep = CandidateStatement.Step();
+        if (CandidateStep == ESQLitePreparedStatementStepResult::Done)
+        {
+            return true;
+        }
+        if (CandidateStep != ESQLitePreparedStatementStepResult::Row)
+        {
+            OutError = Database->GetLastError();
+            return false;
+        }
+
+        FString KindLabel;
+        FString Name;
+        FString RawHash;
+        FString Diagnostic;
+        EMHResourceKind Kind = EMHResourceKind::StaticMesh;
+        if (!CandidateStatement.GetColumnValueByIndex(0, KindLabel) ||
+            !CandidateStatement.GetColumnValueByIndex(1, Name) ||
+            !CandidateStatement.GetColumnValueByIndex(2, RawHash) ||
+            !CandidateStatement.GetColumnValueByIndex(3, Diagnostic) ||
+            !MHResourceKindFromLabel(KindLabel, Kind) ||
+            FMHResourceKey{Kind, Name} != ExpectedKey ||
+            !MHIsCanonicalRawPayloadHash(RawHash))
+        {
+            return true;
+        }
+
+        OutCandidate.RelativePath = RelativePath;
+        OutCandidate.bHasKey = true;
+        OutCandidate.Key = ExpectedKey;
+        OutCandidate.Size = Size;
+        OutCandidate.MTimeTicks = MTimeTicks;
+        OutCandidate.RawHash = MoveTemp(RawHash);
+        OutCandidate.ParseStatus = ECandidateParseStatus::Ok;
+        OutCandidate.Diagnostic = MoveTemp(Diagnostic);
+
+        FSQLitePreparedStatement DependencyStatement = Database->PrepareStatement(
+            TEXT("SELECT owner_kind,owner_name,target_kind,target_name,role,owner_path "
+                 "FROM Dependencies WHERE owner_path=?1 "
+                 "ORDER BY owner_kind,owner_name,target_kind,target_name,role;"));
+        if (!DependencyStatement.IsValid() ||
+            !DependencyStatement.SetBindingValueByIndex(1, RelativePath))
+        {
+            OutError = Database->GetLastError();
+            return false;
+        }
+        while (true)
+        {
+            const ESQLitePreparedStatementStepResult DependencyStep =
+                DependencyStatement.Step();
+            if (DependencyStep == ESQLitePreparedStatementStepResult::Done)
+            {
+                break;
+            }
+            if (DependencyStep != ESQLitePreparedStatementStepResult::Row)
+            {
+                OutError = Database->GetLastError();
+                return false;
+            }
+            FIndexedDependency Dependency;
+            FString OwnerKindLabel;
+            FString TargetKindLabel;
+            if (!DependencyStatement.GetColumnValueByIndex(0, OwnerKindLabel) ||
+                !DependencyStatement.GetColumnValueByIndex(1, Dependency.Owner.LogicalName) ||
+                !DependencyStatement.GetColumnValueByIndex(2, TargetKindLabel) ||
+                !DependencyStatement.GetColumnValueByIndex(3, Dependency.Target.LogicalName) ||
+                !DependencyStatement.GetColumnValueByIndex(4, Dependency.Role) ||
+                !DependencyStatement.GetColumnValueByIndex(5, Dependency.OwnerPath) ||
+                !MHResourceKindFromLabel(OwnerKindLabel, Dependency.Owner.Kind) ||
+                !MHResourceKindFromLabel(TargetKindLabel, Dependency.Target.Kind) ||
+                Dependency.Owner != ExpectedKey ||
+                !Dependency.Target.IsCanonical() ||
+                Dependency.OwnerPath != RelativePath)
+            {
+                OutCandidate = FScannedCandidate();
+                return true;
+            }
+            OutCandidate.Dependencies.Add(MoveTemp(Dependency));
+        }
+        bOutFound = true;
+        return true;
+    }
+
+    bool ScanSnapshotPath(
+        const FString& AbsolutePath,
+        FScannedCandidate& OutCandidate,
+        bool& bOutRecognized,
+        FString& OutError) const
+    {
+        FString IgnoredAbsolute;
+        FString RelativePath;
+        if (!NormalizeSourcePath(AbsolutePath, IgnoredAbsolute, RelativePath, OutError))
         {
             return false;
         }
-        TArray<FScannedCandidate> First;
+        FMHResourceKey Key;
+        FString ClassificationError;
+        if (!MHResourceKeyFromSourceFile(AbsolutePath, Key, ClassificationError))
+        {
+            return ScanOnePath(AbsolutePath, OutCandidate, bOutRecognized, OutError);
+        }
+
+        const int64 Size = IFileManager::Get().FileSize(*AbsolutePath);
+        const int64 MTimeTicks = IFileManager::Get().GetTimeStamp(*AbsolutePath).GetTicks();
+        FScannedCandidate CachedCandidate;
+        bool bFoundCachedCandidate = false;
+        if (Size >= 0 && !LoadReusableCandidate(
+                RelativePath,
+                Key,
+                Size,
+                MTimeTicks,
+                CachedCandidate,
+                bFoundCachedCandidate,
+                OutError))
+        {
+            return false;
+        }
+
+        const bool bVerifyHashes =
+            CVarMHSourceIndexVerifyHashes.GetValueOnAnyThread() != 0;
+        const int64 ScanNowTicks = FDateTime::UtcNow().GetTicks();
+        const bool bWithinRacyWindow =
+            MTimeTicks > ScanNowTicks - SourceIndexRacyWindowTicks;
+        if (bFoundCachedCandidate && !bVerifyHashes && !bWithinRacyWindow)
+        {
+            OutCandidate = MoveTemp(CachedCandidate);
+            bOutRecognized = true;
+            MHRecordSourceScanReusedFingerprint();
+            return true;
+        }
+
+        if (!ScanOnePath(AbsolutePath, OutCandidate, bOutRecognized, OutError))
+        {
+            return false;
+        }
+        if (bFoundCachedCandidate && bVerifyHashes && bOutRecognized &&
+            OutCandidate.Size == Size && OutCandidate.MTimeTicks == MTimeTicks &&
+            OutCandidate.RawHash != CachedCandidate.RawHash)
+        {
+            OutCandidate.bStaleFingerprint = true;
+        }
+        return true;
+    }
+
+    bool ScanFullSnapshot(TArray<FScannedCandidate>& OutCandidates, FString& OutError) const
+    {
+        TArray<FString> Paths;
+        const bool bPerfTrace = MHIsSourceScanPerfActive();
+        const uint64 EnumerationStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
+        const bool bEnumerated = EnumerateKnownPaths(Paths, OutError);
+        if (bPerfTrace)
+        {
+            MHRecordSourceScanEnumeration(
+                FPlatformTime::Cycles64() - EnumerationStart,
+                Paths.Num());
+        }
+        if (!bEnumerated)
+        {
+            return false;
+        }
+        OutCandidates.Reset();
         if (bPerfTrace) MHRecordSourceScanPass();
-        for (const FString& Path : FirstPaths)
+        for (const FString& Path : Paths)
         {
             FScannedCandidate Candidate;
             bool bRecognized = false;
-            if (!ScanOnePath(Path, Candidate, bRecognized, OutError))
+            if (!ScanSnapshotPath(Path, Candidate, bRecognized, OutError))
             {
                 return false;
             }
@@ -1412,60 +1601,7 @@ private:
                 {
                     MHRecordSourceScanEnumeratedBytes(static_cast<uint64>(Candidate.Size));
                 }
-                First.Add(MoveTemp(Candidate));
-            }
-        }
-        const uint64 ConfirmedEnumerationStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
-        const bool bConfirmedEnumerated = EnumerateKnownPaths(ConfirmedPaths, OutError);
-        if (bPerfTrace)
-        {
-            MHRecordSourceScanEnumeration(
-                FPlatformTime::Cycles64() - ConfirmedEnumerationStart,
-                ConfirmedPaths.Num());
-        }
-        if (!bConfirmedEnumerated || ConfirmedPaths != FirstPaths)
-        {
-            if (OutError.IsEmpty())
-            {
-                OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload set changed during scan");
-            }
-            return false;
-        }
-
-        OutCandidates.Reset();
-        if (bPerfTrace) MHRecordSourceScanPass();
-        for (const FString& Path : ConfirmedPaths)
-        {
-            FScannedCandidate Candidate;
-            bool bRecognized = false;
-            if (!ScanOnePath(Path, Candidate, bRecognized, OutError) || !bRecognized)
-            {
-                if (OutError.IsEmpty())
-                {
-                    OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source classification changed during scan");
-                }
-                return false;
-            }
-            OutCandidates.Add(MoveTemp(Candidate));
-        }
-        if (First.Num() != OutCandidates.Num())
-        {
-            OutError = TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: candidate count changed during scan");
-            return false;
-        }
-        for (int32 Index = 0; Index < First.Num(); ++Index)
-        {
-            const FScannedCandidate& A = First[Index];
-            const FScannedCandidate& B = OutCandidates[Index];
-            if (A.RelativePath != B.RelativePath || A.bHasKey != B.bHasKey ||
-                (A.bHasKey && !(A.Key == B.Key)) || A.Size != B.Size ||
-                A.MTimeTicks != B.MTimeTicks || A.RawHash != B.RawHash ||
-                A.ParseStatus != B.ParseStatus)
-            {
-                OutError = FString::Printf(
-                    TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: source payload changed during scan: %s"),
-                    *B.RelativePath);
-                return false;
+                OutCandidates.Add(MoveTemp(Candidate));
             }
         }
         return true;
@@ -1546,6 +1682,7 @@ private:
         FString& OutError) const;
     bool RecomputeDerivedState(
         const FCandidateKeyTransitions& CandidateTransitions,
+        const TArray<FScannedCandidate>* ScanCandidates,
         FString& OutError);
     void ConsumeMatchingTokens(
         const TArray<FScannedCandidate>& Candidates,
@@ -1696,6 +1833,7 @@ bool FMHProjectResourceIndex::FImpl::InsertGeneratedRows(
 
 bool FMHProjectResourceIndex::FImpl::RecomputeDerivedState(
     const FCandidateKeyTransitions& CandidateTransitions,
+    const TArray<FScannedCandidate>* ScanCandidates,
     FString& OutError)
 {
     if (!Execute(TEXT("DELETE FROM ResourceKeys;"), OutError) ||
@@ -1919,6 +2057,38 @@ bool FMHProjectResourceIndex::FImpl::RecomputeDerivedState(
                 FString(), FString(), Message))
         {
             return false;
+        }
+    }
+
+    if (ScanCandidates != nullptr)
+    {
+        for (const FScannedCandidate& Candidate : *ScanCandidates)
+        {
+            if (!Candidate.bStaleFingerprint)
+            {
+                continue;
+            }
+            const FString Kind = Candidate.bHasKey
+                ? FString(MHResourceKindLabel(Candidate.Key.Kind))
+                : FString();
+            const FString Name = Candidate.bHasKey
+                ? Candidate.Key.LogicalName
+                : FString();
+            const FString Message = FString::Printf(
+                TEXT("MH_W_SOURCE_INDEX_STALE_FINGERPRINT: cached fingerprint did not match %s"),
+                *Candidate.RelativePath);
+            if (!InsertDiagnostic(
+                    TEXT("warning"),
+                    TEXT("MH_W_SOURCE_INDEX_STALE_FINGERPRINT"),
+                    Kind,
+                    Name,
+                    Candidate.RelativePath,
+                    FString(),
+                    FString(),
+                    Message))
+            {
+                return false;
+            }
         }
     }
 

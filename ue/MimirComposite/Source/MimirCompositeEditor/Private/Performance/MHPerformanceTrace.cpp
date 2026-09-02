@@ -263,12 +263,13 @@ void ScheduleMapLoadFlush()
 void LogStartupScanReport(const FMHStartupScanPerfReport& Report)
 {
     UE_LOG(LogMHPerformanceTrace, Display,
-        TEXT("MH_PERF_STARTUP_SCAN trigger=%s enumerated_files=%llu enumerated_bytes=%llu scan_passes=%llu hashed_files=%llu parsed_fbx=%llu parsed_material=%llu parsed_composite=%llu parsed_profile=%llu enumeration_ms=%.3f io_hash_ms=%.3f parse_ms=%.3f sqlite_ms=%.3f full_scan_count_delta=%lld total_ms=%.3f"),
+        TEXT("MH_PERF_STARTUP_SCAN trigger=%s enumerated_files=%llu enumerated_bytes=%llu scan_passes=%llu hashed_files=%llu reused_fingerprints=%llu parsed_fbx=%llu parsed_material=%llu parsed_composite=%llu parsed_profile=%llu enumeration_ms=%.3f io_hash_ms=%.3f parse_ms=%.3f sqlite_ms=%.3f full_scan_count_delta=%lld total_ms=%.3f"),
         *Report.Trigger,
         Report.EnumeratedFiles,
         Report.EnumeratedBytes,
         Report.ScanPasses,
         Report.HashedFiles,
+        Report.ReusedFingerprints,
         Report.ParsedFbx,
         Report.ParsedMaterial,
         Report.ParsedComposite,
@@ -617,6 +618,14 @@ void MHRecordSourceScanIOHash(const uint64 Cycles, const bool bHashed)
     }
     GActiveSourceScan->Values.IOHashMs += CyclesToMilliseconds(Cycles);
     if (bHashed) ++GActiveSourceScan->Values.HashedFiles;
+}
+
+void MHRecordSourceScanReusedFingerprint()
+{
+    if (GActiveSourceScan != nullptr)
+    {
+        ++GActiveSourceScan->Values.ReusedFingerprints;
+    }
 }
 
 void MHRecordSourceScanParse(

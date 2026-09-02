@@ -18,7 +18,7 @@
 | D0b | MERGED | #67 |
 | R1.1 | MERGED | #69 (внешний исполнитель, приёмка близнеца); квитанция `docs/receipts/recipe_r1_1.md` |
 | R0c | MERGED | #71 (внешний исполнитель, приёмка близнеца); реализация `7811eab` попала в `main` fast-forward-push'ем до PR, проверена близнецом постфактум (полный suite 176/176 на host близнеца); квитанция `docs/receipts/recipe_r0c.md` |
-| S0 | READY (внешний исполнитель, контракт `docs/contracts/source_s0.md`) | параллельно, линия S |
+| S0 | IN REVIEW (внешний исполнитель, квитанция `docs/receipts/source_s0.md`) | параллельно, линия S |
 | S1 | PLANNED | — |
 | S2 | PLANNED | — |
 | R2a | PLANNED (близнец) | первый шаг — реализация фазового разделения, П1 |
