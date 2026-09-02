@@ -84,12 +84,14 @@ bool FMHMaterializeLayoutParityTest::RunTest(const FString& Parameters)
         Case.Seeds = LayoutSeeds;
     }
 
-    // Identity, a rotated translation, and a non-uniform scale with a negative
-    // yaw: the actor transform must multiply every leaf, never be ignored.
+    // Identity, a rotated translation, and a uniform scale with a negative
+    // yaw: the actor transform must multiply every leaf, never be ignored. A
+    // non-uniform actor scale under rotated nodes is a shear and is refused
+    // by admission (covered by MaterializeLayoutAdmission), not a parity case.
     const TArray<FTransform> ActorTransforms = {
         FTransform::Identity,
         FTransform(FRotator(0.0, 37.5, 0.0), FVector(1234.0, -560.0, 42.0)),
-        FTransform(FRotator(10.0, -120.0, 5.0), FVector(-30.0, 0.0, 250.0), FVector(2.0, 0.5, 1.25)),
+        FTransform(FRotator(10.0, -120.0, 5.0), FVector(-30.0, 0.0, 250.0), FVector(1.25)),
     };
 
     bool bPassed = true;
@@ -206,6 +208,8 @@ bool FMHMaterializeLayoutAdmissionTest::RunTest(const FString& Parameters)
         FMHCompositeNode& Leaf = Group.Children.AddDefaulted_GetRef();
         Leaf.Kind = EMHCompositeNodeKind::Mesh;
         Leaf.Resource = Fixture.Name(TEXT("materialize_mesh"));
+        // A rotation between two non-uniform scales is what produces shear.
+        Leaf.Transform.RotationQuat = FQuat(FRotator(0.0, 30.0, 0.0));
         Leaf.Transform.Scale = FVector(1.0, 2.0, 3.0);
     }
     UMHCompositeAsset* Asset = Fixture.Composite(Fixture.Name(TEXT("materialize_cmp")), Document, {});
@@ -224,10 +228,10 @@ bool FMHMaterializeLayoutAdmissionTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(TEXT("leaf translation includes the actor"),
             Good.Placements[0].WorldMatrix.GetOrigin().Equals(FVector(110.0, 20.0, 30.0), 1e-6));
     }
-    // The same admission rule as the placement compiler: a rotated actor with
-    // a non-uniform scale shears the non-uniformly scaled leaf, and a sheared
-    // matrix cannot round-trip through FTransform.
-    const FTransform Unrepresentable(FRotator(0.0, 45.0, 0.0), FVector::ZeroVector, FVector(2.0, 1.0, 1.0));
+    // The same admission rule as the placement compiler: a non-uniform actor
+    // scale under the rotated, non-uniformly scaled leaf is a shear, and a
+    // sheared matrix cannot round-trip through FTransform.
+    const FTransform Unrepresentable(FRotator::ZeroRotator, FVector::ZeroVector, FVector(2.0, 1.0, 1.0));
     FString AdmissionError;
     FMHResolvedCompositePlan Probe;
     if (Good.Plan.IsValid()) Probe = *Good.Plan;

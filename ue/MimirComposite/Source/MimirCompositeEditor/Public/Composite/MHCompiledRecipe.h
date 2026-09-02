@@ -95,6 +95,9 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompiledRecipe
     bool bGenerated = false;
 };
 
+/** Canonical "kind:name" key of a leaf resource; empty for structural kinds and the empty option. */
+MIMIRCOMPOSITEEDITOR_API FString MHRecipeResourceKey(EMHRandomSemanticKind Kind, const FString& Name);
+
 /**
  * Preview graph assembled from compiled recipes: raw weights, canonical TRS,
  * nested composites by handle. Never carries RawHashes.
