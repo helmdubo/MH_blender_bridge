@@ -25,6 +25,9 @@ namespace
 {
 
 constexpr const TCHAR* ProjectIndexTag = TEXT("mh.project_index:4");
+// File mtimes can be stored at one-second resolution. Rehash candidates younger
+// than this window so a same-size, same-second rewrite cannot reuse a stale hash.
+constexpr int64 SourceIndexRacyWindowTicks = 2 * ETimespan::TicksPerSecond;
 
 TAutoConsoleVariable<int32> CVarMHSourceIndexVerifyHashes(
     TEXT("mh.SourceIndex.VerifyHashes"),
@@ -1542,7 +1545,10 @@ private:
 
         const bool bVerifyHashes =
             CVarMHSourceIndexVerifyHashes.GetValueOnAnyThread() != 0;
-        if (bFoundCachedCandidate && !bVerifyHashes)
+        const int64 ScanNowTicks = FDateTime::UtcNow().GetTicks();
+        const bool bWithinRacyWindow =
+            MTimeTicks > ScanNowTicks - SourceIndexRacyWindowTicks;
+        if (bFoundCachedCandidate && !bVerifyHashes && !bWithinRacyWindow)
         {
             OutCandidate = MoveTemp(CachedCandidate);
             bOutRecognized = true;
