@@ -15,13 +15,13 @@
 | R0a | MERGED | #64 |
 | R0b | MERGED | #65 |
 | R1 | MERGED | #66 (acceptance по формулировке v2; П6 закрывает R1.1) |
-| D0b | NEXT | этот патч; после merge → HISTORY |
-| R1.1 | READY | счётчик `waited_meshes` и тест `Perf.SelectedMeshWait` приводятся к П6: множество ожидаемых = выбранные компилирующиеся; пересечение с невыбранными пусто |
-| R0c | READY | убрать из кода валидацию applied-root в горячем пути (docs/16 §7.2, шестая строка removed-entities); снять tag-пробу duplicate-claim из admission реестра **вместе** с миграцией `DuplicateRootClaimBlocksPlanAndBreak` в preflight-тест (§7.5) |
-| S0 | READY | параллельно, линия S |
+| D0b | MERGED | #67 |
+| R1.1 | READY (внешний исполнитель, контракт `docs/contracts/recipe_r1_1.md`) | счётчик `waited_meshes` и тест `Perf.SelectedMeshWait` приводятся к П6: множество ожидаемых = выбранные компилирующиеся; пересечение с невыбранными пусто |
+| R0c | READY (внешний исполнитель, контракт `docs/contracts/recipe_r0c.md`) | убрать из кода валидацию applied-root в горячем пути (docs/16 §7.2, шестая строка removed-entities); снять tag-пробу duplicate-claim из admission реестра **вместе** с миграцией `DuplicateRootClaimBlocksPlanAndBreak` в preflight-тест (§7.5) |
+| S0 | READY (внешний исполнитель, контракт `docs/contracts/source_s0.md`) | параллельно, линия S |
 | S1 | PLANNED | — |
 | S2 | PLANNED | — |
-| R2a | PLANNED | первый шаг — реализация фазового разделения, П1 |
+| R2a | PLANNED (близнец) | первый шаг — реализация фазового разделения, П1 |
 | R2b | PLANNED | — |
 | R2c | PLANNED | — |
 | R3 | PLANNED | — |
@@ -32,3 +32,5 @@
 | R8 | OPTIONAL | — |
 
 Обновление этой таблицы — обязательная строка acceptance каждого среза.
+
+Правило исполнения (owner 2026-09-02): срезы, которые близнец не делает сам, выполняет внешний исполнитель по контракту из `docs/contracts/`; близнец пишет контракт (ветка + red-тест уже в ветке) и проверяет результат. Каждый срез — отдельная ветка и PR.
