@@ -11,9 +11,6 @@ class UMHCompositeSettings;
 namespace UE::MimirComposite
 {
 
-/** Unique generated claim by ResourceKey; no source-tree lookup or fallback winner. */
-MIMIRCOMPOSITEEDITOR_API UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError);
-
 /** Cheap live root receipt/uniqueness guard for a shared definition lease. */
 MIMIRCOMPOSITEEDITOR_API bool MHValidateAppliedCompositeRoot(
     const UMHCompositeAsset& Root,

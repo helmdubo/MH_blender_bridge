@@ -150,7 +150,7 @@ struct FAppliedPlanBuilder
     UObject* Load(const FMHResourceKey& Key)
     {
         Dependencies.Add(Key);
-        return MHLoadAppliedResource(Key, Error);
+        return UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, Error);
     }
 
     bool Resource(const EMHRandomSemanticKind Kind, const FString& Name)
@@ -317,18 +317,6 @@ bool MHIsSpawnableCompositeActorClass(const UClass* Class)
         !Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists);
 }
 
-UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
-{
-    // R0a facade over the endpoint prototype registry (16 §2.2); R0b renames
-    // the remaining call sites and deletes this symbol.
-    if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
-    {
-        return Registry->ResolveObject(Key, OutError);
-    }
-    OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: endpoint prototype registry unavailable for ") + Key.ToString();
-    return nullptr;
-}
-
 bool MHValidateAppliedCompositeRoot(const UMHCompositeAsset& Root, FString& OutError)
 {
     OutError.Reset();
@@ -337,7 +325,7 @@ bool MHValidateAppliedCompositeRoot(const UMHCompositeAsset& Root, FString& OutE
     {
         return false;
     }
-    if (MHLoadAppliedResource(Key, OutError) != &Root)
+    if (UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutError) != &Root)
     {
         if (OutError.IsEmpty())
         {
@@ -423,7 +411,7 @@ EMHCompositeSeedEffect MHClassifyCompositeDefinition(const UMHCompositeAsset& As
             {
                 if (Kind != EMHRandomSemanticKind::Composite) return;
                 FString LookupError;
-                if (const UMHCompositeAsset* Child = Cast<UMHCompositeAsset>(MHLoadAppliedResource(AppliedPlanKey(EMHResourceKind::Composite, Name), LookupError))) Gather(*Child);
+                if (const UMHCompositeAsset* Child = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(AppliedPlanKey(EMHResourceKind::Composite, Name), LookupError))) Gather(*Child);
             };
             Nested(Node.Kind, Node.Resource);
             for (const FMHRandomOption& Option : Node.Options) Nested(Option.Kind, Option.Resource);
