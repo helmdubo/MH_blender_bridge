@@ -735,6 +735,14 @@ void FMHReimportPerfScope::AddProjectionCycles(const uint64 Cycles)
     if (Impl.IsValid()) Impl->Accumulator.Values.ProjectionMs += CyclesToMilliseconds(Cycles);
 }
 
+void FMHReimportPerfScope::AddIncrementalPaths(const uint64 Count)
+{
+    if (Impl.IsValid())
+    {
+        Impl->Accumulator.Values.IncrementalPaths += Count;
+    }
+}
+
 void MHRecordReimportNotifiedResource(const FMHResourceKey& Key)
 {
     if (GActiveReimport != nullptr) GActiveReimport->NotifiedKeys.Add(Key);

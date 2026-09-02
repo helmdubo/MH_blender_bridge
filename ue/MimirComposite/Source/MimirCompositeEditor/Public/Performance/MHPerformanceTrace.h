@@ -168,6 +168,8 @@ public:
     void AddCompileWaitCycles(uint64 Cycles);
     void AddSavePackagesCycles(uint64 Cycles);
     void AddProjectionCycles(uint64 Cycles);
+    /** S2: paths handed to the incremental index upsert instead of a full scan. */
+    void AddIncrementalPaths(uint64 Count);
 
     FMHReimportPerfScope(const FMHReimportPerfScope&) = delete;
     FMHReimportPerfScope& operator=(const FMHReimportPerfScope&) = delete;

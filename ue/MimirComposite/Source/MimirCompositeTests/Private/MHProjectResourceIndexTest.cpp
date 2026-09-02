@@ -433,6 +433,61 @@ bool FMHProjectIndexRacyFingerprintTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProjectIndexSourceRootMismatchTest,
+    "Mimir.V5.Source.Index.SourceRootMismatchRecreates",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProjectIndexSourceRootMismatchTest::RunTest(const FString& Parameters)
+{
+    // 10 §3: the index is a pure projection of one Source Root. Opening the
+    // same database for a different root is an anomaly: the file is recreated
+    // and the projection rebuilt, never mixed (S2, OPEN-S2-2).
+    FIndexFixture First;
+    FIndexFixture Second;
+    const FString SharedDatabase = First.DatabasePath;
+    bool bPassed = WriteProjectIndexUtf8(FPaths::Combine(First.Root, TEXT("textures/a.png")), TEXT("a"));
+    bPassed &= WriteProjectIndexUtf8(FPaths::Combine(Second.Root, TEXT("textures/b.png")), TEXT("b"));
+
+    {
+        FMHProjectResourceIndex Index(First.Root, SharedDatabase);
+        bool bRecreated = false;
+        FString Error;
+        bPassed &= TestTrue(TEXT("first root opens"), Index.Open(bRecreated, Error));
+        FMHProjectIndexUpdateResult Update;
+        bPassed &= TestTrue(TEXT("first root scans"), Index.FullScan({}, Update, Error));
+        bPassed &= TestEqual(TEXT("first root resolves its texture"),
+            Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("a"))).Status, EMHResolveStatus::Resolved);
+        Index.Close();
+    }
+    {
+        FMHProjectResourceIndex Index(Second.Root, SharedDatabase);
+        bool bRecreated = false;
+        FString Error;
+        bPassed &= TestTrue(TEXT("second root opens the same database"), Index.Open(bRecreated, Error));
+        bPassed &= TestTrue(TEXT("a different Source Root recreates the database"), bRecreated);
+        bPassed &= TestEqual(TEXT("recreated index starts at generation zero"), Index.GetGeneration(), static_cast<int64>(0));
+        bPassed &= TestNotEqual(TEXT("rows of the previous root are gone"),
+            Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("a"))).Status, EMHResolveStatus::Resolved);
+        FMHProjectIndexUpdateResult Update;
+        bPassed &= TestTrue(TEXT("second root scans"), Index.FullScan({}, Update, Error));
+        bPassed &= TestEqual(TEXT("second root resolves its own texture"),
+            Index.Resolve(ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("b"))).Status, EMHResolveStatus::Resolved);
+        Index.Close();
+    }
+    {
+        // Reopening with the same root keeps the projection.
+        FMHProjectResourceIndex Index(Second.Root, SharedDatabase);
+        bool bRecreated = false;
+        FString Error;
+        bPassed &= TestTrue(TEXT("same root reopens"), Index.Open(bRecreated, Error));
+        bPassed &= TestFalse(TEXT("same Source Root does not recreate"), bRecreated);
+        bPassed &= TestTrue(TEXT("same root keeps its generation"), Index.GetGeneration() > 0);
+        Index.Close();
+    }
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHProjectIndexRebuildTest,
     "Mimir.V4.ProjectIndex.RebuildAndNormalizedDump",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

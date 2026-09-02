@@ -1180,14 +1180,26 @@ bool UMHSourceImporter::ReimportStaticMesh(
     }
 
     FMHSourceAnalysisServices Services;
+    FMHProjectIndexUpdateResult Update;
+    bool bUsedFullScan = false;
     const uint64 AnalysisStart = bPerfTrace ? FPlatformTime::Cycles64() : 0;
     const bool bAnalysisReady =
-        MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError);
+        MHCreateIncrementalSourceAnalysisServices(
+            SourceRoot,
+            {ReceiptSourcePath},
+            Services,
+            Update,
+            bUsedFullScan,
+            OutError);
     if (bPerfTrace)
         PerfScope.AddAnalysisServicesCycles(FPlatformTime::Cycles64() - AnalysisStart);
     if (!bAnalysisReady)
     {
         return false;
+    }
+    if (!bUsedFullScan)
+    {
+        PerfScope.AddIncrementalPaths(1);
     }
     FMHSourceAnalysisEntry Entry;
     Entry.Key = MoveTemp(MeshKey);
