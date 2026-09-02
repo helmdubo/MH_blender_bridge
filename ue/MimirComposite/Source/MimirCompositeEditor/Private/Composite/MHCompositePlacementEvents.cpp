@@ -3,6 +3,7 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
@@ -67,6 +68,12 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
                 GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
         {
             Definitions->InvalidateDefinition(Key);
+        }
+        if (UMHEndpointPrototypeRegistry* Registry =
+                GEditor->GetEditorSubsystem<UMHEndpointPrototypeRegistry>())
+        {
+            // Revision++: the prototype re-admits on its next resolve (16 §2.2).
+            Registry->Invalidate(Key);
         }
     }
 

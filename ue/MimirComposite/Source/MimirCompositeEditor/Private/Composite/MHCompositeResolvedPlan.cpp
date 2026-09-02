@@ -1,9 +1,7 @@
 #include "Composite/MHCompositeResolvedPlan.h"
 
-#include "AssetRegistry/AssetData.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Performance/MHPerformanceTrace.h"
 #include "Engine/StaticMesh.h"
@@ -12,7 +10,6 @@
 #include "Material/MHMaterialImporter.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
-#include "Modules/ModuleManager.h"
 #include "Misc/Paths.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
@@ -31,69 +28,6 @@ FMHResourceKey AppliedPlanKey(const EMHResourceKind Kind, const FString& Name)
     Key.Kind = Kind;
     Key.LogicalName = Name;
     return Key;
-}
-
-FString AppliedPlanObjectPath(const FMHResourceKey& Key)
-{
-    const TCHAR* Folder = nullptr;
-    switch (Key.Kind)
-    {
-    case EMHResourceKind::Composite: Folder = TEXT("Composites"); break;
-    case EMHResourceKind::StaticMesh: Folder = TEXT("Meshes"); break;
-    case EMHResourceKind::Material: Folder = TEXT("Materials"); break;
-    case EMHResourceKind::Texture: Folder = TEXT("Textures"); break;
-    default: return FString();
-    }
-    return FString::Printf(TEXT("/Game/MH/Generated/%s/%s.%s"), Folder, *Key.LogicalName, *Key.LogicalName);
-}
-
-bool AppliedPlanReceipt(const UObject& Object, const FMHResourceKey& Key,
-    const FString& SourcePath, const FString& SourceHash, const FString& AppliedHash, FString& Error)
-{
-    // Same receipt domain as the index, evaluated on live applied objects.
-    // No source lookup, history or SQLite state is introduced here.
-    MHRecordEndpointIdentityAdmission();
-    TArray<FString> Segments;
-    SourcePath.ParseIntoArray(Segments, TEXT("/"), false);
-    FMHResourceKey PathKey;
-    FString PathError;
-    const bool bPathValid = !SourcePath.IsEmpty() && FPaths::IsRelative(SourcePath) &&
-        !SourcePath.Contains(TEXT("\\")) && !SourcePath.StartsWith(TEXT("/")) &&
-        !SourcePath.EndsWith(TEXT("/")) && !SourcePath.Contains(TEXT("//")) &&
-        !Segments.ContainsByPredicate([](const FString& Part) { return Part.IsEmpty() || Part == TEXT(".") || Part == TEXT(".."); }) &&
-        MHResourceKeyFromSourceFile(SourcePath, PathKey, PathError) && PathKey == Key;
-    MHRecordEndpointLiveReceiptTagRead();
-    const FAssetData Live(&Object, FAssetData::ECreationFlags::None);
-    int32 MHTagCount = 0;
-    for (const TPair<FName, FAssetTagValueRef>& Tag : Live.TagsAndValues)
-        if (Tag.Key.ToString().StartsWith(TEXT("MH."))) ++MHTagCount;
-    const auto MatchesTag = [&](const TCHAR* Tag, const FString& Expected)
-    {
-        FString Value;
-        return Live.GetTagValue(FName(Tag), Value) && Value == Expected;
-    };
-    if (!bPathValid || Object.GetPathName() != AppliedPlanObjectPath(Key) ||
-        !MHIsCanonicalRawPayloadHash(SourceHash) || !MHIsCanonicalRawPayloadHash(AppliedHash) ||
-        MHTagCount != 6 || !MatchesTag(TEXT("MH.Managed"), TEXT("True")) ||
-        !MatchesTag(TEXT("MH.Kind"), MHResourceKindLabel(Key.Kind)) ||
-        !MatchesTag(TEXT("MH.LogicalName"), Key.LogicalName) ||
-        !MatchesTag(TEXT("MH.SourcePath"), SourcePath) ||
-        !MatchesTag(TEXT("MH.SourceHash"), SourceHash) || !MatchesTag(TEXT("MH.AppliedHash"), AppliedHash))
-    {
-        Error = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid managed receipt for ") + Key.ToString() + TEXT(" at ") + Object.GetPathName();
-        Error += FString::Printf(TEXT(" (source_path='%s', path_valid=%d, canonical_object=%d, source_hash_valid=%d, applied_hash_valid=%d, MH_tags=%d)"),
-            *SourcePath, bPathValid, Object.GetPathName() == AppliedPlanObjectPath(Key),
-            MHIsCanonicalRawPayloadHash(SourceHash), MHIsCanonicalRawPayloadHash(AppliedHash), MHTagCount);
-        for (const TCHAR* Tag : {TEXT("MH.Managed"), TEXT("MH.Kind"), TEXT("MH.LogicalName"),
-            TEXT("MH.SourcePath"), TEXT("MH.SourceHash"), TEXT("MH.AppliedHash")})
-        {
-            FString Value;
-            const bool bPresent = Live.GetTagValue(FName(Tag), Value);
-            Error += FString::Printf(TEXT(" %s='%s'"), Tag, bPresent ? *Value : TEXT("<missing>"));
-        }
-        return false;
-    }
-    return true;
 }
 
 EMHRandomSemanticKind AppliedPlanKind(const EMHCompositeNodeKind Kind)
@@ -243,12 +177,9 @@ struct FAppliedPlanBuilder
             return Error.IsEmpty() ? Fail(Key.ToString() + TEXT(" has no matching managed mesh receipt")) : false;
         }
         // Material slot names are plain structure and stay readable while the
-        // mesh compiles asynchronously; only the registry-tag receipt
-        // admission below has to wait for compilation. Defer that one check
-        // (FinalizeDeferredMeshes) so the whole closure joins a single
-        // batched FinishCompilation instead of serializing one stall per
-        // mesh — the 10x map-load field defect of 2026-08-31. Every deferred
-        // mesh is still fully admitted before the graph is returned.
+        // mesh compiles asynchronously. The identity re-check no longer reads
+        // registry tags (R0a), so the batched FinishCompilation below is a
+        // legacy wait that R1 removes with its own red test.
         for (const FStaticMaterial& Slot : Mesh->GetStaticMaterials())
         {
             if (Slot.ImportedMaterialSlotName.IsNone()) continue;
@@ -282,10 +213,8 @@ struct FAppliedPlanBuilder
         }
         if (!Compiling.IsEmpty())
         {
-            // Cold PostLoad may start async compilation. Until it finishes,
-            // UStaticMesh::GetAssetRegistryTags returns before the inherited
-            // tag provider, hiding all six valid receipt tags — so admission
-            // still joins compilation, but exactly once for the closure.
+            // Legacy wait (R1 removes it): identity admission reads the
+            // embedded receipt, not registry tags, and no longer needs it.
             FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
             FStaticMeshCompilingManager::Get().FinishCompilation(Compiling);
         }
@@ -296,7 +225,7 @@ struct FAppliedPlanBuilder
             {
                 return Fail(Row.Key.ToString() + TEXT(" has no matching managed mesh receipt"));
             }
-            if (!AppliedPlanReceipt(*Row.Mesh, Row.Key, Receipt->SourceRelativePath, Receipt->SourceHash, Receipt->SourceHash, Error)) return false;
+            if (!MHAdmitEndpointIdentity(Row.Key, *Row.Mesh, Error)) return false;
             if (!AddHash(Row.Key, Receipt->SourceHash)) return false;
         }
         return true;
@@ -309,7 +238,7 @@ struct FAppliedPlanBuilder
         UMaterialInstanceConstant* MaterialObject = Cast<UMaterialInstanceConstant>(Load(Key));
         const UMHMaterialSourceData* Receipt = MaterialObject != nullptr ? Cast<UMHMaterialSourceData>(MaterialObject->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass())) : nullptr;
         if (Receipt == nullptr || Receipt->LogicalName != Name) return Fail(Key.ToString() + TEXT(" has no matching managed material receipt"));
-        if (!AppliedPlanReceipt(*MaterialObject, Key, Receipt->SourceRelativePath, Receipt->SourceHash, Receipt->AppliedHash, Error)) return false;
+        if (!MHAdmitEndpointIdentity(Key, *MaterialObject, Error)) return false;
         if (!AddHash(Key, Receipt->SourceHash)) return false;
         FMHMaterialDocument Document;
         if (!MHExtractMaterialV4(*MaterialObject, Settings, Document, Error)) return false;
@@ -323,7 +252,7 @@ struct FAppliedPlanBuilder
             UTexture* Texture = Cast<UTexture>(Load(TextureKey));
             const UMHTextureSourceData* TextureReceipt = Texture != nullptr ? Cast<UMHTextureSourceData>(Texture->GetAssetUserDataOfClass(UMHTextureSourceData::StaticClass())) : nullptr;
             if (TextureReceipt == nullptr || TextureReceipt->LogicalName != TextureName) return Fail(TextureKey.ToString() + TEXT(" has no matching managed texture receipt"));
-            if (!AppliedPlanReceipt(*Texture, TextureKey, TextureReceipt->SourceRelativePath, TextureReceipt->SourceHash, TextureReceipt->SourceHash, Error)) return false;
+            if (!MHAdmitEndpointIdentity(TextureKey, *Texture, Error)) return false;
             if (!AddHash(TextureKey, TextureReceipt->SourceHash)) return false;
         }
         Finished.Add(Key.ToString());
@@ -340,7 +269,7 @@ struct FAppliedPlanBuilder
             return false;
         }
         if (Finished.Contains(Key.ToString())) return true;
-        if (!AppliedPlanReceipt(Asset, Key, Asset.SourceRelativePath, Asset.SourceHash, Asset.AppliedHash, Error)) return false;
+        if (!MHAdmitEndpointIdentity(Key, Asset, Error)) return false;
         if (Load(Key) != &Asset) return Fail(Key.ToString() + TEXT(" does not identify this unique generated asset"));
         if (Asset.LogicalName != ExpectedName || !AddHash(Key, Asset.SourceHash)) return Fail(Key.ToString() + TEXT(" has no matching applied composite receipt"));
         FMHCompositeDocument Document;
@@ -390,66 +319,21 @@ bool MHIsSpawnableCompositeActorClass(const UClass* Class)
 
 UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
 {
-    if (!Key.IsCanonical())
+    // R0a facade over the endpoint prototype registry (16 §2.2); R0b renames
+    // the remaining call sites and deletes this symbol.
+    if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
     {
-        OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: ") + Key.ToString();
-        return nullptr;
+        return Registry->ResolveObject(Key, OutError);
     }
-    MHRecordEndpointRegistryLookup();
-    FARFilter Filter;
-    Filter.TagsAndValues.Add(TEXT("MH.LogicalName"), Key.LogicalName);
-    TArray<FAssetData> Claims;
-    MHRecordEndpointAssetRegistryTagQuery();
-    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssets(Filter, Claims);
-    Claims.RemoveAll([&](const FAssetData& Claim)
-    {
-        FString Kind;
-        FString Name;
-        return !Claim.GetTagValue(TEXT("MH.Kind"), Kind) || Kind != MHResourceKindLabel(Key.Kind) ||
-            !Claim.GetTagValue(TEXT("MH.LogicalName"), Name) || Name != Key.LogicalName;
-    });
-    if (Claims.Num() > 1)
-    {
-        OutError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: ") + Key.ToString();
-        return nullptr;
-    }
-    const FString Path = AppliedPlanObjectPath(Key);
-    if (Claims.Num() == 1)
-    {
-        if (Claims[0].GetSoftObjectPath().ToString() != Path)
-        {
-            OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid generated path for ") + Key.ToString();
-            return nullptr;
-        }
-        const bool bResident = Claims[0].IsAssetLoaded();
-        UObject* Loaded = Claims[0].GetAsset();
-        if (!bResident && Loaded != nullptr)
-        {
-            MHRecordEndpointPackageLoadSync();
-        }
-        return Loaded;
-    }
-    // An in-place import may not yet have refreshed the registry. Its sole
-    // canonical object still has to pass the caller's live-receipt validation.
-    if (Path.IsEmpty())
-    {
-        return nullptr;
-    }
-    const UObject* Resident = FindObject<UObject>(nullptr, *Path);
-    UObject* Loaded = LoadObject<UObject>(nullptr, *Path);
-    if (Resident == nullptr && Loaded != nullptr)
-    {
-        MHRecordEndpointPackageLoadSync();
-    }
-    return Loaded;
+    OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: endpoint prototype registry unavailable for ") + Key.ToString();
+    return nullptr;
 }
 
 bool MHValidateAppliedCompositeRoot(const UMHCompositeAsset& Root, FString& OutError)
 {
     OutError.Reset();
     const FMHResourceKey Key = AppliedPlanKey(EMHResourceKind::Composite, Root.LogicalName);
-    if (!AppliedPlanReceipt(
-            Root, Key, Root.SourceRelativePath, Root.SourceHash, Root.AppliedHash, OutError))
+    if (!MHAdmitEndpointIdentity(Key, Root, OutError))
     {
         return false;
     }
