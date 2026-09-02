@@ -163,6 +163,16 @@ UMHEndpointPrototypeRegistry* UMHEndpointPrototypeRegistry::Get()
     return GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHEndpointPrototypeRegistry>() : nullptr;
 }
 
+UObject* UMHEndpointPrototypeRegistry::ResolveEndpoint(const FMHResourceKey& Key, FString& OutError)
+{
+    if (UMHEndpointPrototypeRegistry* Registry = Get())
+    {
+        return Registry->ResolveObject(Key, OutError);
+    }
+    OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: endpoint prototype registry unavailable for ") + Key.ToString();
+    return nullptr;
+}
+
 const FMHEndpointPrototype& UMHEndpointPrototypeRegistry::Resolve(const FMHResourceKey& Key)
 {
     // The definition endpoint metrics keep their S6.5 meaning: leaf (mesh)

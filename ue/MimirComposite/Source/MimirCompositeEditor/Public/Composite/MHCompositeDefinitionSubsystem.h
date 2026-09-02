@@ -45,14 +45,7 @@ struct FMHCompositeDefinitionEntry
     FString RootSourceHash;
     TSharedPtr<const FMHRandomSourceGraph> Graph;
     TSet<FMHResourceKey> Dependencies;
-    TMap<FMHResourceKey, TWeakObjectPtr<UObject>> Endpoints;
 };
-
-/** Resolve one managed mesh endpoint through an admitted shared definition. */
-MIMIRCOMPOSITEEDITOR_API UObject* MHResolveCompositeDefinitionEndpoint(
-    FMHCompositeDefinitionEntry& Definition,
-    const FMHResourceKey& Key,
-    FString& OutError);
 } // namespace UE::MimirComposite
 
 /** Session-only pool of successful immutable editor definition graphs. */

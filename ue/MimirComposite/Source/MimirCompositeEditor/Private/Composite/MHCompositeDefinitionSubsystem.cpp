@@ -3,26 +3,11 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeResolvedPlan.h"
-#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Engine/StaticMesh.h"
 #include "Settings/MHCompositeSettings.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 
 using namespace UE::MimirComposite;
-
-
-UObject* UE::MimirComposite::MHResolveCompositeDefinitionEndpoint(
-    FMHCompositeDefinitionEntry& Definition, const FMHResourceKey& Key, FString& OutError)
-{
-    // R0a: the session-wide prototype registry is the endpoint cache. The
-    // per-definition Endpoints map is dead and is removed with this symbol in R0b.
-    (void)Definition;
-    if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
-    {
-        return Registry->ResolveObject(Key, OutError);
-    }
-    return MHLoadAppliedResource(Key, OutError);
-}
 
 void UMHCompositeDefinitionSubsystem::Deinitialize()
 {

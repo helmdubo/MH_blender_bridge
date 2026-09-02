@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "GameFramework/Actor.h"
@@ -549,7 +550,7 @@ UObject* FMHCompositeOutlinerModel::ResolveAsset(
     else if (Kind == EMHRandomSemanticKind::Mesh) Key.Kind = EMHResourceKind::StaticMesh;
     else return nullptr;
     Key.LogicalName = Resource;
-    return MHLoadAppliedResource(Key, OutError);
+    return UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutError);
 }
 
 void FMHCompositeOutlinerModel::ApplyOverlayToItem(

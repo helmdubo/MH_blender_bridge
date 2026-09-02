@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeAppearanceTransport.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
@@ -514,9 +515,8 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
                 FMHResourceKey Key;
                 Key.Kind = EMHResourceKind::StaticMesh;
                 Key.LogicalName = Leaf.Resource;
-                ExpectedMesh = Cast<UStaticMesh>(Definition != nullptr
-                    ? MHResolveCompositeDefinitionEndpoint(*Definition, Key, OutResult.Error)
-                    : MHLoadAppliedResource(Key, OutResult.Error));
+                ExpectedMesh = Cast<UStaticMesh>(
+                    UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutResult.Error));
                 if (!OutResult.Error.IsEmpty()) return true;
             }
             const FPlanViewISMBucketKey LiveKey =
@@ -597,9 +597,8 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             FMHResourceKey Key;
             Key.Kind = EMHResourceKind::StaticMesh;
             Key.LogicalName = Resource;
-            Cached = Cast<UStaticMesh>(Definition != nullptr
-                ? MHResolveCompositeDefinitionEndpoint(*Definition, Key, OutResult.Error)
-                : MHLoadAppliedResource(Key, OutResult.Error));
+            Cached = Cast<UStaticMesh>(
+                UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutResult.Error));
             return Cached;
         };
         for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
@@ -817,9 +816,8 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             FMHResourceKey MeshKey;
             MeshKey.Kind = EMHResourceKind::StaticMesh;
             MeshKey.LogicalName = Leaf.Resource;
-            const UStaticMesh* ExpectedMesh = Cast<UStaticMesh>(Definition != nullptr
-                ? MHResolveCompositeDefinitionEndpoint(*Definition, MeshKey, OutResult.Error)
-                : MHLoadAppliedResource(MeshKey, OutResult.Error));
+            const UStaticMesh* ExpectedMesh = Cast<UStaticMesh>(
+                UMHEndpointPrototypeRegistry::ResolveEndpoint(MeshKey, OutResult.Error));
             if (!OutResult.Error.IsEmpty()) return true;
             if (!IsValid(BoundMesh) || BoundMesh != ExpectedMesh) return false;
             if (!MHIsAdmissibleAppearanceCustomDataBaseIndex(Settings.AppearanceCustomDataBaseIndex)) return false;
@@ -909,16 +907,8 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
                 FMHResourceKey Key;
                 Key.Kind = EMHResourceKind::StaticMesh;
                 Key.LogicalName = Leaf.Resource;
-                if (Definition != nullptr)
-                {
-                    Endpoint.Mesh = Cast<UStaticMesh>(
-                        MHResolveCompositeDefinitionEndpoint(*Definition, Key, OutResult.Error));
-                }
-                else
-                {
-                    MHRecordDefinitionEndpointResolve();
-                    Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, OutResult.Error));
-                }
+                Endpoint.Mesh = Cast<UStaticMesh>(
+                    UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutResult.Error));
                 if (!OutResult.Error.IsEmpty()) return true;
             }
             else if (Leaf.Kind == EMHRandomSemanticKind::Actor)
@@ -1048,16 +1038,8 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
                 FMHResourceKey Key;
                 Key.Kind = EMHResourceKind::StaticMesh;
                 Key.LogicalName = Leaf.Resource;
-                if (Definition != nullptr)
-                {
-                    Endpoint.Mesh = Cast<UStaticMesh>(
-                        MHResolveCompositeDefinitionEndpoint(*Definition, Key, Result.Error));
-                }
-                else
-                {
-                    MHRecordDefinitionEndpointResolve();
-                    Endpoint.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, Result.Error));
-                }
+                Endpoint.Mesh = Cast<UStaticMesh>(
+                    UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, Result.Error));
                 if (!Result.Error.IsEmpty()) return Result;
             }
             else if (Leaf.Kind == EMHRandomSemanticKind::Actor)

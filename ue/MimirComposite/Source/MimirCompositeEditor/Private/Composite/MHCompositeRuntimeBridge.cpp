@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHRuntimeCompositeActor.h"
 #include "Editor.h"
@@ -511,7 +512,7 @@ bool MHBuildRuntimeCompositeInput(const AMHCompositeActor& Placement,
                 OutError = MHRuntimeBridgeError(TEXT("unsupported runtime binding ") + KeyString);
                 return false;
             }
-            Object = MHLoadAppliedResource(Key, OutError);
+            Object = UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutError);
             if (Object == nullptr) return false;
         }
         FMHRuntimeCompositeBinding Binding;

@@ -60,6 +60,9 @@ public:
 
     static UMHEndpointPrototypeRegistry* Get();
 
+    /** Ready object for Key through the editor registry; nullptr + error otherwise. */
+    static UObject* ResolveEndpoint(const UE::MimirComposite::FMHResourceKey& Key, FString& OutError);
+
     /** Resolve (or return the cached) prototype for Key. Never returns Loading before R4. */
     const UE::MimirComposite::FMHEndpointPrototype& Resolve(
         const UE::MimirComposite::FMHResourceKey& Key);

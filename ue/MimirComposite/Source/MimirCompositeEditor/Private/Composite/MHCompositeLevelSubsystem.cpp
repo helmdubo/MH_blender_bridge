@@ -8,6 +8,7 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -208,7 +209,7 @@ bool MHCollectBreakSpecs(
             FMHResourceKey Key;
             Key.Kind = EMHResourceKind::StaticMesh;
             Key.LogicalName = Leaf.Resource;
-            Spec.Mesh = Cast<UStaticMesh>(MHLoadAppliedResource(Key, OutError));
+            Spec.Mesh = Cast<UStaticMesh>(UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutError));
             if (!OutError.IsEmpty()) return false;
             if (Spec.Mesh == nullptr)
             {
