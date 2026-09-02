@@ -79,6 +79,25 @@ struct MIMIRCOMPOSITEEDITOR_API FMHPlacementReseedMetrics
 };
 
 /**
+ * Non-serialized endpoint resolve/admission counters (Recipe Model M0).
+ * They only measure the existing resolve path; R0 replaces that path and
+ * asserts the forbidden-in-preview counters stay at zero.
+ */
+struct MIMIRCOMPOSITEEDITOR_API FMHEndpointResolveMetrics
+{
+    // Endpoint resolve requests by resource key (R0: prototype registry lookups).
+    uint64 RegistryLookups = 0;
+    // Asset Registry queries filtered by MH.* tags.
+    uint64 AssetRegistryTagQueries = 0;
+    // Synchronous loads that brought a non-resident object into memory.
+    uint64 PackageLoadsSync = 0;
+    // Receipt validations of a live object (R0: identity admissions).
+    uint64 IdentityAdmissions = 0;
+    // Live GetAssetRegistryTags reads through FAssetData(&Object).
+    uint64 LiveReceiptTagReads = 0;
+};
+
+/**
  * Inclusive/exclusive game-thread timing scope. Instrumentation is observable
  * only through the test API below and is never serialized or read by placement
  * production decisions.
@@ -129,4 +148,11 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementReseedComparison(
     uint64 ChangedLeafIdentities, uint64 AddedLeafIdentities, uint64 RemovedLeafIdentities);
 MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementReseedIncrementalApplied();
 MIMIRCOMPOSITEEDITOR_API void MHRecordPlacementReseedFullFallback();
+MIMIRCOMPOSITEEDITOR_API void MHResetEndpointResolveMetrics();
+MIMIRCOMPOSITEEDITOR_API FMHEndpointResolveMetrics MHGetEndpointResolveMetrics();
+MIMIRCOMPOSITEEDITOR_API void MHRecordEndpointRegistryLookup();
+MIMIRCOMPOSITEEDITOR_API void MHRecordEndpointAssetRegistryTagQuery();
+MIMIRCOMPOSITEEDITOR_API void MHRecordEndpointPackageLoadSync();
+MIMIRCOMPOSITEEDITOR_API void MHRecordEndpointIdentityAdmission();
+MIMIRCOMPOSITEEDITOR_API void MHRecordEndpointLiveReceiptTagRead();
 } // namespace UE::MimirComposite

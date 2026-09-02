@@ -10,6 +10,7 @@ FMHPlacementStageMetrics GMHPlacementStageMetrics;
 FMHDefinitionCacheMetrics GMHDefinitionCacheMetrics;
 FMHPlacementMutationMetrics GMHPlacementMutationMetrics;
 FMHPlacementReseedMetrics GMHPlacementReseedMetrics;
+FMHEndpointResolveMetrics GMHEndpointResolveMetrics;
 thread_local FMHPlacementStageScope* GMHPlacementStageCurrentScope = nullptr;
 }
 
@@ -169,6 +170,41 @@ void MHRecordPlacementReseedComparison(
 void MHRecordPlacementReseedIncrementalApplied()
 {
     ++GMHPlacementReseedMetrics.IncrementalApplied;
+}
+
+void MHResetEndpointResolveMetrics()
+{
+    GMHEndpointResolveMetrics = FMHEndpointResolveMetrics();
+}
+
+FMHEndpointResolveMetrics MHGetEndpointResolveMetrics()
+{
+    return GMHEndpointResolveMetrics;
+}
+
+void MHRecordEndpointRegistryLookup()
+{
+    ++GMHEndpointResolveMetrics.RegistryLookups;
+}
+
+void MHRecordEndpointAssetRegistryTagQuery()
+{
+    ++GMHEndpointResolveMetrics.AssetRegistryTagQueries;
+}
+
+void MHRecordEndpointPackageLoadSync()
+{
+    ++GMHEndpointResolveMetrics.PackageLoadsSync;
+}
+
+void MHRecordEndpointIdentityAdmission()
+{
+    ++GMHEndpointResolveMetrics.IdentityAdmissions;
+}
+
+void MHRecordEndpointLiveReceiptTagRead()
+{
+    ++GMHEndpointResolveMetrics.LiveReceiptTagReads;
 }
 
 void MHRecordPlacementReseedFullFallback()

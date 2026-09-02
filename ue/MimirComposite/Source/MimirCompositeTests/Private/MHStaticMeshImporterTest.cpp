@@ -1807,6 +1807,167 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHPerformanceEndpointCountersTest,
+    "Mimir.V5.Composite.Perf.EndpointCounters",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
+{
+    // Recipe Model M0: the map-load report exposes how the current resolve
+    // path finds endpoints (registry lookups, Asset Registry tag queries,
+    // synchronous package loads, identity admissions, live receipt tag reads).
+    // R0 replaces that path and asserts the forbidden-in-preview counters at 0.
+    IConsoleVariable* PerfTrace =
+        IConsoleManager::Get().FindConsoleVariable(TEXT("mh.PerfTrace"));
+    if (!TestNotNull(TEXT("mh.PerfTrace cvar exists"), PerfTrace))
+    {
+        return false;
+    }
+    const int32 PreviousTrace = PerfTrace->GetInt();
+    ON_SCOPE_EXIT
+    {
+        PerfTrace->Set(PreviousTrace, ECVF_SetByCode);
+        MHResetPerformanceTraceForTests();
+    };
+
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build())
+    {
+        return false;
+    }
+    UStaticMesh* SecondMesh = Fixture.AddSecondMesh();
+    if (!TestNotNull(TEXT("second all-options mesh"), SecondMesh))
+    {
+        return false;
+    }
+    UMHCompositeAsset* PlacementAsset = BuildPerfRandomPlacementAsset(
+        *this,
+        Fixture.LogicalName + TEXT("_endpoints"),
+        Fixture.LogicalName,
+        SecondMesh->GetName());
+    if (!TestNotNull(TEXT("endpoint random composite"), PlacementAsset))
+    {
+        return false;
+    }
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, true);
+    if (!TestNotNull(TEXT("endpoint placement world"), World))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT
+    {
+        World->DestroyWorld(true);
+        PlacementAsset->ClearFlags(RF_Public | RF_Standalone);
+        PlacementAsset->MarkAsGarbage();
+    };
+    AMHCompositeActor* First = World->SpawnActor<AMHCompositeActor>();
+    AMHCompositeActor* Second = World->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("first placement actor"), First) ||
+        !TestNotNull(TEXT("second placement actor"), Second))
+    {
+        return false;
+    }
+    for (AMHCompositeActor* Actor : {First, Second})
+    {
+        Actor->SetAutoSeed(false);
+        Actor->SetSeed(7);
+        Actor->SetCompositeAsset(PlacementAsset);
+    }
+
+    const auto InvalidateDefinitions = []()
+    {
+        if (GEditor != nullptr)
+        {
+            if (UMHCompositeDefinitionSubsystem* Definitions =
+                    GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
+            {
+                Definitions->InvalidateAllDefinitions();
+            }
+        }
+    };
+    const auto BuildActor = [](AMHCompositeActor& Actor)
+    {
+        {
+            FMHMapLoadInitialBuildScope Scope(Actor);
+            Actor.RebuildComposite();
+            Scope.Complete(Actor);
+        }
+        MHFlushMapLoadPerfReport();
+        return MHGetMapLoadPerfReportForTests();
+    };
+    const auto ResetAll = []()
+    {
+        MHResetPerformanceTraceForTests();
+        MHResetEndpointResolveMetrics();
+        MHResetDefinitionCacheMetrics();
+    };
+
+    bool bPassed = true;
+    PerfTrace->Set(0, ECVF_SetByCode);
+    ResetAll();
+    InvalidateDefinitions();
+    const FMHMapLoadPerfReport Off = BuildActor(*First);
+    bPassed &= TestEqual(TEXT("trace zero emits no map-load report"), Off.EmittedReports, 0ull);
+    bPassed &= TestEqual(TEXT("trace zero reports no registry lookups"), Off.RegistryLookups, 0ull);
+    bPassed &= TestEqual(TEXT("trace zero reports no identity admissions"), Off.IdentityAdmissions, 0ull);
+
+    PerfTrace->Set(1, ECVF_SetByCode);
+    ResetAll();
+    InvalidateDefinitions();
+    const FMHMapLoadPerfReport Cold = BuildActor(*First);
+    // Root composite plus every mesh option: the closure resolves all of them.
+    const uint64 UniqueEndpointKeys = Cold.AllOptionUniqueMeshes + 1ull;
+    bPassed &= TestEqual(TEXT("cold build emits one map-load report"), Cold.EmittedReports, 1ull);
+    bPassed &= TestTrue(TEXT("cold build misses the definition cache"), Cold.DefinitionCacheMisses >= 1ull);
+    bPassed &= TestTrue(
+        TEXT("cold build resolves at least every unique endpoint key"),
+        Cold.RegistryLookups >= UniqueEndpointKeys);
+    bPassed &= TestEqual(
+        TEXT("current resolve path queries the Asset Registry by tags once per lookup"),
+        Cold.AssetRegistryTagQueries,
+        Cold.RegistryLookups);
+    bPassed &= TestTrue(
+        TEXT("cold build admits at least every unique endpoint key"),
+        Cold.IdentityAdmissions >= UniqueEndpointKeys);
+    bPassed &= TestEqual(
+        TEXT("current admission reads live receipt tags once per admission"),
+        Cold.LiveReceiptTagReads,
+        Cold.IdentityAdmissions);
+    bPassed &= TestTrue(
+        TEXT("sync package loads never exceed lookups"),
+        Cold.PackageLoadsSync <= Cold.RegistryLookups);
+
+    ResetAll();
+    const FMHMapLoadPerfReport Warm = BuildActor(*Second);
+    bPassed &= TestTrue(TEXT("warm build hits the definition cache"), Warm.DefinitionCacheHits >= 1ull);
+    bPassed &= TestEqual(TEXT("warm build does not miss the definition cache"), Warm.DefinitionCacheMisses, 0ull);
+    bPassed &= TestTrue(
+        TEXT("warm build resolves fewer endpoints than cold"),
+        Warm.RegistryLookups < Cold.RegistryLookups);
+    bPassed &= TestTrue(
+        TEXT("warm build admits fewer endpoints than cold"),
+        Warm.IdentityAdmissions < Cold.IdentityAdmissions);
+    bPassed &= TestEqual(
+        TEXT("warm build still queries the Asset Registry once per lookup"),
+        Warm.AssetRegistryTagQueries,
+        Warm.RegistryLookups);
+    AddInfo(FString::Printf(
+        TEXT("MH_PERF_ENDPOINTS cold: unique_keys=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu; warm: registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu"),
+        UniqueEndpointKeys,
+        Cold.RegistryLookups,
+        Cold.AssetRegistryTagQueries,
+        Cold.PackageLoadsSync,
+        Cold.IdentityAdmissions,
+        Cold.LiveReceiptTagReads,
+        Warm.RegistryLookups,
+        Warm.AssetRegistryTagQueries,
+        Warm.PackageLoadsSync,
+        Warm.IdentityAdmissions,
+        Warm.LiveReceiptTagReads));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHTargetedStaticMeshReimportAdmissionTest,
     "Mimir.V4.StaticMesh.TargetedReimport.Admission",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
