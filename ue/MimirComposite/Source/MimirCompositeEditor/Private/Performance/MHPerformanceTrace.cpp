@@ -35,6 +35,7 @@ struct FMapLoadAccumulator
     TSet<FMHResourceKey> AllOptionMeshes;
     TSet<FMHResourceKey> SelectedMeshes;
     TSet<FMHResourceKey> CompilingMeshes;
+    TSet<FMHResourceKey> WaitedMeshes;
     TMap<FMHResourceKey, FString> VerboseMeshPaths;
     TMap<FString, double> VerboseActorMilliseconds;
     int32 ActiveScopes = 0;
@@ -142,7 +143,7 @@ void CollectGraphNodeMeshes(const FMHRandomNode& Node, TSet<FMHResourceKey>& Out
 void LogMapLoadReport(const FMHMapLoadPerfReport& Report)
 {
     UE_LOG(LogMHPerformanceTrace, Display,
-        TEXT("MH_PERF_MAPLOAD composite_actors=%llu root_composites_unique=%llu definition_cache_hits=%llu definition_cache_misses=%llu all_option_composites=%llu all_option_unique_meshes=%llu selected_unique_meshes=%llu all_option_meshes_compiling=%llu selected_meshes_compiling=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu build_applied_graph_ms=%.3f resolve_composite_plan_ms=%.3f load_endpoints_ms=%.3f wait_static_mesh_compilation_ms=%.3f compile_placement_ms=%.3f register_components_ms=%.3f destroy_retired_components_ms=%.3f components_created=%llu components_reused=%llu components_destroyed=%llu ism_buckets=%llu ism_instances=%llu total_ms=%.3f"),
+        TEXT("MH_PERF_MAPLOAD composite_actors=%llu root_composites_unique=%llu definition_cache_hits=%llu definition_cache_misses=%llu all_option_composites=%llu all_option_unique_meshes=%llu selected_unique_meshes=%llu all_option_meshes_compiling=%llu selected_meshes_compiling=%llu waited_meshes=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu build_applied_graph_ms=%.3f resolve_composite_plan_ms=%.3f load_endpoints_ms=%.3f wait_static_mesh_compilation_ms=%.3f compile_placement_ms=%.3f register_components_ms=%.3f destroy_retired_components_ms=%.3f components_created=%llu components_reused=%llu components_destroyed=%llu ism_buckets=%llu ism_instances=%llu total_ms=%.3f"),
         Report.CompositeActors,
         Report.RootCompositesUnique,
         Report.DefinitionCacheHits,
@@ -152,6 +153,7 @@ void LogMapLoadReport(const FMHMapLoadPerfReport& Report)
         Report.SelectedUniqueMeshes,
         Report.AllOptionMeshesCompiling,
         Report.SelectedMeshesCompiling,
+        Report.WaitedMeshes,
         Report.RegistryLookups,
         Report.AssetRegistryTagQueries,
         Report.PackageLoadsSync,
@@ -197,6 +199,7 @@ void FlushMapLoadInternal()
         }
     }
     GMapLoad.Values.SelectedMeshesCompiling = SelectedCompiling;
+    GMapLoad.Values.WaitedMeshes = GMapLoad.WaitedMeshes.Num();
     GMapLoad.Values.EmittedReports = 1;
     GLastMapLoadReport = GMapLoad.Values;
     LogMapLoadReport(GLastMapLoadReport);
@@ -504,6 +507,15 @@ void MHRecordMapLoadCompilingMesh(const FMHResourceKey& Key, const UObject& Obje
     {
         GMapLoad.VerboseMeshPaths.Add(Key, Object.GetPathName());
     }
+}
+
+void MHRecordMapLoadWaitedMesh(const FMHResourceKey& Key)
+{
+    if (!GMapLoad.bPending || GMapLoad.ActiveScopes <= 0)
+    {
+        return;
+    }
+    GMapLoad.WaitedMeshes.Add(Key);
 }
 
 void MHFlushMapLoadPerfReport()

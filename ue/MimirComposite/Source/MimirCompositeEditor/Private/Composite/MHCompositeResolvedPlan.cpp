@@ -205,6 +205,7 @@ struct FAppliedPlanBuilder
         TArray<UStaticMesh*> Compiling;
         for (const FDeferredMesh& Row : DeferredMeshes)
         {
+            MHRecordMapLoadWaitedMesh(Row.Key);
             if (Row.Mesh->IsCompiling())
             {
                 Compiling.Add(Row.Mesh);
