@@ -181,6 +181,19 @@ private:
 
     void OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event);
     void OnAssetReimport(UObject* Object);
+    void RunParityCommand(const TArray<FString>& Args);
+
+    /** Compile with the cycle stack of the enclosing compilation (MH_E_COMPOSITE_CYCLE). */
+    const UE::MimirComposite::FMHCompiledRecipe* CompileWithStack(
+        const UMHCompositeAsset& Asset,
+        TArray<FObjectKey>& Stack,
+        FString& OutError);
+    TSharedPtr<UE::MimirComposite::FMHCompiledRecipe> CompileRecipe(
+        const UMHCompositeAsset& Asset,
+        uint32 RecipeRevision,
+        TArray<FObjectKey>& Stack,
+        FString& OutError);
+    void IndexDependents(const UE::MimirComposite::FMHCompiledRecipe& Recipe, const FObjectKey& Owner);
 
     TMap<FObjectKey, FEntry> Entries;
     TMap<UE::MimirComposite::FMHResourceKey, TSet<FObjectKey>> Dependents;

@@ -80,6 +80,7 @@ bool RecipeParseKind(const FString& Value, EMHRandomSemanticKind& Out)
     else if (Value == TEXT("group")) Out = EMHRandomSemanticKind::Group;
     else if (Value == TEXT("random")) Out = EMHRandomSemanticKind::Random;
     else if (Value == TEXT("empty")) Out = EMHRandomSemanticKind::Empty;
+    else if (Value == TEXT("gameobj")) Out = EMHRandomSemanticKind::GameObj;
     else return false;
     return true;
 }
