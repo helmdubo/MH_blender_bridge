@@ -79,3 +79,28 @@ Baseline для acceptance-пункта 4: `analysis_services_ms=96.610` при 
 См. `docs/contracts/recipe_r1_1.md` §«Host исполнителя». Работать в отдельном
 клоне/worktree; никогда не делать `git pull` чужой ветки, стоя на `main`;
 `main` не пушить.
+
+## Ответ на OPEN-S2-1 (близнец, 2026-09-02): guard «индекс без full scan»
+
+Причина провала `TargetedReimport.*` (2/4): их фикстуры импортируют меш, минуя
+скан, поэтому индекс никогда не проходил full scan (`GetGeneration() == 0`), и
+upsert одного FBX упирается в неиндексированный `.material`. В редакторе этого
+не бывает: startup-скан (U0c) заполняет индекс до любого targeted reimport.
+Нормативное решение — fail-closed guard, а не проекция зависимостей и не правка
+тестов:
+
+- в `MHCreateIncrementalSourceAnalysisServices` (`Private/Source/MHSourceComposition.cpp`)
+  условие full scan расширяется: `bRecreated || Index->GetGeneration() == 0`
+  (индекс ещё не имеет ни одного завершённого full scan); в этом случае
+  `bOutUsedFullScan = true`, `full_scan_count_delta = 1` честно. Иначе —
+  `UpsertPaths`, как в задаче 1–2.
+- Закрытый список расширяется на один файл: `Private/Source/MHSourceComposition.cpp`
+  (только эта функция).
+- Acceptance без изменений: `Perf.InstrumentationCounters` перед reimport делает
+  явный full scan (`MHScanSourcesOperation`), поэтому там `full_scan_count_delta=0
+  incremental_paths=1`; `TargetedReimport.*` — 4/4 Success без правок тестов
+  (их первый reimport выполнит один full scan по guard'у).
+- Квитанция: раздел «OPEN-S2-1 — закрыт близнецом», строка `MH_PERF_REIMPORT`
+  с `analysis_services_ms` до/после (RED 96.6 мс → GREEN 22.2 мс по вашему логу).
+
+OPEN-S2-1: закрыт.
