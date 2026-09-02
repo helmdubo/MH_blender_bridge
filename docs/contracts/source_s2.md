@@ -15,7 +15,20 @@
   писалось);
 - в `Mimir.V5.Composite.Perf.InstrumentationCounters` (`MHStaticMeshImporterTest.cpp`)
   два assert'а targeted reimport переведены на цель S2:
-  `full_scan_count_delta == 0`, `incremental_paths == 1`. RED-лог: см. ниже.
+  `full_scan_count_delta == 0`, `incremental_paths == 1`.
+
+RED-коммит `2978373`; лог `E:\MimirComposite_R_M0_20260902\Saved\Logs\S2_RED_TEST.log`,
+строки 1105–1123:
+
+```text
+MH_PERF_REIMPORT resource_key=static_mesh:targeted_mesh_… full_scan_count_delta=1 incremental_paths=0 analysis_services_ms=96.610 …
+Result={Fail} Name={InstrumentationCounters}
+Expected 'targeted reimport performs no full scan' to be 0, but it was 1.
+Expected 'targeted reimport upserts exactly its own source path' to be 1, but it was 0.
+```
+
+Baseline для acceptance-пункта 4: `analysis_services_ms=96.610` при трёх payload'ах
+в Source Root фикстуры.
 
 ## Задача
 
