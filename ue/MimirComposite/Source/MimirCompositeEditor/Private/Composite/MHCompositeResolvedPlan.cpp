@@ -52,6 +52,7 @@ bool AppliedPlanReceipt(const UObject& Object, const FMHResourceKey& Key,
 {
     // Same receipt domain as the index, evaluated on live applied objects.
     // No source lookup, history or SQLite state is introduced here.
+    MHRecordEndpointIdentityAdmission();
     TArray<FString> Segments;
     SourcePath.ParseIntoArray(Segments, TEXT("/"), false);
     FMHResourceKey PathKey;
@@ -61,6 +62,7 @@ bool AppliedPlanReceipt(const UObject& Object, const FMHResourceKey& Key,
         !SourcePath.EndsWith(TEXT("/")) && !SourcePath.Contains(TEXT("//")) &&
         !Segments.ContainsByPredicate([](const FString& Part) { return Part.IsEmpty() || Part == TEXT(".") || Part == TEXT(".."); }) &&
         MHResourceKeyFromSourceFile(SourcePath, PathKey, PathError) && PathKey == Key;
+    MHRecordEndpointLiveReceiptTagRead();
     const FAssetData Live(&Object, FAssetData::ECreationFlags::None);
     int32 MHTagCount = 0;
     for (const TPair<FName, FAssetTagValueRef>& Tag : Live.TagsAndValues)
@@ -393,9 +395,11 @@ UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
         OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: ") + Key.ToString();
         return nullptr;
     }
+    MHRecordEndpointRegistryLookup();
     FARFilter Filter;
     Filter.TagsAndValues.Add(TEXT("MH.LogicalName"), Key.LogicalName);
     TArray<FAssetData> Claims;
+    MHRecordEndpointAssetRegistryTagQuery();
     FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssets(Filter, Claims);
     Claims.RemoveAll([&](const FAssetData& Claim)
     {
@@ -417,11 +421,27 @@ UObject* MHLoadAppliedResource(const FMHResourceKey& Key, FString& OutError)
             OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid generated path for ") + Key.ToString();
             return nullptr;
         }
-        return Claims[0].GetAsset();
+        const bool bResident = Claims[0].IsAssetLoaded();
+        UObject* Loaded = Claims[0].GetAsset();
+        if (!bResident && Loaded != nullptr)
+        {
+            MHRecordEndpointPackageLoadSync();
+        }
+        return Loaded;
     }
     // An in-place import may not yet have refreshed the registry. Its sole
     // canonical object still has to pass the caller's live-receipt validation.
-    return Path.IsEmpty() ? nullptr : LoadObject<UObject>(nullptr, *Path);
+    if (Path.IsEmpty())
+    {
+        return nullptr;
+    }
+    const UObject* Resident = FindObject<UObject>(nullptr, *Path);
+    UObject* Loaded = LoadObject<UObject>(nullptr, *Path);
+    if (Resident == nullptr && Loaded != nullptr)
+    {
+        MHRecordEndpointPackageLoadSync();
+    }
+    return Loaded;
 }
 
 bool MHValidateAppliedCompositeRoot(const UMHCompositeAsset& Root, FString& OutError)
