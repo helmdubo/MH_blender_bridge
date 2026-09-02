@@ -20,7 +20,18 @@
    `MHBuildRuntimeCompositeInput` отказывает с тем же кодом; после удаления
    дубликата Break проходит. Сегодня red: план `nullptr`.
 
-RED-лог: `E:\MimirComposite_R_M0_20260902\Saved\Logs\R0C_RED_TEST.log` (строки в квитанции).
+RED-коммит `367820f`; лог `E:\MimirComposite_R_M0_20260902\Saved\Logs\R0C_RED_TEST.log`,
+строки 1081–1104:
+
+```text
+Result={Fail} Name={DuplicateClaimIsProofPlane}
+Expected 'preview resolves the canonical path despite a duplicate claim' to be not null.
+Expected 'preview made no tag queries' to be 0, but it was 1.
+Expected 'removing the duplicate claim heals Break' to be true.   (нет плана — нечего ломать)
+Result={Fail} Name={IdentityAdmission}
+MH_PERF_ENDPOINTS registry two placements: unique_keys=2 registry_lookups=2 asset_registry_tag_queries=2 ...
+Expected 'preview makes no Asset Registry tag queries' to be 0, but it was 2.
+```
 
 ## Задача
 
