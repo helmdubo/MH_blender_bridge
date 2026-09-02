@@ -1,7 +1,7 @@
 # S0 — инкрементальный Project Resource Index
 
-Статус: **STOP — OPEN-S0-1** после возврата PR #73. Исходная подача перевела
-full scan на один snapshot-проход;
+Статус: **READY FOR REVIEW** после закрытия OPEN-S0-1 близнецом (`5143510`,
+`f862acf`). Исходная подача перевела full scan на один snapshot-проход;
 неизменные `ok`-кандидаты переиспользуют сохранённый fingerprint и dependency
 edges без чтения payload, а изменённый payload проходит прежний read/hash/parse.
 
@@ -19,7 +19,8 @@ edges без чтения payload, а изменённый payload проход�
   worktree;
 - основной checkout и его локальный `main` не переключались и не пушились;
 - Engine, resolver/runtime, Blender-аддон, `golden/`, `reference/`, SQLite
-  schema/tag, hash-формат и receipt-форматы не изменялись; red-тест не изменён.
+  schema/tag, hash-формат и receipt-форматы не изменялись; исполнитель red-тесты
+  не менял.
 
 ## 2. Acceptance
 
@@ -98,9 +99,10 @@ console принял значение, но попытки были остано
 - `docs/receipts/source_s0.md`
 - `docs/RECIPE_EXECUTION_STATUS.md`
 
-Red-тест
-`ue/MimirComposite/Source/MimirCompositeTests/Private/MHProjectResourceIndexTest.cpp`
-не изменён.
+Исполнитель не менял red-тест
+`ue/MimirComposite/Source/MimirCompositeTests/Private/MHProjectResourceIndexTest.cpp`;
+после возврата близнец изменил только fixture коммитом `5143510`, как описано
+в §6.
 
 Удалённые тесты: **нет**.
 
@@ -144,29 +146,45 @@ GREEN2 на `38d6cbc`: лог
 единственный `FPlatformProcess::Sleep(0.05f)` расположен после этого assert'а,
 перед записью changed payload, и сам меньше окна 2 s.
 
-По прямому правилу дополнения контракта («если окно ломает этот сценарий —
-STOP + OPEN, тест не менять») остановлены и **не запускались**: три отдельных
-`CrashBetweenPassesRetries`, smoke через `-dpcvars`, полный suite 178/178,
-force-unity и StrictIncludes. Non-unity/no-PCH build реализации прошёл:
-`S0_RETURN1_GREEN_BUILD_NONUNITY.log:19` — `Result: Succeeded`.
+OPEN-S0-1 закрыт близнецом: коммит `5143510` состаривает mtime fixture на 10 s
+до cold scan, контракт `f862acf` фиксирует исправление. Норма `RacyWindow = 2 s`
+не менялась. Финальный повтор исполнителя после этих коммитов:
+
+```text
+S0_RETURN1_SOURCE_INDEX.log:1080: Result={Success} Name={IncrementalScanRehashesSameSecondChange}
+S0_RETURN1_SOURCE_INDEX.log:1083: same-second: hashed_files=2 reused=0
+S0_RETURN1_SOURCE_INDEX.log:1090: unchanged ... hashed_files=0 reused_fingerprints=3
+S0_RETURN1_SOURCE_INDEX.log:1091: changed ... hashed_files=1 reused_fingerprints=2
+S0_RETURN1_SOURCE_INDEX.log:1094: Result={Success} Name={IncrementalScanSkipsUnchangedHashes}
+```
+
+`Mimir.V4.BulkImport.CrashBetweenPassesRetries` прошёл три отдельных процесса:
+
+```text
+S0_RETURN1_CRASH_RETRY_1.log:1103: Test Completed. Result={Success}
+S0_RETURN1_CRASH_RETRY_2.log:1103: Test Completed. Result={Success}
+S0_RETURN1_CRASH_RETRY_3.log:1103: Test Completed. Result={Success}
+```
+
+Smoke cvar выполнен только разрешённым способом
+`-dpcvars=mh.SourceIndex.VerifyHashes=1`: лог
+`S0_RETURN1_VERIFY_HASHES_DPCVARS.log:1098` —
+`enumerated_files=3 scan_passes=1 hashed_files=3 reused_fingerprints=0`;
+`InstrumentationCounters` Success (`:1112`).
+
+| Gate возврата 1 | Результат |
+|---|---|
+| non-unity/no-PCH editor build | `Result: Succeeded` (`S0_RETURN1_FINAL_BUILD_NONUNITY.log:19`) |
+| полный NullRHI `Automation RunTests Mimir` | **178/178 Success, 0 failed** (`S0_RETURN1_FULL_SUITE.log`; crash `:1371`, racy test `:4580`, unchanged test `:4594`, последняя completion-строка `:4661`) |
+| guarded force-unity | `Result: Succeeded` (`S0_RETURN1_FORCE_UNITY.log:27`) |
+| `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | `BUILD SUCCESSFUL` (`S0_RETURN1_STRICT_INCLUDES.log:226`), package `E:\MimirComposite_S0_Return1_Strict_20260902` |
+| `git diff --check` | PASS |
+| `python tools/check_normative_docs.py` | `normative docs: OK` |
 
 ## 7. OPEN-вопросы
 
-### OPEN-S0-1
-
-- **Контекст:** норма возврата требует всегда хэшировать кандидата, если
-  `now - mtime < 2 s`. Неизменяемый acceptance-тест выполняет cold и unchanged
-  scans подряд без паузы, одновременно требуя `hashed_files == 0`; его
-  `Sleep(0.05)` находится позже. Строгая реализация нормы закономерно даёт
-  `hashed_files == 3`.
-- **Вопрос:** близнец должен обновить red-тест паузой не меньше `RacyWindow`
-  перед unchanged-rescan (сохранив ожидание 0), либо acceptance должен разрешить
-  хэширование fresh unchanged candidates? Без одного из этих нормативных
-  изменений оба требования несовместимы.
-- **Временное fail-closed правило:** сохранить строгий `RacyWindow = 2 s`, не
-  переиспользовать fresh candidates, не ослаблять реализацию ради старого
-  assert'а и не менять тест вне закрытого списка.
-- **Статус:** **OPEN; блокирует acceptance и обновление PR как готового к review.**
+- **OPEN-S0-1 — закрыт близнецом, коммит `5143510`;** нормативное закрытие
+  `f862acf`. Текущих OPEN-вопросов нет.
 
 ## 8. Трекер
 
