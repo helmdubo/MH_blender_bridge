@@ -207,7 +207,7 @@ bool MHCreateIncrementalSourceAnalysisServices(
         return false;
     }
 
-    if (bRecreated)
+    if (bRecreated || Index->GetGeneration() == 0)
     {
         TArray<FMHGeneratedAssetTagClaim> Claims;
         GatherGeneratedAssetClaims(Claims);
