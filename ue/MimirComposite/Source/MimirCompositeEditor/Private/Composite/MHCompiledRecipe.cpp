@@ -201,6 +201,21 @@ void ParityField(const FString& Where, const TCHAR* Field, const bool bEqual, TA
     if (!bEqual) Out.Add(Where + TEXT(": ") + Field);
 }
 
+/** Graph resources of a selected-dependency list: composites, meshes, profiles, actors. */
+TArray<FString> GraphSelectedDependencies(const TArray<FString>& Selected)
+{
+    TArray<FString> Result;
+    for (const FString& Key : Selected)
+    {
+        if (Key.StartsWith(TEXT("composite:")) || Key.StartsWith(TEXT("static_mesh:")) ||
+            Key.StartsWith(TEXT("placement_profile:")) || Key.StartsWith(TEXT("actor:")))
+        {
+            Result.Add(Key);
+        }
+    }
+    return Result;
+}
+
 } // namespace
 
 bool MHBuildRecipeGraph(const FMHCompiledRecipe& Root, FMHRandomSourceGraph& OutGraph, FString& OutError)
@@ -314,7 +329,12 @@ bool MHCompareRecipeShadowParity(
             ParityField(Where, TEXT("appearance channels"), bChannels, OutMismatches);
         }
     }
-    ParityField(TEXT("plan"), TEXT("selected dependencies"), Reference.SelectedDependencies == Preview.SelectedDependencies, OutMismatches);
+    // OPEN-R2A-1 (owner, 2026-09-02): the preview plane never loads meshes, so
+    // its selected dependencies carry no mesh -> material -> texture expansion.
+    // Parity compares the graph resources only; preview consumers never read
+    // this proof-plane list.
+    ParityField(TEXT("plan"), TEXT("selected graph dependencies"),
+        GraphSelectedDependencies(Reference.SelectedDependencies) == GraphSelectedDependencies(Preview.SelectedDependencies), OutMismatches);
     ParityField(TEXT("appearance"), TEXT("seed"), Reference.Appearance.AppearanceSeed == Preview.Appearance.AppearanceSeed, OutMismatches);
     if (ParityCount(TEXT("appearance draws"), Reference.Appearance.Draws, Preview.Appearance.Draws, OutMismatches))
     {

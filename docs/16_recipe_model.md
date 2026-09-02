@@ -170,7 +170,10 @@ MHRandomStream.cpp:809`) первым действием вызывает `MHBui
 векторах, экстремальных/малых весах, глубокой вложенности, non-uniform scale,
 отрицательных вращениях, граничных RawU32 сравниваются decisions, leaves,
 матрицы, appearance-каналы, selected dependencies между reference-обёрткой и
-preview-путём. Расхождение = red.
+preview-путём. Расхождение = red. Selected dependencies сравниваются по ресурсам
+графа (composite / static_mesh / placement_profile / actor): preview-плоскость
+не грузит меши и не знает расширений mesh → material → texture; сам список —
+proof-артефакт, preview его не потребляет (OPEN-R2A-1, закрыт owner 2026-09-02).
 
 ### 2.4 Два уровня admission endpoint'а
 
@@ -464,6 +467,7 @@ R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpo
 | OPEN-R-4 | Ключ дескриптора | `FISMComponentDescriptor` + `AppearanceCustomDataBaseIndex`; кастомный ключ — только по доказанному тестом случаю | открыт |
 | OPEN-R-5 | Домен пула для World Partition / Data Layers | пул на `ULevel`; WP-cell и Data Layers — после полевого теста R5, отдельный срез | открыт |
 | OPEN-R-6 | Resolver и хэши замыкания | Фазовое разделение обязательно (проверено по коду `MHRandomStream.cpp:809`). | закрыт 2026-09-02 (D0b П1) |
+| OPEN-R2A-1 | `SelectedDependencies` в preview-плане | preview не использует поле (proof-артефакт); shadow parity сравнивает его только по ресурсам графа (composite / static_mesh / placement_profile / actor), без mesh → material → texture | закрыт 2026-09-02 (owner) |
 | OPEN-R-7 | Duplicate claim в preview | Preview-плоскость не делает tag-запросов Asset Registry, в том числе для обнаружения duplicate-claim. При двух ассетах на один logical name preview резолвит детерминированный путь (§2.2); дубликат обнаруживают source-плоскость (`duplicate_claim` в индексе, warning в Message Log) и build preflight (`MH_E_AMBIGUOUS_GENERATED_ASSET`, error). Red-assert R0a возвращается к `asset_registry_tag_queries == 0`. Тест `Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak` мигрирует в preflight-тест в R2c; до R2c остаётся и помечен `@migrate:R2c`. | закрыт 2026-09-02 (D0b П2) |
 
 | OPEN-S-1 | Источник slot-рёбер mesh→material без парса FBX в скане (S1) | **закрыт 2026-09-02, вариант c (owner):** S0 достаточен — FBX парсится только для новых/изменённых по `(size, mtime)` файлов; S1 закрыт без кода; холодный скан портфолио измеряется полевым протоколом M0 §6 | закрыт |
