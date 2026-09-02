@@ -483,9 +483,9 @@ void PlanViewWaitSelectedMeshes(const TMap<FMHResourceKey, UStaticMesh*>& Select
     TArray<UStaticMesh*> Compiling;
     for (const TPair<FMHResourceKey, UStaticMesh*>& Pair : SelectedMeshes)
     {
-        MHRecordMapLoadWaitedMesh(Pair.Key);
         if (Pair.Value != nullptr && Pair.Value->IsCompiling())
         {
+            MHRecordMapLoadWaitedMesh(Pair.Key);
             Compiling.Add(Pair.Value);
         }
     }
