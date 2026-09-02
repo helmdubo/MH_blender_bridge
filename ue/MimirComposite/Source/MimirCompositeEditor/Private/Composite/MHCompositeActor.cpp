@@ -266,9 +266,17 @@ AMHCompositeActor::ResolvePlanFromCompactState(
     OutError.Reset();
     if (!CompactResolvedState.IsSet()) return nullptr;
     TSharedRef<FMHResolvedCompositePlan> Plan = MakeShared<FMHResolvedCompositePlan>();
-    if (!MHResolveCompositePlan(Graph, CompactResolvedState->Seed,
-            CompactResolvedState->AppearanceSeed, *Plan, OutError) ||
-        !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), OutError))
+    bool bResolved = false;
+    {
+        // R2b-2 instrumentation: this lazy re-resolve is a full Layout +
+        // Appearance + Proof pass and runs on every basis update. It is
+        // counted under the same stage as the initial resolve so the
+        // "move runs no layout" gate can observe it.
+        FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
+        bResolved = MHResolveCompositePlan(Graph, CompactResolvedState->Seed,
+            CompactResolvedState->AppearanceSeed, *Plan, OutError);
+    }
+    if (!bResolved || !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), OutError))
         return nullptr;
     if (Plan->ResolvedSignature != CompactResolvedState->ResolvedSignature ||
         Plan->Appearance.AppearanceSignature != CompactResolvedState->AppearanceSignature ||
