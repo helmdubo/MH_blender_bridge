@@ -769,6 +769,24 @@ public:
     TSet<FMHResourceKey> PendingOrphanRebindDivergences;
 
 private:
+    FString CanonicalSourceRootIdentity() const
+    {
+        FString Result = IFileManager::Get().GetFilenameOnDisk(*SourceRoot);
+        if (Result.IsEmpty())
+        {
+            Result = SourceRoot;
+        }
+        Result = FPaths::ConvertRelativePathToFull(Result);
+        FPaths::NormalizeFilename(Result);
+        FPaths::RemoveDuplicateSlashes(Result);
+        if (!FPaths::CollapseRelativeDirectories(Result))
+        {
+            return FString();
+        }
+        FPaths::NormalizeDirectoryName(Result);
+        return Result;
+    }
+
     bool EnsureOpen(FString& OutError) const
     {
         if (IsOpen())
@@ -830,6 +848,19 @@ private:
             {
                 return false;
             }
+        }
+        const FString SourceRootIdentity = CanonicalSourceRootIdentity();
+        FSQLitePreparedStatement SourceRootStatement = Database->PrepareStatement(
+            TEXT("INSERT INTO Meta(key, value) VALUES('source_root', ?1);"));
+        if (SourceRootIdentity.IsEmpty() ||
+            !SourceRootStatement.IsValid() ||
+            !SourceRootStatement.SetBindingValueByIndex(1, SourceRootIdentity) ||
+            !SourceRootStatement.Execute())
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_SOURCE_INDEX_INVALID: cannot persist source_root identity: %s"),
+                *Database->GetLastError());
+            return false;
         }
         return true;
     }
@@ -1020,6 +1051,7 @@ private:
 
         FString Tag;
         FString GenerationText;
+        FString StoredSourceRoot;
         FSQLitePreparedStatement Statement = Database->PrepareStatement(
             TEXT("SELECT key,value FROM Meta ORDER BY key;"));
         if (!Statement.IsValid())
@@ -1038,11 +1070,14 @@ private:
             }
             if (Key == TEXT("tag")) Tag = Value;
             else if (Key == TEXT("generation")) GenerationText = Value;
+            else if (Key == TEXT("source_root")) StoredSourceRoot = Value;
             else return false;
             ++Count;
         }
         int64 ParsedGeneration = 0;
-        if (Count != 2 || Tag != ProjectIndexTag ||
+        const FString SourceRootIdentity = CanonicalSourceRootIdentity();
+        if (Count != 3 || Tag != ProjectIndexTag || SourceRootIdentity.IsEmpty() ||
+            StoredSourceRoot != SourceRootIdentity ||
             !LexTryParseString(ParsedGeneration, *GenerationText) || ParsedGeneration < 0)
         {
             return false;
