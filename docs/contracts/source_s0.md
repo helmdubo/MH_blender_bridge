@@ -17,7 +17,21 @@
 `C.hashed_files == 1`, нормализованный дамп индекса после B и C равен дампу
 свежей БД после полного пересканирования (существующий acceptance «удаление
 .sqlite → идентичный индекс», 10 §3), resolver outcomes по каждому ключу
-совпадают. RED-лог: `...\S0_RED_TEST.log`.
+совпадают.
+
+RED-коммит `46f7187`; лог `E:\MimirComposite_R_M0_20260902\Saved\Logs\S0_RED_TEST.log`,
+строки 1083–1095 (проверки идентичности проекции и resolver outcomes на этом
+коммите **проходят** — падают только три инкрементальных assert'а):
+
+```text
+Result={Fail} Name={IncrementalScanSkipsUnchangedHashes}
+cold: enumerated_files=3 scan_passes=2 hashed_files=6
+unchanged: enumerated_files=3 scan_passes=2 hashed_files=6
+Expected 'unchanged rescan is one snapshot pass' to be 1, but it was 2.
+Expected 'unchanged rescan hashes nothing' to be 0, but it was 6.
+changed: enumerated_files=3 scan_passes=2 hashed_files=6
+Expected 'changed rescan hashes exactly the changed payload' to be 1, but it was 6.
+```
 
 ## Задача
 
