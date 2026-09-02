@@ -161,7 +161,8 @@ def check_removed_entities() -> list[str]:
     # holds dated research and the external audit (evidence, not normative).
     for p in active_docs():
         r = rel(p)
-        if r == "KICKOFF_PROMPT.md" or r.startswith("docs/reference_notes/"):
+        if r == "KICKOFF_PROMPT.md" or r.startswith("docs/reference_notes/") or r.startswith(CONTRACTS_PREFIX):
+            # Executor contracts, like the kickoff, name the entities a slice deletes.
             continue
         lines = read_text(p).splitlines()
         is_recipe_model = p.resolve() == RECIPE_MODEL_PATH.resolve()

@@ -1933,10 +1933,9 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("cold build resolves at least every unique endpoint key"),
         Cold.RegistryLookups >= UniqueEndpointKeys);
-    bPassed &= TestEqual(
-        TEXT("current resolve path queries the Asset Registry by tags once per lookup"),
-        Cold.AssetRegistryTagQueries,
-        Cold.RegistryLookups);
+    // D0b П2 (OPEN-R-7 closed): the preview plane makes no Asset Registry
+    // tag queries; duplicate claims belong to the source and proof planes.
+    bPassed &= TestEqual(TEXT("cold build makes no Asset Registry tag queries"), Cold.AssetRegistryTagQueries, 0ull);
     bPassed &= TestTrue(
         TEXT("cold build admits at least every unique endpoint key"),
         Cold.IdentityAdmissions >= UniqueEndpointKeys);
@@ -1956,10 +1955,7 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("warm build admits fewer endpoints than cold"),
         Warm.IdentityAdmissions < Cold.IdentityAdmissions);
-    bPassed &= TestEqual(
-        TEXT("warm build still queries the Asset Registry once per lookup"),
-        Warm.AssetRegistryTagQueries,
-        Warm.RegistryLookups);
+    bPassed &= TestEqual(TEXT("warm build makes no Asset Registry tag queries"), Warm.AssetRegistryTagQueries, 0ull);
     bPassed &= TestEqual(TEXT("warm build reads no live receipt tags"), Warm.LiveReceiptTagReads, 0ull);
     AddInfo(FString::Printf(
         TEXT("MH_PERF_ENDPOINTS cold: unique_keys=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu; warm: registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu"),
@@ -2069,10 +2065,24 @@ bool FMHPerformanceSelectedMeshWaitTest::RunTest(const FString& Parameters)
     bool bPassed = TestEqual(TEXT("cold build emits one map-load report"), Report.EmittedReports, 1ull);
     bPassed &= TestEqual(TEXT("two mesh options enter the closure"), Report.AllOptionUniqueMeshes, 2ull);
     bPassed &= TestEqual(TEXT("the seed selects one mesh"), Report.SelectedUniqueMeshes, 1ull);
-    bPassed &= TestEqual(TEXT("only the selected mesh reaches the compilation wait"),
-        Report.WaitedMeshes, Report.SelectedUniqueMeshes);
-    bPassed &= TestTrue(TEXT("unselected options never reach the compilation wait"),
-        Report.WaitedMeshes < Report.AllOptionUniqueMeshes);
+    // D0b П6 acceptance: the waited set is exactly the selected meshes that
+    // were compiling, and it never intersects the unselected options. The
+    // all_option/selected ratio above is a receipt metric, not a condition.
+    AddInfo(FString::Printf(TEXT("waited=[%s] selected_compiling=[%s] unselected=[%s]"),
+        *FString::Join(Report.WaitedMeshKeys, TEXT(",")),
+        *FString::Join(Report.SelectedCompilingMeshKeys, TEXT(",")),
+        *FString::Join(Report.UnselectedMeshKeys, TEXT(","))));
+    bPassed &= TestTrue(TEXT("waited_mesh_set == selected_compiling_mesh_set"),
+        Report.WaitedMeshKeys == Report.SelectedCompilingMeshKeys);
+    bool bDisjoint = true;
+    for (const FString& Key : Report.WaitedMeshKeys)
+    {
+        bDisjoint &= !Report.UnselectedMeshKeys.Contains(Key);
+    }
+    bPassed &= TestTrue(TEXT("waited_mesh_set ∩ unselected_mesh_set == ∅"), bDisjoint);
+    bPassed &= TestEqual(TEXT("unselected set is the closure minus the selection"),
+        static_cast<uint64>(Report.UnselectedMeshKeys.Num()),
+        Report.AllOptionUniqueMeshes - Report.SelectedUniqueMeshes);
     return bPassed;
 }
 

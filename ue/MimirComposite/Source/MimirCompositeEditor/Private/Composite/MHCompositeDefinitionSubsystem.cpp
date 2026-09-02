@@ -3,6 +3,7 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Engine/StaticMesh.h"
 #include "Settings/MHCompositeSettings.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
@@ -121,7 +122,8 @@ TSharedPtr<FMHCompositeDefinitionEntry> UMHCompositeDefinitionSubsystem::GetOrBu
             RemoveDefinitionByKey(Key);
             continue;
         }
-        if (!MHValidateAppliedCompositeRoot(Root, OutError))
+        if (!MHAdmitEndpointIdentity(RootKey, Root, OutError) ||
+            UMHEndpointPrototypeRegistry::ResolveEndpoint(RootKey, OutError) != &Root)
         {
             RemoveDefinitionByKey(Key);
             break;

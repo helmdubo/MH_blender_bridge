@@ -11,9 +11,9 @@ class UMHCompositeSettings;
 namespace UE::MimirComposite
 {
 
-/** Cheap live root receipt/uniqueness guard for a shared definition lease. */
-MIMIRCOMPOSITEEDITOR_API bool MHValidateAppliedCompositeRoot(
-    const UMHCompositeAsset& Root,
+/** Proof-plane uniqueness/path check for one generated ResourceKey claim. */
+MIMIRCOMPOSITEEDITOR_API bool MHCheckGeneratedAssetClaims(
+    const FMHResourceKey& Key,
     FString& OutError);
 
 MIMIRCOMPOSITEEDITOR_API bool MHIsSpawnableCompositeActorClass(const UClass* Class);

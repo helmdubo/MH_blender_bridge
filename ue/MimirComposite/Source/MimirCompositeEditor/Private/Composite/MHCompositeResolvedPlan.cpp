@@ -1,5 +1,8 @@
 #include "Composite/MHCompositeResolvedPlan.h"
 
+#include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHCompositePlacementMetrics.h"
@@ -11,6 +14,7 @@
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/Paths.h"
+#include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
@@ -309,21 +313,34 @@ bool MHIsSpawnableCompositeActorClass(const UClass* Class)
         !Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists);
 }
 
-bool MHValidateAppliedCompositeRoot(const UMHCompositeAsset& Root, FString& OutError)
+bool MHCheckGeneratedAssetClaims(const FMHResourceKey& Key, FString& OutError)
 {
     OutError.Reset();
-    const FMHResourceKey Key = AppliedPlanKey(EMHResourceKind::Composite, Root.LogicalName);
-    if (!MHAdmitEndpointIdentity(Key, Root, OutError))
+    const FString CanonicalPath = MHEndpointObjectPath(Key);
+    if (CanonicalPath.IsEmpty())
     {
+        return true;
+    }
+
+    FARFilter Filter;
+    Filter.TagsAndValues.Add(TEXT("MH.LogicalName"), Key.LogicalName);
+    TArray<FAssetData> Claims;
+    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetAssets(Filter, Claims);
+    Claims.RemoveAll([&](const FAssetData& Claim)
+    {
+        FString Kind;
+        FString Name;
+        return !Claim.GetTagValue(TEXT("MH.Kind"), Kind) || Kind != MHResourceKindLabel(Key.Kind) ||
+            !Claim.GetTagValue(TEXT("MH.LogicalName"), Name) || Name != Key.LogicalName;
+    });
+    if (Claims.Num() > 1)
+    {
+        OutError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: ") + Key.ToString();
         return false;
     }
-    if (UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutError) != &Root)
+    if (Claims.Num() == 1 && Claims[0].GetSoftObjectPath().ToString() != CanonicalPath)
     {
-        if (OutError.IsEmpty())
-        {
-            OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: ") + Key.ToString() +
-                TEXT(" does not identify this unique generated asset");
-        }
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: invalid generated path for ") + Key.ToString();
         return false;
     }
     return true;
