@@ -21,7 +21,7 @@
 | S0 | MERGED | #73 (внешний исполнитель, приёмка близнеца; возврат 1 — racy fingerprint); квитанция `docs/receipts/source_s0.md` |
 | S1 | CLOSED (без кода) | OPEN-S-1 закрыт owner'ом, вариант c: S0 достаточен; полевой замер холодного скана — по протоколу M0 §6 |
 | S2 | MERGED | #77 (внешний исполнитель, приёмка близнеца; возвраты OPEN-S2-1/S2-2 закрыты нормативно); квитанция `docs/receipts/source_s2.md`. Линия S закрыта: S0 #73, S1 CLOSED (вариант c), S2 #77 |
-| R2a | NEXT (близнец) | первый шаг — реализация фазового разделения, П1 |
+| R2a | IN PROGRESS (близнец) | разбит на два PR: **R2a-1** фазовое разделение resolver'а (`recipe/r2a-resolver-phases`, квитанция `docs/receipts/recipe_r2a_phases.md`) → IN REVIEW; **R2a-2** `FMHCompiledRecipe` + `RecipeShadowParityTest` — NEXT после merge R2a-1 |
 | R2b | PLANNED | — |
 | R2c | PLANNED | — |
 | R3 | PLANNED | — |
