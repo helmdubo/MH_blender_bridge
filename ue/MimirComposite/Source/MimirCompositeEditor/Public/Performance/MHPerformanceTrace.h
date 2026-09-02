@@ -31,6 +31,10 @@ struct MIMIRCOMPOSITEEDITOR_API FMHMapLoadPerfReport
     uint64 SelectedMeshesCompiling = 0;
     // Unique meshes handed to the compilation wait step (R1: selected only).
     uint64 WaitedMeshes = 0;
+    // Sorted ResourceKey strings for set-based acceptance (D0b П6). Test API only, never logged.
+    TArray<FString> WaitedMeshKeys;
+    TArray<FString> SelectedCompilingMeshKeys;
+    TArray<FString> UnselectedMeshKeys;
     uint64 RegistryLookups = 0;
     uint64 AssetRegistryTagQueries = 0;
     uint64 PackageLoadsSync = 0;
