@@ -1045,6 +1045,27 @@ bool MHResolveCompositePlan(
     return true;
 }
 
+bool MHResolveCompositeLayout(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
+    // R2a red state: the layout stage is not separated yet and still runs the
+    // whole reference resolver, closure included.
+    return MHResolveCompositePlan(Graph, Seed, 0, OutPlan, OutError);
+}
+
+bool MHBuildCompositeProof(
+    const FMHRandomSourceGraph& Graph,
+    FMHResolvedCompositePlan& Plan,
+    FString& OutError)
+{
+    if (!MHBuildRandomSourceClosure(Graph, Plan.Closure, OutError)) return false;
+    MHRefreshResolvedCompositeSignature(Plan);
+    return true;
+}
+
 void MHResolveCompositeAppearance(FMHResolvedCompositePlan& Plan, const int32 AppearanceSeed)
 {
     Plan.Appearance = FMHResolvedCompositeAppearance();
