@@ -267,6 +267,15 @@ bool FMHProjectIndexIncrementalScanTest::RunTest(const FString& Parameters)
         ProjectIndexTestKey(EMHResourceKind::Material, TEXT("wall")),
         ProjectIndexTestKey(EMHResourceKind::Material, TEXT("floor")),
         ProjectIndexTestKey(EMHResourceKind::Texture, TEXT("brick_d"))};
+    // S0 racy-fingerprint rule: candidates younger than the racy window are
+    // always hashed. Age the fixture payloads so the unchanged rescan below
+    // exercises fingerprint reuse deterministically; the later rewrite is
+    // fresh on purpose and must be hashed.
+    const FDateTime AgedStamp = FDateTime::UtcNow() - FTimespan::FromSeconds(10.0);
+    for (const FString& Path : {TexturePath, MaterialPath, SecondMaterialPath})
+    {
+        IFileManager::Get().SetTimeStamp(*Path, AgedStamp);
+    }
 
     const auto Scan = [&](FMHProjectResourceIndex& Index, const TCHAR* Label, FMHStartupScanPerfReport& OutReport)
     {
