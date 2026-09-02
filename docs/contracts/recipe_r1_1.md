@@ -16,8 +16,15 @@
   `all_option/selected` остаётся метрикой, не условием.
 
 RED на `bfb4d4d`: лог
-`E:\MimirComposite_R_M0_20260902\Saved\Logs\R1_1_RED_TEST.log` (строки см. в
-квитанции). Причина: `PlanViewWaitSelectedMeshes` записывает в `waited` каждый
+`E:\MimirComposite_R_M0_20260902\Saved\Logs\R1_1_RED_TEST.log`, строки 1094–1105:
+
+```text
+Test Completed. Result={Fail} Name={SelectedMeshWait}
+waited=[static_mesh:targeted_mesh_…] selected_compiling=[] unselected=[static_mesh:targeted_mesh_…_second]
+Expected 'waited_mesh_set == selected_compiling_mesh_set' to be true.
+```
+
+Причина: `PlanViewWaitSelectedMeshes` записывает в `waited` каждый
 выбранный меш, компилируется он или нет, а во множество `selected_compiling`
 попадают только компилирующиеся.
 
