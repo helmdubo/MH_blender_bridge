@@ -207,6 +207,11 @@ hash при равных `(size, mtime)` даёт derived warning
 `MH_W_SOURCE_INDEX_STALE_FINGERPRINT` и обновляет строку. Perf-квитанция
 фиксирует `scan_passes=1` и `reused_fingerprints`; tag
 `mh.project_index:4`, SQLite schema и hash-формат не меняются.
+Targeted reimport вызывает `UpsertPaths` только для собственного source-пути;
+full scan выполняется только явной командой, при пересоздании файла БД или когда
+индекс ещё не имеет завершённой generation (S2). Индекс привязан к физической
+канонической форме Source Root в `Meta.source_root`; смена корня пересоздаёт файл
+индекса.
 
 **Аддитивная проекция v5.** Файл `.placement` классифицируется кандидатом kind
 `placement_profile`; `.composite` без `"v": 5` имеет `invalid_payload` и не

@@ -1,33 +1,31 @@
 # S2 — targeted reimport без FullScan
 
-Статус: **STOP — OPEN-S2-2**. `OPEN-S2-1` закрыт близнецом в `e1dd4f3`, guard
-`GetGeneration() == 0` реализован, а контрактный red-тест зелёный. Однако
-`Mimir.V4.StaticMesh.TargetedReimport.*` остаются 2/4: generation SQLite не
-различает последовательно создаваемые fixture Source Root. Ветка не переведена
-в `IN REVIEW`, PR не создан.
+Статус: **READY FOR REVIEW**. Targeted reimport обновляет в Project Index только
+собственный source-путь; fallback full scan ограничен пересозданием БД и
+индексом без завершённой generation. Индекс привязан к физическому Source Root,
+поэтому строки разных деревьев больше не смешиваются.
 
 ## 1. База и host
 
-- ветка: `source/s2-targeted-reimport-upsert`; база и red-коммит контракта:
-  `5980d35` (`2978373` — red test);
-- targeted-upsert checkpoint: `2b50105`; guard из ответа близнеца:
-  `2064483` (контрактное закрытие `e1dd4f3`);
+- ветка: `source/s2-targeted-reimport-upsert`; база `origin/main` `dae980b`;
+  исходный red-коммит `2978373`, контрактный checkpoint `5980d35`;
+- реализация targeted upsert: `2b50105`; guard `generation == 0`: `2064483`;
+  привязка БД к Source Root: `637c526`;
 - отдельный worktree:
   `E:\GITHUB\Mimirhead_UE5Exporter\MH_blender_bridge_s2_executor`;
 - собственный module-free host:
   `E:\MimirComposite_S2_External_20260902\HostProject.uproject`; stock UE 5.7.4:
   `D:\PersonalProjects\UE5\UE_5.7`; plugin подключён junction к worktree;
-- основной checkout `main`, audit-host Lead, portfolio-проект owner, Engine,
-  resolver/runtime module, `golden/`, `reference/` и Blender-аддон не
-  изменялись; `main` не пушился.
+- основной checkout `main`, Engine, resolver/runtime module, `golden/`,
+  `reference/` и Blender-аддон не изменялись; `main` не пушился.
 
 ## 2. Red-first
 
-Нетронутый HEAD сначала собран non-unity/no-PCH:
+Первый HEAD среза собран non-unity/no-PCH:
 `E:\MimirComposite_S2_External_20260902\Saved\Logs\S2_BASE_BUILD_NONUNITY.log:139`
-— `Result: Succeeded`. Первым тестовым запуском после сборки был
-`Mimir.V5.Composite.Perf.InstrumentationCounters`:
-`E:\MimirComposite_S2_External_20260902\Saved\Logs\S2_RED_TEST.log`.
+— `Result: Succeeded`. Первым тестом после сборки был
+`Mimir.V5.Composite.Perf.InstrumentationCounters`; лог
+`S2_RED_TEST.log`:
 
 ```text
 1109: MH_PERF_REIMPORT ... full_scan_count_delta=1 incremental_paths=0 analysis_services_ms=100.967 ...
@@ -36,145 +34,113 @@
 1127: Expected 'targeted reimport upserts exactly its own source path' to be 1, but it was 0.
 ```
 
-## 3. Целевой green
-
-`UMHSourceImporter::ReimportStaticMesh` передаёт уже нормализованный и
-проверенный `ReceiptSourcePath` в
-`MHCreateIncrementalSourceAnalysisServices`. `incremental_paths` увеличивается
-только после успешного открытия/обновления индекса и только когда сервис не
-использовал разрешённый fallback full scan при пересоздании БД.
-
-Сборка:
-`E:\MimirComposite_S2_External_20260902\Saved\Logs\S2_GREEN_BUILD_NONUNITY.log:21`
-— `Result: Succeeded`. Green-лог:
-`E:\MimirComposite_S2_External_20260902\Saved\Logs\S2_GREEN_TEST.log`.
+После контрактного red-коммита `24f2c8f` обновлённый HEAD также сначала собран
+non-unity/no-PCH (`S2_RED2_BUILD_NONUNITY.log:19`, `Result: Succeeded`) и первым
+запущен нетронутый тест
+`Mimir.V5.Source.Index.SourceRootMismatchRecreates`; `S2_RED2_TEST.log`:
 
 ```text
-1104: MH_PERF_REIMPORT ... full_scan_count_delta=0 incremental_paths=1 analysis_services_ms=22.200 ...
-1110: Test Completed. Result={Success} Name={InstrumentationCounters}
+1079: Test Completed. Result={Fail} Name={SourceRootMismatchRecreates}
+1081: Expected 'a different Source Root recreates the database' to be true.
+1082: Expected 'recreated index starts at generation zero' to be 0, but it was 1.
 ```
 
-На собственном host `analysis_services_ms` уменьшился с `100.967` до
-`22.200` мс (4.55x). Это фактический результат этого запуска, не полевой
-portfolio-замер.
+## 3. Реализация и целевой green
 
-После ответа близнеца guard собран:
-`S2_POSTOPEN_BUILD_NONUNITY.log:20`, `Result: Succeeded`. Повторный perf-тест
-остаётся зелёным (`S2_POSTOPEN_PERF.log`):
+`UMHSourceImporter::ReimportStaticMesh` передаёт свой нормализованный
+`ReceiptSourcePath` в `MHCreateIncrementalSourceAnalysisServices` и учитывает
+`incremental_paths=1` только для реально выполненного targeted upsert. Сервис
+делает full scan при `bRecreated || Index->GetGeneration() == 0`.
+
+`FMHProjectResourceIndex::Open` записывает в новую БД `Meta.source_root` в
+физической канонической форме. Отсутствующий ключ старой БД или несовпадение с
+текущим Source Root проваливает существующую проверку Meta и ведёт по прежнему
+пути удаления/создания с `bOutRecreated=true`. Таблицы, tag
+`mh.project_index:4`, hash-домен, normalized dump и `ScanFullSnapshot` не
+менялись; миграции нет.
+
+Финальная non-unity/no-PCH сборка:
+`S2_GREEN2_BUILD_NONUNITY.log:19` — `Result: Succeeded`. Новый тест зелёный:
 
 ```text
-1104: MH_PERF_REIMPORT ... full_scan_count_delta=0 incremental_paths=1 analysis_services_ms=22.909 ...
-1110: Test Completed. Result={Success} Name={InstrumentationCounters}
+S2_GREEN2_TEST.log:1080: Test Completed. Result={Success} Name={SourceRootMismatchRecreates}
 ```
 
-## 4. Регрессия существующих targeted-тестов
-
-После реализации отдельный запуск
-`Automation RunTests Mimir.V4.StaticMesh.TargetedReimport` дал 2 Success и
-2 Fail:
-`E:\MimirComposite_S2_External_20260902\Saved\Logs\S2_TARGETED_REIMPORT.log`.
+Perf-тест после первой targeted-реализации зафиксировал:
 
 ```text
-1088: Test Completed. Result={Success} Name={Admission}
-1105: MH_E_UNRESOLVED_MATERIAL_REFERENCE ... no source payload for material:targeted_mat_...
-1110: Test Completed. Result={Fail} Name={ForceAndNotify}
-1154: Test Completed. Result={Success} Name={MissingSourceDoesNotMutate}
-1175: MH_E_UNRESOLVED_MATERIAL_REFERENCE ... no source payload for material:targeted_mat_...
-1179: Test Completed. Result={Fail} Name={SequentialMultiSelection}
+S2_GREEN_TEST.log:1104: MH_PERF_REIMPORT ... full_scan_count_delta=0 incremental_paths=1 analysis_services_ms=22.200 ...
+S2_GREEN_TEST.log:1110: Test Completed. Result={Success} Name={InstrumentationCounters}
 ```
 
-Контрольный прогон на том же host с исходным `ReimportStaticMesh` из
-`5980d35` (после успешной пересборки
-`S2_BASELINE_RECHECK_BUILD.log:19`) подтверждает, что это регрессия S2, а не
-флап: `S2_TARGETED_REIMPORT_BASELINE.log:1088,1128,1149,1187` — **4/4
-Success**.
+На собственном host первый сопоставимый red/green изменился с `100.967` до
+`22.200` мс (4.55x); контрактный red близнеца — `96.610` мс. После финальной
+root-binding реализации отдельный прогон остаётся функционально зелёным:
+`S2_GREEN2_PERF.log:1105,1111` — `full_scan_count_delta=0`,
+`incremental_paths=1`, `analysis_services_ms=31.229`, `Result={Success}`.
+Значения времени — отдельные локальные прогоны, не полевой portfolio-замер.
 
-Причина: fixture создаёт `.material`, managed material и mesh прямым вызовом
-импортёра, но не проецирует source tree в Project Index. При валидной
-существующей SQLite `bUsedFullScan == false`; upsert только собственного FBX
-добавляет mesh-candidate и его slot-edge, однако material-candidate в индексе
-отсутствует. Resolver поэтому корректно блокирует импорт. Прежний full scan
-находил оба payload и скрывал эту предпосылку fixture.
+## 4. Возвраты и закрытые OPEN
 
-### Возврат 2: guard generation==0 недостаточен
+### OPEN-S2-1 — закрыт близнецом
 
-`OPEN-S2-1` закрыт близнецом в `e1dd4f3`: incremental service теперь делает
-full scan при `bRecreated || Index->GetGeneration() == 0`. На уже
-использовавшейся БД результат не изменился:
-`S2_POSTOPEN_TARGETED.log:1088,1110,1154,1179` — 2/4.
+Закрыт 2026-09-02 контрактным коммитом `e1dd4f3`: full scan разрешён при
+`bRecreated || GetGeneration() == 0`, потому что прямые fixture-импорты могут
+открыть индекс без завершённого full scan. Реализация — `2064483`; этот guard
+сохранён вторым рубежом после root identity.
 
-Для исключения прежнего состояния `ProjectIndex.sqlite` был перемещён в
-recoverable backup внутри собственного host, после чего тест повторён на новой
-БД. `S2_POSTOPEN_TARGETED_FRESHDB.log:1088,1110,1154,1179` также дал 2/4.
-Лог объясняет почему: тест `Admission` первым прямым импортом вызывает
-`MHRefreshGeneratedAssetProjection`; на новой БД этот путь выполняет full scan
-(`ProjectIndex.sqlite` открыт в строке 1086) и оставляет generation ненулевой.
-Fixture закрывает индекс, но не удаляет SQLite. Следующий `ForceAndNotify`
-создаёт другой Source Root, открывает ту же БД (строка 1104), видит generation
-от предыдущего root и не попадает в guard; материал нового root остаётся
-неиндексированным (строка 1105). То же повторяется для
-`SequentialMultiSelection`.
+### OPEN-S2-2 — закрыт близнецом
+
+Закрыт 2026-09-02 red-коммитом `24f2c8f` и нормативным коммитом `93b159c`:
+Project Index принадлежит одному физическому Source Root через
+`Meta.source_root`; отсутствующий или другой root пересоздаёт файл. Реализация
+— `637c526`. Нетронутый red-тест теперь зелёный, а четыре targeted-теста
+проходят и на переиспользованной, и на свежей БД.
 
 ## 5. Гейты
 
 | Gate | Результат |
 |---|---|
-| non-unity/no-PCH, RED HEAD | PASS — `S2_BASE_BUILD_NONUNITY.log:139`, `Result: Succeeded` |
+| non-unity/no-PCH, исходный RED HEAD | PASS — `S2_BASE_BUILD_NONUNITY.log:139`, `Result: Succeeded` |
 | `Perf.InstrumentationCounters`, RED | ожидаемый FAIL — `S2_RED_TEST.log:1115,1126-1127` |
-| non-unity/no-PCH после реализации | PASS — `S2_GREEN_BUILD_NONUNITY.log:21`, `Result: Succeeded` |
-| `Perf.InstrumentationCounters`, GREEN | PASS — `S2_GREEN_TEST.log:1104,1110` |
-| `Mimir.V4.StaticMesh.TargetedReimport.*` | **FAIL / STOP** — 2/4 Success; `S2_TARGETED_REIMPORT.log:1088,1110,1154,1179` |
-| baseline тех же четырёх тестов на `5980d35` | PASS — 4/4 Success; `S2_TARGETED_REIMPORT_BASELINE.log:1088,1128,1149,1187` |
-| non-unity/no-PCH после guard `generation==0` | PASS — `S2_POSTOPEN_BUILD_NONUNITY.log:20`, `Result: Succeeded` |
-| `Perf.InstrumentationCounters` после guard | PASS — `S2_POSTOPEN_PERF.log:1104,1110` |
-| `TargetedReimport.*` после guard, reused DB | **FAIL / STOP** — 2/4; `S2_POSTOPEN_TARGETED.log:1088,1110,1154,1179` |
-| `TargetedReimport.*` после guard, новая DB | **FAIL / STOP** — 2/4; `S2_POSTOPEN_TARGETED_FRESHDB.log:1088,1110,1154,1179` |
-| полный NullRHI `Automation RunTests Mimir` | NOT RUN — остановка по `OPEN-S2-2` |
-| guarded force-unity | NOT RUN — остановка по `OPEN-S2-2` |
-| `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | NOT RUN — остановка по `OPEN-S2-2` |
+| non-unity/no-PCH, OPEN-S2-2 RED HEAD | PASS — `S2_RED2_BUILD_NONUNITY.log:19`, `Result: Succeeded` |
+| `SourceRootMismatchRecreates`, RED | ожидаемый FAIL — `S2_RED2_TEST.log:1079,1081-1082` |
+| финальный non-unity/no-PCH | PASS — `S2_GREEN2_BUILD_NONUNITY.log:19`, `Result: Succeeded` |
+| `SourceRootMismatchRecreates`, GREEN | PASS — `S2_GREEN2_TEST.log:1080` |
+| `Perf.InstrumentationCounters` | PASS — `S2_GREEN2_PERF.log:1105,1111`; `full_scan_count_delta=0`, `incremental_paths=1` |
+| `Mimir.V4.StaticMesh.TargetedReimport.*`, reused DB | PASS — 4/4; `S2_GREEN2_TARGETED_REUSED.log:1089,1128,1148,1187` |
+| `Mimir.V4.StaticMesh.TargetedReimport.*`, fresh DB | PASS — 4/4; `S2_GREEN2_TARGETED_FRESH.log:1088,1127,1147,1186` |
+| `Mimir.V4.ProjectIndex.*` | PASS — 12/12; `S2_GREEN2_PROJECTINDEX.log:1088-1175` |
+| полный NullRHI `Automation RunTests Mimir` | PASS — **179/179 Success**, 0 failed; `S2_GREEN2_FULL.log:1287-4729`; ключевые строки `3489,3987,4665`, generic-host guard `NOT RUN` = 17 |
+| guarded force-unity | PASS — 14/14; `S2_GREEN2_FORCEUNITY.log:25-31`, `Result: Succeeded` |
+| `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | PASS — `S2_GREEN2_STRICT.log:226,228`, `BUILD SUCCESSFUL`, ExitCode 0; пакет `E:\MimirComposite_S2_Strict_20260902` |
 | `git diff --check` | PASS |
 | `python tools/check_normative_docs.py` | PASS — `normative docs: OK` |
 
 ## 6. Изменённые файлы
 
-Ровно файлы из закрытого списка контракта:
+Изменения исполнителя — ровно разрешённые контрактом файлы:
 
-- `Private/Source/MHSourceImporter.cpp` — только `ReimportStaticMesh`;
-- `Private/Source/MHSourceComposition.cpp` — только контрактный guard в
-  `MHCreateIncrementalSourceAnalysisServices`;
-- `docs/receipts/source_s2.md` — эта STOP-квитанция.
+- `ue/MimirComposite/Source/MimirCompositeEditor/Private/Source/MHSourceImporter.cpp`
+  — targeted `ReimportStaticMesh`;
+- `ue/MimirComposite/Source/MimirCompositeEditor/Private/Source/MHSourceComposition.cpp`
+  — guard пересозданной/нулевой generation;
+- `ue/MimirComposite/Source/MimirCompositeEditor/Private/Index/MHProjectResourceIndex.cpp`
+  — только создание/чтение `Meta.source_root` и физическая канонизация для
+  `Open`;
+- `docs/10_source_protocol_v5_plan.md` — две нормативные фразы S2 в §3;
+- `docs/receipts/source_s2.md` — эта квитанция;
+- `docs/RECIPE_EXECUTION_STATUS.md` — строка S2 → `IN REVIEW`.
 
-`MHStaticMeshImporterTest.cpp`, `MHPerformanceTrace.*`, другие production-файлы
-и нормативные документы не изменялись. Удалённых тестов нет.
+Red-тесты `MHStaticMeshImporterTest.cpp` и `MHProjectResourceIndexTest.cpp`
+добавлены близнецом до реализации и исполнителем не менялись. Удалённых тестов
+нет.
 
 ## 7. OPEN-вопросы
 
-### OPEN-S2-1 — закрыт близнецом
-
-Закрыт 2026-09-02 контрактным коммитом `e1dd4f3`: full scan при
-`bRecreated || GetGeneration() == 0`. Реализация — `2064483`. Проверка выявила
-отдельный конфликт ниже; решение `OPEN-S2-1` не переинтерпретируется.
-
-### OPEN-S2-2 — generation не привязана к Source Root
-
-- **Контекст:** после первого полного скана generation остаётся ненулевой в
-  общей `Saved/MimirBridge/ProjectIndex.sqlite`. Следующая fixture меняет
-  Source Root, но `MHRefreshGeneratedAssetProjection` открывает ту же валидную
-  БД и делает только `ReplaceGeneratedAssets`; incremental service видит
-  `GetGeneration() > 0` и upsert одного FBX, хотя текущий root никогда не был
-  просканирован. Это воспроизведено и на новой БД, без изменения тестов.
-- **Вопрос:** каким нормативным способом отличать «generation относится к
-  текущему Source Root» без запрещённого изменения schema/index format:
-  близнец расширяет контракт на root-aware lifetime/guard в composition layer,
-  либо предоставляет другое согласованное правило и закрытый список?
-- **Временное fail-closed правило:** тесты не менять; дополнительные source
-  paths не выводить из живых UObject/receipt; новый root-aware механизм не
-  изобретать;
-  полный suite и последующие build-гейты считать не пройденными; S2 не
-  переводить в `IN REVIEW`, PR не открывать.
-- **Статус:** **OPEN — нужен ответ владельца/близнеца контракта.**
+Нет. `OPEN-S2-1` и `OPEN-S2-2` закрыты близнецом и реализованы без
+переинтерпретации контрактов.
 
 ## 8. Строка трекера
 
-Не изменена: `S2 | READY`. Переход в `IN REVIEW` запрещён до закрытия
-`OPEN-S2-2` и зелёного `TargetedReimport.*`/полного suite.
+`S2 | IN REVIEW | targeted reimport без FullScan`.
