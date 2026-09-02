@@ -1940,10 +1940,8 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("cold build admits at least every unique endpoint key"),
         Cold.IdentityAdmissions >= UniqueEndpointKeys);
-    bPassed &= TestEqual(
-        TEXT("current admission reads live receipt tags once per admission"),
-        Cold.LiveReceiptTagReads,
-        Cold.IdentityAdmissions);
+    // R0a: identity admission reads the embedded receipt, never live tags.
+    bPassed &= TestEqual(TEXT("admission reads no live receipt tags"), Cold.LiveReceiptTagReads, 0ull);
     bPassed &= TestTrue(
         TEXT("sync package loads never exceed lookups"),
         Cold.PackageLoadsSync <= Cold.RegistryLookups);
@@ -1962,6 +1960,7 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
         TEXT("warm build still queries the Asset Registry once per lookup"),
         Warm.AssetRegistryTagQueries,
         Warm.RegistryLookups);
+    bPassed &= TestEqual(TEXT("warm build reads no live receipt tags"), Warm.LiveReceiptTagReads, 0ull);
     AddInfo(FString::Printf(
         TEXT("MH_PERF_ENDPOINTS cold: unique_keys=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu; warm: registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu"),
         UniqueEndpointKeys,

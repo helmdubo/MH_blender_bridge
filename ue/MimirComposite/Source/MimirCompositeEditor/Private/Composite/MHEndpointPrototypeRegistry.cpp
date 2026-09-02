@@ -165,15 +165,19 @@ UMHEndpointPrototypeRegistry* UMHEndpointPrototypeRegistry::Get()
 
 const FMHEndpointPrototype& UMHEndpointPrototypeRegistry::Resolve(const FMHResourceKey& Key)
 {
+    // The definition endpoint metrics keep their S6.5 meaning: leaf (mesh)
+    // endpoints only. Composite roots are prototypes too, but the M0
+    // registry counters, not these, measure them.
+    const bool bLeafEndpoint = Key.Kind == EMHResourceKind::StaticMesh;
     FMHEndpointPrototype& Prototype = Prototypes.FindOrAdd(Key);
     if (Prototype.State == EMHEndpointState::Ready)
     {
         if (Prototype.Object.IsValid())
         {
-            MHRecordDefinitionEndpointHit();
+            if (bLeafEndpoint) MHRecordDefinitionEndpointHit();
             return Prototype;
         }
-        MHRecordDefinitionDeadEndpointReload();
+        if (bLeafEndpoint) MHRecordDefinitionDeadEndpointReload();
     }
     // Unresolved, Invalid and dead prototypes re-admit: an invalid key never
     // becomes sticky, so an in-memory repair heals on the next resolve.
@@ -245,7 +249,7 @@ void UMHEndpointPrototypeRegistry::OnAssetsChanged(TConstArrayView<FAssetData> A
 void UMHEndpointPrototypeRegistry::Admit(const FMHResourceKey& Key, FMHEndpointPrototype& Prototype)
 {
     MHRecordEndpointRegistryLookup();
-    MHRecordDefinitionEndpointResolve();
+    if (Key.Kind == EMHResourceKind::StaticMesh) MHRecordDefinitionEndpointResolve();
     Prototype.Object.Reset();
     Prototype.State = EMHEndpointState::Invalid;
     Prototype.AdmissionError.Reset();
@@ -306,5 +310,5 @@ void UMHEndpointPrototypeRegistry::Admit(const FMHResourceKey& Key, FMHEndpointP
         return;
     }
     Prototype.State = EMHEndpointState::Ready;
-    MHRecordDefinitionEndpointStore();
+    if (Key.Kind == EMHResourceKind::StaticMesh) MHRecordDefinitionEndpointStore();
 }
