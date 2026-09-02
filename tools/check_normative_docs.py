@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 INDEX_PATH = REPO_ROOT / "docs" / "NORMATIVE_INDEX.md"
 RECIPE_MODEL_PATH = REPO_ROOT / "docs" / "16_recipe_model.md"
 EVIDENCE_PREFIX = "docs/reference_notes/evidence/"
+CONTRACTS_PREFIX = "docs/contracts/"
 
 
 def read_text(path: Path) -> str:
@@ -52,10 +53,14 @@ def normative_paths(index_text: str) -> list[str]:
 def check_index_coverage(index_text: str) -> list[str]:
     violations = []
     has_evidence_mention = EVIDENCE_PREFIX in index_text
+    has_contracts_mention = CONTRACTS_PREFIX in index_text
     for p in active_docs():
         r = rel(p)
-        if r.startswith(EVIDENCE_PREFIX):
-            if not has_evidence_mention:
+        # Directory-level coverage: evidence bundles and per-slice executor
+        # contracts are covered when the index names their directory.
+        if r.startswith(EVIDENCE_PREFIX) or r.startswith(CONTRACTS_PREFIX):
+            covered = has_contracts_mention if r.startswith(CONTRACTS_PREFIX) else has_evidence_mention
+            if not covered:
                 violations.append(f"VIOLATION: {r} not covered by docs/NORMATIVE_INDEX.md")
             continue
         if r not in index_text:
