@@ -107,3 +107,7 @@ normative docs: OK
 
 - `grep -rIn "PlacementInterfaceHash" README.md KICKOFF_PROMPT.md docs --exclude-dir=archive --exclude-dir=receipts --exclude-dir=reference_notes | grep -v "16_recipe_model.md"` → 0 строк.
 - `grep -n "Первый шаг R2a — \*\*проверить" KICKOFF_PROMPT.md docs/16_recipe_model.md` → 0 строк (формулировка заменена П1 в обоих документах).
+
+## Ревью близнеца
+
+Diff проверен построчно по П1–П12; дополнительно приведены к П11 описания docs/16 в `README.md` и `docs/NORMATIVE_INDEX.md` («Status PROPOSED до R2b» → «v2.1: rollout TRANSITIONAL, cutover R2b»). Ссылки KICKOFF §5/§8 на `Status: PROPOSED` описывают acceptance исторического среза D0a и не менялись.

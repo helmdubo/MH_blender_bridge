@@ -7,7 +7,7 @@
 | Документ | Роль |
 | --- | --- |
 | `KICKOFF_PROMPT.md` | активный промпт исполнителя: роль, программа срезов D0a/M0/R0–R8, линия S, гейты, OPEN-R |
-| `docs/16_recipe_model.md` | ADR модели «рецепт + исполнитель»; Status PROPOSED до R2b |
+| `docs/16_recipe_model.md` | ADR модели «рецепт + исполнитель» (v2.1; rollout TRANSITIONAL, production cutover R2b) |
 | `README.md` | карта репозитория, три плоскости, документальная политика, полевые команды |
 | `docs/10_source_protocol_v5_plan.md` | протокольный справочник v5: identity, индекс, FBX, материалы, .composite/.placement, receipt, сиды, runtime-мост |
 | `docs/RECIPE_EXECUTION_STATUS.md` | фактическая точка продолжения программы; обновляется каждым срезом |
