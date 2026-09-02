@@ -104,3 +104,40 @@ upsert одного FBX упирается в неиндексированный
   с `analysis_services_ms` до/после (RED 96.6 мс → GREEN 22.2 мс по вашему логу).
 
 OPEN-S2-1: закрыт.
+
+
+## Ответ на OPEN-S2-2 (близнец, 2026-09-02): индекс привязан к Source Root
+
+Находка исполнителя верна и важнее фикстур: `ProjectIndex.sqlite` не хранит
+identity своего Source Root, поэтому при смене корня (в тестах — каждая
+фикстура, в редакторе — правка `Project Settings → Source Root`) строки разных
+деревьев молча смешиваются, а guard OPEN-S2-1 по `generation` не срабатывает.
+По 10 §3 «коррупция или любая аномалия при открытии → файл удаляется и индекс
+перестраивается полностью»; смена Source Root — такая аномалия.
+
+**Норма.** `FMHProjectResourceIndex::Open` записывает в `Meta` ключ
+`source_root` = физическая каноническая форма корня (10 §13.7, та же
+канонизация, что у reader paths) при создании файла и проверяет его при
+открытии: ключ отсутствует (старые файлы) или отличается → recreate
+(`bOutRecreated = true`, дальше — существующий full scan при пересоздании).
+Таблицы, тег `mh.project_index:4`, hash-домен не меняются: `Meta` — key/value,
+новый ключ — метаданные файла, не формат строк; старый `.sqlite` пересоздаётся
+один раз, миграции нет (10 §3).
+
+**Red-тест уже в ветке** (`Mimir.V5.Source.Index.SourceRootMismatchRecreates`,
+коммит близнеца `24f2c8f`; RED-лог `E:\MimirComposite_R_M0_20260902\Saved\Logs\S2_RED2_TEST.log`, строки 1079–1082: `Result={Fail} Name={SourceRootMismatchRecreates}`, `Expected 'a different Source Root recreates the database' to be true`, `Expected 'recreated index starts at generation zero' to be 0, but it was 1`): один `.sqlite`, два корня → при втором
+открытии `bRecreated == true`, `GetGeneration() == 0`, строки первого корня
+недоступны; повторное открытие с тем же корнем — `bRecreated == false`.
+
+**Закрытый список** расширяется на `Private/Index/MHProjectResourceIndex.cpp`
+(только `Open`/создание Meta и чтение Meta; `ScanFullSnapshot` и S0-логику не
+трогать). Guard OPEN-S2-1 (`GetGeneration() == 0`) остаётся как второй
+fail-closed рубеж.
+
+**Acceptance** дополняется: новый тест Success; `TargetedReimport.*` 4/4 на
+переиспользованной и на свежей БД; `Mimir.V4.ProjectIndex.*` без изменений
+(normalized dump не включает `Meta`). В `docs/10` §3 — одно предложение в абзаце
+S0: «индекс привязан к физическому Source Root (`Meta.source_root`); смена корня
+— пересоздание файла (S2)».
+
+OPEN-S2-2: закрыт.
