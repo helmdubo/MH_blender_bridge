@@ -17,7 +17,7 @@
 | R1 | MERGED | #66 (acceptance по формулировке v2; П6 закрывает R1.1) |
 | D0b | MERGED | #67 |
 | R1.1 | MERGED | #69 (внешний исполнитель, приёмка близнеца); квитанция `docs/receipts/recipe_r1_1.md` |
-| R0c | READY (внешний исполнитель, контракт `docs/contracts/recipe_r0c.md`) | убрать из кода валидацию applied-root в горячем пути (docs/16 §7.2, шестая строка removed-entities); снять tag-пробу duplicate-claim из admission реестра **вместе** с миграцией `DuplicateRootClaimBlocksPlanAndBreak` в preflight-тест (§7.5) |
+| R0c | IN REVIEW (внешний исполнитель, контракт `docs/contracts/recipe_r0c.md`) | убрать из кода валидацию applied-root в горячем пути (docs/16 §7.2, шестая строка removed-entities); снять tag-пробу duplicate-claim из admission реестра **вместе** с миграцией `DuplicateRootClaimBlocksPlanAndBreak` в preflight-тест (§7.5) |
 | S0 | READY (внешний исполнитель, контракт `docs/contracts/source_s0.md`) | параллельно, линия S |
 | S1 | PLANNED | — |
 | S2 | PLANNED | — |
