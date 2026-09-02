@@ -1,4 +1,4 @@
-> HISTORY. Не норматив. Модель заменена docs/16_recipe_model.md (2026-09-02).
+> Status: HISTORY · Do not use for implementation · Superseded by docs/16_recipe_model.md
 
 # 12 — Срезы V5-S6.2 и V5-S6.3 (pre-S7)
 

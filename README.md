@@ -1,48 +1,76 @@
+> Status: NORMATIVE · Architecture version: Recipe Model v2 · Supersedes: docs/archive/README_pre_d0.md
+
 # MH_blender_bridge
 
-> **АКТИВНЫЙ НОРМАТИВ — ровно три файла** (ратификация owner 2026-09-02):
-> [`KICKOFF_PROMPT.md`](KICKOFF_PROMPT.md) — роль исполнителя, программа
-> срезов R/S, гейты; [`docs/16_recipe_model.md`](docs/16_recipe_model.md) —
-> модель «рецепт + исполнитель» редакторского слоя UE; этот `README.md` —
-> карта репозитория и полевые команды. Wire-контракты Source Protocol v5
-> (identity, индекс, FBX, материалы, `.composite`/`.placement`, receipt, сиды)
-> — справочник [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md).
-> Всё в `docs/archive/` — история под шапкой `HISTORY`; `docs/receipts/` —
-> история исполнения срезов, квитанция не равна owner acceptance;
-> `docs/reference_notes/` — датированные исследования, не норматив.
+> **АКТИВНЫЙ НОРМАТИВ** (owner, 2026-09-02, после внешнего аудита):
+> [`KICKOFF_PROMPT.md`](KICKOFF_PROMPT.md) v2 — роль исполнителя, программа
+> срезов, гейты; [`docs/16_recipe_model.md`](docs/16_recipe_model.md) — ADR
+> модели «рецепт + исполнитель» (Status PROPOSED до R2b); этот `README.md`;
+> справочник Source Protocol v5 —
+> [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md).
+> Полный список — [`docs/NORMATIVE_INDEX.md`](docs/NORMATIVE_INDEX.md).
+> `docs/archive/` — HISTORY, для реализации не используется;
+> `docs/receipts/` — история исполнения срезов, квитанция не равна owner
+> acceptance и не содержит нормативных требований; `docs/reference_notes/` —
+> исследования и внешний аудит, не норматив.
 
 DCC-driven composite pipeline: Blender (`addon/mh4blend`) публикует чистые
 source-файлы, UE 5.7.4 plugin (`ue/MimirComposite`) импортирует их, размещает
 композиты в уровне и передаёт результат в runtime. Модель размещения
 заимствована у Dagor composit; identity и транспорт заданы Source Protocol v5.
 
-## Модель в одном экране
+## Три плоскости
+
+> Dagor-подобный быстрый preview-исполнитель + Mimir-подобный строгий proof на
+> границах.
+
+| Плоскость | Что делает | Что ей запрещено |
+|---|---|---|
+| **Preview** | компиляция рецепта, выбор по сидам, материализация в пулы, заглушки, async-загрузка | хэши источников, full-closure proof, ожидание компиляции, чтение Asset Registry тегов |
+| **Proof** | full closure, receipt freshness, `ClosureHash`/`ResolvedSignature`, admission runtime-снапшота, build preflight, export | блокировать загрузку карты или preview |
+| **Source** | инкрементальный индекс файлов, targeted reimport, background freshness | парсить FBX в скане, делать FullScan на targeted reimport |
 
 ```text
 Имя файла определяет identity; UUID нет.
 .composite v5: parent-local T/R/S, random-узлы с весами, .placement-профили.
-Seed и AppearanceSeed принадлежат размещению в UE; в Blender сида нет.
-Один mh.random_stream:1 (потоки от пути узла) строит один план резолвера.
+Seed и AppearanceSeed — явные, принадлежат размещению в UE, от позиции не зависят.
+Один mh.random_stream:1 (потоки от пути узла) строит один план reference resolver.
 Рецепт компилируется один раз на ассет; инстанс хранит только
-  (asset, seed, appearanceSeed, transform, nodeOverrides).
-Материализация — чистая функция; листья резолвятся по детерминированному пути,
-  один раз на ключ за сессию; ненайденный лист — заглушка.
-Receipt (провенанс) живёт в UE asset и проверяется только в точках выхода:
-  PreSaveWorld, build preflight, runtime snapshot, export/level operations.
-Реимпорт меша композит не трогает; рецепт пересобирает только свои инстансы.
-Editor preview = Break = PIE = packaged по одному плану.
+  (asset, Seed, AppearanceSeed, transform, [NodeOverrides с R6]).
+Preview: чистая материализация, endpoint по детерминированному пути,
+  identity-admission один раз на ключ, ненайденный лист — заглушка.
+Proof: full closure и SourceHash/AppliedHash только в точках выхода
+  (PreSaveWorld, build preflight, runtime snapshot, export/Break).
+Реимпорт меша с тем же интерфейсом композит не трогает;
+  child-рецепт не перекомпилирует родителей.
+Подписи остаются proof-артефактами и перестают быть состоянием актора.
 ```
 
-## Документы
+## Документы и политика
 
 | Файл | Роль |
 |---|---|
-| `KICKOFF_PROMPT.md` | активный промпт исполнителя: программа R (D0, R0–R7), линия S (S0–S2), гейты, OPEN-правила |
-| `docs/16_recipe_model.md` | норматив модели: слои, протокол обновлений, точки выхода, удалённые термины и греп-гейт, OPEN-R-вопросы, карта документов |
+| `KICKOFF_PROMPT.md` | активный промпт исполнителя: программа D0a → M0 → R0 → R1 → S0–S2 ∥ → R2a → R2b → R2c → R3 → R4 → R5 → R6 → R7 (→ R8), гейты, OPEN-R |
+| `docs/16_recipe_model.md` | ADR модели: плоскости, слои, протокол обновлений, точки выхода, запрещённые утверждения, удалённые сущности кода, OPEN-R-1…6 |
 | `docs/10_source_protocol_v5_plan.md` | протокольный справочник v5 (не меняется программой R) |
-| `docs/reference_notes/` | разбор Dagor composit / dag4blend / корпуса ассетов; улика |
+| `docs/NORMATIVE_INDEX.md` | индекс активных документов; проверяется CI |
+| `docs/reference_notes/` | разбор Dagor composit, внешний аудит `external_audit_recipe_model_20260902.md`, dag4blend, корпус ассетов |
 | `docs/receipts/` | квитанции срезов; полевой протокол замеров — `m0_perf_instrumentation.md` §6 |
-| `docs/archive/` | история v1–v5: планы 00–09, срезы 11–15, ADR, amendments, аудиты, `QUESTIONS.md`, proposals, spikes |
+| `docs/archive/` | HISTORY: планы 00–09, срезы 11–15, ADR, amendments, аудиты, `QUESTIONS.md`, proposals, spikes, README и KICKOFF v1 до D0a |
+
+Документальная политика (KICKOFF §7): проверяется **нормативный статус**, не
+лексика. Active-документ начинается с `Status: NORMATIVE · Architecture
+version: Recipe Model v2 · Supersedes: …`; архивный — `Status: HISTORY · Do
+not use for implementation · Superseded by docs/16_recipe_model.md`.
+Запрещены утверждения «freshness актора определяется подписью», «карта
+обязана построить proof до первого кадра», «реимпорт меша требует rebuild
+актора»; сами термины `ClosureHash`/`ResolvedSignature` разрешены.
+Лексический ноль — только для удалённых сущностей кода (16 §7.2). Гейт
+каждого PR:
+
+```bash
+python tools/check_normative_docs.py
+```
 
 Следующий срез не начинается до owner merge предыдущего. PR мержит только
 owner; Engine и `reference/` не изменяются.
@@ -56,19 +84,17 @@ candidate (PR #30), перф-срезы U0a/U0c/U5/U7 и инструмента�
 (`mh.PerfTrace`, отчёты `MH_PERF_MAPLOAD` / `MH_PERF_STARTUP_SCAN` /
 `MH_PERF_REIMPORT`, PR #60).
 
-Программа Recipe Model (KICKOFF §5) начинается срезом D0 (документы, эта
-редакция) и продолжается C++-срезами R0–R7. До их выполнения код
-редакторского слоя `Composite/` соответствует прежней модели; расхождение
-кода с `docs/16_recipe_model.md` — ожидаемое состояние, закрываемое срезами,
-а не основание восстанавливать старую модель в документах.
+Программа Recipe Model v2 начинается срезом D0a (документы, эта редакция).
+До R2b код редакторского слоя `Composite/` соответствует прежней модели
+размещений; расхождение кода с ADR — ожидаемое переходное состояние.
 
 ## Структура репозитория
 
 ```text
-KICKOFF_PROMPT.md   # активный промпт исполнителя
-docs/               # 10 (протокол), 16 (модель), archive/, receipts/, reference_notes/
+KICKOFF_PROMPT.md   # активный промпт исполнителя (v2)
+docs/               # 10 (протокол), 16 (ADR), NORMATIVE_INDEX, archive/, receipts/, reference_notes/
 reference/          # read-only reference material (dag4blend 2.12.0, патчи, fixtures)
-tools/              # build/verification tooling (addon zip, canonical, parity probes)
+tools/              # build/verification tooling (addon zip, canonical, parity probes, doc CI)
 golden/             # cross-host fixtures и expected reports
 addon/mh4blend/     # Blender Extension
 ue/MimirComposite/  # UE plugin: MimirCompositeRuntime, MimirCompositeEditor, MimirCompositeTests
@@ -116,7 +142,8 @@ python -m pytest tests/ -q
 C++-среза — KICKOFF §9: guarded build, `BuildPlugin -StrictIncludes` без
 unity/PCH, force-unity без adaptive unity, `git diff --check`, полный NullRHI
 `Automation RunTests Mimir` с `-MHGoldenRoot=<repo>/golden` (0 failed),
-red-first логи, `mh.PerfTrace 1` до/после на собственном host исполнителя.
+red-first логи, с R2a — `RecipeShadowParityTest`, `mh.PerfTrace 1` до/после
+на собственном host исполнителя, документальный CI `check_normative_docs.py`.
 
 Automation-тесты `Mimir.*` ищут `golden/` в порядке:
 `-MHGoldenRoot=<repo>/golden` → переменная окружения `MH_GOLDEN_ROOT` →

@@ -1,3 +1,5 @@
+> Status: REFERENCE · External audit of Recipe Model v1 (2026-09-02) · Not normative; its 12 requirements are incorporated into KICKOFF_PROMPT.md v2 and docs/16_recipe_model.md
+
 Итоговая оценка
 
 dagor_composit_research.md — сильное инженерное исследование. Его главная модель подтверждается и исходниками, и официальной документацией Dagor: composite — это редакторский рецепт, а не самостоятельная runtime-сущность; в уровень уходят отдельные листья. 

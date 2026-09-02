@@ -1,4 +1,4 @@
-> HISTORY. Не норматив. Модель заменена docs/16_recipe_model.md (2026-09-02).
+> Status: HISTORY · Do not use for implementation · Superseded by docs/16_recipe_model.md
 
 # dag4blend 2.12.0 → модель для Blender→UE5 composite pipeline
 

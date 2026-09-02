@@ -1,4 +1,4 @@
-> HISTORY. Не норматив. Модель заменена docs/16_recipe_model.md (2026-09-02).
+> Status: HISTORY · Do not use for implementation · Superseded by docs/16_recipe_model.md
 
 # 07 — UE Import Contract for Clean Sources v2 (ACTIVE)
 
