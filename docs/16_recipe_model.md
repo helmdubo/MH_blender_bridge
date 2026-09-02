@@ -369,8 +369,8 @@ MHResolveCompositeDefinitionEndpoint
 
 | Сущность | Что вместо | Удаляет |
 |---|---|---|
-| скан Asset Registry с tag-фильтром на каждый резолв endpoint'а (первая строка блока) | `UMHEndpointPrototypeRegistry`, детерминированный путь | R0 |
-| receipt из шести тегов через `FAssetData(&Object)` на живом объекте (вторая строка) | identity-admission по `UMHStaticMeshImportData`, один раз на ключ | R0 |
+| скан Asset Registry с tag-фильтром на каждый резолв endpoint'а (первая строка блока) | `UMHEndpointPrototypeRegistry`, детерминированный путь | R0a (реализация → фасад), R0b (символ) |
+| receipt из шести тегов через `FAssetData(&Object)` на живом объекте (вторая строка) | identity-admission по `UMHStaticMeshImportData`, один раз на ключ | R0a |
 | ожидание компиляции мешей в горячем пути (третья строка) | R1: ждать только выбранные; R4: async + заглушки | R1/R4 |
 | список зависимостей размещения на акторе (четвёртая строка) | обратный индекс `Dependents` в `FMHCompiledRecipe` | R2b |
 | ключ definition-кэша по root + closure (пятая строка) | ключ рецепта = ассет + `AppliedHash`; вложенные по ссылке | R2a |
@@ -411,6 +411,18 @@ R3 (reconcile по `PlacementInterfaceHash`) → R4 (async endpoint'ы) → R5 (
 | OPEN-R-4 | Ключ дескриптора | `FISMComponentDescriptor` + `AppearanceCustomDataBaseIndex`; кастомный ключ — только по доказанному тестом случаю | открыт |
 | OPEN-R-5 | Домен пула для World Partition / Data Layers | пул на `ULevel`; WP-cell и Data Layers — после полевого теста R5, отдельный срез | открыт |
 | OPEN-R-6 | Resolver и хэши замыкания | проверяется первым шагом R2a; до проверки фазовое разделение §2.3 обязательно | открыт |
+| OPEN-R-7 | Duplicate claim в preview | реестр делает ровно один tag-запрос Asset Registry на admission ключа (не на резолв); AR add/remove того же logical name инвалидирует ключ; red-assert R0a: `asset_registry_tag_queries == uniqueKeys` вместо 0 | открыт (R0a), ответ до R2c |
+
+**OPEN-R-7 — контекст.** Тест
+`Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak`
+закрепляет отказ `RebuildComposite` при двух заявках Asset Registry на один
+ключ (`MH_E_AMBIGUOUS_GENERATED_ASSET`), а KICKOFF §5 R0 требует одновременно
+`GetAssets = 0` в preview и «`AppliedPlanAdmissionTest` остаётся до R2c».
+Обнаружить дубликат без tag-запроса нельзя: индекс (`duplicate_claim`) —
+source-плоскость, preview его не читает. Вопрос owner: живёт ли duplicate
+claim только в proof-плоскости (preflight/snapshot/export + индекс) с
+переносом теста в R2c, или preview сохраняет пробу. До ответа действует
+правило из таблицы; тест не изменён.
 
 Вопрос v1 о судьбе хэша плана резолвера снят: v2 §0 оставляет
 `ClosureHash`/`ResolvedSignature` proof-артефактами (не состоянием актора).

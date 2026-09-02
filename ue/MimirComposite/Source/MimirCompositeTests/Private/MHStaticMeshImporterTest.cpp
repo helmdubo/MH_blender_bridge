@@ -7,6 +7,7 @@
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/StaticMeshComponent.h"
 #include "Diagnostics/MHSourceOperations.h"
 #include "Editor.h"
@@ -1901,6 +1902,15 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
         MHResetEndpointResolveMetrics();
         MHResetDefinitionCacheMetrics();
     };
+    // R0a: endpoints are admitted once per key per session; a cold pass must
+    // also forget the prototypes, otherwise every resolve is a registry hit.
+    const auto InvalidateEndpoints = []()
+    {
+        if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
+        {
+            Registry->InvalidateAll();
+        }
+    };
 
     bool bPassed = true;
     PerfTrace->Set(0, ECVF_SetByCode);
@@ -1914,6 +1924,7 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     PerfTrace->Set(1, ECVF_SetByCode);
     ResetAll();
     InvalidateDefinitions();
+    InvalidateEndpoints();
     const FMHMapLoadPerfReport Cold = BuildActor(*First);
     // Root composite plus every mesh option: the closure resolves all of them.
     const uint64 UniqueEndpointKeys = Cold.AllOptionUniqueMeshes + 1ull;
@@ -1929,10 +1940,8 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(
         TEXT("cold build admits at least every unique endpoint key"),
         Cold.IdentityAdmissions >= UniqueEndpointKeys);
-    bPassed &= TestEqual(
-        TEXT("current admission reads live receipt tags once per admission"),
-        Cold.LiveReceiptTagReads,
-        Cold.IdentityAdmissions);
+    // R0a: identity admission reads the embedded receipt, never live tags.
+    bPassed &= TestEqual(TEXT("admission reads no live receipt tags"), Cold.LiveReceiptTagReads, 0ull);
     bPassed &= TestTrue(
         TEXT("sync package loads never exceed lookups"),
         Cold.PackageLoadsSync <= Cold.RegistryLookups);
@@ -1951,6 +1960,7 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
         TEXT("warm build still queries the Asset Registry once per lookup"),
         Warm.AssetRegistryTagQueries,
         Warm.RegistryLookups);
+    bPassed &= TestEqual(TEXT("warm build reads no live receipt tags"), Warm.LiveReceiptTagReads, 0ull);
     AddInfo(FString::Printf(
         TEXT("MH_PERF_ENDPOINTS cold: unique_keys=%llu registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu; warm: registry_lookups=%llu asset_registry_tag_queries=%llu package_loads_sync=%llu identity_admissions=%llu live_receipt_tag_reads=%llu"),
         UniqueEndpointKeys,

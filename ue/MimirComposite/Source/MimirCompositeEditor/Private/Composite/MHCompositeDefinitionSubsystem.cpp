@@ -3,46 +3,25 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Engine/StaticMesh.h"
 #include "Settings/MHCompositeSettings.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 
 using namespace UE::MimirComposite;
 
-namespace
-{
-bool MatchesDefinitionEndpointIdentity(const FMHResourceKey& Key, const UObject& Object)
-{
-    if (Key.Kind != EMHResourceKind::StaticMesh || !Object.IsA<UStaticMesh>()) return false;
-    const FString ExpectedPath = FString::Printf(
-        TEXT("/Game/MH/Generated/Meshes/%s.%s"), *Key.LogicalName, *Key.LogicalName);
-    return Object.GetPathName() == ExpectedPath;
-}
-} // namespace
 
 UObject* UE::MimirComposite::MHResolveCompositeDefinitionEndpoint(
     FMHCompositeDefinitionEntry& Definition, const FMHResourceKey& Key, FString& OutError)
 {
-    if (TWeakObjectPtr<UObject>* Cached = Definition.Endpoints.Find(Key))
+    // R0a: the session-wide prototype registry is the endpoint cache. The
+    // per-definition Endpoints map is dead and is removed with this symbol in R0b.
+    (void)Definition;
+    if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
     {
-        if (UObject* Object = Cached->Get();
-            Object != nullptr && MatchesDefinitionEndpointIdentity(Key, *Object))
-        {
-            MHRecordDefinitionEndpointHit();
-            return Object;
-        }
-        MHRecordDefinitionDeadEndpointReload();
-        Definition.Endpoints.Remove(Key);
+        return Registry->ResolveObject(Key, OutError);
     }
-
-    MHRecordDefinitionEndpointResolve();
-    UObject* Object = MHLoadAppliedResource(Key, OutError);
-    if (Object != nullptr && MatchesDefinitionEndpointIdentity(Key, *Object))
-    {
-        Definition.Endpoints.Add(Key, Object);
-        MHRecordDefinitionEndpointStore();
-    }
-    return Object;
+    return MHLoadAppliedResource(Key, OutError);
 }
 
 void UMHCompositeDefinitionSubsystem::Deinitialize()
