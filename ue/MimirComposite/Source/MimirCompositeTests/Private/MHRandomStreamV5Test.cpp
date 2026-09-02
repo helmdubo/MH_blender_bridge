@@ -1,15 +1,12 @@
 #include "MHGoldenRoot.h"
 
 #include "Canonical/MHCanonical.h"
-#include "Composite/MHCompositePlanReport.h"
 #include "Dom/JsonObject.h"
 #include "Diagnostics/MHDiagnosticRegistry.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Random/MHRandomStream.h"
-#include "Serialization/JsonSerializer.h"
-#include "Serialization/JsonWriter.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -562,17 +559,26 @@ bool FMHResolverPhasesParityTest::RunTest(const FString& Parameters)
     const TArray<TSharedPtr<FJsonValue>>* Plans = nullptr;
     if (!Root->TryGetArrayField(TEXT("plan_vectors"), Plans) || Plans == nullptr) return false;
 
-    const auto ReportJson = [this](const FMHResolvedCompositePlan& Plan, FString& OutJson)
+    // The signature preimages are the canonical byte form of the whole plan
+    // (seed, closure hash, decisions, leaves; appearance draws), so byte
+    // equality of both preimages plus the three signatures is exact parity.
+    const auto SamePlan = [this](const FString& Label, const FMHResolvedCompositePlan& A, const FMHResolvedCompositePlan& B)
     {
-        TSharedPtr<FJsonObject> Report;
-        FString Error;
-        if (!MHBuildCompositePlanReport(Plan, {}, Report, Error) || !Report.IsValid())
+        bool bSame = TestTrue(*(Label + TEXT(": layout preimage")), A.SignaturePreimage == B.SignaturePreimage);
+        bSame &= TestTrue(*(Label + TEXT(": appearance preimage")), A.Appearance.SignaturePreimage == B.Appearance.SignaturePreimage);
+        bSame &= TestEqual(*(Label + TEXT(": closure hash")), A.Closure.ClosureHash, B.Closure.ClosureHash);
+        bSame &= TestEqual(*(Label + TEXT(": resolved signature")), A.ResolvedSignature, B.ResolvedSignature);
+        bSame &= TestEqual(*(Label + TEXT(": appearance signature")), A.Appearance.AppearanceSignature, B.Appearance.AppearanceSignature);
+        bSame &= TestEqual(*(Label + TEXT(": placement signature")), A.PlacementSignature, B.PlacementSignature);
+        bSame &= TestEqual(*(Label + TEXT(": nodes")), A.Nodes.Num(), B.Nodes.Num());
+        bSame &= TestEqual(*(Label + TEXT(": draws")), A.Draws.Num(), B.Draws.Num());
+        bSame &= TestTrue(*(Label + TEXT(": selected dependencies")), A.SelectedDependencies == B.SelectedDependencies);
+        bSame &= TestEqual(*(Label + TEXT(": leaves")), A.Leaves.Num(), B.Leaves.Num());
+        for (int32 Index = 0; Index < FMath::Min(A.Leaves.Num(), B.Leaves.Num()); ++Index)
         {
-            AddError(TEXT("plan report failed: ") + Error);
-            return false;
+            bSame &= TestTrue(*FString::Printf(TEXT("%s: leaf %d world matrix"), *Label, Index), A.Leaves[Index].WorldMatrix == B.Leaves[Index].WorldMatrix);
         }
-        const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutJson);
-        return FJsonSerializer::Serialize(Report.ToSharedRef(), Writer);
+        return bSame;
     };
 
     FMHRandomSourceGraph HashlessGraph = Graph;
@@ -593,11 +599,7 @@ bool FMHResolverPhasesParityTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(*(Label + TEXT(": layout stage resolves")), MHResolveCompositeLayout(Graph, Seed, Phased, Error));
         MHResolveCompositeAppearance(Phased, Seed);
         bPassed &= TestTrue(*(Label + TEXT(": proof stage builds")), MHBuildCompositeProof(Graph, Phased, Error));
-        FString ReferenceJson;
-        FString PhasedJson;
-        bPassed &= ReportJson(Reference, ReferenceJson) && ReportJson(Phased, PhasedJson);
-        bPassed &= TestEqual(*(Label + TEXT(": phased plan report equals reference")), PhasedJson, ReferenceJson);
-        bPassed &= TestEqual(*(Label + TEXT(": placement signature")), Phased.PlacementSignature, Reference.PlacementSignature);
+        bPassed &= SamePlan(Label + TEXT(": phased vs reference"), Phased, Reference);
 
         // Preview plane: no hashes at all.
         FMHResolvedCompositePlan Preview;
