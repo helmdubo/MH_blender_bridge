@@ -30,7 +30,7 @@ dag4blend, снятые непосредственно перед установ
 3. `type:t` обычных узлов и отдельных вариантов зеркалится в ID properties.
 
 Именно на эти зеркала опирается прямой dag4blend-адаптер mh4blend
-(V5-S6.1, `docs/13_v5_s6_1_dag4blend_bridge.md`). `place_type:i`,
+(V5-S6.1, `docs/archive/13_v5_s6_1_dag4blend_bridge.md`). `place_type:i`,
 `placeOnCollision:b`, `ignoreParentInstSeed:b` патч не зеркалит — они
 доступны через сохранённый `dagorprops` и читаются адаптером напрямую.
 
@@ -41,7 +41,7 @@ MH-маршрут не влияет — inline p2 заблокирован OPEN-
 
 ## importer.py — патч №2 (collision / phmat)
 
-Добавлен 2026-08-29 по `docs/15_v5_s6_1_1_hardening.md` §3 (носители —
+Добавлен 2026-08-29 по `docs/archive/15_v5_s6_1_1_hardening.md` §3 (носители —
 §3.4). Отличия от стока
 (`diff -u --strip-trailing-cr reference/dag4blend/importer/importer.py importer.py`)
 — ровно две правки, обе в DAG-импортёре:

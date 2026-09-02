@@ -1,18 +1,27 @@
-# 10 — MH Source Protocol v5: random composites and placement seeds (FREEZE CANDIDATE)
+> Status: NORMATIVE · Architecture version: Recipe Model v2 · Supersedes: docs/archive/08_source_protocol_v4_plan.md, docs/archive/11_v5_agent_slices.md (wire-части), docs/archive/12_v5_s6_2_s6_3_slices.md §3–§4 (appearance seed)
 
-Статус: **кандидат owner freeze V5-S0**. Owner merge среза V5-S0 означает
-ратификацию этого документа и делает его единственным активным нормативом для
-срезов `11_v5_agent_slices.md`. До такого merge запрещены любые production-code
-изменения v5. Неразрешённые места перечислены в §13 и `QUESTIONS.md`; для них
-действует STOP, а не подразумеваемая семантика.
+# 10 — MH Source Protocol v5: identity, payload'ы, индекс, receipt, сиды
+
+Статус: **ратифицированный протокольный справочник v5** (freeze V5-S0,
+owner merge; редакция D0 2026-09-02). Документ задаёт wire-контракты, которые
+программа Recipe Model не меняет: identity и индекс (§2–§3), FBX (§4),
+материалы (§5), `.composite` v5 и `.placement` (§6), receipt на ассетах (§7),
+генерируемые пути (§8), сиды и proof-артефакты resolver'а (§6.6, §6.9,
+§13.3). Редакторская модель (три плоскости preview/proof/source, реестр
+endpoint'ов, пулы, точки выхода) — ADR `docs/16_recipe_model.md`; порядок
+работ — `KICKOFF_PROMPT.md`; индекс активных документов —
+`docs/NORMATIVE_INDEX.md`. Решённые
+вопросы `OPEN-V4-*`/`OPEN-V5-*` — история (`docs/archive/QUESTIONS.md`), их
+нормативный остаток — §13; для нерешённого действует STOP, а не
+подразумеваемая семантика.
 
 Поколение v5 несовместимо меняет ТОЛЬКО `.composite` и добавляет новый resource
 kind `.placement`. Контракты `.material`, `.mesh.fbx`, текстур, Project Resource
-Index и applied state перенесены из 08; поле версии в них не добавляется.
+Index и receipt перенесены из 08; поле версии в них не добавляется.
 
 Номера `S1`…`S7` внутри дословно перенесённых v4-абзацев — provenance прежней
-реализации по 09, а не порядок v5. Активные gates всегда пишутся `V5-S*` и
-определены только в 11.
+реализации по 09, а не порядок v5. Активные gates программы R
+определены в `KICKOFF_PROMPT.md`; `V5-S*` — история (`docs/archive/11_v5_agent_slices.md`).
 
 ## 1. Формула
 
@@ -22,7 +31,7 @@ Index и applied state перенесены из 08; поле версии в н
 StaticMesh — односторонне генерируемый asset (Blender -> UE).
 Material и Composite — двусторонние JSON (explicit overwrite publish).
 Project Resource Index — rebuildable кэш, не authority.
-Applied state живёт внутри соответствующего UE asset.
+Receipt (провенанс применённого source) живёт внутри UE asset.
 Дубликат имени одного kind не выбирается автоматически.
 Rename — сознательный breaking change.
 UUID не существуют нигде: ни в payload, ни в Blender, ни в UE.
@@ -81,7 +90,7 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   unique|ambiguous|invalid|missing), Dependencies (owner -> target, role),
   GeneratedAssets (kind, name, ue_object_path, applied_hash, status),
   Diagnostics.
-- Raw hash всюду (index, applied state, probable-rename) — engine-native
+- Raw hash всюду (index, receipt, probable-rename) — engine-native
   BLAKE3-160 в self-describing форме `blake3-160:<40 hex lowercase>`
   (ратифицирован фактом S1); смена алгоритма — новый tag-префикс, не
   переинтерпретация старых строк.
@@ -389,7 +398,7 @@ keys, node trees материалов (восстанавливается тол
   потеря данных на Publish). Статические bool-переключатели по-прежнему НЕ
   сериализуются и живут включёнными в мастерах (№7); `tex16support` из
   раннего примера — артефакт черновика, такого поля не существует.
-- **Каноническая байт-форма JSON и applied state (решение OPEN-V4-7).**
+- **Каноническая байт-форма JSON и receipt (решение OPEN-V4-7).**
   Blender writer и UE Publish обязаны выдавать байт-идентичный canonical
   JSON: UTF-8, LF, завершающий перевод строки, 2-пробельный отступ,
   порядок полей `class|library → twosided → textures → params`, ключи
@@ -464,7 +473,7 @@ keys, node trees материалов (восстанавливается тол
 `<name>.composite` — несовместимый JSON v5 без информации о материалах.
 Корень всегда начинает поколение полем `"v": 5`. Версия относится ТОЛЬКО к
 `.composite`: `.material`, `.mesh.fbx`, текстуры, Project Resource Index и
-applied state не получают version-поля. Существующие v4-композиты временные:
+receipt не получают version-поля. Существующие v4-композиты временные:
 миграции и dual-read нет, owner удаляет их и переэкспортирует.
 
 Минимальный документ:
@@ -549,7 +558,7 @@ float32-shortest, целые без дробной части, identity-поля
 `appearance_seed_boundary`) фиксируется после него (закрытие OPEN-V5-21
 owner'ом); пропуск profile в документе 12 — редакционный остаток, не
 удаление действующего поля. Неизменённые документы дают прежние байты;
-новые поля не меняют формулу ResolvedSignature или RNG. Их source bytes
+новые поля не меняют RNG и прообраз `ResolvedSignature` (§13.3). Их source bytes
 участвуют в raw/closure hash обычным образом (§13.3).
 
 Ревизия OPEN-V5-15 (owner 2026-08-31): узел может нести опциональное поле
@@ -867,8 +876,10 @@ Resolver возвращает ровно один immutable `FMHResolvedComposit
 - decisions: NodePath, selected option index, raw draw/sample и веса;
 - leaves: kind, resource, world matrix и provenance;
 - SelectedDependencies;
-- ResolvedSignature = hash(closure hash + Seed + selected indices + samples +
-  resolver version).
+- `ResolvedSignature` = hash(closure hash + Seed + selected indices + samples +
+  resolver version) — proof-артефакт (§13.3): golden-векторы, отчёт плана,
+  runtime admission, preflight, export. Состоянием актора не является
+  (16 §0, §2.10).
 
 Editor preview, Show Resolved Choices, Show Decision Trace, Break,
 `AMHRuntimeCompositeActor`, PIE, packaged runtime и cook обязаны потреблять этот
@@ -886,16 +897,19 @@ B — совместимость поведенческая, байты `mh.rand
 stream нет — каждый узел, которому нужна случайность, открывает собственный
 поток от `mix(placement Seed, hash(NodePath))`. Depth-first обход в порядке
 источника сохраняется, но определяет теперь только ПОРЯДОК ЗАПИСЕЙ в плане
-(decisions/leaves, а значит и подпись), а не позиции в потоке.
+(decisions/leaves, а значит и `ResolvedSignature`), а не позиции в потоке.
 
 ### 6.7 UE editor, runtime и cook
 
-`AMHCompositeActor` — persisted level-placement: ссылка на
-`UMHCompositeAsset`, actor transform, int32 `Seed`, `bAutoSeed` и read-only
-derived `ResolvedSignature`. Компоненты и decision trace derived/transient.
-Dependency notify пересобирает plan и preview без пересохранения уровня.
+`AMHCompositeActor` — persisted level-placement с состоянием ровно из
+16 §2.10: ссылка на `UMHCompositeAsset`, actor transform, `Seed`/`bAutoSeed`,
+`AppearanceSeed`/`bAutoAppearanceSeed`, с R6 — `NodeOverrides`. Всё
+остальное — транзиентная материализация preview-плоскости
+(`MHMaterializeLayout` над скомпилированным рецептом, 16 §2); обновления —
+по протоколу 16 §4. Proof (full closure, `ResolvedSignature`) строится
+только в точках выхода 16 §2.6.
 
-V5-S5 добавляет Reseed / Randomize Selected / Copy Seed / Paste Seed / Lock Seed /
+Редактор предоставляет Reseed / Randomize Selected / Copy Seed / Paste Seed / Lock Seed /
 Keep Seed on Duplicate / Show Resolved Choices / Show Decision Trace.
 Build Composite сериализует parent-local T/R/S. Edit Composite публикует source
 и пересобирает все placements. Break потребляет resolved plan текущего Seed и
@@ -907,9 +921,13 @@ StaticMeshActor, selected gameplay leaves — акторами, nested composite
 имеют строгую границу: UE transaction закрывается до Publish, Undo не
 восстанавливает source bytes, VCS — единственный rollback source.
 
-Основной runtime path — `AMHRuntimeCompositeActor`, использующий тот же plan:
-Editor = PIE = packaged по decision trace и ResolvedSignature. Только после
-этого V5-S7 строит cook flattening: каждый placed actor резолвится по своему Seed;
+Основной runtime path — `AMHRuntimeCompositeActor`: `FMHRuntimeCompositeInput`
+несёт сериализуемый seed-free граф (`GraphBytes`) и `Bindings` на все
+варианты (включая невыбранные и zero-weight) и actor-классы; тот же resolver
+с сидами размещения даёт тот же plan, Editor = PIE = packaged по decision
+trace и `ResolvedSignature`. Admission снапшота — точка выхода proof-плоскости
+(16 §2.6): stale или missing receipt даёт error там и только там. Cook flattening (V5-S7) отложен
+к v2.0; его контракт: каждый placed actor резолвится по своему Seed;
 static leaves материализуются в ISM/HISM/StaticMeshActor, gameplay leaves — в
 самостоятельные actors, groups/nested composites растворяются, wrapper
 удаляется. World Partition/OFPA validation и cook smoke обязательны.
@@ -946,7 +964,51 @@ GAZ-фикстура является content authority; guard —
 traces/signatures заполнены V5-S1 после ратификации `OPEN-V5-1`/`OPEN-V5-3`;
 подстановка случайных ожидаемых значений запрещена.
 
-## 7. Applied state в ассетах (поправка №9)
+### 6.9 Appearance seed `mh.appearance:1`
+
+Второй сид размещения. Имя `Seed` (layout) сериализуется без изменений; в UI
+он отображается как «Layout Seed». `AMHCompositeActor` и
+`AMHRuntimeCompositeActor` несут `int32 AppearanceSeed` и
+`bool bAutoAppearanceSeed`.
+
+- **Миграция.** Для размещения без сериализованного `AppearanceSeed` значение
+  вычисляется **один раз** при загрузке как детерминированный
+  `Mix(Seed, "appearance")`, записывается в свойство, пакет помечается dirty.
+  Это не вычисляемый дефолт и не fallback в геттере: иначе каждый реролл
+  `Seed` молча переролил бы покраску.
+- **Границы вместо флагов наследования.**
+  `Boundary(node)` = ближайший предок (включая сам узел) с
+  `appearance_seed_boundary = true`, иначе корень размещения;
+  `AppearanceStream(node) = MHMakeNodeRandomStream(AppearanceSeed,
+  NodePath(Boundary(node)))`. Два листа с одной границей получают один поток
+  и одинаковые значения каналов («дом с едиными окнами»); граница на каждом
+  листе даёт независимую покраску; граница на composite-узле — общую
+  вариативность вложенного композита.
+- **Каналы вместо транспорта сида.** Каждый лист получает
+  `MH_APPEARANCE_CHANNELS = 4` розыгрыша `NextUnit()` в `[0,1)` с ролями
+  `appearance[0…3]`; порядок — строго каналы `0…3`, по одному `NextU32()` на
+  канал, пропусков нет. В прообраз `AppearanceSignature` идёт `RawU32`;
+  `Unit` — производная. Транспорт в материал — `PerInstanceCustomData` с базой
+  `UMHCompositeSettings::AppearanceCustomDataBaseIndex`; для actor-листьев
+  розыгрыши выполняются (паритет стабилен), потребитель отсутствует.
+- **Хэши.** Layout-часть плана (choices, draws, samples, pre-snap матрицы)
+  остаётся байт-идентичной с `mh.random_resolver:2`; appearance-стадия имеет
+  собственный тег `mh.appearance:1` в прообразе `AppearanceSignature`
+  (включает `MH_APPEARANCE_CHANNELS`); `PlacementSignature =
+  Hash(ResolvedSignature, AppearanceSignature)` — то, что сравнивает
+  кросс-hostовый parity smoke. Все три — proof-артефакты (16 §0); golden —
+  `golden/v5/appearance/`.
+- Мировой результат (trace hits, post-snap матрицы) не является protocol
+  authority и ни в один хэш не входит.
+
+## 7. Receipt в ассетах (поправка №9)
+
+Receipt — источник истины о провенансе применённого source внутри UE asset.
+Два уровня чтения (16 §2.4): identity-admission в реестре endpoint'ов (один
+раз на ключ за сессию: объект по пути §8, receipt структурно валиден,
+`LogicalName`, `ImporterVersion`) и source-freshness proof (`SourceHash`/
+`AppliedHash` против индекса) только в точках выхода 16 §2.6. Preview никогда
+не сравнивает receipt с Source Root; резолв по тегам запрещён.
 
 - `UMHStaticMeshImportData : UAssetImportData` на UStaticMesh (решение
   OPEN-V4-20; поля v3-черновика упразднены): LogicalName,
@@ -972,20 +1034,19 @@ traces/signatures заполнены V5-S1 после ратификации `OP
   текущих master/library roots. UE object path в поле не хранится.
   Список Asset Registry tags ниже не расширяется — `AppliedParent` в
   теги не выносится.
-- `UMHCompositeAsset` — applied state зеркалом §5 (решение OPEN-V4-10), но
+- `UMHCompositeAsset` — receipt зеркалом §5 (решение OPEN-V4-10), но
   canonical payload теперь строго v5 по §6:
   `SourceHash` (raw, §3) и `AppliedHash` — hash канонического JSON,
   извлечённого из применённого ассета тем же extractor'ом, что Publish
   Composite; детект локальной правки — как у материалов (re-extract vs
   `AppliedHash`; non-roundtrippable extract = локальная правка, warning).
   Аналога `AppliedParent` у композитов нет.
-- `AMHCompositeActor.ResolvedSignature` — derived результат resolver'а §6.6,
-  а не identity/source receipt/Asset Registry tag. Он пересчитывается из
-  closure+Seed и не меняет шесть тегов managed asset.
-- Asset Registry tags — РОВНО ШЕСТЬ (поправка owner, решение OPEN-V4-13):
-  `MH.Kind`, `MH.LogicalName`, `MH.SourcePath`, `MH.SourceHash` (raw,
-  форма §3), `MH.AppliedHash`, `MH.Managed` — индекс строит
-  GeneratedAssets только из них, не загружая UObject'ы. Прежняя фиксация
+- Asset Registry tags — РОВНО ШЕСТЬ (поправка owner, решение OPEN-V4-13),
+  все с префиксом `MH.`: `Kind`, `LogicalName`, `SourcePath`, `SourceHash`
+  (raw, форма §3), `AppliedHash`, `Managed` — индекс строит
+  GeneratedAssets только из них, не загружая UObject'ы. Теги — проекция
+  receipt для индекса; резолв endpoint'ов по тегам в preview-плоскости
+  запрещён (16 §2.2). Прежняя фиксация
   «ровно пять» предшествовала удалению Ledger: без raw hash в тегах
   change detector был бы вынужден грузить каждый managed-ассет на каждом
   скане. Receipts внутри ассетов остаются authority, теги — их проекция;
@@ -1000,7 +1061,7 @@ traces/signatures заполнены V5-S1 после ратификации `OP
   канонической текстовой формой (material, composite) `AppliedHash` —
   hash канонического extract (V4-7/V4-10), домен отличен от raw. Для
   БИНАРНЫХ kinds (texture; static_mesh с S5) канонического extract не
-  существует: applied state бинарного kind — это применённые
+  существует: receipt бинарного kind — это применённые
   source-байты, поэтому `MH.AppliedHash == MH.SourceHash` ПО
   ОПРЕДЕЛЕНИЮ (нормативное тождество, не эвристика; отдельное
   receipt-поле не добавляется — тег публикуется из `SourceHash`, тег
@@ -1009,12 +1070,12 @@ traces/signatures заполнены V5-S1 после ратификации `OP
   V4-16 «AppliedHash не сравнивается с raw» остаётся для канонических
   kinds, где домены разные; у бинарных домен один и тождество
   тривиально.
-- Commit applied state только после: build успешен → async compilation
+- Commit receipt только после: build успешен → async compilation
   завершена → package сохранён.
 
 Carrier/generated-path/applied receipt для `placement_profile` задан §13.4
 (решение `OPEN-V5-4`) и §13.4.1: отдельного UAsset, седьмого tag и generated
-path нет, значения инлайнятся в `UMHCompositeAsset` как applied state, а
+path нет, значения инлайнятся в `UMHCompositeAsset` как receipt-данные, а
 freshness закрывает приватный `AppliedSourceHash`.
 
 ## 8. Генерируемые пути UE
@@ -1072,20 +1133,16 @@ Resolver: `IMHSourceResolver::Resolve(FMHResourceKey)`.
 paths, v4 composite goldens и тесты (включая решение OPEN-V4-24) и заменяет их
 v5. Owner удаляет старые source-файлы и переэкспортирует. Файл без `"v"` не
 чинится и не интерпретируется: `MH_E_COMPOSITE_LEGACY_GENERATION` с сообщением
-из §6. Материалы, meshes, textures, индекс и их applied state не мигрируют.
+из §6. Материалы, meshes, textures, индекс и их receipt не мигрируют.
 
-## 12. Судьба существующих нормативов
+## 12. Судьба прежних нормативов
 
-| Документ/область | Судьба в v5 |
-|---|---|
-| 08 §§1–5, 7–10 | перенесены сюда; identity, index, mesh, material, texture, applied-state и generated-path контракты выживают, кроме явно перечисленных аддитивных `.placement` пунктов |
-| 08 §§6, 6.1 и OPEN-V4-24 | superseded целиком: document-world, structural-only group и старые Build/Break assumptions физически удаляются в V5-S2 |
-| 08 §11 | заменён §11 этого документа: v4 composite не мигрирует и не dual-read'ится |
-| 09 S0–S6 | историческая карта завершённой реализации v4; не является порядком работ v5 |
-| ADR_V4_mh_asset_io / 09 S7 | отдельный parked backlog; v5 S0–S7 не блокирует и сам не меняет |
-| 00–07, ADR_V2/V3, оба AMENDMENT, RISK_RESULTS, ROADMAP | сохраняют прежние v4 supersede-баннеры; новая authority — этот документ, их surviving statements уже перенесены сюда |
-| QUESTIONS | OPEN-V4-24 остаётся историей отменённого document-world решения; OPEN-V4-1 перенесён в OPEN-V5-7; активные дыры — только `OPEN-V5-*` |
-| C0/C1 audit reports и receipts v4 | исторические квитанции, не норматив и не acceptance v5 |
+Документы 00–09 (v1–v4), 11–15 (срезы v5, программа UE Editor U0–U7), ADR,
+amendments, аудиты C0/C1, `QUESTIONS.md`, proposals и spikes перенесены в
+`docs/archive/` под шапкой `HISTORY` (срез D0). Их выжившие положения по
+identity, индексу, mesh, material, texture, receipt и generated paths
+перенесены в этот документ; редакторская модель — ADR
+`docs/16_recipe_model.md`; активные документы — `docs/NORMATIVE_INDEX.md`.
 
 ## 13. Решения owner по вопросам v5
 
@@ -1160,7 +1217,7 @@ reference; probe может его заменить только явным owne
 - Порядок публикации батча: **профили публикуются первыми**, до материалов —
   они листья зависимостей композитов; далее прежний порядок §6.5.
 
-### 13.3 NodePath, closure hash и `ResolvedSignature` (OPEN-V5-3)
+### 13.3 NodePath, `ClosureHash` и `ResolvedSignature` (OPEN-V5-3)
 
 - NodePath: сегменты `nodes[i]`, `children[j]`, `options[k]`, соединённые `/`;
   пересечение границы вложенного композита обозначается `>` и логическим
@@ -1175,14 +1232,18 @@ reference; probe может его заменить только явным owne
   числа — float32 shortest round-trip.
 - Display-only `name`, любые файловые пути и абсолютные локации в прообраз НЕ
   входят: подпись — функция identity и геометрии, не презентации.
-- `ResolvedSignature` = `blake3-160:<40 hex>` от прообраза.
+- `ResolvedSignature` = `blake3-160:<40 hex>` от прообраза
+  (`resolved_signature` в golden-векторах и отчёте плана). `ClosureHash` и
+  `ResolvedSignature` — proof-артефакты (16 §0): reference resolver,
+  golden, runtime admission, preflight, export. Редакторский актор их не
+  хранит и по ним ничего не решает (16 §2.10).
 
 ### 13.4 UE carrier профиля (OPEN-V5-4)
 
 Отдельного UAsset у `placement_profile` НЕТ; седьмой Asset Registry tag и
 generated path не вводятся. Значения профиля **инлайнятся в
 `UMHCompositeAsset`** при импорте композита, который на них ссылается — это
-applied state внутри ассета (§7), поэтому cook и runtime никогда не читают
+receipt-данные внутри ассета (§7), поэтому cook и runtime никогда не читают
 source tree. Индекс хранит ребро `composite→placement_profile: "profile"`
 (закрытая роль добавляется к §3), поэтому правка `.placement` помечает
 dependent-композиты `stale` и вызывает их реимпорт обычным порядком. Kind
@@ -1399,14 +1460,14 @@ v5 больше нет.
 - Причина исключения важнее самого отключения и фиксируется, чтобы вопрос не
   вернулся в неправильной форме: **у композит-ассета нет канонического
   внешнего вида.** Резолюция — свойство РАЗМЕЩЕНИЯ (actor + Seed), а не
-  ассета; один ассет законно имеет много размещений с разными seed, trace и
-  signature. Поэтому asset-thumbnail не «трудно засидить» — он некорректно
+  ассета; один ассет законно имеет много размещений с разными seed и
+  trace. Поэтому asset-thumbnail не «трудно засидить» — он некорректно
   поставлен как потребитель plan, и никакой неявный seed 0, авто-seed или
   выбор по текущему выделению эту некорректность не лечит, а прячет.
 - Если thumbnail когда-нибудь понадобится, допустима ровно одна форма:
   ОТОБРАЖАТЕЛЬНАЯ конвенция над явно документированным фиксированным seed,
   объявленная не протокольным артефактом. Она НИКОГДА не входит в
-  `ResolvedSignature`, closure hash, applied state или cook, и acceptance
+  `ResolvedSignature`, `ClosureHash`, receipt или cook, и acceptance
   никогда не сравнивает её «на parity» с размещением. Вводится это отдельным
   срезом и отдельным owner-решением, не внутри V5-S5.
 
@@ -1415,7 +1476,7 @@ v5 больше нет.
 
 ### 13.13 Прямой dag4blend-адаптер (owner, документ 13 R2)
 
-Документ [13 R2](13_v5_s6_1_dag4blend_bridge.md) заменяет обязательную
+Документ 13 R2 (`docs/archive/13_v5_s6_1_dag4blend_bridge.md`, HISTORY) заменяет обязательную
 материализацию маршрута сценовой конвертации из §6.4 прямым read-only
 экспортом. Строгий BLK-reader не меняется; две формы сцены Blender дают один
 Composite DTO и используют один canonical writer / source-closure publisher.
