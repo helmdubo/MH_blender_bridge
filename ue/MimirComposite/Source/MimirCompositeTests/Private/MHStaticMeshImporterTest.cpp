@@ -7,6 +7,7 @@
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/StaticMeshComponent.h"
 #include "Diagnostics/MHSourceOperations.h"
 #include "Editor.h"
@@ -1901,6 +1902,15 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
         MHResetEndpointResolveMetrics();
         MHResetDefinitionCacheMetrics();
     };
+    // R0a: endpoints are admitted once per key per session; a cold pass must
+    // also forget the prototypes, otherwise every resolve is a registry hit.
+    const auto InvalidateEndpoints = []()
+    {
+        if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
+        {
+            Registry->InvalidateAll();
+        }
+    };
 
     bool bPassed = true;
     PerfTrace->Set(0, ECVF_SetByCode);
@@ -1914,6 +1924,7 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
     PerfTrace->Set(1, ECVF_SetByCode);
     ResetAll();
     InvalidateDefinitions();
+    InvalidateEndpoints();
     const FMHMapLoadPerfReport Cold = BuildActor(*First);
     // Root composite plus every mesh option: the closure resolves all of them.
     const uint64 UniqueEndpointKeys = Cold.AllOptionUniqueMeshes + 1ull;
