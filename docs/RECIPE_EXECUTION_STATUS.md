@@ -22,7 +22,7 @@
 | S1 | CLOSED (без кода) | OPEN-S-1 закрыт owner'ом, вариант c: S0 достаточен; полевой замер холодного скана — по протоколу M0 §6 |
 | S2 | MERGED | #77 (внешний исполнитель, приёмка близнеца; возвраты OPEN-S2-1/S2-2 закрыты нормативно); квитанция `docs/receipts/source_s2.md`. Линия S закрыта: S0 #73, S1 CLOSED (вариант c), S2 #77 |
 | R2a | MERGED (близнец) | два PR: **R2a-1** фазовое разделение resolver'а — #79 (`docs/receipts/recipe_r2a_phases.md`); **R2a-2** `FMHCompiledRecipe` + реестр + `RecipeShadowParity` как CI-гейт — #81 (`docs/receipts/recipe_r2a_compiled_recipe.md`). OPEN-R2A-1 закрыт owner 2026-09-02 (docs/16 §9). **Полевой тест owner 2026-09-02 на портфолио (main `4782082`) пройден** — `docs/receipts/field_recipe_r2a_20260902.md`. Preview-путь ещё не production → R2b |
-| R2b | IN PROGRESS (близнец) | три PR: **R2b-1** `MHMaterializeLayout` — IN REVIEW, ветка `recipe/r2b-materialize-layout`, квитанция `docs/receipts/recipe_r2b_materialize_layout.md`, OPEN-R2B-1 (гейт удалений) — ждёт Lead; **R2b-2** актор на рецептах (без Layout на PostEditMove, без Proof на загрузке) — NEXT; **R2b-3** удаления proof-состояния — после ответа Lead. Полевые находки Undo/reseed — вход для R2b-2/R4 |
+| R2b | IN PROGRESS (близнец) | три PR: **R2b-1** `MHMaterializeLayout` — MERGED #84, квитанция `docs/receipts/recipe_r2b_materialize_layout.md`, OPEN-R2B-1 (гейт удалений) — ждёт Lead; **R2b-2** актор на рецептах (без Layout на PostEditMove, без Proof на загрузке) — IN PROGRESS, ветка `recipe/r2b-actor-preview`; **R2b-3** удаления proof-состояния — после ответа Lead. Полевые находки Undo/reseed — вход для R2b-2/R4 |
 | R2c | PLANNED | — |
 | R3 | PLANNED | — |
 | R4 | PLANNED | — |
