@@ -1792,14 +1792,16 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
         AddError(Error);
     }
     const FMHReimportPerfReport ReimportReport = MHGetReimportPerfReportForTests();
+    // Source line S2: a targeted reimport upserts only its own payload path;
+    // a full scan happens only on an explicit command or database recreation.
     bPassed &= TestEqual(
-        TEXT("targeted reimport records current full scan"),
+        TEXT("targeted reimport performs no full scan"),
         ReimportReport.FullScanCountDelta,
-        1ll);
+        0ll);
     bPassed &= TestEqual(
-        TEXT("targeted reimport records no incremental paths"),
+        TEXT("targeted reimport upserts exactly its own source path"),
         ReimportReport.IncrementalPaths,
-        0ull);
+        1ull);
     bPassed &= TestEqual(
         TEXT("trace one emits one reimport report"),
         ReimportReport.EmittedReports,
