@@ -200,6 +200,27 @@ void FlushMapLoadInternal()
     }
     GMapLoad.Values.SelectedMeshesCompiling = SelectedCompiling;
     GMapLoad.Values.WaitedMeshes = GMapLoad.WaitedMeshes.Num();
+    for (const FMHResourceKey& Key : GMapLoad.WaitedMeshes)
+    {
+        GMapLoad.Values.WaitedMeshKeys.Add(Key.ToString());
+    }
+    for (const FMHResourceKey& Key : GMapLoad.SelectedMeshes)
+    {
+        if (GMapLoad.CompilingMeshes.Contains(Key))
+        {
+            GMapLoad.Values.SelectedCompilingMeshKeys.Add(Key.ToString());
+        }
+    }
+    for (const FMHResourceKey& Key : GMapLoad.AllOptionMeshes)
+    {
+        if (!GMapLoad.SelectedMeshes.Contains(Key))
+        {
+            GMapLoad.Values.UnselectedMeshKeys.Add(Key.ToString());
+        }
+    }
+    GMapLoad.Values.WaitedMeshKeys.Sort();
+    GMapLoad.Values.SelectedCompilingMeshKeys.Sort();
+    GMapLoad.Values.UnselectedMeshKeys.Sort();
     GMapLoad.Values.EmittedReports = 1;
     GLastMapLoadReport = GMapLoad.Values;
     LogMapLoadReport(GLastMapLoadReport);

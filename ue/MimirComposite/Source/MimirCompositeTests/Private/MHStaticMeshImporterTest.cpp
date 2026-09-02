@@ -2069,10 +2069,24 @@ bool FMHPerformanceSelectedMeshWaitTest::RunTest(const FString& Parameters)
     bool bPassed = TestEqual(TEXT("cold build emits one map-load report"), Report.EmittedReports, 1ull);
     bPassed &= TestEqual(TEXT("two mesh options enter the closure"), Report.AllOptionUniqueMeshes, 2ull);
     bPassed &= TestEqual(TEXT("the seed selects one mesh"), Report.SelectedUniqueMeshes, 1ull);
-    bPassed &= TestEqual(TEXT("only the selected mesh reaches the compilation wait"),
-        Report.WaitedMeshes, Report.SelectedUniqueMeshes);
-    bPassed &= TestTrue(TEXT("unselected options never reach the compilation wait"),
-        Report.WaitedMeshes < Report.AllOptionUniqueMeshes);
+    // D0b П6 acceptance: the waited set is exactly the selected meshes that
+    // were compiling, and it never intersects the unselected options. The
+    // all_option/selected ratio above is a receipt metric, not a condition.
+    AddInfo(FString::Printf(TEXT("waited=[%s] selected_compiling=[%s] unselected=[%s]"),
+        *FString::Join(Report.WaitedMeshKeys, TEXT(",")),
+        *FString::Join(Report.SelectedCompilingMeshKeys, TEXT(",")),
+        *FString::Join(Report.UnselectedMeshKeys, TEXT(","))));
+    bPassed &= TestTrue(TEXT("waited_mesh_set == selected_compiling_mesh_set"),
+        Report.WaitedMeshKeys == Report.SelectedCompilingMeshKeys);
+    bool bDisjoint = true;
+    for (const FString& Key : Report.WaitedMeshKeys)
+    {
+        bDisjoint &= !Report.UnselectedMeshKeys.Contains(Key);
+    }
+    bPassed &= TestTrue(TEXT("waited_mesh_set ∩ unselected_mesh_set == ∅"), bDisjoint);
+    bPassed &= TestEqual(TEXT("unselected set is the closure minus the selection"),
+        static_cast<uint64>(Report.UnselectedMeshKeys.Num()),
+        Report.AllOptionUniqueMeshes - Report.SelectedUniqueMeshes);
     return bPassed;
 }
 
