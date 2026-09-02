@@ -1771,7 +1771,7 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
     const FMHStartupScanPerfReport ScanReport = MHGetStartupScanPerfReportForTests();
     bPassed &= TestEqual(TEXT("startup scan trigger"), ScanReport.Trigger, FString(TEXT("startup")));
     bPassed &= TestEqual(TEXT("manual scan records one full scan"), ScanReport.FullScanCountDelta, 1ll);
-    bPassed &= TestEqual(TEXT("manual scan uses two snapshot passes"), ScanReport.ScanPasses, 2ull);
+    bPassed &= TestEqual(TEXT("manual scan uses one snapshot pass"), ScanReport.ScanPasses, 1ull);
     bPassed &= TestEqual(TEXT("trace one emits one scan report"), ScanReport.EmittedReports, 1ull);
 
     MHResetPerformanceTraceForTests();

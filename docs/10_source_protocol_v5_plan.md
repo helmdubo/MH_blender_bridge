@@ -196,6 +196,18 @@ texture:     brick_a_tex_d     <- brick_a_tex_d.<img-ext>
   «сильно» из прежней формулировки §2 упразднено — порогов и метрик
   подобия нет.
 
+**Инкрементальный full scan (S0).** Full scan перечисляет source tree и
+обрабатывает его одним snapshot-проходом; для каноничного кандидата со статусом
+`ok` и неизменными `(path, size, mtime)` он переиспользует сохранённые
+`raw_hash`, identity, diagnostic и dependency edges без чтения и хэширования
+payload. Новый или изменённый fingerprint проходит прежний read/hash/parse с
+одиночной pre/post-проверкой `(size, mtime)`. `mh.SourceIndex.VerifyHashes`
+(default `0`) при значении `1` принудительно хэширует кандидаты; несовпадение
+hash при равных `(size, mtime)` даёт derived warning
+`MH_W_SOURCE_INDEX_STALE_FINGERPRINT` и обновляет строку. Perf-квитанция
+фиксирует `scan_passes=1` и `reused_fingerprints`; tag
+`mh.project_index:4`, SQLite schema и hash-формат не меняются.
+
 **Аддитивная проекция v5.** Файл `.placement` классифицируется кандидатом kind
 `placement_profile`; `.composite` без `"v": 5` имеет `invalid_payload` и не
 даёт dependency edges. После ратификации binding из §6.3 добавляется закрытая

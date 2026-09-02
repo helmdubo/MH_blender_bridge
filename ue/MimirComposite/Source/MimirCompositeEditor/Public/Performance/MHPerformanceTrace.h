@@ -63,6 +63,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHStartupScanPerfReport
     uint64 EnumeratedBytes = 0;
     uint64 ScanPasses = 0;
     uint64 HashedFiles = 0;
+    uint64 ReusedFingerprints = 0;
     uint64 ParsedFbx = 0;
     uint64 ParsedMaterial = 0;
     uint64 ParsedComposite = 0;
@@ -147,6 +148,7 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanEnumeration(
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanPass();
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanEnumeratedBytes(uint64 Bytes);
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanIOHash(uint64 Cycles, bool bHashed);
+MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanReusedFingerprint();
 MIMIRCOMPOSITEEDITOR_API void MHRecordSourceScanParse(
     const FMHResourceKey& Key,
     const FString& SourcePath,
