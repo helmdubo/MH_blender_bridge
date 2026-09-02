@@ -16,6 +16,8 @@
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/Actor.h"
 #include "Materials/MaterialInterface.h"
+#include "Performance/MHPerformanceTrace.h"
+#include "StaticMeshCompiler.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Templates/Greater.h"
 
@@ -471,6 +473,29 @@ int32 MHApplyCompositePlacementAppearance(
     return Applied;
 }
 
+/**
+ * R1: the compilation wait is handed only the meshes the seed selected. The
+ * closure loads every option for proof but never waits; R4 removes this wait
+ * with placeholders and async prototypes.
+ */
+void PlanViewWaitSelectedMeshes(const TMap<FMHResourceKey, UStaticMesh*>& SelectedMeshes)
+{
+    TArray<UStaticMesh*> Compiling;
+    for (const TPair<FMHResourceKey, UStaticMesh*>& Pair : SelectedMeshes)
+    {
+        MHRecordMapLoadWaitedMesh(Pair.Key);
+        if (Pair.Value != nullptr && Pair.Value->IsCompiling())
+        {
+            Compiling.Add(Pair.Value);
+        }
+    }
+    if (!Compiling.IsEmpty())
+    {
+        FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
+        FStaticMeshCompilingManager::Get().FinishCompilation(Compiling);
+    }
+}
+
 bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
     const FMHResolvedCompositePlan& PreviousPlan, const FMHResolvedCompositePlan& CandidatePlan,
     const FMHRandomComposite& RootDefinition, const UMHCompositeSettings& Settings,
@@ -895,6 +920,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
     };
     TArray<FReseedEndpoint> Endpoints;
     Endpoints.SetNum(CandidatePlan.Leaves.Num());
+    TMap<FMHResourceKey, UStaticMesh*> SelectedMeshes;
     {
         FMHPlacementStageScope LoadStage(EMHPlacementStage::LoadEndpoints);
         for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
@@ -910,6 +936,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
                 Endpoint.Mesh = Cast<UStaticMesh>(
                     UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutResult.Error));
                 if (!OutResult.Error.IsEmpty()) return true;
+                if (Endpoint.Mesh != nullptr) SelectedMeshes.Add(Key, Endpoint.Mesh);
             }
             else if (Leaf.Kind == EMHRandomSemanticKind::Actor)
             {
@@ -924,6 +951,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             }
         }
     }
+    PlanViewWaitSelectedMeshes(SelectedMeshes);
 
     const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
     for (int32 Index = 0; Index < PreviousHandles.Num(); ++Index)
@@ -1027,6 +1055,7 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         Settings.AppearanceCustomDataBaseIndex + MH_APPEARANCE_CHANNELS;
     struct FEndpoint { UStaticMesh* Mesh = nullptr; UClass* ActorClass = nullptr; };
     TArray<FEndpoint> Endpoints;
+    TMap<FMHResourceKey, UStaticMesh*> SelectedMeshes;
     {
         FMHPlacementStageScope LoadStage(EMHPlacementStage::LoadEndpoints);
         // All endpoint lookup and matrix checks precede component mutations.
@@ -1041,6 +1070,7 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
                 Endpoint.Mesh = Cast<UStaticMesh>(
                     UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, Result.Error));
                 if (!Result.Error.IsEmpty()) return Result;
+                if (Endpoint.Mesh != nullptr) SelectedMeshes.Add(Key, Endpoint.Mesh);
             }
             else if (Leaf.Kind == EMHRandomSemanticKind::Actor)
             {
@@ -1055,6 +1085,7 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
             }
         }
     }
+    PlanViewWaitSelectedMeshes(SelectedMeshes);
     const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
     const FPlanViewPreviousIndex PreviousIndex = PlanViewIndexPrevious(PreviousComponents);
     for (int32 Index = 0; Index < RootDefinition.Nodes.Num(); ++Index)

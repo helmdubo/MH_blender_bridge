@@ -13,7 +13,6 @@
 #include "Misc/Paths.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
-#include "StaticMeshCompiler.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "Texture/MHTextureSourceData.h"
 
@@ -177,9 +176,8 @@ struct FAppliedPlanBuilder
             return Error.IsEmpty() ? Fail(Key.ToString() + TEXT(" has no matching managed mesh receipt")) : false;
         }
         // Material slot names are plain structure and stay readable while the
-        // mesh compiles asynchronously. The identity re-check no longer reads
-        // registry tags (R0a), so the batched FinishCompilation below is a
-        // legacy wait that R1 removes with its own red test.
+        // mesh compiles asynchronously; deferred admission keeps the closure
+        // walk linear and never waits for compilation (R1).
         for (const FStaticMaterial& Slot : Mesh->GetStaticMaterials())
         {
             if (Slot.ImportedMaterialSlotName.IsNone()) continue;
@@ -200,24 +198,17 @@ struct FAppliedPlanBuilder
     };
     TArray<FDeferredMesh> DeferredMeshes;
 
-    bool FinalizeDeferredMeshes()
+    bool AdmitDeferredMeshes()
     {
-        TArray<UStaticMesh*> Compiling;
+        // R1: the closure never waits for compilation. Identity admission
+        // reads the embedded receipt; only the placement compiler waits, and
+        // only for the meshes the seed selected. The statistic stays.
         for (const FDeferredMesh& Row : DeferredMeshes)
         {
-            MHRecordMapLoadWaitedMesh(Row.Key);
             if (Row.Mesh->IsCompiling())
             {
-                Compiling.Add(Row.Mesh);
                 MHRecordMapLoadCompilingMesh(Row.Key, *Row.Mesh);
             }
-        }
-        if (!Compiling.IsEmpty())
-        {
-            // Legacy wait (R1 removes it): identity admission reads the
-            // embedded receipt, not registry tags, and no longer needs it.
-            FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
-            FStaticMeshCompilingManager::Get().FinishCompilation(Compiling);
         }
         for (const FDeferredMesh& Row : DeferredMeshes)
         {
@@ -348,7 +339,7 @@ bool MHBuildAppliedCompositeGraph(const UMHCompositeAsset& Root, const UMHCompos
     OutError.Reset();
     FAppliedPlanBuilder Builder{Settings, OutGraph, OutDependencies, OutError};
     if (!Builder.Composite(Root, Root.LogicalName)) return false;
-    if (!Builder.FinalizeDeferredMeshes()) return false;
+    if (!Builder.AdmitDeferredMeshes()) return false;
     FMHRandomSourceClosure Closure;
     return MHBuildRandomSourceClosure(OutGraph, Closure, OutError);
 }
