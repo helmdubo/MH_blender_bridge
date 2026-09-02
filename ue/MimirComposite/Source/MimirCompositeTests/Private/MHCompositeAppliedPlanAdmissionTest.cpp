@@ -1,9 +1,11 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Components/SceneComponent.h"
@@ -141,7 +143,13 @@ struct FAppliedAdmissionFixture
         Asset.MarkAsGarbage();
     }
 
-    bool ExpectRejected(UMHCompositeAsset& Root, AMHCompositeActor& Actor, const TCHAR* Diagnostic)
+    /**
+     * R2b-2: the applied-graph closure and Break refusals are proof-plane facts and
+     * hold for every rejected state; only a root identity defect also blocks the
+     * preview, so callers say which plane is expected to refuse.
+     */
+    bool ExpectRejected(UMHCompositeAsset& Root, AMHCompositeActor& Actor, const TCHAR* Diagnostic,
+        const bool bPreviewRejects, FString* OutGraphError = nullptr)
     {
         FMHRandomSourceGraph Graph;
         TSet<FMHResourceKey> Dependencies;
@@ -149,9 +157,19 @@ struct FAppliedAdmissionFixture
         bool bPassed = Test.TestFalse(TEXT("invalid applied state blocks graph admission"),
             MHBuildAppliedCompositeGraph(Root, *Settings, Graph, Dependencies, Error));
         bPassed &= Test.TestTrue(TEXT("graph refusal preserves diagnostic"), Error.Contains(Diagnostic));
+        if (OutGraphError != nullptr) *OutGraphError = Error;
         Actor.RebuildComposite();
-        bPassed &= Test.TestNull(TEXT("invalid applied state has no current placement plan"), Actor.GetResolvedPlan());
-        bPassed &= Test.TestTrue(TEXT("invalid applied state has no current derived signature"), AdmissionStoredSignature(Actor).IsEmpty());
+        if (bPreviewRejects)
+        {
+            bPassed &= Test.TestNull(TEXT("invalid applied state has no current placement plan"), Actor.GetResolvedPlan());
+            bPassed &= Test.TestTrue(TEXT("invalid applied state has no current derived signature"), AdmissionStoredSignature(Actor).IsEmpty());
+        }
+        else
+        {
+            // R2b-2: preview never validates unselected endpoints
+            bPassed &= Test.TestNotNull(TEXT("unselected closure defect keeps the preview plan"), Actor.GetResolvedPlan());
+            bPassed &= Test.TestTrue(TEXT("unselected closure defect raises no placement error"), Actor.GetLastPlacementError().IsEmpty());
+        }
         UMHCompositeLevelSubsystem* Operations = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
         if (!Test.TestNotNull(TEXT("Break subsystem exists"), Operations)) return false;
         const TArray<TObjectPtr<UActorComponent>> BeforeBreak = Actor.GetDerivedComponents();
@@ -186,18 +204,25 @@ bool FMHCompositeInvalidRootReceiptAdmissionTest::RunTest(const FString& Paramet
     if (Actor == nullptr || !TestNotNull(TEXT("valid receipt starts admitted"), Actor->GetResolvedPlan())) return false;
     const FString SourcePath = Root->SourceRelativePath;
     const FString AppliedHash = Root->AppliedHash;
+    // R2b-2: a root identity defect blocks the preview through endpoint
+    // registry admission, which re-admits only on a notification (16 §2.2:
+    // once per key per session, again after Revision++). A receipt mutated in
+    // place is announced the way an import announces it.
     Root->SourceRelativePath.Reset();
-    bool bPassed = Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_SOURCE_INDEX_INVALID"));
+    MHNotifyCompositeAssetChanged(*Root);
+    bool bPassed = Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_SOURCE_INDEX_INVALID"), true);
     Root->SourceRelativePath = SourcePath;
-    Actor->RebuildComposite();
+    MHNotifyCompositeAssetChanged(*Root);
     bPassed &= TestNotNull(TEXT("restoring SourcePath heals receipt admission"), Actor->GetResolvedPlan());
     Root->AppliedHash.Reset();
-    bPassed &= Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_SOURCE_INDEX_INVALID"));
+    MHNotifyCompositeAssetChanged(*Root);
+    bPassed &= Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_SOURCE_INDEX_INVALID"), true);
     Root->AppliedHash = AppliedHash;
-    Actor->RebuildComposite();
+    MHNotifyCompositeAssetChanged(*Root);
     bPassed &= TestNotNull(TEXT("restoring AppliedHash heals receipt admission"), Actor->GetResolvedPlan());
     Root->SourceRelativePath = TEXT("../") + SourcePath;
-    bPassed &= Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_SOURCE_INDEX_INVALID"));
+    MHNotifyCompositeAssetChanged(*Root);
+    bPassed &= Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_SOURCE_INDEX_INVALID"), true);
     return bPassed;
 }
 
@@ -229,8 +254,10 @@ bool FMHCompositeAbstractActorAdmissionTest::RunTest(const FString& Parameters)
     if (Root == nullptr) return false;
     AMHCompositeActor* Actor = Fixture.Spawn(*Root);
     if (Actor == nullptr) return false;
-    bool bPassed = Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE"));
-    bPassed &= TestTrue(TEXT("refusal names the unselected abstract registry token"), Actor->GetLastPlacementError().Contains(ActorName));
+    // R2b-2: an unselected abstract endpoint only breaks the closure, which the proof plane owns.
+    FString GraphError;
+    bool bPassed = Fixture.ExpectRejected(*Root, *Actor, TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE"), false, &GraphError);
+    bPassed &= TestTrue(TEXT("applied-graph refusal names the unselected abstract registry token"), GraphError.Contains(ActorName));
     Fixture.Settings->ActorClassRegistry.Add(ActorName, FSoftClassPath(AStaticMeshActor::StaticClass()));
     Actor->RebuildComposite();
     if (!TestNotNull(TEXT("spawnable replacement admits the full closure"), Actor->GetResolvedPlan())) return false;
@@ -295,10 +322,12 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     Actor->Tick(0.0f);
     if (!TestNotNull(TEXT("placement move during Edit retains admitted prospective plan"), Actor->GetResolvedPlan())) return false;
     TestEqual(TEXT("moving placement during Edit does not change Seed"), Actor->GetSeed(), 100);
-    TestEqual(TEXT("placement basis alone does not change signature"), Actor->GetResolvedPlan()->ResolvedSignature, AppliedPlan.ResolvedSignature);
-    TestEqual(TEXT("placement basis alone does not change closure hash"), Actor->GetResolvedPlan()->Closure.ClosureHash, AppliedPlan.Closure.ClosureHash);
-    TestTrue(TEXT("placement basis alone does not change raw closure receipts"),
-        Actor->GetResolvedPlan()->Closure.OrderedRawHashes == AppliedPlan.Closure.OrderedRawHashes);
+    // R2b-2: the preview publishes no signature and no closure, so an unchanged basis
+    // move is asserted as unchanged plan content instead.
+    TArray<FString> Mismatches;
+    TestTrue(TEXT("placement basis alone does not change the plan content"),
+        MHCompareRecipeShadowParity(AppliedPlan, *Actor->GetResolvedPlan(), Mismatches));
+    TestTrue(TEXT("preview plan carries no source closure"), Actor->GetResolvedPlan()->Closure.Resources.IsEmpty());
     TestEqual(TEXT("moving in Edit keeps authored handle object"), Actor->GetTopLevelPlacementComponents()[0].Get(), Handle);
     TestEqual(TEXT("moving in Edit keeps leaf object"), Actor->GetDerivedComponents()[1].Get(), static_cast<UActorComponent*>(Leaf));
     TestTrue(TEXT("authored handle follows placement basis without baking profile"), MHMatrixElementsWithinTrsTolerance(
@@ -323,8 +352,9 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("authored handle update produces prospective plan"), Actor->GetResolvedPlan())) return false;
     const FMHResolvedCompositePlan ProspectivePlan = *Actor->GetResolvedPlan();
     TestEqual(TEXT("prospective authored transform is not sampled profile transform"), ProspectivePlan.Nodes[0].AuthoredLocalTrs.TranslationCm.X, 150.0f);
-    TestNotEqual(TEXT("authored Edit changes prospective signature"), ProspectivePlan.ResolvedSignature, AppliedPlan.ResolvedSignature);
-    TestNotEqual(TEXT("authored Edit changes prospective closure hash"), ProspectivePlan.Closure.ClosureHash, AppliedPlan.Closure.ClosureHash);
+    // R2b-2: an authored Edit is observed as changed plan content, not as a changed signature or closure hash.
+    TestFalse(TEXT("authored Edit changes the prospective plan content"),
+        MHCompareRecipeShadowParity(AppliedPlan, ProspectivePlan, Mismatches));
     TestEqual(TEXT("authored Edit does not change applied SourceHash"), Root->SourceHash, SourceHash);
     TestEqual(TEXT("authored Edit does not change applied canonical hash"), Root->AppliedHash, AppliedHash);
     TestEqual(TEXT("authored Edit does not change inlined profile receipt"), Root->InlinedPlacementProfiles[0].GetAppliedSourceHash(), ProfileHash);
@@ -332,16 +362,14 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     TArray<uint8> StillAppliedBytes;
     if (!MHExtractCompositeV5(*Root, Extracted, Error) || !MHWriteCanonicalCompositeV5(Extracted, StillAppliedBytes, Error)) return false;
     TestTrue(TEXT("Edit never mutates source-shaped applied asset"), StillAppliedBytes == AppliedBytes);
-    FMHCompositeDocument ProspectiveDocument = Document;
-    ProspectiveDocument.Nodes[0].Transform.TranslationCm = SubmittedLocal.GetTranslation();
-    ProspectiveDocument.Nodes[0].Transform.RotationQuat = SubmittedLocal.GetRotation();
-    ProspectiveDocument.Nodes[0].Transform.Scale = SubmittedLocal.GetScale3D();
-    TArray<uint8> ProspectiveBytes;
-    if (!MHWriteCanonicalCompositeV5(ProspectiveDocument, ProspectiveBytes, Error)) return false;
-    const int32 RootHashIndex = ProspectivePlan.Closure.Resources.IndexOfByKey(TEXT("composite:") + Root->LogicalName);
-    if (!TestTrue(TEXT("prospective closure still includes its root"), ProspectivePlan.Closure.OrderedRawHashes.IsValidIndex(RootHashIndex))) return false;
-    TestEqual(TEXT("prospective root receipt hashes canonical edited source"),
-        ProspectivePlan.Closure.OrderedRawHashes[RootHashIndex], MHRawPayloadHash(ProspectiveBytes));
+    // R2b-2: the preview builds no closure, so the submitted host decomposition is
+    // verified on the prospective plan's authored TRS instead of a closure receipt
+    // over canonical edited bytes.
+    const FMHRandomTrs& ProspectiveAuthored = ProspectivePlan.Nodes[0].AuthoredLocalTrs;
+    TestTrue(TEXT("prospective authored TRS preserves the submitted host decomposition"),
+        ProspectiveAuthored.TranslationCm.Equals(FVector3f(SubmittedLocal.GetTranslation()), 0.05f) &&
+        ProspectiveAuthored.RotationQuat.Equals(FQuat4f(SubmittedLocal.GetRotation()), 0.005f) &&
+        ProspectiveAuthored.Scale.Equals(FVector3f(SubmittedLocal.GetScale3D()), 0.005f));
     if (!TestEqual(TEXT("editing authored transform preserves draw count"), ProspectivePlan.Draws.Num(), AppliedPlan.Draws.Num())) return false;
     for (int32 Index = 0; Index < AppliedPlan.Draws.Num(); ++Index)
     {
@@ -353,8 +381,10 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     Actor->RebuildComposite();
     if (!TestNotNull(TEXT("Cancel plus Rebuild restores applied plan"), Actor->GetResolvedPlan())) return false;
     TestFalse(TEXT("Cancel exits transient Edit mode"), Actor->IsPlacementEditMode());
-    TestEqual(TEXT("Cancel restores original signature despite moved placement"), Actor->GetResolvedPlan()->ResolvedSignature, AppliedPlan.ResolvedSignature);
-    TestEqual(TEXT("Cancel restores original closure hash"), Actor->GetResolvedPlan()->Closure.ClosureHash, AppliedPlan.Closure.ClosureHash);
+    // R2b-2: Cancel is observed as restored plan content; the preview has no signature or closure.
+    TestTrue(TEXT("Cancel restores original plan content despite moved placement"),
+        MHCompareRecipeShadowParity(AppliedPlan, *Actor->GetResolvedPlan(), Mismatches));
+    TestTrue(TEXT("restored preview plan carries no source closure"), Actor->GetResolvedPlan()->Closure.Resources.IsEmpty());
     TestEqual(TEXT("Cancel never rewrote source receipt"), Root->SourceHash, SourceHash);
     TestTrue(TEXT("Cancel restores authored handle in current placement basis"), MHMatrixElementsWithinTrsTolerance(
         Actor->GetTopLevelPlacementComponents()[0]->GetComponentTransform().ToMatrixWithScale(),

@@ -112,6 +112,8 @@ public:
 
     /** Instrumentation only: full placement rebuilds performed by this actor. */
     uint32 GetPlacementRebuildCount() const { return PlacementRebuildCount; }
+    /** Increments on every successful preview build or edit-session step (R2b-2); zero before the first. */
+    uint32 GetPreviewRevision() const { return PreviewRevision; }
 
     /** Instrumentation only: rebuilds forced by a fail-closed state desync. */
     uint32 GetPlacementDesyncCount() const { return PlacementDesyncCount; }
@@ -193,8 +195,6 @@ private:
     void AttachRootTransformHook();
     void ReportPlacementError();
     void StoreCompactResolvedState(const UE::MimirComposite::FMHResolvedCompositePlan& Plan);
-    TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> ResolvePlanFromCompactState(
-        const UE::MimirComposite::FMHRandomSourceGraph& Graph, FString& OutError) const;
     void InvalidateResolvedDebugPlan() const;
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
@@ -252,6 +252,14 @@ private:
     TSharedPtr<UE::MimirComposite::FMHCompositeDefinitionEntry> AppliedDefinition;
     TSharedPtr<const UE::MimirComposite::FMHRandomSourceGraph> AppliedGraph;
     TOptional<UE::MimirComposite::FMHCompactResolvedState> CompactResolvedState;
+    /**
+     * Resident preview plan (Recipe Model v2 §2.10 "LastPlacements"): Layout +
+     * Appearance of the current seeds on the recipe graph, no closure, no
+     * signature. Basis updates, Outliner and reseed diffs read it; nothing
+     * re-resolves it.
+     */
+    TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> ResidentPlan;
+    uint32 PreviewRevision = 0;
     mutable TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> ResolvedDebugPlan;
     mutable int32 ResolvedDebugPlanLeaseCount = 0;
     TOptional<UE::MimirComposite::FMHRandomSourceGraph> EditingGraph;

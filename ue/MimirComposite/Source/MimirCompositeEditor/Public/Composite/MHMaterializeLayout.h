@@ -44,7 +44,14 @@ struct MIMIRCOMPOSITEEDITOR_API FMHMaterializeResult
      * reseed diff). Never carries a closure or a signature: preview plane.
      */
     TSharedPtr<const FMHResolvedCompositePlan> Plan;
+    /** Preview graph the plan was resolved on (recipe composites, no RawHashes). */
+    TSharedPtr<const FMHRandomSourceGraph> Graph;
 };
+
+/** Graph resources a materialized recipe observes: composites, meshes, profiles. */
+MIMIRCOMPOSITEEDITOR_API void MHCollectRecipeGraphDependencies(
+    const FMHRandomSourceGraph& Graph,
+    TSet<FMHResourceKey>& OutDependencies);
 
 /**
  * Recipe Model v2 §2.5. Pure function over a compiled recipe: no asset load,

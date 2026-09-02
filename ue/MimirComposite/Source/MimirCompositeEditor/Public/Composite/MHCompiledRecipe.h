@@ -115,6 +115,14 @@ MIMIRCOMPOSITEEDITOR_API bool MHResolveRecipePreview(
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError);
 
+/** Same preview stages over an already assembled preview graph (edit sessions, materialization). */
+MIMIRCOMPOSITEEDITOR_API bool MHResolvePreviewGraph(
+    const FMHRandomSourceGraph& Graph,
+    int32 Seed,
+    int32 AppearanceSeed,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError);
+
 /**
  * Shadow parity (§2.3): decisions, draws, nodes, leaves, world matrices,
  * appearance channels and selected dependencies of the reference wrapper
@@ -160,6 +168,12 @@ public:
 
     /** RecipeRevision++; the next Compile rebuilds this recipe (parents keep their references). */
     void Invalidate(const UMHCompositeAsset& Asset);
+    /** Every known recipe: RecipeRevision++ (cold passes, tests). */
+    void InvalidateAll();
+    /** Reimport notification of a composite key (docs/16 §4): RecipeRevision++ of that asset only. */
+    void InvalidateComposite(const FString& LogicalName);
+    /** Reimport notification of a placement profile: RecipeRevision++ of every recipe inlining it. */
+    void InvalidateProfile(const FString& LogicalName);
 
     uint32 GetRecipeRevision(const UMHCompositeAsset& Asset) const;
 

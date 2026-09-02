@@ -108,6 +108,7 @@ FMHCompositeOutlinerFreshness FMHCompositeOutlinerFreshness::Capture(
     FMHCompositeOutlinerFreshness Result;
     Result.Seed = Actor.GetSeed();
     Result.AppearanceSeed = Actor.GetAppearanceSeed();
+    Result.PreviewRevision = Actor.GetPreviewRevision();
     Result.ResolvedSignature = Actor.GetCompactResolvedSignature();
     Result.AppearanceSignature = Actor.GetCompactAppearanceSignature();
     Result.PlacementSignature = Actor.GetCompactPlacementSignature();
@@ -116,9 +117,9 @@ FMHCompositeOutlinerFreshness FMHCompositeOutlinerFreshness::Capture(
 
 bool FMHCompositeOutlinerFreshness::IsComplete() const
 {
-    return !ResolvedSignature.IsEmpty() &&
-        !AppearanceSignature.IsEmpty() &&
-        !PlacementSignature.IsEmpty();
+    // R2b-2: the preview plane carries no signatures; a built preview is
+    // identified by the actor's preview revision.
+    return PreviewRevision != 0;
 }
 
 bool FMHCompositeOutlinerFreshness::Matches(
@@ -126,9 +127,7 @@ bool FMHCompositeOutlinerFreshness::Matches(
 {
     return IsComplete() && Other.IsComplete() &&
         Seed == Other.Seed && AppearanceSeed == Other.AppearanceSeed &&
-        ResolvedSignature == Other.ResolvedSignature &&
-        AppearanceSignature == Other.AppearanceSignature &&
-        PlacementSignature == Other.PlacementSignature;
+        PreviewRevision == Other.PreviewRevision;
 }
 
 bool FMHCompositeOutlinerRefreshState::NeedsRebuild(

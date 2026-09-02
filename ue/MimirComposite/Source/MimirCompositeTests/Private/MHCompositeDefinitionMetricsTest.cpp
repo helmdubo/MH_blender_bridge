@@ -1,5 +1,6 @@
 #include "MHGoldenRoot.h"
 
+#include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
@@ -273,9 +274,10 @@ bool DefinitionMetricsCommonAssertions(
     const uint64 PlacementCount, const uint64 RegisteredComponents)
 {
     bool bPassed = true;
-    const uint64 GraphBuilds = Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls;
-    bPassed &= Test.TestTrue(TEXT("at least one applied graph admission is measured"), GraphBuilds >= 1);
-    bPassed &= Test.TestTrue(TEXT("graph admissions never exceed placements"), GraphBuilds <= PlacementCount);
+    // R2b-2: preview compiles a recipe and materializes the layout, so no
+    // placement admits an applied graph any more.
+    bPassed &= Test.TestEqual(TEXT("preview builds no applied graph"),
+        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     bPassed &= Test.TestEqual(TEXT("each placement resolves its own plan"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, PlacementCount);
     bPassed &= Test.TestEqual(TEXT("each placement loads its endpoints"),
@@ -336,21 +338,16 @@ bool DefinitionPlanParity(
     }
 
     bool bPassed = true;
-    bPassed &= Test.TestEqual(TEXT("resolved signature matches a fresh build"),
-        SharedPlan->ResolvedSignature, FreshPlan.ResolvedSignature);
-    bPassed &= Test.TestEqual(TEXT("appearance signature matches a fresh build"),
-        SharedPlan->Appearance.AppearanceSignature, FreshPlan.Appearance.AppearanceSignature);
-    bPassed &= Test.TestEqual(TEXT("placement signature matches a fresh build"),
-        SharedPlan->PlacementSignature, FreshPlan.PlacementSignature);
-    bPassed &= Test.TestTrue(TEXT("layout signature bytes match a fresh build"),
-        SharedPlan->SignaturePreimage == FreshPlan.SignaturePreimage);
-    bPassed &= Test.TestTrue(TEXT("appearance signature bytes match a fresh build"),
-        SharedPlan->Appearance.SignaturePreimage == FreshPlan.Appearance.SignaturePreimage);
-    bPassed &= Test.TestTrue(TEXT("closure bytes match a fresh build"),
-        SharedPlan->Closure.Resources == FreshPlan.Closure.Resources &&
-        SharedPlan->Closure.OrderedRawHashes == FreshPlan.Closure.OrderedRawHashes &&
-        SharedPlan->Closure.HashPreimage == FreshPlan.Closure.HashPreimage &&
-        SharedPlan->Closure.ClosureHash == FreshPlan.Closure.ClosureHash);
+    // R2b-2: the preview plan has no signatures and no closure, so parity with
+    // the reference resolver is decisions/draws/nodes/leaves/appearance only.
+    TArray<FString> Mismatches;
+    bPassed &= Test.TestTrue(TEXT("shared plan matches the reference resolver"),
+        MHCompareRecipeShadowParity(FreshPlan, *SharedPlan, Mismatches));
+    for (int32 Index = 0; Index < FMath::Min(Mismatches.Num(), 5); ++Index)
+        Test.AddError(TEXT("recipe shadow parity mismatch: ") + Mismatches[Index]);
+    // R2b-2: the closure and its signatures now belong to the proof plane only.
+    bPassed &= Test.TestTrue(TEXT("preview plan carries no closure"),
+        SharedPlan->Closure.Resources.IsEmpty() && SharedPlan->ResolvedSignature.IsEmpty());
     bPassed &= Test.TestEqual(TEXT("decision count matches a fresh build"),
         SharedPlan->Decisions.Num(), FreshPlan.Decisions.Num());
     for (int32 Index = 0; Index < FMath::Min(SharedPlan->Decisions.Num(), FreshPlan.Decisions.Num()); ++Index)
@@ -384,6 +381,32 @@ bool DefinitionPlanParity(
                 sizeof(Left.AppearanceChannels)) == 0);
     }
     return bPassed;
+}
+
+// R2b-2: preview plans carry no closure, so receipt-sensitive facts are read
+// from a proof-plane build (applied graph + reference resolver) of the asset.
+bool DefinitionProofClosureHash(
+    FAutomationTestBase& Test, const UMHCompositeAsset& Asset, const int32 Seed,
+    const int32 AppearanceSeed, FString& OutClosureHash)
+{
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (!Test.TestNotNull(TEXT("proof-plane settings"), Settings)) return false;
+    FMHRandomSourceGraph Graph;
+    TSet<FMHResourceKey> Dependencies;
+    FString Error;
+    if (!MHBuildAppliedCompositeGraph(Asset, *Settings, Graph, Dependencies, Error))
+    {
+        Test.AddError(TEXT("proof-plane graph build failed: ") + Error);
+        return false;
+    }
+    FMHResolvedCompositePlan Plan;
+    if (!MHResolveCompositePlan(Graph, Seed, AppearanceSeed, Plan, Error))
+    {
+        Test.AddError(TEXT("proof-plane resolve failed: ") + Error);
+        return false;
+    }
+    OutClosureHash = Plan.Closure.ClosureHash;
+    return true;
 }
 } // namespace
 
@@ -445,12 +468,19 @@ bool FMHDefinitionPoolSharedHundredTest::RunTest(const FString& Parameters)
     bool bPassed = DefinitionMetricsPlaceActors(
         *this, *Fixture.Root, PlacementCount, Metrics, WallMilliseconds);
     AddInfo(DefinitionMetricsLine(TEXT("acceptance_shared100"), PlacementCount, WallMilliseconds, Metrics));
-    bPassed &= TestEqual(TEXT("100 placements share one closure build"),
-        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    // R2b-2: no placement builds an applied graph; the shared work is the
+    // compiled recipe, cached by asset + RecipeRevision.
+    bPassed &= TestEqual(TEXT("100 placements build no applied graph"),
+        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     bPassed &= TestEqual(TEXT("100 placements still resolve independently"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls,
         static_cast<uint64>(PlacementCount));
     const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
+    // R2b-2: Hits/Misses now report the compiled recipe cache seen by placements.
+    bPassed &= TestEqual(TEXT("100 placements compile the recipe exactly once"),
+        Cache.Misses, 1ull);
+    bPassed &= TestEqual(TEXT("99 later placements hit the compiled recipe"),
+        Cache.Hits, static_cast<uint64>(PlacementCount - 1));
     bPassed &= TestEqual(TEXT("100 warm placements resolve one distinct endpoint"),
         Cache.EndpointResolves, 1ull);
     bPassed &= TestEqual(TEXT("cache hits never rebuild the immutable closure"),
@@ -476,12 +506,17 @@ bool FMHDefinitionPoolDragEmulationTest::RunTest(const FString& Parameters)
     double WallMilliseconds = 0.0;
     bool bPassed = DefinitionMetricsPlaceActors(*this, *Fixture.Root, 2, Metrics, WallMilliseconds);
     AddInfo(DefinitionMetricsLine(TEXT("acceptance_drag_two_spawns"), 2, WallMilliseconds, Metrics));
-    bPassed &= TestEqual(TEXT("drag preview and final drop share one closure build"),
-        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    // R2b-2: no applied graph in preview; the drop shares the drag's recipe.
+    bPassed &= TestEqual(TEXT("drag preview and final drop build no applied graph"),
+        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     bPassed &= TestEqual(TEXT("both drag actors resolve independently"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, 2ull);
+    const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
+    // R2b-2: recipe cache: the drag preview compiles, the final drop hits.
+    bPassed &= TestEqual(TEXT("drag preview compiles the recipe once"), Cache.Misses, 1ull);
+    bPassed &= TestEqual(TEXT("final drop hits the compiled recipe"), Cache.Hits, 1ull);
     bPassed &= TestEqual(TEXT("drag preview and final drop resolve the endpoint set once"),
-        MHGetDefinitionCacheMetrics().EndpointResolves, 1ull);
+        Cache.EndpointResolves, 1ull);
     return bPassed;
 }
 
@@ -524,11 +559,23 @@ bool FMHDefinitionPoolTargetedInvalidationTest::RunTest(const FString& Parameter
 
     bool bPassed = ChangedFixture.ReimportRootWithEquivalentSource();
     MHResetPlacementStageMetrics();
+    MHResetDefinitionCacheMetrics();
     MHNotifyCompositeAssetChanged(*ChangedFixture.Root);
     const FMHPlacementStageMetrics Metrics = MHGetPlacementStageMetrics();
+    const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
     AddInfo(DefinitionMetricsLine(TEXT("acceptance_targeted_reimport"), 3, 0.0, Metrics));
-    bPassed &= TestEqual(TEXT("one invalidated definition is rebuilt once"),
-        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    // R2b-2: the notification rebuilds placements from the compiled recipe; no
+    // placement admits an applied graph any more.
+    bPassed &= TestEqual(TEXT("no affected placement builds an applied graph"),
+        Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
+    // R2b-2: recipe content follows the applied document, not the source receipt.
+    // This reimport keeps AppliedHash byte-identical and fires neither
+    // PostEditChange nor the reimport delegate, so the recipe stays cached and
+    // all three rebuilds are recipe-cache hits.
+    bPassed &= TestEqual(TEXT("an equivalent source reimport recompiles no recipe"),
+        Cache.Misses, 1ull);
+    bPassed &= TestEqual(TEXT("every affected placement hits the compiled recipe"),
+        Cache.Hits, 2ull);
     bPassed &= TestEqual(TEXT("every affected placement resolves again"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, 3ull);
     for (int32 Index = 0; Index < ChangedActors.Num(); ++Index)
@@ -582,10 +629,17 @@ bool FMHDefinitionPoolClosureHitTest::RunTest(const FString& Parameters)
         Actor->SetCompositeAsset(Fixture.Root);
         bPassed &= TestNotNull(TEXT("closure-hit plan"), Actor->GetResolvedPlan());
     }
-    AddInfo(DefinitionMetricsLine(
-        TEXT("acceptance_closure_hits"), HitCount, 0.0, MHGetPlacementStageMetrics()));
+    const FMHPlacementStageMetrics Stages = MHGetPlacementStageMetrics();
+    const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
+    AddInfo(DefinitionMetricsLine(TEXT("acceptance_closure_hits"), HitCount, 0.0, Stages));
     bPassed &= TestEqual(TEXT("cache hits perform zero immutable closure builds"),
-        MHGetDefinitionCacheMetrics().ClosureHitBuilds, 0ull);
+        Cache.ClosureHitBuilds, 0ull);
+    // R2b-2: a warm placement neither recompiles the recipe nor admits a graph.
+    bPassed &= TestEqual(TEXT("warm placements build no applied graph"),
+        Stages.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
+    bPassed &= TestEqual(TEXT("warm placements recompile no recipe"), Cache.Misses, 0ull);
+    bPassed &= TestEqual(TEXT("every warm placement hits the compiled recipe"),
+        Cache.Hits, static_cast<uint64>(HitCount));
     World->DestroyWorld(true);
     return bPassed;
 }
@@ -621,7 +675,9 @@ bool FMHDefinitionPoolEndpointGarbageCollectionTest::RunTest(const FString& Para
         FirstWorld->DestroyWorld(true);
         return false;
     }
-    const FString FirstPlacementSignature = FirstPlan->PlacementSignature;
+    // R2b-2: the preview plan has no PlacementSignature, so keep the cold plan
+    // itself and compare it with the recovered one.
+    const FMHResolvedCompositePlan FirstCopy = *FirstPlan;
     FirstWorld->DestroyWorld(true);
 
     const TWeakObjectPtr<UStaticMesh> ReleasedMesh = Fixture.ReleaseMeshForGarbageCollection();
@@ -656,8 +712,12 @@ bool FMHDefinitionPoolEndpointGarbageCollectionTest::RunTest(const FString& Para
     bPassed &= TestNotNull(TEXT("endpoint-GC recovered plan"), SecondPlan);
     if (SecondPlan != nullptr)
     {
-        bPassed &= TestEqual(TEXT("endpoint-GC placement signature matches cold result"),
-            SecondPlan->PlacementSignature, FirstPlacementSignature);
+        // R2b-2: preview signatures are empty; equality is plan parity instead.
+        TArray<FString> Mismatches;
+        bPassed &= TestTrue(TEXT("endpoint-GC recovered plan matches the cold result"),
+            MHCompareRecipeShadowParity(FirstCopy, *SecondPlan, Mismatches));
+        for (int32 Index = 0; Index < FMath::Min(Mismatches.Num(), 5); ++Index)
+            AddError(TEXT("endpoint-GC parity mismatch: ") + Mismatches[Index]);
     }
     const TArray<TObjectPtr<USceneComponent>>& Leaves = Second->GetLeafPlacementComponents();
     UStaticMeshComponent* MeshComponent = Leaves.Num() == 1
@@ -699,12 +759,19 @@ bool FMHDefinitionPoolEndpointReimportTest::RunTest(const FString& Parameters)
         FirstWorld->DestroyWorld(true);
         return false;
     }
-    const FString FirstClosureHash = FirstPlan->Closure.ClosureHash;
+    // R2b-2: the preview plan carries no closure, so the receipt-sensitive hash
+    // comes from a proof-plane build of the same asset and seeds.
+    const int32 FirstSeed = First->GetSeed();
+    const int32 FirstAppearanceSeed = First->GetAppearanceSeed();
+    FString FirstClosureHash;
+    const bool bFirstClosure = DefinitionProofClosureHash(
+        *this, *Fixture.Root, FirstSeed, FirstAppearanceSeed, FirstClosureHash);
     FirstWorld->DestroyWorld(true);
 
     const TWeakObjectPtr<UStaticMesh> ReleasedMesh = Fixture.ReleaseMeshForGarbageCollection();
     CollectGarbage(RF_NoFlags);
-    bool bPassed = TestFalse(TEXT("reimport replaces the prior endpoint object"), ReleasedMesh.IsValid());
+    bool bPassed = bFirstClosure;
+    bPassed &= TestFalse(TEXT("reimport replaces the prior endpoint object"), ReleasedMesh.IsValid());
     UStaticMesh* Replacement = Fixture.AddMesh(
         Fixture.MeshName,
         TEXT("blake3-160:1123456789012345678901234567890123456789"));
@@ -727,19 +794,31 @@ bool FMHDefinitionPoolEndpointReimportTest::RunTest(const FString& Parameters)
     Second->SetAutoSeed(false);
     Second->SetCompositeAsset(Fixture.Root);
     const FMHDefinitionCacheMetrics Cache = MHGetDefinitionCacheMetrics();
-    AddInfo(DefinitionMetricsLine(
-        TEXT("acceptance_endpoint_reimport"), 1, 0.0, MHGetPlacementStageMetrics()));
-    bPassed &= TestEqual(TEXT("mesh notify rebuilds the invalidated definition"),
-        MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 1ull);
+    const FMHPlacementStageMetrics Stages = MHGetPlacementStageMetrics();
+    AddInfo(DefinitionMetricsLine(TEXT("acceptance_endpoint_reimport"), 1, 0.0, Stages));
+    // R2b-2: a mesh reimport invalidates the endpoint prototype, never the
+    // recipe; the rebuilt preview materializes a layout without an applied graph.
+    bPassed &= TestEqual(TEXT("mesh notify builds no applied graph"),
+        Stages.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     bPassed &= TestEqual(TEXT("replacement endpoint is physically resolved once"),
         Cache.EndpointResolves, 1ull);
     bPassed &= TestEqual(TEXT("replacement endpoint enters the new definition cache"),
         Cache.EndpointStores, 1ull);
     const FMHResolvedCompositePlan* SecondPlan = Second->GetResolvedPlan();
     bPassed &= TestNotNull(TEXT("endpoint-reimport replacement plan"), SecondPlan);
-    if (SecondPlan != nullptr)
+    // R2b-2: the preview plan has no closure, so the receipt change is proved
+    // against a proof-plane build taken after the replacement.
+    FString SecondClosureHash;
+    if (DefinitionProofClosureHash(
+            *this, *Fixture.Root, FirstSeed, FirstAppearanceSeed, SecondClosureHash))
+    {
         bPassed &= TestNotEqual(TEXT("mesh receipt change reaches the rebuilt closure"),
-            SecondPlan->Closure.ClosureHash, FirstClosureHash);
+            SecondClosureHash, FirstClosureHash);
+    }
+    else
+    {
+        bPassed = false;
+    }
     const TArray<TObjectPtr<USceneComponent>>& Leaves = Second->GetLeafPlacementComponents();
     UStaticMeshComponent* MeshComponent = Leaves.Num() == 1
         ? Cast<UStaticMeshComponent>(Leaves[0]) : nullptr;

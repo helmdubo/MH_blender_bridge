@@ -5,6 +5,38 @@
 namespace UE::MimirComposite
 {
 
+namespace
+{
+
+FMHResourceKey GraphKey(const EMHResourceKind Kind, const FString& Name)
+{
+    FMHResourceKey Key;
+    Key.Kind = Kind;
+    Key.LogicalName = Name;
+    return Key;
+}
+
+} // namespace
+
+void MHCollectRecipeGraphDependencies(const FMHRandomSourceGraph& Graph, TSet<FMHResourceKey>& OutDependencies)
+{
+    TFunction<void(const FMHRandomNode&)> Visit = [&](const FMHRandomNode& Node)
+    {
+        if (Node.Kind == EMHRandomSemanticKind::Mesh) OutDependencies.Add(GraphKey(EMHResourceKind::StaticMesh, Node.Resource));
+        if (!Node.Profile.IsEmpty()) OutDependencies.Add(GraphKey(EMHResourceKind::PlacementProfile, Node.Profile));
+        for (const FMHRandomOption& Option : Node.Options)
+        {
+            if (Option.Kind == EMHRandomSemanticKind::Mesh) OutDependencies.Add(GraphKey(EMHResourceKind::StaticMesh, Option.Resource));
+        }
+        for (const FMHRandomNode& Child : Node.Children) Visit(Child);
+    };
+    for (const TPair<FString, FMHRandomComposite>& Pair : Graph.Composites)
+    {
+        OutDependencies.Add(GraphKey(EMHResourceKind::Composite, Pair.Key));
+        for (const FMHRandomNode& Node : Pair.Value.Nodes) Visit(Node);
+    }
+}
+
 FMHMaterializeResult MHMaterializeLayout(
     const FMHCompiledRecipe& Recipe,
     const int32 Seed,
@@ -17,9 +49,18 @@ FMHMaterializeResult MHMaterializeLayout(
     FMHMaterializeResult Result;
     Result.Seed = Seed;
     Result.AppearanceSeed = AppearanceSeed;
+    const TSharedRef<FMHRandomSourceGraph> Graph = MakeShared<FMHRandomSourceGraph>();
     const TSharedRef<FMHResolvedCompositePlan> Plan = MakeShared<FMHResolvedCompositePlan>();
     FString Error;
-    if (!MHResolveRecipePreview(Recipe, Seed, AppearanceSeed, *Plan, Error))
+    if (!MHBuildRecipeGraph(Recipe, *Graph, Error))
+    {
+        Result.Error = Error.StartsWith(TEXT("MH_E_")) ? Error : TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: ") + Error;
+        return Result;
+    }
+    // The graph is reported even when layout fails: its resources are what a
+    // caller must watch to retry once a missing dependency appears.
+    Result.Graph = Graph;
+    if (!MHResolvePreviewGraph(*Graph, Seed, AppearanceSeed, *Plan, Error))
     {
         Result.Error = Error.StartsWith(TEXT("MH_E_")) ? Error : TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
         return Result;

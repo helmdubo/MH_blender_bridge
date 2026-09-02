@@ -207,7 +207,9 @@ bool FMHCompositeCompactResolvedStateTest::RunTest(const FString& Parameters)
     Actor->SetAppearanceSeed(2718);
     Actor->SetCompositeAsset(Fixture.Composite);
 
-    bool bPassed = TestFalse(TEXT("ordinary placement retains no full debug plan"),
+    // R2b-2: the preview plan is resident (§2.10 "LastPlacements"); the lazy
+    // debug lease no longer owns a separate copy.
+    bool bPassed = TestFalse(TEXT("no separate debug copy is leased"),
         Actor->HasResidentResolvedDebugPlan());
     bPassed &= TestFalse(TEXT("compact state retains no draws, decisions, or preimages"),
         Actor->HasCompactResolvedDiagnostics());
@@ -220,31 +222,35 @@ bool FMHCompositeCompactResolvedStateTest::RunTest(const FString& Parameters)
     const FString AppearanceSignature = Actor->GetCompactAppearanceSignature();
     const FString PlacementSignature = Actor->GetCompactPlacementSignature();
     const FMHResolvedCompositePlan* Debug = Actor->GetResolvedPlan();
-    bPassed &= TestNotNull(TEXT("explicit inspection lazily materializes the full debug plan"), Debug);
+    bPassed &= TestNotNull(TEXT("inspection reads the resident preview plan"), Debug);
     if (Debug != nullptr)
     {
-        bPassed &= TestTrue(TEXT("lazy plan contains the layout diagnostic trace"),
+        bPassed &= TestTrue(TEXT("resident plan contains the layout diagnostic trace"),
             !Debug->Decisions.IsEmpty() && !Debug->Draws.IsEmpty() &&
             !Debug->SignaturePreimage.IsEmpty());
-        bPassed &= TestTrue(TEXT("lazy plan contains appearance trace"),
+        bPassed &= TestTrue(TEXT("resident plan contains appearance trace"),
             !Debug->Appearance.Draws.IsEmpty() &&
             !Debug->Appearance.SignaturePreimage.IsEmpty());
-        bPassed &= TestEqual(TEXT("lazy plan preserves the resolved signature"),
+        // R2b-2: preview plane, no closure, no signatures; the compact state
+        // mirrors the (empty) preview signatures exactly.
+        bPassed &= TestTrue(TEXT("preview plan carries no signature"),
+            Debug->ResolvedSignature.IsEmpty() && Debug->Appearance.AppearanceSignature.IsEmpty() &&
+            Debug->PlacementSignature.IsEmpty() && Debug->Closure.Resources.IsEmpty());
+        bPassed &= TestEqual(TEXT("compact state mirrors the preview resolved signature"),
             Debug->ResolvedSignature, ResolvedSignature);
-        bPassed &= TestEqual(TEXT("lazy plan preserves the appearance signature"),
+        bPassed &= TestEqual(TEXT("compact state mirrors the preview appearance signature"),
             Debug->Appearance.AppearanceSignature, AppearanceSignature);
-        bPassed &= TestEqual(TEXT("lazy plan preserves the placement signature"),
+        bPassed &= TestEqual(TEXT("compact state mirrors the preview placement signature"),
             Debug->PlacementSignature, PlacementSignature);
     }
-    bPassed &= TestTrue(TEXT("debug plan is resident after explicit inspection"),
+    bPassed &= TestFalse(TEXT("inspection leases no separate debug copy"),
         Actor->HasResidentResolvedDebugPlan());
     const FMHResolvedCompositePlan FirstDebug = Debug != nullptr
         ? *Debug : FMHResolvedCompositePlan();
     Actor->ReleaseResolvedDebugPlan();
-    bPassed &= TestFalse(TEXT("unleased debug plan is freed after inspection"),
-        Actor->HasResidentResolvedDebugPlan());
     const FMHResolvedCompositePlan* RebuiltDebug = Actor->GetResolvedPlan();
-    bPassed &= TestNotNull(TEXT("debug plan can be reconstructed again"), RebuiltDebug);
+    bPassed &= TestNotNull(TEXT("resident plan survives lease release"), RebuiltDebug);
+    bPassed &= TestTrue(TEXT("release returns the same resident plan object"), RebuiltDebug == Debug);
     if (RebuiltDebug != nullptr)
     {
         bPassed &= TestTrue(TEXT("lazy reconstruction preserves layout preimage bytes"),
