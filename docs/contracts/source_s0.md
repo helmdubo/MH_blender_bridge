@@ -123,9 +123,12 @@ Expected 'same-second rescan hashes the fresh payload' to be true.
 1. `IncrementalScanRehashesSameSecondChange` — Success.
 2. `Mimir.V4.BulkImport.CrashBetweenPassesRetries` — Success **3 из 3** отдельных
    прогонов (лог каждого в квитанции).
-3. `IncrementalScanSkipsUnchangedHashes` остаётся Success: в нём между записью и
-   повторным сканом уже есть пауза; если окно ломает его сценарий — STOP + OPEN,
-   тест не менять.
+3. `IncrementalScanSkipsUnchangedHashes` остаётся Success. **OPEN-S0-1 закрыт
+   близнецом (2026-09-02):** паузы в тесте не было (ошибка контракта); фикстура
+   теста теперь состаривает payload'ы на 10 с через `SetTimeStamp` до холодного
+   скана (коммит близнеца в ветке), поэтому «unchanged» проход переиспользует
+   fingerprint детерминированно, а последующая перезапись остаётся свежей и
+   хэшируется. Норма без изменений; тесты исполнитель по-прежнему не меняет.
 4. Smoke `mh.SourceIndex.VerifyHashes=1` запускать через
    `-dpcvars=mh.SourceIndex.VerifyHashes=1` (cvar перед `Automation RunTests`
    в `-ExecCmds` подвешивает harness — воспроизведено близнецом и с
