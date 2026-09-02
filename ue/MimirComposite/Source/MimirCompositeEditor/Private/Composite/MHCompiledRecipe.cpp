@@ -55,19 +55,6 @@ FMHResourceKey RecipeKey(const EMHResourceKind Kind, const FString& Name)
     return Key;
 }
 
-/** Canonical "kind:name" key of a leaf resource; empty for structural kinds and the empty option. */
-FString RecipeResourceKey(const EMHRandomSemanticKind Kind, const FString& Name)
-{
-    switch (Kind)
-    {
-    case EMHRandomSemanticKind::Mesh: return RecipeKey(EMHResourceKind::StaticMesh, Name).ToString();
-    case EMHRandomSemanticKind::Composite: return RecipeKey(EMHResourceKind::Composite, Name).ToString();
-    case EMHRandomSemanticKind::Actor: return TEXT("actor:") + Name;
-    case EMHRandomSemanticKind::GameObj: return TEXT("gameobj:") + Name;
-    default: return FString();
-    }
-}
-
 /** Registry keys the reverse index can express: managed meshes and composites. */
 bool RecipeIndexKey(const EMHRandomSemanticKind Kind, const FString& Name, FMHResourceKey& OutKey)
 {
@@ -218,6 +205,18 @@ TArray<FString> GraphSelectedDependencies(const TArray<FString>& Selected)
 
 } // namespace
 
+FString MHRecipeResourceKey(const EMHRandomSemanticKind Kind, const FString& Name)
+{
+    switch (Kind)
+    {
+    case EMHRandomSemanticKind::Mesh: return RecipeKey(EMHResourceKind::StaticMesh, Name).ToString();
+    case EMHRandomSemanticKind::Composite: return RecipeKey(EMHResourceKind::Composite, Name).ToString();
+    case EMHRandomSemanticKind::Actor: return TEXT("actor:") + Name;
+    case EMHRandomSemanticKind::GameObj: return TEXT("gameobj:") + Name;
+    default: return FString();
+    }
+}
+
 bool MHBuildRecipeGraph(const FMHCompiledRecipe& Root, FMHRandomSourceGraph& OutGraph, FString& OutError)
 {
     OutGraph = FMHRandomSourceGraph();
@@ -246,6 +245,12 @@ bool MHResolveRecipePreview(
     if (!MHBuildRecipeGraph(Root, Graph, OutError)) return false;
     if (!MHResolveCompositeLayout(Graph, Seed, OutPlan, OutError)) return false;
     MHResolveCompositeAppearance(OutPlan, AppearanceSeed);
+    // The appearance stage refreshes the signature strings from the preimages;
+    // without a closure they are not proof artifacts and must not look like
+    // ones. The preimages stay (parity, diagnostics).
+    OutPlan.ResolvedSignature.Reset();
+    OutPlan.Appearance.AppearanceSignature.Reset();
+    OutPlan.PlacementSignature.Reset();
     return true;
 }
 
@@ -511,7 +516,7 @@ TSharedPtr<FMHCompiledRecipe> UMHCompiledRecipeRegistry::CompileRecipe(
             Component.NodePath = NodePath;
             Component.Kind = RecipeNodeKind(Node.Kind);
             Component.Resource = Node.Resource;
-            Component.ResourceKey = RecipeResourceKey(Component.Kind, Node.Resource);
+            Component.ResourceKey = MHRecipeResourceKey(Component.Kind, Node.Resource);
             Component.DisplayName = Node.Name;
             Component.AuthoredTrs = RecipeTrs(Node.Transform);
             Component.ProfileName = Node.Profile;
@@ -532,7 +537,7 @@ TSharedPtr<FMHCompiledRecipe> UMHCompiledRecipeRegistry::CompileRecipe(
                 FMHCompiledRecipeOption& Out = Component.Options.AddDefaulted_GetRef();
                 Out.Kind = RecipeOptionKind(Option.Kind);
                 Out.Resource = Option.Resource;
-                Out.ResourceKey = RecipeResourceKey(Out.Kind, Option.Resource);
+                Out.ResourceKey = MHRecipeResourceKey(Out.Kind, Option.Resource);
                 Out.WeightRaw = Option.Weight;
             }
             Recipe->bGenerated |= Component.Kind == EMHRandomSemanticKind::Random || Component.TransformKind == EMHCompiledTransformKind::Ranges;
