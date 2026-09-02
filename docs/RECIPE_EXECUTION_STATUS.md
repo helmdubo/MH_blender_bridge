@@ -1,0 +1,34 @@
+> Status: NORMATIVE · Architecture version: Recipe Model v2.1 · Supersedes: — (created in D0b)
+
+# RECIPE_EXECUTION_STATUS — фактическая точка продолжения
+
+Архитектурный порядок задаёт `KICKOFF_PROMPT.md` (§5) и `docs/16_recipe_model.md`
+(§8). Этот документ задаёт **фактическую** точку продолжения программы: какие
+срезы реально смержены в `origin/main`, какой срез следующий, и какие срезы
+разблокированы для параллельной работы. Перед началом любого среза исполнитель
+читает эту таблицу и начинает **только** срез со статусом NEXT/READY.
+
+| Срез | Статус | PR / примечание |
+|---|---|---|
+| D0a | MERGED | #62 |
+| M0 | MERGED | #63 |
+| R0a | MERGED | #64 |
+| R0b | MERGED | #65 |
+| R1 | MERGED | #66 (acceptance по формулировке v2; П6 закрывает R1.1) |
+| D0b | NEXT | этот патч; после merge → HISTORY |
+| R1.1 | READY | счётчик `waited_meshes` и тест `Perf.SelectedMeshWait` приводятся к П6: множество ожидаемых = выбранные компилирующиеся; пересечение с невыбранными пусто |
+| R0c | READY | убрать из кода валидацию applied-root в горячем пути (docs/16 §7.2, шестая строка removed-entities); снять tag-пробу duplicate-claim из admission реестра **вместе** с миграцией `DuplicateRootClaimBlocksPlanAndBreak` в preflight-тест (§7.5) |
+| S0 | READY | параллельно, линия S |
+| S1 | PLANNED | — |
+| S2 | PLANNED | — |
+| R2a | PLANNED | первый шаг — реализация фазового разделения, П1 |
+| R2b | PLANNED | — |
+| R2c | PLANNED | — |
+| R3 | PLANNED | — |
+| R4 | PLANNED | — |
+| R5 | PLANNED | — |
+| R6 | PLANNED | — |
+| R7 | PLANNED | — |
+| R8 | OPTIONAL | — |
+
+Обновление этой таблицы — обязательная строка acceptance каждого среза.

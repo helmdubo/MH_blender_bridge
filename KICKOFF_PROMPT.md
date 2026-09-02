@@ -1,7 +1,7 @@
 # KICKOFF v2 — MimirComposite: Recipe Model (preview plane + proof plane)
 
 > **АКТИВНЫЙ ПРОМПТ ИСПОЛНИТЕЛЯ. Заменяет `KICKOFF_PROMPT.md` целиком.**
-> Status: NORMATIVE · Architecture version: Recipe Model v2 · Ратифицировано
+> Status: NORMATIVE · Architecture version: Recipe Model v2.1 (D0b) · Ратифицировано
 > owner 2026-09-02 после внешнего аудита. Версия v1 (2026-09-02, до аудита) —
 > HISTORY, не использовать. Этот документ самодостаточен: сессия, которая его
 > читает, не имеет другого контекста.
@@ -29,6 +29,10 @@ plugin `ue/MimirComposite`). Owner (Alexander) единолично приним
 Это не переписывание плагина с нуля. Формат `.composite`, канонизация, сиды,
 reference resolver, runtime-мост, Source-конвейер остаются. Переписывается
 редакторский слой `Composite/` и его контракт с актором.
+
+Архитектурный порядок задаёт KICKOFF. Фактическую точку продолжения задаёт
+`docs/RECIPE_EXECUTION_STATUS.md`; перед началом любого среза исполнитель
+читает его и начинает **только** срез со статусом NEXT/READY.
 
 ## 1. Обязательное чтение до любых правок
 
@@ -76,6 +80,10 @@ FMHCompiledRecipeRegistry         плоская программа рецепт
 MHMaterializeLayout                MHBuildCompositeProof
 preview plane                      proof plane
 без хэшей                          full closure + receipts + signatures
+                                        │
+                                        ▼
+                                   FMHProofCache
+                                   background proof cache по RecipeRevision (R2c)
         │
         ▼
 UMHEndpointPrototypeRegistry      точный путь, identity-admission, async-загрузка
@@ -87,10 +95,15 @@ UMHInstancePoolSubsystem          пулы по домену (ULevel), стаб�
 AMHCompositeActor                 asset + сиды + (позже) безопасные overrides
 ```
 
+`FMHProofCache` — editor subsystem с background task по `RecipeRevision`;
+реализуется в R2c.
+
 ### 3.1 `FMHCompiledRecipe` (Editor, `Composite/MHCompiledRecipe.{h,cpp}`)
 
-Реестр — editor subsystem; ключ `TWeakObjectPtr<UMHCompositeAsset>` +
-`AppliedHash` ассета. Компиляция не грузит ни одного меша: только
+Реестр — editor subsystem; ключ `UMHCompositeAsset* + RecipeRevision`
+(`uint32`, инкремент при реимпорте/`PostEditChange` ассета); `AppliedHash`
+ассета хранится в записи как debug-атрибут и **никогда** не сравнивается с
+Source Root в preview. Компиляция не грузит ни одного меша: только
 `MHExtractCompositeV5` и ключи ресурсов.
 
 - `TArray<FComponent>` в DFS-порядке; иерархия интервалами `BeginInd/EndInd`;
@@ -112,8 +125,9 @@ AMHCompositeActor                 asset + сиды + (позже) безопас
 
 `FMHResourceKey → FMHEndpointPrototype { TWeakObjectPtr<UObject> Object;
 EState {Unresolved, Loading, Ready, Invalid}; FBox Bounds; FString
-AdmissionError; uint32 Revision; uint64 PlacementInterfaceHash;
-TSoftClassPtr<AActor> ActorClass }`.
+AdmissionError; uint32 Revision; uint32 PayloadRevision; uint32 BoundsRevision;
+uint64 BucketDescriptorHash; uint64 CollisionInterfaceHash;
+uint64 MaterialBindingHash; TSoftClassPtr<AActor> ActorClass }`.
 
 - Резолв меша **только** по детерминированному пути
   `/Game/MH/Generated/<Folder>/<LogicalName>.<LogicalName>` через
@@ -123,11 +137,17 @@ TSoftClassPtr<AActor> ActorClass }`.
 - Загрузка выбранных endpoint'ов асинхронная (`FStreamableManager`); пока
   `Loading` — `UMHCompositeSettings::PlaceholderMesh` (по умолчанию
   `/Engine/BasicShapes/Cube`). Невыбранные варианты не загружаются.
-- `PlacementInterfaceHash` — хэш интерфейса меша для пула: material slots
-  (число, порядок, дефолтные материалы), sections и их флаги, LOD count,
-  collision contract / BodySetup, trace companion identity, свойства,
-  влияющие на `FISMComponentDescriptor`, bounds. Считается при `Ready` и при
-  каждом `Revision++`.
+- Пять хэшей/ревизий интерфейса меша для пула (единое поле заменено срезом
+  П4), считаются при `Ready` и при каждом `Revision++`:
+  `PayloadRevision` — геометрия / render resource → render refresh;
+  `BoundsRevision` — пространственные bounds → bounds cache, streaming bounds;
+  `BucketDescriptorHash` — поля совместимости `FISMComponentDescriptor`
+  (material slots: число, порядок, дефолтные материалы; sections и их флаги;
+  LOD count) → миграция бакета;
+  `CollisionInterfaceHash` — `BodySetup` / collision policy / trace companion
+  → recreate physics state;
+  `MaterialBindingHash` — slots / default materials / override compatibility
+  → reconcile дескриптора материалов.
 - `Actor`-лист: класс из `UMHCompositeSettings::ActorClassRegistry`
   (whitelist имя → `FSoftClassPath`; Blueprint допустим — решение owner).
   Имя вне whitelist → `Invalid` + заглушка-меш.
@@ -146,9 +166,12 @@ MHResolveCompositePlan = Layout → Appearance → Proof   // прежний п�
 
 Preview вызывает Layout + Appearance на графе, собранном из compiled recipes
 (сырые веса, canonical TRS). Proof-плоскость вызывает полную обёртку.
-Первый шаг R2a — **проверить**, требует ли текущий resolver хэши замыкания до
-обхода layout; если требует — разделение обязательно, если нет — оно всё
-равно делается, но проще.
+Текущий `MHResolveCompositePlan` (`MimirCompositeRuntime/Private/Random/
+MHRandomStream.cpp:809`) первым действием вызывает `MHBuildRandomSourceClosure`,
+которое жёстко завершается ошибкой `missing or invalid raw payload hash` для
+любого ресурса полного замыкания, включая невыбранные варианты. Фазовое
+разделение `Layout → Appearance → Proof` **обязательно**; первый шаг R2a —
+его реализация, а не проверка.
 
 **Shadow parity — постоянный CI-гейт**, не разовая проверка: на всех golden-
 векторах, экстремальных/малых весах, глубокой вложенности, non-uniform scale,
@@ -180,22 +203,47 @@ FMHMaterializeResult MHMaterializeLayout(
 
 ### 3.6 Точки выхода (proof plane)
 
-1. `PreSaveWorld` — warning в Message Log, сохранение не блокируется.
+1. `PreSaveWorld` **читает** background proof cache (ключ: `RecipeRevision`
+   root'а, generation индекса, `ImporterVersion`, `Registry.Revision`) и
+   выводит warning по состоянию `Fresh | Stale | Missing | ProofPending |
+   Unknown`. Сам proof в `PreSaveWorld` не строится. Синхронно дождаться
+   полного proof имеют право только build preflight и runtime snapshot
+   admission (явные действия пользователя).
 2. Build preflight (`MHCompositeBuildPreflight*`) — error, блокирует.
 3. Runtime snapshot (`MHRuntimeCompositeInput` admission) — error.
 4. Export / `UMHCompositeLevelSubsystem::Build/Break` — error.
 
 Только здесь строится full closure и читаются `SourceHash`/`AppliedHash`.
 
-### 3.7 `NodeOverrides` (вводится в R6, после R3)
+### 3.7 `NodeOverrides` (вводится в R6, после R5)
 
 Слой per-instance переопределений локального трансформа узла — основа для
 физической симуляции и автосборки (производители overrides, вне программы).
 
 - Ключ: `FMHNodeOverrideKey { FString NodePath; uint64 NodeFingerprint }`.
-  Fingerprint = `(semantic kind, resource key, display label, authored local
-  transform, parent fingerprint)`. Индексный `NodePath` сдвигается при вставке
-  sibling, поэтому путь без fingerprint не идентифицирует узел.
+  Индексный `NodePath` сдвигается при вставке sibling, поэтому путь без
+  fingerprint не идентифицирует узел.
+
+```
+NodeFingerprint = Hash(
+    semantic kind,
+    resource key,
+    own authored local transform (canonical),
+    relevant semantic node data (options set, profile name),
+    ParentSemanticFingerprint )
+ParentSemanticFingerprint = Hash(kind, resource key, structural role, его ParentSemanticFingerprint)
+                             — без authored transform родителя
+```
+
+- `DisplayName` **не** входит (presentation-only); рядом хранятся
+  `ExpectedLabel/CurrentLabel` для диагностики.
+- Canonical-представление трансформа: нормализованный знак кватерниона,
+  `-0.0 → 0.0`, фиксированная сериализация float, порядок компонентов, запрет
+  NaN/Inf. Raw-байты `FTransform` не хэшируются.
+- Правило: изменился authored transform **самого** узла → override не
+  применяется, `MH_W_ORPHAN_OVERRIDE_IDENTITY_CHANGED`; изменился transform
+  **предка** → override валиден и движется с предком; сменился семантический
+  родитель → override не применяется.
 - Применение: путь найден и fingerprint совпал → override заменяет локальный
   трансформ (после генерации, до умножения на родителя). Путь найден, fingerprint
   не совпал → **не применять**, `MH_W_ORPHAN_OVERRIDE_IDENTITY_CHANGED`. Путь не
@@ -203,8 +251,8 @@ FMHMaterializeResult MHMaterializeLayout(
 - Жизненный цикл (решение owner): override — рабочий слой; штатный финал —
   `Promote to composite` (новый `.composite` через экспортный путь level
   subsystem, актор переключается на него, overrides очищаются). Консервативный
-  fingerprint с authored-трансформом принят: любая правка узла в источнике
-  гасит override с warning.
+  fingerprint принят: правка authored-трансформа **самого** узла гасит override
+  с warning; сдвиг предка override не гасит — он движется с предком.
 - Операции: `Reset override`, `Reset all`, `Promote to composite…`.
 
 ### 3.8 `UMHInstancePoolSubsystem` (World subsystem, Editor)
@@ -222,10 +270,10 @@ FMHMaterializeResult MHMaterializeLayout(
   один physics/nav refresh на скоуп), групповые операции по owner:
   `HideOwner/ShowOwner/RemoveOwner/MoveOwner/SetOwnerEditorVisibility` —
   `SetVisibility()` на ISM-компоненте для этого **непригоден**.
-- **Reconcile по `PlacementInterfaceHash`** (§4): payload меша изменился при
-  том же интерфейсе → только render-refresh; интерфейс изменился → миграция
-  инстансов этого меша в новый дескриптор; collision изменился → recreate
-  physics state только у бакетов этого меша.
+- **Reconcile по пяти хэшам/ревизиям** (§4): только `PayloadRevision`/
+  `BoundsRevision` → render/bounds refresh; `BucketDescriptorHash` → миграция
+  бакета; `CollisionInterfaceHash` → recreate physics state;
+  `MaterialBindingHash` → reconcile дескриптора материалов.
 - Undo: транзакционен только актор композита; пул восстанавливает
   материализацию из его состояния в `PostEditUndo`.
 
@@ -261,15 +309,18 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 | Событие | Действие | Не делать |
 |---|---|---|
 | Реимпорт `.composite` | перекомпилировать рецепт **только этого** ассета, `Revision++`; инвалидировать `SeedAffectsResult` upstream; rematerialize placements, содержащих его invocation (первая реализация — полный rematerialize их root; целевая — только subtree) | перекомпилировать родительские рецепты; трогать акторов других рецептов |
-| Реимпорт меша in place, интерфейс тот же | `Revision++`, bounds, render-refresh бакетов | `Materialize`, rebuild актора, перекомпиляция рецептов |
-| Реимпорт меша, `PlacementInterfaceHash` изменился | миграция инстансов этого меша в новый дескриптор; collision → recreate physics только у них | полный rebuild |
+| Реимпорт меша in place, изменились только `PayloadRevision` и/или `BoundsRevision` | render/bounds refresh бакетов, без миграции и без rebuild | `Materialize`, rebuild актора, перекомпиляция рецептов |
+| Реимпорт меша, изменился `BucketDescriptorHash` / `CollisionInterfaceHash` / `MaterialBindingHash` | миграция бакета / recreate physics / reconcile материалов только у бакетов этого меша | полный rebuild |
 | Texture payload reimport in place | ничего в пулах | — |
 | MI-параметры (scalar/vector/texture) изменились in place | ничего в пулах | — |
 | Material object identity / slot binding изменились | reconcile дескриптора затронутых бакетов | rebuild актора |
 | Physical material mapping изменился | reconcile collision/trace-интерфейса затронутых бакетов | — |
 | Меш появился (был `Invalid`/`Loading`) | прототип → `Ready`; перенос инстансов с заглушки | rebuild актора |
-| Смена `Seed` | `SeedAffectsResult == None` → только appearance; иначе Layout + diff по `NodePath` | пересоздавать неизменившиеся хэндлы |
-| Смена `AppearanceSeed` | `Update` appearance-каналов | — |
+| Смена `Seed`, `SeedAffectsResult == None` | сохранить значение; layout, appearance и хэндлы не трогать | — |
+| Смена `Seed`, `SeedAffectsResult == ChildSeedsOnly` | обновить только endpoint'ы, реально потребляющие layout-сид (вложенные рецепты с `bGenerated`) | — |
+| Смена `Seed`, `SeedAffectsResult == Transform` | пересчитать трансформы, `Update` хэндлов | — |
+| Смена `Seed`, `SeedAffectsResult == Topology` | Layout + diff add/update/remove | пересоздавать неизменившиеся хэндлы |
+| Смена `AppearanceSeed` | обновить только appearance-каналы; `bAutoAppearanceSeed` = «сгенерировать один раз при создании/дублировании», не «вычислять из позиции» | — |
 | Перемещение актора (вне драга) | `Update(WorldMatrix)` по хэндлам | `Materialize` |
 | **Драг гизмо** | каждый кадр: `Update` трансформов инстансов в `BeginBulk/EndBulk`, без collision/nav/snapping, без per-instance `MarkRenderStateDirty`; на `bFinished`: один physics/nav refresh, snapping, bounds | замораживать визуальное движение до отпускания |
 | Изменение `NodeOverrides` | Layout + diff по затронутым поддеревьям | — |
@@ -278,7 +329,8 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 ## 5. Программа срезов
 
 Каждый срез: ветка `recipe/<id>-<slug>` от свежего `origin/main`, один PR,
-квитанция `docs/receipts/recipe_<id>.md`, red-first, гейты §9. Следующий — только
+квитанция `docs/receipts/recipe_<id>.md`, red-first, гейты §9. Квитанция среза
+обновляет `docs/RECIPE_EXECUTION_STATUS.md`. Следующий — только
 после owner merge. Ограничения owner: ≤7 acceptance criteria, ≤6 изменяемых
 файлов (удаления и тесты отдельно), 30-секундный read-aloud тест. Не влезает —
 дели.
@@ -288,12 +340,12 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 | **D0a** | ADR `docs/16_recipe_model.md` (Status: PROPOSED → NORMATIVE после R2b), `docs/NORMATIVE_INDEX.md`, архив HISTORY-документов, status-заголовки, CI-проверки §7 | CI-проверки §7 зелёные; ни один active doc не утверждает «freshness актора определяется подписью» / «карта строит proof до кадра» | кода нет |
 | **M0** | инструментация (готово в `codex/m0-perf-instrumentation`, ждёт merge) | — | добавить `registry_lookups`, `package_loads`, `identity_admissions` |
 | **R0** | `UMHEndpointPrototypeRegistry` с identity-admission; `MHLoadAppliedResource` и `MHResolveCompositeDefinitionEndpoint` заменены | 2 актора одного ассета: `registry_lookups == uniqueKeys`; `GetAssets`=0; `FAssetData(&Object)`=0 в preview | новый `PrototypeRegistryIdentityAdmissionTest`; `AppliedPlanAdmissionTest` остаётся до R2c |
-| **R1** | переходный: граф без тяжёлых loads, resolve, загрузить и ждать **только выбранные** меши | `all_option_unique_meshes ≫ waited_meshes == selected_unique_meshes` | — (полное снятие ожидания — R4) |
+| **R1** | переходный: граф без тяжёлых loads, resolve, загрузить и ждать **только выбранные** меши | `waited_mesh_set == selected_compiling_mesh_set`; `waited_mesh_set ∩ unselected_mesh_set == ∅`; `all_option_unique_meshes / selected_unique_meshes` — метрика квитанции, не условие | — (полное снятие ожидания — R4) |
 | **S0–S2** | параллельно, §6 | — | свои |
 | **R2a** | `FMHCompiledRecipe` (сырые веса, canonical TRS, ссылки), фазовый resolver §3.3, **shadow parity** как diagnostic command + CI-гейт; preview-путь ещё не production | parity на всех golden-векторах = 0 расхождений | `RecipeShadowParityTest` |
 | **R2b** | preview переключается на `MHMaterializeLayout`; актор — состояние §3.10; proof остаётся в §3.6 | `PostEditMove` не вызывает Layout; загрузка карты не вызывает Proof | старые тесты подписей на акторе удаляются **только** после зелёных `PrototypeRegistryIdentityAdmissionTest` + `BuildPreflightFullClosureTest` |
 | **R2c** | точки выхода §3.6 с freshness-proof; `AppliedPlanAdmissionTest` мигрирует в proof | stale receipt: save → warning, preflight → error, snapshot → reject | `BuildPreflightFullClosureTest` |
-| **R3** | семантический reconcile §4 по `PlacementInterfaceHash`: mesh, material, texture, phmat, child recipe (без перекомпиляции родителей) | targeted reimport меша с тем же интерфейсом: `actor_rebuild_ms_total == 0`, `recipes_recompiled == 0`; изменение child-рецепта: `parent_recipes_recompiled == 0` | `ResourceReconcileTest` |
+| **R3** | семантический reconcile §4 по пяти хэшам/ревизиям П4: mesh, material, texture, phmat, child recipe (без перекомпиляции родителей) | targeted reimport меша с тем же интерфейсом: `actor_rebuild_ms_total == 0`, `recipes_recompiled == 0`; изменение child-рецепта: `parent_recipes_recompiled == 0` | `ResourceReconcileTest` |
 | **R4** | async-загрузка выбранных endpoint'ов, заглушки; **снятие остатка ожидания из R1** | cold DDC: `package_loads_sync == 0`, `wait_static_mesh_compilation_ms == 0`; первый кадр раньше готовности мешей | — |
 | **R5** | `UMHInstancePoolSubsystem` по домену `ULevel`, стабильные хэндлы, owner-операции видимости, Outliner через `ReverseLookup` | remove одного инстанса не ломает `ReverseLookup` остальных (swap-remove тест); `HideOwner` скрывает только инстансы актора; undo восстанавливает | `InstancePoolHandleStabilityTest` |
 | **R6** | `NodeOverrides` §3.7 + UI (Reset, Reset all, Promote) | override с несовпавшим fingerprint не применяется и даёт warning; promote воспроизводит трансформы при импорте | `NodeOverrideIdentityTest` |
@@ -301,8 +353,9 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 | **R8** (опц.) | нормализация весов / схлопывание матриц | exhaustive parity = 0 | расширение `RecipeShadowParityTest` |
 
 После R6 — физическая симуляция и автосборка по объёмам как производители
-`NodeOverrides` (вход `LastPlacements`, выход — транзакция в overrides);
-проектируются отдельным документом.
+`FMHNodeOverrideSet`-транзакций (вход `LastPlacements`, выход — транзакция в
+overrides); ядро не различает источник override; проектируются отдельным
+документом.
 
 ## 6. Линия S (Source-конвейер) — параллельно, не блокирует R
 
@@ -339,7 +392,9 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 4. Лексический ноль (grep-гейт) — только для **удалённых сущностей кода**,
    список в `docs/16_recipe_model.md`, стартово: `MHLoadAppliedResource`,
    `AppliedPlanReceipt` (на живом объекте), `FinalizeDeferredMeshes`,
-   `PlacementDependencies`, `FMHCompositeDefinitionKey`, `MHValidateAppliedCompositeRoot`.
+   `PlacementDependencies`, `FMHCompositeDefinitionKey`, `MHValidateAppliedCompositeRoot`;
+   восьмая строка (D0b, документ) — единое поле хэша интерфейса меша,
+   разделённое П4 на пять хэшей/ревизий (список — `docs/16_recipe_model.md` §7.2).
 5. Старый тест удаляется **только** после зелёного replacement-теста,
    названного в квитанции; каждое удаление — отдельной строкой в квитанции.
 6. Никаких параллельных «старый/новый production-путь» дольше одного среза.
@@ -389,8 +444,14 @@ Acceptance:
   `AppearanceCustomDataBaseIndex`; кастомный ключ — только по доказанному тестом случаю.
 - **OPEN-R-5 Домен пула для World Partition / Data Layers.** Правило: пул на
   `ULevel`; WP-cell и Data Layers — после полевого теста R5, отдельный срез.
-- **OPEN-R-6 Resolver и хэши замыкания.** Проверяется первым шагом R2a; до
-  проверки считать, что фазовое разделение §3.3 обязательно.
+- **OPEN-R-6 Resolver и хэши замыкания.** Статус: закрыт 2026-09-02 (D0b П1).
+  Фазовое разделение обязательно (проверено по коду `MHRandomStream.cpp:809`).
+- **OPEN-R-7 Duplicate claim в preview.** Статус: закрыт 2026-09-02 (D0b П2).
+  Preview не делает tag-запросов Asset Registry, в том числе для обнаружения
+  duplicate-claim; дубликат обнаруживают source-плоскость (`duplicate_claim`
+  в индексе) и build preflight (`MH_E_AMBIGUOUS_GENERATED_ASSET`); тест
+  `DuplicateRootClaimBlocksPlanAndBreak` мигрирует в preflight-тест в R2c
+  (до R2c остаётся, помечен `@migrate:R2c`).
 
 Новую семантику не угадывай. Реальную дыру оформляй как `OPEN-R-<N>`:
 Контекст → Вопрос → Временное fail-closed правило → Статус; затронутая часть

@@ -5,7 +5,7 @@
 > **АКТИВНЫЙ НОРМАТИВ** (owner, 2026-09-02, после внешнего аудита):
 > [`KICKOFF_PROMPT.md`](KICKOFF_PROMPT.md) v2 — роль исполнителя, программа
 > срезов, гейты; [`docs/16_recipe_model.md`](docs/16_recipe_model.md) — ADR
-> модели «рецепт + исполнитель» (Status PROPOSED до R2b); этот `README.md`;
+> модели «рецепт + исполнитель» (v2.1: rollout TRANSITIONAL, cutover R2b); этот `README.md`;
 > справочник Source Protocol v5 —
 > [`docs/10_source_protocol_v5_plan.md`](docs/10_source_protocol_v5_plan.md).
 > Полный список — [`docs/NORMATIVE_INDEX.md`](docs/NORMATIVE_INDEX.md).
