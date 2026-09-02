@@ -89,3 +89,50 @@ Expected 'changed rescan hashes exactly the changed payload' to be 1, but it was
 ## Host исполнителя
 
 См. `docs/contracts/recipe_r1_1.md` §«Host исполнителя».
+
+## Возврат PR #73 (близнец, 2026-09-02): racy fingerprint
+
+**Находка.** На реализации `f1a88a6` тест `Mimir.V4.BulkImport.CrashBetweenPassesRetries`
+падает детерминированно (3/3 на host'е близнеца; на `main` до S0 — 4/4 Success):
+`Expected 'injected pass boundary was observed' to be true`. Причина: в этом
+конвейере mtime кандидата хранится с точностью до **секунды** (в БД после
+провала: `mtime=639239457290000000`, кратно 10⁷ тикам). Тест переписывает PNG
+того же размера в ту же секунду → `(size, mtime)` совпадают → S0
+переиспользует старый fingerprint (в строке остаётся хэш прежнего payload), и
+импорт считает `NO_CHANGE`. Это дыра фильтра `(size, mtime)`, а не теста.
+
+**Норма.** «Свежий» кандидат не переиспользуется: если `now − mtime` меньше
+окна `RacyWindow` (2 секунды; константа с комментарием, не cvar), файл
+читается и хэшируется как изменённый. Всё остальное правило S0 без изменений.
+Аналог — racy-git.
+
+**Red-тест уже в ветке** (коммит `5a17389`, близнец):
+`Mimir.V5.Source.Index.IncrementalScanRehashesSameSecondChange` — payload той же
+длины переписывается сразу после первого скана; ожидание: повторный скан видит
+новый хэш и `hashed_files ≥ 1`. RED-лог `E:\MimirComposite_R_M0_20260902\Saved\Logs\S0_RED2_TEST.log`, строки 1080–1087:
+
+```text
+Result={Fail} Name={IncrementalScanRehashesSameSecondChange}
+first: hashed_files=2 reused=0
+same-second: hashed_files=0 reused=2
+Expected 'same-second rescan sees the rewritten payload' to be "blake3-160:1d4d…", but it was "blake3-160:28ff…".
+Expected 'same-second rescan hashes the fresh payload' to be true.
+```
+
+**Дополнение acceptance:**
+1. `IncrementalScanRehashesSameSecondChange` — Success.
+2. `Mimir.V4.BulkImport.CrashBetweenPassesRetries` — Success **3 из 3** отдельных
+   прогонов (лог каждого в квитанции).
+3. `IncrementalScanSkipsUnchangedHashes` остаётся Success: в нём между записью и
+   повторным сканом уже есть пауза; если окно ломает его сценарий — STOP + OPEN,
+   тест не менять.
+4. Smoke `mh.SourceIndex.VerifyHashes=1` запускать через
+   `-dpcvars=mh.SourceIndex.VerifyHashes=1` (cvar перед `Automation RunTests`
+   в `-ExecCmds` подвешивает harness — воспроизведено близнецом и с
+   `mh.PerfTrace 0`, к S0 не относится). Ожидание: `hashed_files == enumerated_files`
+   в каждом проходе.
+5. Полный suite 178/178 (+1 новый тест).
+
+Закрытый список файлов не расширяется. Квитанцию дополнить разделом
+«Возврат 1: racy fingerprint» с red/green строками нового теста и 3 прогонами
+`CrashBetweenPassesRetries`.
