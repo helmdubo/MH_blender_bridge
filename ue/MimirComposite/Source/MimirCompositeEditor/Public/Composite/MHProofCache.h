@@ -102,6 +102,9 @@ public:
     /** Forget every cached proof (reimport notifications, index rebuild, tests). */
     void InvalidateAll();
 
+    /** Warnings the last non-cook PreSaveWorld audit emitted (one per non-Fresh placement). */
+    int32 GetLastSaveAuditWarningCount() const { return LastSaveAuditWarningCount; }
+
     /**
      * Test seam for the freshness check: current source payload hash of a
      * resource key. Production reads the ProjectIndex; a provider returning
@@ -111,4 +114,5 @@ public:
 
 private:
     TFunction<bool(const UE::MimirComposite::FMHResourceKey&, FString&)> SourceHashProviderForTests;
+    int32 LastSaveAuditWarningCount = 0;
 };

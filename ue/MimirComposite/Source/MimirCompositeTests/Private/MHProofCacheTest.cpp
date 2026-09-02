@@ -7,9 +7,12 @@
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Composite/MHProofCache.h"
 #include "CoreMinimal.h"
+#include "Editor.h"
 #include "Engine/World.h"
 #include "Misc/AutomationTest.h"
 #include "Source/MHSourceResolver.h"
+#include "UObject/ObjectSaveContext.h"
+#include "UObject/Package.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -190,6 +193,98 @@ bool FMHProofBuildPreflightFullClosureTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(TEXT("audit reports Missing"), Row->State == EMHProofState::Missing);
         bPassed &= TestTrue(TEXT("audit carries the diagnostic"), Row->Diagnostic.Contains(Fixture.MeshC));
     }
+    return bPassed;
+}
+
+// Saving a map is not an exit point: it reads the proof cache, warns about
+// every placement that is not Fresh, schedules a deferred proof for Unknown
+// ones, and never builds a proof or refuses the save (§2.6 п. 1).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProofSaveWarnsWithoutProofTest,
+    "Mimir.V5.Composite.Proof.SaveWarnsWithoutProof",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProofSaveWarnsWithoutProofTest::RunTest(const FString& Parameters)
+{
+    UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
+    if (!TestNotNull(TEXT("proof cache subsystem"), Proofs)) return false;
+    Proofs->InvalidateAll();
+    FProofFixture Fixture(*this);
+    if (!Fixture.Build(*this)) return false;
+    AMHCompositeActor& Actor = *Fixture.Actor;
+    bool bPassed = TestTrue(TEXT("placement starts Unknown"), Proofs->GetProofState(Actor).State == EMHProofState::Unknown);
+
+    MHResetPlacementStageMetrics();
+    {
+        // A non-cook save of the preview world: no target platform.
+        FObjectSaveContextData Data(Fixture.World->GetOutermost(), nullptr, TEXT(""), SAVE_None);
+        FObjectPreSaveContext Context(Data);
+        bPassed &= TestFalse(TEXT("probe context is not a cook"), Context.IsCooking());
+        FEditorDelegates::PreSaveWorldWithContext.Broadcast(Fixture.World, Context);
+    }
+    bPassed &= TestEqual(TEXT("save builds no proof"), MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
+    bPassed &= TestTrue(TEXT("save schedules the missing proof"), Proofs->GetProofState(Actor).State == EMHProofState::ProofPending);
+    bPassed &= TestTrue(TEXT("save warned about the unproven placement"), Proofs->GetLastSaveAuditWarningCount() >= 1);
+    bPassed &= TestTrue(TEXT("save leaves the preview alone"), Actor.GetResolvedPlan() != nullptr && Actor.GetLastPlacementError().IsEmpty());
+
+    // The deferred proof runs later; once Fresh, the next save has nothing to warn about.
+    Proofs->FlushPendingProofs();
+    bPassed &= TestTrue(TEXT("deferred proof became Fresh"), Proofs->GetProofState(Actor).State == EMHProofState::Fresh);
+    MHResetPlacementStageMetrics();
+    {
+        FObjectSaveContextData Data(Fixture.World->GetOutermost(), nullptr, TEXT(""), SAVE_None);
+        FObjectPreSaveContext Context(Data);
+        FEditorDelegates::PreSaveWorldWithContext.Broadcast(Fixture.World, Context);
+    }
+    bPassed &= TestEqual(TEXT("second save builds no proof either"), MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
+    bPassed &= TestEqual(TEXT("fresh placement raises no save warning"), Proofs->GetLastSaveAuditWarningCount(), 0);
+    return bPassed;
+}
+
+// A receipt that no longer matches the source payload known to the index is
+// Stale: cook preflight and runtime snapshot admission refuse with
+// MH_E_STALE_SOURCE; the preview keeps working.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHProofStaleSourceBlocksCookAndSnapshotTest,
+    "Mimir.V5.Composite.Proof.StaleSourceBlocksCookAndSnapshot",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHProofStaleSourceBlocksCookAndSnapshotTest::RunTest(const FString& Parameters)
+{
+    UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
+    if (!TestNotNull(TEXT("proof cache subsystem"), Proofs)) return false;
+    Proofs->InvalidateAll();
+    FProofFixture Fixture(*this);
+    if (!Fixture.Build(*this)) return false;
+    AMHCompositeActor& Actor = *Fixture.Actor;
+    FString Error;
+    bool bPassed = TestTrue(TEXT("fresh world passes preflight: ") + Error, MHValidateRuntimeCompositeWorld(*Fixture.World, Error));
+
+    // The selected anchor mesh is what the index now reports with a newer payload.
+    const FString StaleKey = TEXT("static_mesh:") + Fixture.MeshA;
+    Proofs->SetSourceHashProviderForTests([StaleKey](const FMHResourceKey& Key, FString& OutHash)
+    {
+        if (Key.ToString() != StaleKey) return false;
+        OutHash = TEXT("blake3-160:0123456789abcdef0123456789abcdef01234567");
+        return true;
+    });
+    Proofs->InvalidateAll();
+    Error.Reset();
+    bPassed &= TestFalse(TEXT("stale source refuses cook preflight"), MHValidateRuntimeCompositeWorld(*Fixture.World, Error));
+    bPassed &= TestTrue(TEXT("preflight names the stale code and key: ") + Error,
+        Error.Contains(TEXT("MH_E_STALE_SOURCE")) && Error.Contains(Fixture.MeshA));
+    FMHRuntimeCompositeInput Snapshot;
+    Error.Reset();
+    bPassed &= TestFalse(TEXT("stale source refuses snapshot admission"), MHBuildRuntimeCompositeInput(Actor, Snapshot, Error));
+    bPassed &= TestTrue(TEXT("snapshot names the stale code: ") + Error, Error.Contains(TEXT("MH_E_STALE_SOURCE")));
+    bPassed &= TestTrue(TEXT("cache reports Stale"), Proofs->GetProofState(Actor).State == EMHProofState::Stale);
+    bPassed &= TestTrue(TEXT("preview is untouched by a stale source"), Actor.GetResolvedPlan() != nullptr && Actor.GetLastPlacementError().IsEmpty());
+
+    // The index catches up (reimport): the proof is Fresh again.
+    Proofs->SetSourceHashProviderForTests(nullptr);
+    Proofs->InvalidateAll();
+    Error.Reset();
+    bPassed &= TestTrue(TEXT("refreshed source passes preflight again: ") + Error, MHValidateRuntimeCompositeWorld(*Fixture.World, Error));
     return bPassed;
 }
 
