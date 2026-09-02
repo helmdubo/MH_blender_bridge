@@ -19,7 +19,7 @@
 | R1.1 | MERGED | #69 (внешний исполнитель, приёмка близнеца); квитанция `docs/receipts/recipe_r1_1.md` |
 | R0c | MERGED | #71 (внешний исполнитель, приёмка близнеца); реализация `7811eab` попала в `main` fast-forward-push'ем до PR, проверена близнецом постфактум (полный suite 176/176 на host близнеца); квитанция `docs/receipts/recipe_r0c.md` |
 | S0 | MERGED | #73 (внешний исполнитель, приёмка близнеца; возврат 1 — racy fingerprint); квитанция `docs/receipts/source_s0.md` |
-| S1 | READY (внешний исполнитель, контракт `docs/contracts/source_s1.md`) | FBX не парсится в скане |
+| S1 | CLOSED (без кода) | OPEN-S-1 закрыт owner'ом, вариант c: S0 достаточен; полевой замер холодного скана — по протоколу M0 §6 |
 | S2 | IN REVIEW | targeted reimport без FullScan |
 | R2a | PLANNED (близнец) | первый шаг — реализация фазового разделения, П1 |
 | R2b | PLANNED | — |

@@ -466,6 +466,22 @@ R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpo
 | OPEN-R-6 | Resolver и хэши замыкания | Фазовое разделение обязательно (проверено по коду `MHRandomStream.cpp:809`). | закрыт 2026-09-02 (D0b П1) |
 | OPEN-R-7 | Duplicate claim в preview | Preview-плоскость не делает tag-запросов Asset Registry, в том числе для обнаружения duplicate-claim. При двух ассетах на один logical name preview резолвит детерминированный путь (§2.2); дубликат обнаруживают source-плоскость (`duplicate_claim` в индексе, warning в Message Log) и build preflight (`MH_E_AMBIGUOUS_GENERATED_ASSET`, error). Red-assert R0a возвращается к `asset_registry_tag_queries == 0`. Тест `Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak` мигрирует в preflight-тест в R2c; до R2c остаётся и помечен `@migrate:R2c`. | закрыт 2026-09-02 (D0b П2) |
 
+| OPEN-S-1 | Источник slot-рёбер mesh→material без парса FBX в скане (S1) | **закрыт 2026-09-02, вариант c (owner):** S0 достаточен — FBX парсится только для новых/изменённых по `(size, mtime)` файлов; S1 закрыт без кода; холодный скан портфолио измеряется полевым протоколом M0 §6 | закрыт |
+
+**OPEN-S-1 — контекст.** KICKOFF §6 S1: «FBX в скане не парсится никогда;
+зависимости mesh→material берутся из receipt импорта и из индекса предыдущего
+скана». Receipt `UMHStaticMeshImportData` не хранит имена слотов, шесть тегов
+Asset Registry их тоже не несут (10 §7: «ровно шесть»), а индекс по 10 §3 —
+чистая проекция «скан + теги»: после удаления `.sqlite` рёбра нового/изменённого
+меша без парса FBX восстановить неоткуда, и acceptance «удаление .sqlite →
+идентичный индекс» ломается. Варианты: (a) седьмой тег/поле receipt с именами
+слотов, пишется импортёром, читается индексом без загрузки объекта — меняет
+10 §7; (b) рёбра для меша считаются «неизвестны, пока не импортирован», парс
+только при импорте, `IsImportBlocked` по slot-рёбрам работает после первого
+импорта — ослабляет 10 §3 (`unknown ≠ empty` уже допускает unknown, но не для
+`ok`-кандидата); (c) оставить S0-поведение (парс только новых/изменённых FBX)
+как достаточное и закрыть S1 без изменений. Вопрос owner: a / b / c.
+
 **OPEN-R-7 — контекст.** Тест
 `Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak`
 закрепляет отказ `RebuildComposite` при двух заявках Asset Registry на один
