@@ -1,15 +1,17 @@
 # S2 — targeted reimport без FullScan
 
-Статус: **STOP — OPEN-S2-1**. Контрактный red-тест стал зелёным, но
-существующие `Mimir.V4.StaticMesh.TargetedReimport.*` вне закрытого списка
-регрессировали на синтетической fixture с валидной, но неполной проекцией
-Project Index. Ветка не переведена в `IN REVIEW`, PR не создан.
+Статус: **STOP — OPEN-S2-2**. `OPEN-S2-1` закрыт близнецом в `e1dd4f3`, guard
+`GetGeneration() == 0` реализован, а контрактный red-тест зелёный. Однако
+`Mimir.V4.StaticMesh.TargetedReimport.*` остаются 2/4: generation SQLite не
+различает последовательно создаваемые fixture Source Root. Ветка не переведена
+в `IN REVIEW`, PR не создан.
 
 ## 1. База и host
 
 - ветка: `source/s2-targeted-reimport-upsert`; база и red-коммит контракта:
   `5980d35` (`2978373` — red test);
-- implementation-checkpoint: `2b50105`;
+- targeted-upsert checkpoint: `2b50105`; guard из ответа близнеца:
+  `2064483` (контрактное закрытие `e1dd4f3`);
 - отдельный worktree:
   `E:\GITHUB\Mimirhead_UE5Exporter\MH_blender_bridge_s2_executor`;
 - собственный module-free host:
@@ -56,6 +58,15 @@ Project Index. Ветка не переведена в `IN REVIEW`, PR не со
 `22.200` мс (4.55x). Это фактический результат этого запуска, не полевой
 portfolio-замер.
 
+После ответа близнеца guard собран:
+`S2_POSTOPEN_BUILD_NONUNITY.log:20`, `Result: Succeeded`. Повторный perf-тест
+остаётся зелёным (`S2_POSTOPEN_PERF.log`):
+
+```text
+1104: MH_PERF_REIMPORT ... full_scan_count_delta=0 incremental_paths=1 analysis_services_ms=22.909 ...
+1110: Test Completed. Result={Success} Name={InstrumentationCounters}
+```
+
 ## 4. Регрессия существующих targeted-тестов
 
 После реализации отдельный запуск
@@ -85,6 +96,25 @@ Success**.
 отсутствует. Resolver поэтому корректно блокирует импорт. Прежний full scan
 находил оба payload и скрывал эту предпосылку fixture.
 
+### Возврат 2: guard generation==0 недостаточен
+
+`OPEN-S2-1` закрыт близнецом в `e1dd4f3`: incremental service теперь делает
+full scan при `bRecreated || Index->GetGeneration() == 0`. На уже
+использовавшейся БД результат не изменился:
+`S2_POSTOPEN_TARGETED.log:1088,1110,1154,1179` — 2/4.
+
+Для исключения прежнего состояния `ProjectIndex.sqlite` был перемещён в
+recoverable backup внутри собственного host, после чего тест повторён на новой
+БД. `S2_POSTOPEN_TARGETED_FRESHDB.log:1088,1110,1154,1179` также дал 2/4.
+Лог объясняет почему: тест `Admission` первым прямым импортом вызывает
+`MHRefreshGeneratedAssetProjection`; на новой БД этот путь выполняет full scan
+(`ProjectIndex.sqlite` открыт в строке 1086) и оставляет generation ненулевой.
+Fixture закрывает индекс, но не удаляет SQLite. Следующий `ForceAndNotify`
+создаёт другой Source Root, открывает ту же БД (строка 1104), видит generation
+от предыдущего root и не попадает в guard; материал нового root остаётся
+неиндексированным (строка 1105). То же повторяется для
+`SequentialMultiSelection`.
+
 ## 5. Гейты
 
 | Gate | Результат |
@@ -95,9 +125,13 @@ Success**.
 | `Perf.InstrumentationCounters`, GREEN | PASS — `S2_GREEN_TEST.log:1104,1110` |
 | `Mimir.V4.StaticMesh.TargetedReimport.*` | **FAIL / STOP** — 2/4 Success; `S2_TARGETED_REIMPORT.log:1088,1110,1154,1179` |
 | baseline тех же четырёх тестов на `5980d35` | PASS — 4/4 Success; `S2_TARGETED_REIMPORT_BASELINE.log:1088,1128,1149,1187` |
-| полный NullRHI `Automation RunTests Mimir` | NOT RUN — остановка по `OPEN-S2-1` |
-| guarded force-unity | NOT RUN — остановка по `OPEN-S2-1` |
-| `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | NOT RUN — остановка по `OPEN-S2-1` |
+| non-unity/no-PCH после guard `generation==0` | PASS — `S2_POSTOPEN_BUILD_NONUNITY.log:20`, `Result: Succeeded` |
+| `Perf.InstrumentationCounters` после guard | PASS — `S2_POSTOPEN_PERF.log:1104,1110` |
+| `TargetedReimport.*` после guard, reused DB | **FAIL / STOP** — 2/4; `S2_POSTOPEN_TARGETED.log:1088,1110,1154,1179` |
+| `TargetedReimport.*` после guard, новая DB | **FAIL / STOP** — 2/4; `S2_POSTOPEN_TARGETED_FRESHDB.log:1088,1110,1154,1179` |
+| полный NullRHI `Automation RunTests Mimir` | NOT RUN — остановка по `OPEN-S2-2` |
+| guarded force-unity | NOT RUN — остановка по `OPEN-S2-2` |
+| `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | NOT RUN — остановка по `OPEN-S2-2` |
 | `git diff --check` | PASS |
 | `python tools/check_normative_docs.py` | PASS — `normative docs: OK` |
 
@@ -106,6 +140,8 @@ Success**.
 Ровно файлы из закрытого списка контракта:
 
 - `Private/Source/MHSourceImporter.cpp` — только `ReimportStaticMesh`;
+- `Private/Source/MHSourceComposition.cpp` — только контрактный guard в
+  `MHCreateIncrementalSourceAnalysisServices`;
 - `docs/receipts/source_s2.md` — эта STOP-квитанция.
 
 `MHStaticMeshImporterTest.cpp`, `MHPerformanceTrace.*`, другие production-файлы
@@ -113,22 +149,27 @@ Success**.
 
 ## 7. OPEN-вопросы
 
-### OPEN-S2-1 — собственный path недостаточен для неполной валидной проекции
+### OPEN-S2-1 — закрыт близнецом
 
-- **Контекст:** контракт одновременно требует передавать в `UpsertPaths` только
-  абсолютный путь собственного FBX (`incremental_paths == 1`), запрещает full
-  scan кроме пересоздания БД и требует зелёными четыре существующих
-  `TargetedReimport.*`. Два теста создают material source вне индекса; после
-  upsert FBX его slot-edge указывает на material key без candidate. Тесты вне
-  закрытого списка и менять их запрещено. Добавлять dependency paths или
-  fallback full scan означало бы отступить от прямого требования S2.
-- **Вопрос:** близнец (a) дополняет fixture/red-коммит предварительной полной
-  проекцией индекса как production-precondition targeted reimport, либо (b)
-  расширяет контракт и закрытый список, задавая нормативное восстановление
-  отсутствующих dependency-candidates без запрещённого full scan? Какой вариант
-  является требуемым контрактом S2?
+Закрыт 2026-09-02 контрактным коммитом `e1dd4f3`: full scan при
+`bRecreated || GetGeneration() == 0`. Реализация — `2064483`. Проверка выявила
+отдельный конфликт ниже; решение `OPEN-S2-1` не переинтерпретируется.
+
+### OPEN-S2-2 — generation не привязана к Source Root
+
+- **Контекст:** после первого полного скана generation остаётся ненулевой в
+  общей `Saved/MimirBridge/ProjectIndex.sqlite`. Следующая fixture меняет
+  Source Root, но `MHRefreshGeneratedAssetProjection` открывает ту же валидную
+  БД и делает только `ReplaceGeneratedAssets`; incremental service видит
+  `GetGeneration() > 0` и upsert одного FBX, хотя текущий root никогда не был
+  просканирован. Это воспроизведено и на новой БД, без изменения тестов.
+- **Вопрос:** каким нормативным способом отличать «generation относится к
+  текущему Source Root» без запрещённого изменения schema/index format:
+  близнец расширяет контракт на root-aware lifetime/guard в composition layer,
+  либо предоставляет другое согласованное правило и закрытый список?
 - **Временное fail-closed правило:** тесты не менять; дополнительные source
-  paths не выводить из живых UObject/receipt; fallback full scan не добавлять;
+  paths не выводить из живых UObject/receipt; новый root-aware механизм не
+  изобретать;
   полный suite и последующие build-гейты считать не пройденными; S2 не
   переводить в `IN REVIEW`, PR не открывать.
 - **Статус:** **OPEN — нужен ответ владельца/близнеца контракта.**
@@ -136,4 +177,4 @@ Success**.
 ## 8. Строка трекера
 
 Не изменена: `S2 | READY`. Переход в `IN REVIEW` запрещён до закрытия
-`OPEN-S2-1` и зелёного `TargetedReimport.*`/полного suite.
+`OPEN-S2-2` и зелёного `TargetedReimport.*`/полного suite.
