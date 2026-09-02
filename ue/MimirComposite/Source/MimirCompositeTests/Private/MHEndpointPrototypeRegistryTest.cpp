@@ -1,8 +1,12 @@
 #include "Composite/MHEndpointPrototypeRegistry.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositeRuntimeBridge.h"
+#include "Composite/MHRuntimeCompositeInput.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Editor.h"
@@ -23,6 +27,7 @@ struct FRegistryFixture
     FAutomationTestBase& Test;
     FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
     TArray<UObject*> Assets;
+    TSet<UObject*> RegisteredAssets;
 
     explicit FRegistryFixture(FAutomationTestBase& InTest) : Test(InTest) {}
 
@@ -32,6 +37,7 @@ struct FRegistryFixture
         {
             Registry->InvalidateAll();
         }
+        for (UObject* Asset : RegisteredAssets) FAssetRegistryModule::AssetDeleted(Asset);
         for (UObject* Asset : Assets)
         {
             if (IsValid(Asset))
@@ -71,14 +77,31 @@ struct FRegistryFixture
         return Mesh;
     }
 
-    UMHCompositeAsset* Composite(const FString& LogicalName, const FString& MeshName)
+    void Register(UObject& Asset)
+    {
+        FAssetRegistryModule::AssetCreated(&Asset);
+        RegisteredAssets.Add(&Asset);
+    }
+
+    void RemoveClaim(UObject& Asset)
+    {
+        if (RegisteredAssets.Remove(&Asset) > 0) FAssetRegistryModule::AssetDeleted(&Asset);
+        Assets.Remove(&Asset);
+        Asset.ClearFlags(RF_Public | RF_Standalone);
+        Asset.MarkAsGarbage();
+    }
+
+    UMHCompositeAsset* Composite(const FString& LogicalName, const FString& MeshName, const bool bAliasPath = false)
     {
         FMHCompositeDocument Document;
         FMHCompositeNode& Node = Document.Nodes.AddDefaulted_GetRef();
         Node.Kind = EMHCompositeNodeKind::Mesh;
         Node.Resource = MeshName;
+        const FString PackageName = (bAliasPath
+            ? TEXT("/Game/MimirCompositeTests/RegistryAlias/")
+            : TEXT("/Game/MH/Generated/Composites/")) + LogicalName;
         UMHCompositeAsset* Asset = NewObject<UMHCompositeAsset>(
-            CreatePackage(*(TEXT("/Game/MH/Generated/Composites/") + LogicalName)),
+            CreatePackage(*PackageName),
             FName(*LogicalName), RF_Public | RF_Standalone);
         Assets.Add(Asset);
         Asset->LogicalName = LogicalName;
@@ -193,10 +216,72 @@ bool FMHPrototypeRegistryIdentityAdmissionTest::RunTest(const FString& Parameter
     bPassed &= TestEqual(TEXT("two placements resolve each unique key once"), Endpoints.RegistryLookups, UniqueKeys);
     bPassed &= TestEqual(TEXT("two placements admit each unique key once"), Endpoints.IdentityAdmissions, UniqueKeys);
     bPassed &= TestEqual(TEXT("preview reads no live receipt tags"), Endpoints.LiveReceiptTagReads, 0ull);
-    // OPEN-R-7 fail-closed rule: one duplicate-claim probe per admission. The
-    // owner answer moves duplicate_claim to the proof plane and drops this to 0.
-    bPassed &= TestEqual(TEXT("duplicate-claim probe runs once per admission"), Endpoints.AssetRegistryTagQueries, UniqueKeys);
+    // D0b П2 (OPEN-R-7 closed): the preview plane makes no Asset Registry tag
+    // queries at all; duplicate claims belong to the source and proof planes.
+    bPassed &= TestEqual(TEXT("preview makes no Asset Registry tag queries"), Endpoints.AssetRegistryTagQueries, 0ull);
     bPassed &= TestTrue(TEXT("repeated endpoints are registry hits"), Cache.EndpointHits >= 1ull);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHRegistryDuplicateClaimProofPlaneTest,
+    "Mimir.V5.Composite.Registry.DuplicateClaimIsProofPlane",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHRegistryDuplicateClaimProofPlaneTest::RunTest(const FString& Parameters)
+{
+    // D0b П2: two Asset Registry claims on one logical name never block the
+    // preview (it resolves the canonical path); Break and the runtime snapshot
+    // are proof-plane exit points and refuse with MH_E_AMBIGUOUS_GENERATED_ASSET.
+    UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get();
+    UMHCompositeLevelSubsystem* Operations = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("endpoint prototype registry subsystem"), Registry) ||
+        !TestNotNull(TEXT("level operations subsystem"), Operations))
+    {
+        return false;
+    }
+    FRegistryFixture Fixture(*this);
+    const FString MeshName = Fixture.Name(TEXT("r0c_mesh"));
+    Fixture.Mesh(MeshName);
+    const FString RootName = Fixture.Name(TEXT("r0c_root"));
+    UMHCompositeAsset* Root = Fixture.Composite(RootName, MeshName);
+    if (Root == nullptr) return false;
+    Fixture.Register(*Root);
+    UMHCompositeAsset* Duplicate = Fixture.Composite(RootName, MeshName, true);
+    if (Duplicate == nullptr) return false;
+    Fixture.Register(*Duplicate);
+    bool bPassed = TestNotEqual(TEXT("duplicate claims live at distinct object paths"), Root->GetPathName(), Duplicate->GetPathName());
+
+    UWorld* World = UWorld::CreateWorld(EWorldType::EditorPreview, false);
+    if (!TestNotNull(TEXT("duplicate-claim world"), World)) return false;
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    Registry->InvalidateAll();
+    MHResetEndpointResolveMetrics();
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("duplicate-claim placement"), Actor)) return false;
+    Actor->SetAutoSeed(false);
+    Actor->SetSeed(100);
+    Actor->SetCompositeAsset(Root);
+    bPassed &= TestNotNull(TEXT("preview resolves the canonical path despite a duplicate claim"), Actor->GetResolvedPlan());
+    bPassed &= TestEqual(TEXT("preview made no tag queries"), MHGetEndpointResolveMetrics().AssetRegistryTagQueries, 0ull);
+
+    TArray<AActor*> Broken;
+    TArray<FString> Warnings;
+    FString Error;
+    bPassed &= TestFalse(TEXT("Break refuses the duplicate claim"), Operations->BreakComposites({Actor}, Broken, Warnings, Error));
+    bPassed &= TestTrue(TEXT("Break names MH_E_AMBIGUOUS_GENERATED_ASSET"), Error.Contains(TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET")));
+    bPassed &= TestTrue(TEXT("refused Break spawns nothing"), Broken.IsEmpty());
+
+    FMHRuntimeCompositeInput Input;
+    Error.Reset();
+    bPassed &= TestFalse(TEXT("runtime snapshot refuses the duplicate claim"), MHBuildRuntimeCompositeInput(*Actor, Input, Error));
+    bPassed &= TestTrue(TEXT("snapshot names MH_E_AMBIGUOUS_GENERATED_ASSET"), Error.Contains(TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET")));
+
+    Fixture.RemoveClaim(*Duplicate);
+    Error.Reset();
+    Broken.Reset();
+    bPassed &= TestTrue(TEXT("removing the duplicate claim heals Break"), Operations->BreakComposites({Actor}, Broken, Warnings, Error));
+    if (!Error.IsEmpty()) AddInfo(Error);
     return bPassed;
 }
 } // namespace UE::MimirComposite::Tests
