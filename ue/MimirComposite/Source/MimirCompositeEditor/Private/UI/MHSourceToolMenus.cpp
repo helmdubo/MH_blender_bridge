@@ -17,6 +17,7 @@
 #include "LevelEditorMenuContext.h"
 #include "Logging/MessageLog.h"
 #include "Material/MHMaterialDocumentExport.h"
+#include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
@@ -839,6 +840,77 @@ void ExecuteShowDuplicates(const FToolMenuContext&) { ExecuteDiagnosticView(EMHD
 void ExecuteFindBrokenReferences(const FToolMenuContext&) { ExecuteDiagnosticView(EMHDiagnosticView::BrokenReferences); }
 void ExecuteFindOrphans(const FToolMenuContext&) { ExecuteDiagnosticView(EMHDiagnosticView::Orphans); }
 
+/**
+ * Owner workflow (2026-09-03): after exporting one MI into another managed
+ * material's source document, the target MI is refreshed from its source
+ * without leaving the Content Browser. Same coordinator as Import Changed,
+ * scoped to the selected managed materials.
+ */
+void ExecuteUpdateMaterialsFromSource(const FToolMenuContext& MenuContext)
+{
+    const UContentBrowserAssetContextMenuContext* Context =
+        UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext);
+    FMHImportSourcesScope Scope;
+    FString Error;
+    if (Context != nullptr)
+    {
+        for (UMaterialInstanceConstant* Material : Context->LoadSelectedObjects<UMaterialInstanceConstant>())
+        {
+            const UMHMaterialSourceData* Receipt = Material != nullptr
+                ? Cast<UMHMaterialSourceData>(Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()))
+                : nullptr;
+            if (Receipt == nullptr || Receipt->LogicalName.IsEmpty())
+            {
+                Error += FString::Printf(
+                    TEXT("MH_E_INVALID_RESOURCE_SOURCE: %s is not a managed MH material (no receipt); use Publish or Adopt first\n"),
+                    Material != nullptr ? *Material->GetPathName() : TEXT("<null>"));
+                continue;
+            }
+            FMHResourceKey Key;
+            Key.Kind = EMHResourceKind::Material;
+            Key.LogicalName = Receipt->LogicalName;
+            Scope.ResourceKeys.AddUnique(Key);
+        }
+    }
+    FMHSourceAnalysis Analysis;
+    bool bExecuted = false;
+    UMHSourceImporter* Importer = SourceImporter();
+    const bool bOk = !Scope.ResourceKeys.IsEmpty() && Importer != nullptr &&
+        Importer->ImportSources(Scope, Analysis, bExecuted);
+    FMessageLog Log(TEXT("Mimir"));
+    Log.NewPage(LOCTEXT("UpdateMaterialsPage", "Update MH Materials from Source"));
+    for (const FString& Warning : Analysis.Warnings) AddDiagnostic(Log, Warning);
+    for (const FString& AnalysisError : Analysis.Errors) AddDiagnostic(Log, AnalysisError);
+    int32 Updated = 0;
+    for (const FMHSourceAnalysisEntry& Entry : Analysis.Entries)
+    {
+        if (!Scope.ResourceKeys.Contains(Entry.Key)) continue;
+        for (const FString& Warning : Entry.Warnings) AddDiagnostic(Log, Warning);
+        for (const FString& EntryError : Entry.Errors) AddDiagnostic(Log, EntryError);
+        if (Entry.Errors.IsEmpty() &&
+            (Entry.Change == EMHSourceChange::Reimport || Entry.Change == EMHSourceChange::Create ||
+             Entry.Change == EMHSourceChange::Move))
+        {
+            ++Updated;
+        }
+        Log.Info(FText::FromString(FString::Printf(
+            TEXT("%s: %s"), *Entry.Key.ToString(), MHSourceChangeLabel(Entry.Change))));
+    }
+    if (!Error.IsEmpty()) Log.Error(FText::FromString(Error));
+    if (Scope.ResourceKeys.IsEmpty() && Error.IsEmpty())
+    {
+        Log.Error(LOCTEXT("UpdateMaterialsNoSelection", "MH_E_INVALID_RESOURCE_SOURCE: select one or more managed Material Instances"));
+    }
+    const bool bClean = bOk && !Analysis.HasErrors() && Error.IsEmpty();
+    Log.Notify(
+        FText::Format(
+            LOCTEXT("UpdateMaterialsResult", "Updated {0} of {1} materials from MH Source (unchanged sources are left as is)"),
+            FText::AsNumber(Updated),
+            FText::AsNumber(Scope.ResourceKeys.Num())),
+        bClean ? EMessageSeverity::Info : EMessageSeverity::Error,
+        true);
+}
+
 void ExecutePublishMaterials(const FToolMenuContext& MenuContext)
 {
     const UContentBrowserAssetContextMenuContext* Context =
@@ -1415,6 +1487,17 @@ void MHRegisterS6ToolMenus()
                     LOCTEXT("PublishMaterialTip", "Full-overwrite the selected .material documents from their live Material Instances."),
                     FSlateIcon(),
                     Action);
+                FToolUIAction UpdateAction;
+                UpdateAction.ExecuteAction =
+                    FToolMenuExecuteAction::CreateStatic(&ExecuteUpdateMaterialsFromSource);
+                DynamicSection.AddMenuEntry(
+                    TEXT("MHUpdateMaterialsFromSource"),
+                    LOCTEXT("UpdateMaterialFromSource", "Update Material from MH Source"),
+                    LOCTEXT(
+                        "UpdateMaterialFromSourceTip",
+                        "Re-apply the selected managed Material Instances from their .material source documents (source wins; unchanged sources are skipped)."),
+                    FSlateIcon(),
+                    UpdateAction);
                 FToolUIAction ExportAction;
                 ExportAction.ExecuteAction =
                     FToolMenuExecuteAction::CreateStatic(&ExecuteExportMaterialDocuments);
@@ -1423,7 +1506,7 @@ void MHRegisterS6ToolMenus()
                     LOCTEXT("ExportMaterialDocument", "Export Material Document..."),
                     LOCTEXT(
                         "ExportMaterialDocumentTip",
-                        "Write canonical .material document copies outside MH Source Root without changing receipts."),
+                        "Write the canonical .material document of the selected Material Instance to any path, including another material's source inside MH Source Root; receipts are not changed. Non-serializable overrides are dropped with warnings."),
                     FSlateIcon(),
                     ExportAction);
             }));
