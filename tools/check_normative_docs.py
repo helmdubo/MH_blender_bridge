@@ -172,6 +172,18 @@ def check_removed_entities() -> list[str]:
             for name in identifiers:
                 if re.search(r"\b" + re.escape(name) + r"\b", line):
                     violations.append(f"VIOLATION: removed entity {name} in {rel(p)}:{lineno}")
+    # Code gate (KICKOFF §7.4): a removed entity is lexically absent from the
+    # plugin sources too, tests included. The identifiers come from the same
+    # block, so a slice that deletes code and a slice that documents it agree.
+    code_root = REPO_ROOT / "ue" / "MimirComposite" / "Source"
+    if code_root.exists():
+        for p in sorted(code_root.rglob("*")):
+            if p.suffix.lower() not in {".h", ".cpp", ".inl", ".cs"}:
+                continue
+            for lineno, line in enumerate(read_text(p).splitlines(), start=1):
+                for name in identifiers:
+                    if re.search("(?<![A-Za-z0-9_])" + re.escape(name) + "(?![A-Za-z0-9_])", line):
+                        violations.append(f"VIOLATION: removed entity {name} in code {rel(p)}:{lineno}")
     return violations
 
 

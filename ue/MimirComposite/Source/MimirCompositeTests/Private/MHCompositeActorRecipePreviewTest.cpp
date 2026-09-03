@@ -11,6 +11,8 @@
 #include "Misc/AutomationTest.h"
 #include "Performance/MHPerformanceTrace.h"
 #include "Source/MHSourceResolver.h"
+#include "UObject/UObjectGlobals.h"
+#include "UObject/UnrealType.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -184,6 +186,37 @@ bool FMHActorRecipeDependentsTest::RunTest(const FString& Parameters)
     MHNotifyGeneratedResourceChanged(PreviewMeshKey(Fixture.Recipe.Name(TEXT("foreign_mesh"))));
     bPassed &= TestEqual(TEXT("foreign change leaves the placement alone"), Fixture.Actor->GetPlacementRebuildCount(), Rebuilds + 1);
     bPassed &= TestTrue(TEXT("no error after notifications: ") + Fixture.Actor->GetLastPlacementError(), Fixture.Actor->GetLastPlacementError().IsEmpty());
+    return bPassed;
+}
+
+// R2b-3 (Recipe Model v2 §2.10, §7.2): the actor carries no proof state. No
+// signature property, no definition cache subsystem, no compact signed state;
+// the resident preview plan and the proof cache are the only two authorities.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHActorHasNoProofStateTest,
+    "Mimir.V5.Composite.Recipe.ActorHasNoProofState",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHActorHasNoProofStateTest::RunTest(const FString& Parameters)
+{
+    bool bPassed = TestNull(TEXT("actor exposes no ResolvedSignature property"),
+        FindFProperty<FProperty>(AMHCompositeActor::StaticClass(), TEXT("ResolvedSignature")));
+    bPassed &= TestNull(TEXT("definition cache subsystem class is gone"),
+        FindFirstObject<UClass>(TEXT("MHCompositeDefinitionSubsystem"), EFindFirstObjectOptions::ExactClass));
+    FActorPreviewFixture Fixture(*this);
+    if (!Fixture.Build(*this)) return false;
+    Fixture.Actor->SetCompositeAsset(Fixture.Root);
+    Fixture.Actor->RebuildComposite();
+    bPassed &= TestTrue(TEXT("preview builds: ") + Fixture.Actor->GetLastPlacementError(), Fixture.Actor->GetLastPlacementError().IsEmpty());
+    const FMHResolvedCompositePlan* Plan = Fixture.Actor->GetResolvedPlan();
+    bPassed &= TestNotNull(TEXT("resident preview plan"), Plan);
+    if (Plan != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("resident plan carries no closure or signature"),
+            Plan->Closure.Resources.IsEmpty() && Plan->ResolvedSignature.IsEmpty() && Plan->PlacementSignature.IsEmpty());
+        bPassed &= TestEqual(TEXT("resident plan seed"), Plan->Seed, Fixture.Actor->GetSeed());
+    }
+    bPassed &= TestTrue(TEXT("preview revision advanced"), Fixture.Actor->GetPreviewRevision() >= 1u);
     return bPassed;
 }
 
