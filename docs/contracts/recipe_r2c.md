@@ -105,6 +105,8 @@ Unknown», «preview survives a missing unselected receipt») и отказы
   экспорт, если применимо)
 - `Private/Composite/MHCompositePlacementEvents.cpp` (`InvalidateAll` при
   нотификации)
+- `Public|Private/Source/MHSourceComposition.{h,cpp}` — **только** новый
+  read-only accessor `MHPeekProjectIndex()` (OPEN-R2C-3)
 - `MimirCompositeRuntime/Private/Diagnostics/MHDiagnosticRegistry.cpp` — регистрация
   `MH_E_STALE_SOURCE` и четырёх `MH_W_PROOF_{UNKNOWN,PENDING,STALE,MISSING}`
   (точные имена; реестр закреплён тестом — см. OPEN-R2C-2)
@@ -208,3 +210,62 @@ count to be 20, but it was 16` и пять `… is registered`; остальны
 теста зелёные.
 
 OPEN-R2C-2: закрыт.
+
+## Возврат PR #88 (близнец, 2026-09-03): OPEN-R2C-3 и OPEN-R2C-4
+
+Диф `f7ccdbc` соответствует закрытому и запрещённому спискам; три proof-теста,
+реестр и полный suite зелёные у исполнителя. Два дефекта реализации против
+контракта — исправить в той же ветке, перегнать гейты, обновить квитанцию.
+
+### OPEN-R2C-3 — чтение состояния открывает и может пересоздать SQLite-индекс
+
+`FImpl::MakeKey` → `OpenProjectIndex` создаёт **второй** handle
+`FMHProjectResourceIndex` и вызывает `Open(bRecreated)` — «opens a valid cache
+or recreates an empty cache». Это делается в `GetProofState`, `AuditWorld`
+(PreSaveWorld — на каждый placement) и `RequestProof`. Следствия: (а) чтение
+состояния — путь с побочным эффектом записи (создание/пересоздание БД,
+`generation` сдвигается), что противоречит §2.6 п. 1 «AuditWorld только
+читает»; (б) второй handle рядом с процессным `GProjectIndex`
+(`MHSourceComposition.cpp`), который может держать БД открытой; (в) стоимость
+N открытий SQLite на save.
+
+**Норма.** Единственный владелец индекса — `GProjectIndex`. В
+`MHSourceComposition.{h,cpp}` добавить
+`MIMIRCOMPOSITEEDITOR_API TSharedPtr<FMHProjectResourceIndex> MHPeekProjectIndex();`
+— возвращает процессный индекс, **только если он уже валиден и открыт**; никогда
+не создаёт, не открывает и не пересоздаёт. `UMHProofCacheSubsystem`:
+- `MakeKey` берёт `ProjectIndexGeneration = Index.IsValid() ? Index->GetGeneration() : 0`
+  через `MHPeekProjectIndex()` — без `Open`;
+- `BuildProofNow` использует тот же `MHPeekProjectIndex()` для freshness; индекс
+  не открыт → ключи «неизвестны индексу» → не Stale (норма контракта);
+- `OpenProjectIndex` и `MakeUnique<FMHProjectResourceIndex>` из `MHProofCache.cpp`
+  удалить; `Index/MHProjectResourceIndex.h` там больше не нужен.
+Acceptance-добавка: в `Proof.SaveWarnsWithoutProof` и `Proof.BuildPreflightFullClosure`
+(без изменений тестов) на хосте без Source Root не должен появляться
+`ProjectIndex.sqlite` — проверить руками и указать в квитанции.
+
+### OPEN-R2C-4 — preflight моста потерял проверку транспортных байт
+
+`MHRuntimeBridgePreflight` раньше декодировал `Prepared.Input.GraphBytes`,
+резолвил и проверял трансформы — это единственная проверка того, что **байты,
+которые уйдут в cook**, дают тот же план. Реализация удалила её, оставив только
+`BuildProofNow` по applied graph (до кодирования).
+
+**Норма.** Вернуть в `MHRuntimeBridgePreflight` после
+`MHBuildRuntimeCompositeInput`: `MHDecodeRuntimeCompositeGraph(GraphBytes)` →
+`MHResolveCompositePlan` → `MHValidateResolvedPlacementTransforms`, и
+дополнительно сравнить `ResolvedSignature` и `PlacementSignature` декодированного
+плана с proof-планом (`Proofs->GetProofState(*Source).Plan`, кэш после
+`BuildProofNow`; после OPEN-R2C-3 это чтение без побочных эффектов).
+Расхождение → `MH_E_INVALID_RESOURCE_SOURCE: transport graph diverges from proof
+for <path>`. Второй `MHBuildAppliedCompositeGraph` внутри
+`MHBuildRuntimeCompositeInput` допустим (транспорт), но комментарий «does not
+retain the former independent claim/resolve preflight path» убрать — путь
+восстанавливается.
+
+Остальное принято: ключ proof, тикер (1 placement/тик), `FlushPendingProofs`,
+PreSave-аудит с `MH_W_PROOF_*` и `RequestProof` для `Unknown`, Break через
+`BuildProofNow`, `InvalidateAll` в нотификации, docs/16 §2.6/§9.
+
+После правок: полный suite + гейты §9 заново, квитанция — новые логи, PR #88
+обновить (force-push не нужен, обычные коммиты). Merge — после повторной приёмки.
