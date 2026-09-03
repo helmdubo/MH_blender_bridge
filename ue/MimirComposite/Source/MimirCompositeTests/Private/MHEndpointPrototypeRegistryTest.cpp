@@ -260,23 +260,23 @@ bool FMHRegistryDuplicateClaimProofPlaneTest::RunTest(const FString& Parameters)
     bPassed &= TestNotNull(TEXT("preview resolves the canonical path despite a duplicate claim"), Actor->GetResolvedPlan());
     bPassed &= TestEqual(TEXT("preview made no tag queries"), MHGetEndpointResolveMetrics().AssetRegistryTagQueries, 0ull);
 
-    TArray<AActor*> Broken;
-    TArray<FString> Warnings;
-    FString Error;
-    bPassed &= TestFalse(TEXT("Break refuses the duplicate claim"), Operations->BreakComposites({Actor}, Broken, Warnings, Error));
-    bPassed &= TestTrue(TEXT("Break names MH_E_AMBIGUOUS_GENERATED_ASSET"), Error.Contains(TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET")));
-    bPassed &= TestTrue(TEXT("refused Break spawns nothing"), Broken.IsEmpty());
-
     FMHRuntimeCompositeInput Input;
-    Error.Reset();
+    FString Error;
     bPassed &= TestFalse(TEXT("runtime snapshot refuses the duplicate claim"), MHBuildRuntimeCompositeInput(*Actor, Input, Error));
     bPassed &= TestTrue(TEXT("snapshot names MH_E_AMBIGUOUS_GENERATED_ASSET"), Error.Contains(TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET")));
 
-    Fixture.RemoveClaim(*Duplicate);
+    // R4-pre: Break is a preview-plane operation (Dagor split) and, like the
+    // preview, uses the canonical endpoint without tag queries; the duplicate
+    // claim stays a proof-plane fact for save audit, snapshot and cook.
+    TArray<AActor*> Broken;
+    TArray<FString> Warnings;
     Error.Reset();
-    Broken.Reset();
-    bPassed &= TestTrue(TEXT("removing the duplicate claim heals Break"), Operations->BreakComposites({Actor}, Broken, Warnings, Error));
-    if (!Error.IsEmpty()) AddInfo(Error);
+    MHResetEndpointResolveMetrics();
+    bPassed &= TestTrue(TEXT("Break proceeds on the canonical endpoint despite a duplicate claim: ") + Error,
+        Operations->BreakComposites({Actor}, Broken, Warnings, Error));
+    bPassed &= TestEqual(TEXT("Break emits the one top-level mesh"), Broken.Num(), 1);
+    bPassed &= TestEqual(TEXT("Break made no tag queries"), MHGetEndpointResolveMetrics().AssetRegistryTagQueries, 0ull);
+    Fixture.RemoveClaim(*Duplicate);
     return bPassed;
 }
 } // namespace UE::MimirComposite::Tests
