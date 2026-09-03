@@ -23,7 +23,7 @@
 | S2 | MERGED | #77 (внешний исполнитель, приёмка близнеца; возвраты OPEN-S2-1/S2-2 закрыты нормативно); квитанция `docs/receipts/source_s2.md`. Линия S закрыта: S0 #73, S1 CLOSED (вариант c), S2 #77 |
 | R2a | MERGED (близнец) | два PR: **R2a-1** фазовое разделение resolver'а — #79 (`docs/receipts/recipe_r2a_phases.md`); **R2a-2** `FMHCompiledRecipe` + реестр + `RecipeShadowParity` как CI-гейт — #81 (`docs/receipts/recipe_r2a_compiled_recipe.md`). OPEN-R2A-1 закрыт owner 2026-09-02 (docs/16 §9). **Полевой тест owner 2026-09-02 на портфолио (main `4782082`) пройден** — `docs/receipts/field_recipe_r2a_20260902.md`. Preview-путь ещё не production → R2b |
 | R2b | IN PROGRESS (близнец) | три PR: **R2b-1** `MHMaterializeLayout` — MERGED #84, квитанция `docs/receipts/recipe_r2b_materialize_layout.md`, OPEN-R2B-1 (гейт удалений) — ждёт Lead; **R2b-2** актор на рецептах (без Layout на PostEditMove, без Proof на загрузке) — MERGED #86 (owner: merge разрешён 2026-09-03), квитанция `docs/receipts/recipe_r2b_actor_preview.md`; OPEN-R2B-1/-2 закрыты (docs/16 §9); **R2b-3** удаления proof-состояния — после R2c (гейт: preflight full-closure тест R2c). Полевые находки Undo/reseed — вход для R2b-2/R4 |
-| R2c | NEXT (внешний исполнитель, контракт близнеца) | точки выхода proof-плоскости (docs/16 §2.6): preflight/snapshot/export/PreSaveWorld с полным closure; контракт `docs/contracts/recipe_r2c.md` |
+| R2c | IN REVIEW (внешний исполнитель) | proof cache и точки выхода реализованы в `e55a049`; квитанция `docs/receipts/recipe_r2c.md`; PR в `main`, merge — только после проверки близнеца |
 | R3 | PLANNED | — |
 | R4 | PLANNED | — |
 | R5 | PLANNED | — |
