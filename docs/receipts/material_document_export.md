@@ -55,9 +55,11 @@ fail-closed отклоняется как внешняя модификация.
 - ошибки извлечения отдельных материалов и ошибки записи выводятся с asset и
   destination в отдельную страницу Mimir Message Log;
 - итоговая Slate notification показывает exported/skipped counts;
-- destination внутри Source Root получает
-  `MH_E_INVALID_RESOURCE_SOURCE` с подсказкой использовать
-  `Publish Material to MH Source`.
+- destination внутри Source Root **разрешён** (решение owner 2026-09-03:
+  материал можно экспортировать в любой исходник материалов в любой
+  ситуации); запись логируется как обычная внешняя правка источника, receipt не
+  трогается — `Publish Material to MH Source` остаётся отдельным путём. До
+  2026-09-03 такой destination отклонялся с `MH_E_INVALID_RESOURCE_SOURCE`.
 
 ## 3. Red-first
 
@@ -100,7 +102,8 @@ EXIT=0
 - receipt logical name и fallback asset name;
 - byte-identical canonical output и равенство hash с `AppliedHash`;
 - один collision-list, полную отмену без записей и подтверждённый overwrite;
-- полный запрет destination внутри Source Root с правильной подсказкой;
+- destination внутри Source Root: preflight и commit проходят, документ
+  записан canonical-байтами (до 2026-09-03 — полный запрет);
 - skip неэкспортируемого материала при успешной записи корректного peer.
 
 Лог:
@@ -152,8 +155,8 @@ owner не закрывался и не использовался: build/test �
    receipt/fallback, один общий список коллизий и exported/skipped в Mimir Log.
 4. Добавить в selection MI с неподдерживаемым parent/override: он получает
    строку с причиной в Message Log, остальные файлы создаются.
-5. Выбрать destination внутри Source Root: запись блокируется до файловой
-   мутации, UI указывает `Publish Material to MH Source`.
+5. Выбрать destination внутри Source Root: документ записывается как обычный
+   экспорт; индекс источника подхватывает файл как внешнюю правку.
 
 Commandlet-гейты покрывают ядро; native dialogs и визуальное расположение
 пункта меню требуют этого короткого owner field test.
@@ -169,5 +172,6 @@ Commandlet-гейты покрывают ядро; native dialogs и визуа�
 
 ## 7. Вопросы
 
-Открытых архитектурных вопросов нет. R5 реализован без исключений: export не
-является альтернативным publish-путём внутри Source Root.
+Открытых архитектурных вопросов нет. С 2026-09-03 export разрешён и внутри
+Source Root по решению owner; publish-путь (receipt, index) им не подменяется —
+экспортированный документ живёт как внешняя правка источника.

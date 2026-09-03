@@ -11,6 +11,8 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialDocumentExport, Log, All);
+
 namespace UE::MimirComposite
 {
 namespace
@@ -166,11 +168,12 @@ bool MHPrepareMaterialDocumentExport(
         }
         if (IsInsideSourceRoot(Item.DestinationPath, SourceRoot))
         {
-            OutPlan = FMHMaterialDocumentExportPlan();
-            OutError = FString::Printf(
-                TEXT("MH_E_INVALID_RESOURCE_SOURCE: material document export cannot write inside Source Root; use 'Publish Material to MH Source' instead: %s"),
-                *Item.DestinationPath);
-            return false;
+            // Owner decision (2026-09-03): a material may be exported into any
+            // material source, Source Root included, in every situation. The
+            // written document is an ordinary external edit for the source
+            // index; 'Publish Material to MH Source' stays the receipt-bound path.
+            UE_LOG(LogMHMaterialDocumentExport, Display,
+                TEXT("material document export writes inside Source Root: %s"), *Item.DestinationPath);
         }
     }
 
