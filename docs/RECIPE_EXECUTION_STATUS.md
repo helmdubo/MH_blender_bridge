@@ -25,6 +25,8 @@
 | R2b | MERGED (близнец) | три PR: **R2b-1** `MHMaterializeLayout` — #84; **R2b-2** актор на рецептах — #86; **R2b-3** удаления proof-состояния актора и definition-кэша — #90 (owner: удаления одобрены 2026-09-03; квитанция `docs/receipts/recipe_r2b_proof_state_deletions.md` §6). ADR docs/16: `Status: NORMATIVE` (D0a: «PROPOSED → NORMATIVE после R2b») |
 | R2c | MERGED | #88 (внешний исполнитель, приёмка близнеца; возвраты OPEN-R2C-1…4 закрыты нормативно в `docs/contracts/recipe_r2c.md`); квитанция `docs/receipts/recipe_r2c.md`; `Proof.BuildPreflightFullClosure` зелёный → гейт R2b-3 открыт |
 | R3 | NEXT (внешний исполнитель, контракт близнеца) | пять хэшей/ревизий интерфейса меша (docs/16 §2.2 П4, восьмая строка §7.2 — код); контракт `docs/contracts/recipe_r3.md` |
+| RS-1 | IN PROGRESS (внешний агент, ресёрч) | как daEditor строит/разбирает композиты — контракт `docs/contracts/research_dagor_composite_ops.md`; результат: reference note. Основание: полевой тест `docs/receipts/field_r2b3_break_20260903.md` (Break медленный, плоский, ломает Undo) |
+| R4-pre | PLANNED (близнец, после RS-1) | Break = верхний слой рецепта, Undo без дублей (plan-view компоненты не транзакционны / восстановление в `PostEditUndo`) — граница с R4 (пулы) по результату RS-1 |
 | R4 | PLANNED | — |
 | R5 | PLANNED | — |
 | R6 | PLANNED | — |
