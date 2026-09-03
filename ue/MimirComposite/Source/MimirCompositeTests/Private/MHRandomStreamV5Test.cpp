@@ -238,7 +238,11 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
     FString ResolverTag;
     bool bPassed = TestTrue(TEXT("stream tag"), Root->TryGetStringField(TEXT("stream"), StreamTag) && StreamTag == MHRandomStream1Tag);
     bPassed &= TestTrue(TEXT("resolver tag"), Root->TryGetStringField(TEXT("resolver"), ResolverTag) && ResolverTag == MHRandomResolverTag);
-	bPassed &= TestEqual(TEXT("exact registered MH_E count"), MHRegisteredErrorCodes().Num(), 53);
+	// R2c: proof plane freshness (docs/16 §2.6): +1 error, +4 warnings.
+	bPassed &= TestEqual(TEXT("exact registered MH_E count"), MHRegisteredErrorCodes().Num(), 54);
+	bPassed &= TestTrue(
+		TEXT("stale source code is registered"),
+		MHRegisteredErrorCodes().Contains(TEXT("MH_E_STALE_SOURCE")));
 	bPassed &= TestTrue(
 		TEXT("placement state desync code is registered"),
 		MHRegisteredErrorCodes().Contains(TEXT("MH_E_PLACEMENT_STATE_DESYNC")));
@@ -248,7 +252,12 @@ bool FMHRandomStream1GoldenTest::RunTest(const FString& Parameters)
 	bPassed &= TestTrue(
 		TEXT("partial publish code is registered"),
 		MHRegisteredErrorCodes().Contains(TEXT("MH_E_PARTIAL_PUBLISH")));
-    bPassed &= TestEqual(TEXT("exact registered MH_W count"), MHRegisteredWarningCodes().Num(), 16);
+    bPassed &= TestEqual(TEXT("exact registered MH_W count"), MHRegisteredWarningCodes().Num(), 20);
+    for (const TCHAR* ProofWarning : {TEXT("MH_W_PROOF_UNKNOWN"), TEXT("MH_W_PROOF_PENDING"), TEXT("MH_W_PROOF_STALE"), TEXT("MH_W_PROOF_MISSING")})
+    {
+        bPassed &= TestTrue(FString::Printf(TEXT("proof warning %s is registered"), ProofWarning),
+            MHRegisteredWarningCodes().Contains(ProofWarning));
+    }
     bPassed &= TestTrue(TEXT("explicit Dagor construct drop warning is registered"),
         MHRegisteredWarningCodes().Contains(TEXT("MH_W_DAGOR_CONSTRUCT_DROPPED")));
     bPassed &= TestTrue(TEXT("placement grammar code registered"),

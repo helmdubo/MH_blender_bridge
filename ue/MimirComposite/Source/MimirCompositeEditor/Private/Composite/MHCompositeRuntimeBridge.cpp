@@ -2,8 +2,9 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeResolvedPlan.h"
-#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHCompositeTransformAdmission.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Composite/MHProofCache.h"
 #include "Composite/MHRuntimeCompositeActor.h"
 #include "Editor.h"
 #include "Engine/Level.h"
@@ -297,10 +298,22 @@ bool MHRuntimeBridgePreflight(UWorld& World, TArray<FMHRuntimeBridgePreparedPlac
         Prepared.Transform = Source->GetActorTransform();
         if (!MHBuildRuntimeCompositeInput(*Source, Prepared.Input, Error)) return false;
         FMHRandomSourceGraph Graph;
-        FMHResolvedCompositePlan Plan;
+        FMHResolvedCompositePlan TransportPlan;
         if (!MHDecodeRuntimeCompositeGraph(Prepared.Input.GraphBytes, Graph, Error) ||
-            !MHResolveCompositePlan(Graph, Prepared.Seed, Prepared.AppearanceSeed, Plan, Error) ||
-            !MHValidateResolvedPlacementTransforms(Plan, Prepared.Transform, Error)) return false;
+            !MHResolveCompositePlan(Graph, Prepared.Seed, Prepared.AppearanceSeed, TransportPlan, Error) ||
+            !MHValidateResolvedPlacementTransforms(TransportPlan, Prepared.Transform, Error)) return false;
+        UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
+        const FMHProofResult Proof = Proofs != nullptr
+            ? Proofs->GetProofState(*Source)
+            : FMHProofResult();
+        if (Proof.State != EMHProofState::Fresh || !Proof.Plan.IsValid() ||
+            Proof.Plan->ResolvedSignature != TransportPlan.ResolvedSignature ||
+            Proof.Plan->PlacementSignature != TransportPlan.PlacementSignature)
+        {
+            Error = MHRuntimeBridgeError(
+                TEXT("transport graph diverges from proof for ") + Source->GetPathName());
+            return false;
+        }
         Out.Add(MoveTemp(Prepared));
     }
     return true;
@@ -476,18 +489,25 @@ bool MHBuildRuntimeCompositeInput(const AMHCompositeActor& Placement,
         OutError = MHRuntimeBridgeError(Placement.GetPathName() + TEXT(" has no applied composite definition"));
         return false;
     }
+
+    UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
+    FMHProofResult Proof;
+    if (Proofs == nullptr)
+    {
+        OutError = MHRuntimeBridgeError(TEXT("proof cache subsystem is unavailable"));
+        return false;
+    }
+    if (!Proofs->BuildProofNow(Placement, Proof, OutError))
+    {
+        return false;
+    }
+
+    // Proof is the admission authority. This second assembly produces the
+    // transport graph bytes and bindings; preflight independently decodes and
+    // resolves those exact bytes, then compares their proof signatures.
     FMHRandomSourceGraph Graph;
     TSet<FMHResourceKey> Dependencies;
     if (!MHBuildAppliedCompositeGraph(*Asset, *Settings, Graph, Dependencies, OutError)) return false;
-    TArray<FMHResourceKey> ClaimKeys = Dependencies.Array();
-    ClaimKeys.Sort([](const FMHResourceKey& A, const FMHResourceKey& B)
-    {
-        return A.ToString() < B.ToString();
-    });
-    for (const FMHResourceKey& Key : ClaimKeys)
-    {
-        if (!MHCheckGeneratedAssetClaims(Key, OutError)) return false;
-    }
     TArray<FString> Keys;
     if (!MHCollectRuntimeCompositeBindingKeys(Graph, Keys, OutError)) return false;
     FMHRuntimeCompositeInput Input;

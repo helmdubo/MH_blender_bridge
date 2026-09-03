@@ -10,6 +10,7 @@
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Composite/MHProofCache.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -232,31 +233,6 @@ bool MHCollectBreakSpecs(
                 return false;
             }
         }
-    }
-    return true;
-}
-
-bool MHCheckBreakPlanClaims(
-    const UMHCompositeAsset& Root,
-    const FMHResolvedCompositePlan& Plan,
-    FString& OutError)
-{
-    FMHResourceKey RootKey;
-    RootKey.Kind = EMHResourceKind::Composite;
-    RootKey.LogicalName = Root.LogicalName;
-    if (!MHCheckGeneratedAssetClaims(RootKey, OutError)) return false;
-    for (const FString& Resource : Plan.Closure.Resources)
-    {
-        FString KindLabel;
-        FMHResourceKey Key;
-        if (!Resource.Split(TEXT(":"), &KindLabel, &Key.LogicalName) ||
-            !MHResourceKindFromLabel(KindLabel, Key.Kind))
-        {
-            OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: invalid resolved closure resource ") + Resource;
-            return false;
-        }
-        if (Key == RootKey) continue;
-        if (!MHCheckGeneratedAssetClaims(Key, OutError)) return false;
     }
     return true;
 }
@@ -600,34 +576,19 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         // actor never validated unselected endpoints or receipts, so it is not
         // the authority here; the proof plan carries the same layout (shadow
         // parity gate) plus closure and signatures.
-        const UMHCompositeAsset* Root = Actor->GetCompositeAsset();
-        const TSharedRef<FMHResolvedCompositePlan> ProofPlan = MakeShared<FMHResolvedCompositePlan>();
+        FString ProofError = Actor->GetLastPlacementError();
+        FMHProofResult Proof;
+        UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
+        if (Actor->GetResolvedPlan() == nullptr || !ProofError.IsEmpty() || Proofs == nullptr ||
+            !Proofs->BuildProofNow(*Actor, Proof, ProofError) || !Proof.Plan.IsValid())
         {
-            FMHRandomSourceGraph ProofGraph;
-            TSet<FMHResourceKey> ProofDependencies;
-            FString ProofError = Actor->GetLastPlacementError();
-            if (Actor->GetResolvedPlan() == nullptr || !ProofError.IsEmpty() || Root == nullptr ||
-                !MHBuildAppliedCompositeGraph(*Root, *Settings, ProofGraph, ProofDependencies, ProofError) ||
-                !MHResolveCompositePlan(ProofGraph, Actor->GetSeed(), Actor->GetAppearanceSeed(), *ProofPlan, ProofError) ||
-                !MHValidateResolvedPlacementTransforms(*ProofPlan, Actor->GetActorTransform(), ProofError))
-            {
-                OutError = ProofError.IsEmpty()
-                    ? FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires a current resolved plan for %s"), *Actor->GetPathName())
-                    : ProofError + TEXT(" (Break: ") + Actor->GetPathName() + TEXT(")");
-                Actor->ReleaseResolvedDebugPlan();
-                return false;
-            }
-        }
-        const FMHResolvedCompositePlan* ResolvedPlan = &ProofPlan.Get();
-        if (Root == nullptr || !MHCheckBreakPlanClaims(*Root, *ResolvedPlan, OutError))
-        {
-            if (OutError.IsEmpty())
-            {
-                OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break placement has no applied root composite");
-            }
+            OutError = ProofError.IsEmpty()
+                ? FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires a current resolved plan for %s"), *Actor->GetPathName())
+                : ProofError + TEXT(" (Break: ") + Actor->GetPathName() + TEXT(")");
             Actor->ReleaseResolvedDebugPlan();
             return false;
         }
+        const FMHResolvedCompositePlan* ResolvedPlan = Proof.Plan.Get();
         FActorBreakPlan& Plan = Plans.AddDefaulted_GetRef();
         Plan.Actor = Actor;
         if (!MHCollectBreakSpecs(

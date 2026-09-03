@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Composite/MHProofCache.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
@@ -82,6 +83,10 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
             // profile reimport recompiles the recipes carrying it (R2b-2).
             if (Key.Kind == EMHResourceKind::Composite) Recipes->InvalidateComposite(Key.LogicalName);
             else if (Key.Kind == EMHResourceKind::PlacementProfile) Recipes->InvalidateProfile(Key.LogicalName);
+        }
+        if (UMHProofCacheSubsystem* Proofs = GEditor->GetEditorSubsystem<UMHProofCacheSubsystem>())
+        {
+            Proofs->InvalidateAll();
         }
     }
 
