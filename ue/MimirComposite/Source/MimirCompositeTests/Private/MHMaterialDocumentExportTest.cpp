@@ -174,24 +174,30 @@ bool FMHMaterialDocumentExportTest::RunTest(const FString& Parameters)
         TEXT("confirmed non-collision peer is written"),
         IFileManager::Get().FileExists(*FreshPath));
 
+    // Owner decision (2026-09-03): export into Source Root is allowed in every
+    // situation; the document is a plain source edit, not a publish.
     FMHMaterialDocumentExportPlan SourceRootPlan;
-    const TArray<FMHMaterialDocumentExportRequest> SourceRootRequests = {
-        {Managed, SourceRoot / TEXT("blocked.material")}};
+    const FString SourceRootTarget = SourceRoot / TEXT("inside_root.material");
+    const TArray<FMHMaterialDocumentExportRequest> SourceRootRequests = {{Managed, SourceRootTarget}};
     Error.Reset();
-    bPassed &= TestFalse(
-        TEXT("Source Root export is refused"),
+    bPassed &= TestTrue(
+        TEXT("Source Root export is admitted: ") + Error,
         MHPrepareMaterialDocumentExport(
             SourceRootRequests,
             *Settings,
             SourceRoot,
             SourceRootPlan,
             Error));
+    bPassed &= TestEqual(TEXT("Source Root export prepares one document"), SourceRootPlan.Ready.Num(), 1);
+    FMHMaterialDocumentExportResult SourceRootResult;
+    Error.Reset();
     bPassed &= TestTrue(
-        TEXT("Source Root refusal points to Publish"),
-        Error.Contains(TEXT("Publish Material to MH Source"), ESearchCase::CaseSensitive));
-    bPassed &= TestFalse(
-        TEXT("Source Root refusal writes nothing"),
-        IFileManager::Get().FileExists(*(SourceRoot / TEXT("blocked.material"))));
+        TEXT("Source Root export commits"),
+        MHCommitMaterialDocumentExport(SourceRootPlan, false, SourceRootResult, Error));
+    bPassed &= TestEqual(TEXT("Source Root export writes one document"), SourceRootResult.ExportedCount, 1);
+    TArray<uint8> SourceRootBytes;
+    FFileHelper::LoadFileToArray(SourceRootBytes, *SourceRootTarget);
+    bPassed &= TestTrue(TEXT("Source Root document carries canonical bytes"), SourceRootBytes == ExpectedBytes);
 
     UMaterialInstanceConstant* Invalid = MakeDocumentExportMaterial(TEXT("InvalidMaterial"), nullptr);
     const FString GoodPath = ExportRoot / TEXT("good.material");
