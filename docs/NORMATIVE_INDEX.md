@@ -31,6 +31,7 @@
 | `docs/reference_notes/dagor_engine_references.md` | справочные ссылки на движок Dagor (evidence/research) |
 | `docs/reference_notes/dagor_phmat_registry.md` | заметки по реестру phmat Dagor (evidence/research) |
 | `docs/reference_notes/evidence/` | сырые артефакты и логи проб (evidence/research), не норматив |
+| `docs/reference_notes/dagor_composite_build_break_20260903.md` | исследование RS-1: как daEditor строит композит из выбранного и разбирает его на один слой (evidence/research) |
 
 ## История
 
