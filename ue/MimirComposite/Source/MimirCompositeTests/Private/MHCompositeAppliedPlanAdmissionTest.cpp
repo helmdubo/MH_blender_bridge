@@ -45,12 +45,6 @@ bool AppliedAdmissionLeafTransform(
 }
 
 
-FString AdmissionStoredSignature(const AMHCompositeActor& Actor)
-{
-    const FStrProperty* Property = FindFProperty<FStrProperty>(AMHCompositeActor::StaticClass(), TEXT("ResolvedSignature"));
-    return Property != nullptr ? Property->GetPropertyValue_InContainer(&Actor) : FString();
-}
-
 struct FAppliedAdmissionFixture
 {
     FAutomationTestBase& Test;
@@ -162,7 +156,6 @@ struct FAppliedAdmissionFixture
         if (bPreviewRejects)
         {
             bPassed &= Test.TestNull(TEXT("invalid applied state has no current placement plan"), Actor.GetResolvedPlan());
-            bPassed &= Test.TestTrue(TEXT("invalid applied state has no current derived signature"), AdmissionStoredSignature(Actor).IsEmpty());
         }
         else
         {

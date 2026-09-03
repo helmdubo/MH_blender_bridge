@@ -83,9 +83,6 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerFreshness final
     int32 AppearanceSeed = 0;
     /** Preview build counter of the actor (R2b-2); zero means no preview yet. */
     uint32 PreviewRevision = 0;
-    FString ResolvedSignature;
-    FString AppearanceSignature;
-    FString PlacementSignature;
 
     static FMHCompositeOutlinerFreshness Capture(const AMHCompositeActor& Actor);
     bool IsComplete() const;

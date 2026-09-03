@@ -2,7 +2,6 @@
 
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAppearanceTransport.h"
-#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
@@ -189,111 +188,12 @@ void AMHCompositeActor::SetAutoAppearanceSeed(const bool bEnabled)
 const UE::MimirComposite::FMHResolvedCompositePlan* AMHCompositeActor::GetResolvedPlan() const
 {
     using namespace UE::MimirComposite;
-    if (!bPlanAvailable || !CompactResolvedState.IsSet() ||
-        CompactResolvedState->Seed != Seed ||
-        CompactResolvedState->AppearanceSeed != AppearanceSeed ||
+    if (!bPlanAvailable || !ResidentPlan.IsValid() ||
+        ResidentPlan->Seed != Seed ||
+        ResidentPlan->Appearance.AppearanceSeed != AppearanceSeed ||
         !LastPlacementError.IsEmpty()) return nullptr;
     // R2b-2: the preview plan is resident; nothing is re-resolved on read.
     return ResidentPlan.Get();
-}
-
-void AMHCompositeActor::RetainResolvedDebugPlan() const
-{
-    ++ResolvedDebugPlanLeaseCount;
-}
-
-void AMHCompositeActor::ReleaseResolvedDebugPlan() const
-{
-    if (ResolvedDebugPlanLeaseCount > 0) --ResolvedDebugPlanLeaseCount;
-    if (ResolvedDebugPlanLeaseCount == 0) ResolvedDebugPlan.Reset();
-}
-
-void AMHCompositeActor::InvalidateResolvedDebugPlan() const
-{
-    ResolvedDebugPlan.Reset();
-}
-
-void AMHCompositeActor::StoreCompactResolvedState(
-    const UE::MimirComposite::FMHResolvedCompositePlan& Plan)
-{
-    using namespace UE::MimirComposite;
-    FMHCompactResolvedState State;
-    State.Seed = Plan.Seed;
-    State.AppearanceSeed = Plan.Appearance.AppearanceSeed;
-    State.ResolvedSignature = Plan.ResolvedSignature;
-    State.AppearanceSignature = Plan.Appearance.AppearanceSignature;
-    State.PlacementSignature = Plan.PlacementSignature;
-    State.SelectedOptionIndices.Reserve(Plan.Decisions.Num());
-    for (const FMHResolvedCompositeDecision& Decision : Plan.Decisions)
-        State.SelectedOptionIndices.Add(Decision.OptionIndex);
-    State.Leaves.Reserve(Plan.Leaves.Num());
-    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
-    {
-        int32 ResourceIndex = State.Resources.IndexOfByKey(Leaf.Resource);
-        if (ResourceIndex == INDEX_NONE) ResourceIndex = State.Resources.Add(Leaf.Resource);
-        FMHCompactResolvedLeafState& Compact = State.Leaves.AddDefaulted_GetRef();
-        Compact.Kind = Leaf.Kind;
-        Compact.ResourceIndex = ResourceIndex;
-        Compact.WorldMatrix = Leaf.WorldMatrix;
-        Compact.RootNodeIndex = Leaf.RootNodeIndex;
-        Compact.OwningResolvedNodeIndex = Leaf.OwningResolvedNodeIndex;
-        FMemory::Memcpy(Compact.AppearanceChannels, Leaf.AppearanceChannels,
-            sizeof(Compact.AppearanceChannels));
-    }
-    CompactResolvedState = MoveTemp(State);
-    InvalidateResolvedDebugPlan();
-}
-
-bool AMHCompositeActor::HasResidentResolvedDebugPlan() const
-{
-    return ResolvedDebugPlan.IsValid();
-}
-
-bool AMHCompositeActor::HasCompactResolvedDiagnostics() const
-{
-    return false;
-}
-
-uint64 AMHCompositeActor::GetCompactResolvedStateAllocatedBytes() const
-{
-    if (!CompactResolvedState.IsSet()) return 0;
-    uint64 Bytes = CompactResolvedState->Resources.GetAllocatedSize() +
-        CompactResolvedState->Leaves.GetAllocatedSize() +
-        CompactResolvedState->SelectedOptionIndices.GetAllocatedSize();
-    for (const FString& Resource : CompactResolvedState->Resources)
-        Bytes += Resource.GetAllocatedSize();
-    Bytes += CompactResolvedState->ResolvedSignature.GetAllocatedSize() +
-        CompactResolvedState->AppearanceSignature.GetAllocatedSize() +
-        CompactResolvedState->PlacementSignature.GetAllocatedSize();
-    return Bytes;
-}
-
-int32 AMHCompositeActor::GetCompactResolvedLeafCount() const
-{
-    return CompactResolvedState.IsSet() ? CompactResolvedState->Leaves.Num() : 0;
-}
-
-int32 AMHCompositeActor::GetCompactSelectedOptionCount() const
-{
-    return CompactResolvedState.IsSet()
-        ? CompactResolvedState->SelectedOptionIndices.Num() : 0;
-}
-
-const FString& AMHCompositeActor::GetCompactResolvedSignature() const
-{
-    return CompactResolvedState.IsSet() ? CompactResolvedState->ResolvedSignature : ResolvedSignature;
-}
-
-const FString& AMHCompositeActor::GetCompactAppearanceSignature() const
-{
-    static const FString Empty;
-    return CompactResolvedState.IsSet() ? CompactResolvedState->AppearanceSignature : Empty;
-}
-
-const FString& AMHCompositeActor::GetCompactPlacementSignature() const
-{
-    static const FString Empty;
-    return CompactResolvedState.IsSet() ? CompactResolvedState->PlacementSignature : Empty;
 }
 
 void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
@@ -302,11 +202,9 @@ void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
     SetPlacementEditMode(false);
     if (CompositeAsset.Get() != Asset)
     {
-        AppliedDefinition.Reset();
         AppliedGraph.Reset();
-        CompactResolvedState.Reset();
+        ObservedRecipeGraph.Reset();
         ResidentPlan.Reset();
-        InvalidateResolvedDebugPlan();
         bPlanAvailable = false;
     }
     CompositeAsset = Asset;
@@ -367,7 +265,7 @@ void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)
     // admitted back into its immutable-policy bucket.
     bPlacementEditMode = false;
     bExtractSelectedLeafForEdit = bEnabled && !SelectedPlacementLeafPath.IsEmpty();
-    if (HasActorRegisteredAllComponents() && CompactResolvedState.IsSet()) RebuildPlacement(false);
+    if (HasActorRegisteredAllComponents() && ResidentPlan.IsValid()) RebuildPlacement(false);
     // Beginning an edit session must not erase a handle transform the user
     // changed immediately before invoking Edit. The subsequent editor tick
     // turns these restored world transforms into the prospective signed plan.
@@ -400,13 +298,28 @@ void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)
 
 bool AMHCompositeActor::DependsOnResource(const UE::MimirComposite::FMHResourceKey& Key) const
 {
-    return PlacementDependencies.Contains(Key);
+    using namespace UE::MimirComposite;
+    // R2b-3: no dependency list on the actor. The root asset and the resident
+    // recipe graph (composites, meshes, profiles) are what a notification can
+    // hit; materials and textures reconcile per bucket (docs/16 §4, R4).
+    if (Key.Kind == EMHResourceKind::Composite)
+    {
+        // The root is observed by identity, alive or not: a dead or replaced
+        // root asset is exactly the notification this placement must react to.
+        if (const UMHCompositeAsset* Asset = CompositeAsset.Get(); Asset != nullptr && Asset->LogicalName == Key.LogicalName) return true;
+        if (!CompositeAsset.IsNull() && CompositeAsset.ToSoftObjectPath().GetAssetName() == Key.LogicalName) return true;
+    }
+    const FMHRandomSourceGraph* Graph = ObservedRecipeGraph.IsValid() ? ObservedRecipeGraph.Get() : AppliedGraph.Get();
+    if (Graph == nullptr) return false;
+    TSet<FMHResourceKey> Observed;
+    MHCollectRecipeGraphDependencies(*Graph, Observed);
+    return Observed.Contains(Key);
 }
 
 bool AMHCompositeActor::GetEditedCompositeDocument(UE::MimirComposite::FMHCompositeDocument& OutDocument) const
 {
     if (!bPlacementEditMode || !EditingDocument.IsSet() ||
-        !bPlanAvailable || !CompactResolvedState.IsSet()) return false;
+        !bPlanAvailable || !ResidentPlan.IsValid()) return false;
     if (TopLevelPlacementComponents.Num() != EditingDocument->Nodes.Num() ||
         TopLevelPlacementComponents.ContainsByPredicate([](const USceneComponent* Handle) { return !IsValid(Handle); })) return false;
     OutDocument = EditingDocument.GetValue();
@@ -454,15 +367,11 @@ void AMHCompositeActor::ClearDerivedComponents()
     TopLevelPlacementComponents.Reset();
     LeafPlacementComponents.Reset();
     LeafMaterializations.Reset();
-    PlacementDependencies.Reset();
     LastPlacementWarnings.Reset();
     LastPlacementError.Reset();
-    ResolvedSignature.Reset();
-    CompactResolvedState.Reset();
     ResidentPlan.Reset();
-    InvalidateResolvedDebugPlan();
-    AppliedDefinition.Reset();
     AppliedGraph.Reset();
+    ObservedRecipeGraph.Reset();
     bPlanAvailable = false;
     bBasisRejected = false;
     BroadcastMHCompositeComponentsEdited();
@@ -510,13 +419,11 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     FMHResourceKey RootKey;
     RootKey.Kind = EMHResourceKind::Composite;
     RootKey.LogicalName = Name;
-    PlacementDependencies.Add(RootKey);
 
     // Preview plane (Recipe Model v2 §2.1, §2.5, R2b-2): compile the recipe
     // (cached by asset + RecipeRevision) and materialize the layout. No applied
     // graph, no closure, no receipt versus Source Root, no definition cache;
     // the definition-cache counters now report recipe cache hits and misses.
-    TSharedPtr<FMHCompositeDefinitionEntry> CandidateDefinition;
     TSharedPtr<const FMHRandomSourceGraph> CandidateGraph;
     TSharedPtr<const FMHResolvedCompositePlan> CandidatePlan;
     FString Error;
@@ -553,12 +460,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             if (Materialized.Graph.IsValid())
             {
                 CandidateGraph = Materialized.Graph;
+                ObservedRecipeGraph = CandidateGraph;
                 MHRecordMapLoadGraph(Name, *CandidateGraph);
-                // Every graph resource is a retry trigger for the targeted
-                // notification, whether or not this build succeeded.
-                PlacementDependencies.Reset();
-                PlacementDependencies.Add(RootKey);
-                MHCollectRecipeGraphDependencies(*CandidateGraph, PlacementDependencies);
             }
             if (Materialized.Succeeded())
             {
@@ -581,8 +484,6 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     LastPlacementError = Error;
     if (!Error.IsEmpty())
     {
-        InvalidateResolvedDebugPlan();
-        ResolvedSignature.Reset();
         bPlanAvailable = false;
         if (Error.Contains(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM")))
         {
@@ -599,7 +500,6 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             {
                 View = MHCompileCompositePlacementV5(
                     *this, *ResidentPlan, *PreviousRoot, *Settings, Previous,
-                    AppliedDefinition.Get(),
                     bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
             }
         }
@@ -619,8 +519,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     if (!CandidateGraph.IsValid() || !CandidatePlan.IsValid()) return;
     const FMHRandomComposite* Root = CandidateGraph->Composites.Find(Name);
     if (Root == nullptr) return;
-    const bool bLayoutReseed = bSeedOnly && bPlanAvailable && CompactResolvedState.IsSet() &&
-        CompactResolvedState->Seed != CandidatePlan->Seed;
+    const bool bLayoutReseed = bSeedOnly && bPlanAvailable && ResidentPlan.IsValid() &&
+        ResidentPlan->Seed != CandidatePlan->Seed;
     TSharedPtr<const FMHResolvedCompositePlan> PreviousPlan;
     if (bLayoutReseed && ResidentPlan.IsValid())
     {
@@ -636,13 +536,12 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     {
         const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
         FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
-            *this, *CandidatePlan, *Root, *Settings, Previous, CandidateDefinition.Get(),
+            *this, *CandidatePlan, *Root, *Settings, Previous,
             bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
         if (!View.Succeeded())
         {
             LastPlacementError = View.Error;
             bPlanAvailable = false;
-            ResolvedSignature.Reset();
             ReportPlacementError();
             return false;
         }
@@ -668,14 +567,13 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         if (MHTryCompileCompositePlacementReseedV5(
                 *this, *PreviousPlan, *CandidatePlan, *Root, *Settings, Previous,
                 TopLevelPlacementComponents, LeafPlacementComponents,
-                LeafMaterializations, CandidateDefinition.Get(), View,
+                LeafMaterializations, View,
                 bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString()))
         {
             if (!View.Succeeded())
             {
                 LastPlacementError = View.Error;
                 bPlanAvailable = false;
-                ResolvedSignature.Reset();
                 ReportPlacementError();
                 return;
             }
@@ -710,12 +608,9 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     {
         if (!CompileFullView()) return;
     }
-    AppliedDefinition = CandidateDefinition;
     AppliedGraph = CandidateGraph;
     ResidentPlan = CandidatePlan;
     ++PreviewRevision;
-    StoreCompactResolvedState(*CandidatePlan);
-    ResolvedSignature = CandidatePlan->ResolvedSignature;
     bPlanAvailable = true;
     // The existing Level Editor component-edited event is also the read-only
     // semantic-overlay invalidation signal. A reseed can preserve every
@@ -733,9 +628,9 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
         Tick(0.0f);
         return;
     }
-    if (!CompactResolvedState.IsSet() || !AppliedGraph.IsValid() ||
-        CompactResolvedState->Seed != Seed ||
-        CompactResolvedState->AppearanceSeed != AppearanceSeed) return;
+    if (!ResidentPlan.IsValid() || !AppliedGraph.IsValid() ||
+        ResidentPlan->Seed != Seed ||
+        ResidentPlan->Appearance.AppearanceSeed != AppearanceSeed) return;
     if (!bPlanAvailable && !bBasisRejected)
     {
         // The cached plan may predate a rejected dependency update. Never let
@@ -758,9 +653,8 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
                 LeafMaterializations, Error))
         {
             if (!Error.StartsWith(TEXT("MH_E_")))
-                Error = TEXT("MH_E_PLACEMENT_STATE_DESYNC: compact placement state: ") + Error;
+                Error = TEXT("MH_E_PLACEMENT_STATE_DESYNC: resident placement state: ") + Error;
             LastPlacementError = Error;
-            ResolvedSignature.Reset();
             bPlanAvailable = false;
             bBasisRejected = true;
             ReportPlacementError();
@@ -769,7 +663,6 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
         else if (bBasisRejected)
         {
             LastPlacementError.Reset();
-            ResolvedSignature = CompactResolvedState->ResolvedSignature;
             bPlanAvailable = true;
             bBasisRejected = false;
         }
@@ -786,7 +679,7 @@ void AMHCompositeActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
     AttachRootTransformHook();
-    if (!CompactResolvedState.IsSet() && LastPlacementError.IsEmpty()) RebuildComposite();
+    if (!ResidentPlan.IsValid() && LastPlacementError.IsEmpty()) RebuildComposite();
     else UpdatePlacementBasis(nullptr, EUpdateTransformFlags::None, ETeleportType::None);
 }
 
@@ -881,7 +774,6 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     {
         LastPlacementError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: an authored Edit handle disappeared");
         bPlanAvailable = false;
-        ResolvedSignature.Reset();
         return;
     }
     const FTransform CurrentBasis = GetActorTransform();
@@ -899,7 +791,6 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
         {
             LastPlacementError = TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: edited top-level handle");
             bPlanAvailable = false;
-            ResolvedSignature.Reset();
             return;
         }
         const FTransform Local(LocalMatrix);
@@ -923,7 +814,6 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
         if (!MHWriteCanonicalCompositeV5(*EditingDocument, ProspectiveBytes, Error))
         {
             LastPlacementError = Error;
-            ResolvedSignature.Reset();
             bPlanAvailable = false;
             return;
         }
@@ -934,18 +824,16 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
         !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), Error))
     {
         LastPlacementError = Error;
-        ResolvedSignature.Reset();
         bPlanAvailable = false;
         return;
     }
     FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
-        *this, *Plan, *Root, *Settings, DerivedComponents, nullptr,
+        *this, *Plan, *Root, *Settings, DerivedComponents,
         bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
     if (!View.Succeeded())
     {
         LastPlacementError = View.Error;
         bPlanAvailable = false;
-        ResolvedSignature.Reset();
         return;
     }
     const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
@@ -959,8 +847,6 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     LastEditBasis = CurrentBasis;
     ResidentPlan = Plan;
     ++PreviewRevision;
-    StoreCompactResolvedState(*Plan);
-    ResolvedSignature = Plan->ResolvedSignature;
     LastPlacementError.Reset();
     bPlanAvailable = true;
 }

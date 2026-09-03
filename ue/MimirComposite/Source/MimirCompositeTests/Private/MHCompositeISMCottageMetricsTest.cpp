@@ -57,14 +57,13 @@ FString CottageMetricsLine(
     FString Result = FString::Printf(
         TEXT("U5_COTTAGE_METRICS phase=%s wall_ms=%.6f leaves=%d derived=%d scene=%d ")
         TEXT("handles=%d leaf_view=%d static_materializers=%d ordinary_smc=%d ")
-        TEXT("ism_buckets=%d ism_instances=%d resolved_state_bytes=%llu debug_resident=%d"),
-        Phase, WallMilliseconds, Actor.GetCompactResolvedLeafCount(),
+        TEXT("ism_buckets=%d ism_instances=%d resident_plan=%d"),
+        Phase, WallMilliseconds, Actor.GetResolvedPlan() != nullptr ? Actor.GetResolvedPlan()->Leaves.Num() : 0,
         Actor.GetDerivedComponents().Num(), SceneComponents,
         Actor.GetTopLevelPlacementComponents().Num(),
         Actor.GetLeafPlacementComponents().Num(), StaticMaterializers,
         OrdinaryStaticMeshes, ISMBuckets, ISMInstances,
-        Actor.GetCompactResolvedStateAllocatedBytes(),
-        Actor.HasResidentResolvedDebugPlan() ? 1 : 0);
+        Actor.GetResolvedPlan() != nullptr ? 1 : 0);
     for (int32 Index = 0; Index < FMHPlacementStageMetrics::StageCount; ++Index)
     {
         const EMHPlacementStage Stage = static_cast<EMHPlacementStage>(Index);

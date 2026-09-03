@@ -192,7 +192,6 @@ public:
 
     virtual ~SMHCompositeOutliner() override
     {
-        if (CurrentActor.IsValid()) CurrentActor->ReleaseResolvedDebugPlan();
         if (FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
         {
             FLevelEditorModule& LevelEditor =
@@ -611,9 +610,7 @@ private:
             RefreshState.NeedsRebuild(NextActor, NextFreshness);
         if (CurrentActor.Get() != NextActor)
         {
-            if (CurrentActor.IsValid()) CurrentActor->ReleaseResolvedDebugPlan();
             CurrentActor = NextActor;
-            if (CurrentActor.IsValid()) CurrentActor->RetainResolvedDebugPlan();
         }
         if (!bNeedsRebuild) return;
         RefreshModel();
@@ -629,7 +626,7 @@ private:
             ? FMHCompositeOutlinerFreshness::Capture(*CurrentActor)
             : FMHCompositeOutlinerFreshness();
         const bool bFreshBuild = bBuilt && CurrentActor.IsValid() &&
-            CurrentActor->HasResidentResolvedDebugPlan();
+            CurrentActor->GetResolvedPlan() != nullptr;
         RefreshState.RecordRebuild(CurrentActor.Get(), BuiltFreshness, bFreshBuild);
         if (!bBuilt)
         {

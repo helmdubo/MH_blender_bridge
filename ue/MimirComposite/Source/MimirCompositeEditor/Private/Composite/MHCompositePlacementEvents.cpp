@@ -3,7 +3,6 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAsset.h"
-#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHProofCache.h"
 #include "Editor.h"
@@ -24,14 +23,6 @@ TFunction<void(const FMHResourceKey&)> GGeneratedResourceChangedObserverForTests
 
 int32 MHRebuildAllLoadedCompositeActors()
 {
-    if (GEditor != nullptr)
-    {
-        if (UMHCompositeDefinitionSubsystem* Definitions =
-                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
-        {
-            Definitions->InvalidateAllDefinitions();
-        }
-    }
     int32 RebuiltCount = 0;
     for (TObjectIterator<AMHCompositeActor> It; It; ++It)
     {
@@ -66,11 +57,6 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
 
     if (GEditor != nullptr)
     {
-        if (UMHCompositeDefinitionSubsystem* Definitions =
-                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
-        {
-            Definitions->InvalidateDefinition(Key);
-        }
         if (UMHEndpointPrototypeRegistry* Registry =
                 GEditor->GetEditorSubsystem<UMHEndpointPrototypeRegistry>())
         {

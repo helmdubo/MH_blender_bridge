@@ -570,7 +570,6 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
             OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires distinct live, sealed MH Composite placements");
             return false;
         }
-        Actor->RetainResolvedDebugPlan();
         // Proof plane (Recipe Model v2 §2.6, R2b-2): Break is an exit point and
         // admits the full applied closure itself. The preview plan of the
         // actor never validated unselected endpoints or receipts, so it is not
@@ -585,7 +584,6 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
             OutError = ProofError.IsEmpty()
                 ? FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires a current resolved plan for %s"), *Actor->GetPathName())
                 : ProofError + TEXT(" (Break: ") + Actor->GetPathName() + TEXT(")");
-            Actor->ReleaseResolvedDebugPlan();
             return false;
         }
         const FMHResolvedCompositePlan* ResolvedPlan = Proof.Plan.Get();
@@ -598,10 +596,8 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
                 Plan.Specs,
                 OutError))
         {
-            Actor->ReleaseResolvedDebugPlan();
             return false;
         }
-        Actor->ReleaseResolvedDebugPlan();
     }
     const FScopedTransaction Transaction(INVTEXT("Break MH Composite"));
     for (const FActorBreakPlan& Plan : Plans)
@@ -656,17 +652,14 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
         }
         return false;
     }
-    Actor->RetainResolvedDebugPlan();
     const FMHResolvedCompositePlan* ResolvedPlan = Actor->GetResolvedPlan();
     if (ResolvedPlan == nullptr || ResolvedPlan->Seed != Actor->GetSeed() || !Actor->GetLastPlacementError().IsEmpty())
     {
         OutError = FString::Printf(
             TEXT("MH_E_INVALID_RESOURCE_SOURCE: Edit requires a current resolved placement for %s: %s"),
             *Actor->GetPathName(), *Actor->GetLastPlacementError());
-        Actor->ReleaseResolvedDebugPlan();
         return false;
     }
-    Actor->ReleaseResolvedDebugPlan();
     const TArray<TObjectPtr<USceneComponent>>& TopLevel = Actor->GetTopLevelComponents();
     if (TopLevel.Num() != EditingDocument.Nodes.Num())
     {
