@@ -199,17 +199,30 @@ FMHMaterializeResult MHMaterializeLayout(
 
 ### 2.6 Точки выхода (proof plane)
 
-1. `PreSaveWorld` **читает** background proof cache (ключ: `RecipeRevision`
-   root'а, generation индекса, `ImporterVersion`, `Registry.Revision`) и
-   выводит warning по состоянию `Fresh | Stale | Missing | ProofPending |
-   Unknown`. Сам proof в `PreSaveWorld` не строится. Синхронно дождаться
-   полного proof имеют право только build preflight и runtime snapshot
-   admission (явные действия пользователя).
-2. Build preflight (`MHCompositeBuildPreflight*`) — error, блокирует.
-3. Runtime snapshot (`MHRuntimeCompositeInput` admission) — error.
-4. Export / `UMHCompositeLevelSubsystem::Build/Break` — error.
+1. `UMHProofCacheSubsystem` хранит состояния `Unknown | ProofPending | Fresh |
+   Stale | Missing`. Ключ: root asset, его `RecipeRevision`, `Seed`,
+   `AppearanceSeed`, generation `ProjectIndex`, `ImporterVersion` и ревизии
+   endpoint-реестра для полного набора зависимостей. Сдвиг любого поля даёт
+   `Unknown`; `RequestProof` ставит работу в game-thread ticker (не более одного
+   placement за тик), а `FlushPendingProofs` завершает очередь синхронно по
+   явному запросу.
+2. `PreSaveWorld` вне cook вызывает только `AuditWorld`: для каждого состояния,
+   кроме `Fresh`, пишет в Message Log «Mimir» один из
+   `MH_W_PROOF_UNKNOWN`, `MH_W_PROOF_PENDING`, `MH_W_PROOF_STALE`,
+   `MH_W_PROOF_MISSING`; для `Unknown` только планирует `RequestProof`.
+   Синхронный proof и отказ сохранения карты здесь запрещены.
+3. Build/cook preflight (`MHValidateRuntimeCompositeWorld`), runtime snapshot
+   (`MHBuildRuntimeCompositeInput`) и `BreakComposites` вызывают
+   `BuildProofNow` синхронно и блокируют выход при `Stale`/`Missing`. Экспорт,
+   который потребляет placement, подчиняется тому же правилу.
+4. `BuildProofNow` строит applied full closure, проверяет duplicate claims,
+   выполняет `Layout → Appearance → Proof` и admission трансформов, затем
+   сравнивает receipt-хэши только с `ProjectIndex` (или тестовым provider).
+   Неизвестный индексу ключ не делает proof stale; расхождение даёт
+   `MH_E_STALE_SOURCE: <key> receipt <hash> differs from source <hash>`.
 
-Только здесь строится full closure и читаются `SourceHash`/`AppliedHash`.
+Preview не читает этот кэш и не строит ни closure, ни подписи, ни source
+freshness proof.
 
 ### 2.7 `NodeOverrides` (вводится в R6, после R5)
 
@@ -470,7 +483,7 @@ R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpo
 | OPEN-R2A-1 | `SelectedDependencies` в preview-плане | preview не использует поле (proof-артефакт); shadow parity сравнивает его только по ресурсам графа (composite / static_mesh / placement_profile / actor), без mesh → material → texture | закрыт 2026-09-02 (owner) |
 | OPEN-R2B-1 | Гейт удалений proof-состояния актора (R2b-3) | `BuildPreflightFullClosureTest` из KICKOFF §5 R2b = preflight-тест полного closure, который создаёт R2c; до него proof-поля актора (`CompactResolvedState`, `ResolvedSignature`, `AppliedDefinition`) — диагностика без гейтов | закрыт 2026-09-03 (owner делегировал решение близнецу) |
 | OPEN-R2B-2 | Резидентный preview-план на актор (§2.10 «LastPlacements») | план хранится целиком (decisions, draws, nodes, leaves): draws нужны Outliner-трассе и reseed-diff; сжатие — только если полевой замер R4 (пулы) покажет проблему памяти | закрыт 2026-09-03 (owner делегировал решение близнецу) |
-| OPEN-R-7 | Duplicate claim в preview | Preview-плоскость не делает tag-запросов Asset Registry, в том числе для обнаружения duplicate-claim. При двух ассетах на один logical name preview резолвит детерминированный путь (§2.2); дубликат обнаруживают source-плоскость (`duplicate_claim` в индексе, warning в Message Log) и build preflight (`MH_E_AMBIGUOUS_GENERATED_ASSET`, error). Red-assert R0a возвращается к `asset_registry_tag_queries == 0`. Тест `Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak` мигрирует в preflight-тест в R2c; до R2c остаётся и помечен `@migrate:R2c`. | закрыт 2026-09-02 (D0b П2) |
+| OPEN-R-7 | Duplicate claim в preview | Preview-плоскость делает ноль tag-запросов. Duplicate claim обнаруживают source-плоскость (`duplicate_claim`) и `BuildProofNow` в preflight/snapshot/Break (`MH_E_AMBIGUOUS_GENERATED_ASSET`). Старый preview-тест заменён proof-plane тестом `DuplicateClaimIsProofPlane` в R0c. | закрыт D0b П2; реализован в proof-плоскости R2c (2026-09-03) |
 
 | OPEN-S-1 | Источник slot-рёбер mesh→material без парса FBX в скане (S1) | **закрыт 2026-09-02, вариант c (owner):** S0 достаточен — FBX парсится только для новых/изменённых по `(size, mtime)` файлов; S1 закрыт без кода; холодный скан портфолио измеряется полевым протоколом M0 §6 | закрыт |
 
@@ -489,17 +502,13 @@ Asset Registry их тоже не несут (10 §7: «ровно шесть»)
 как достаточное и закрыть S1 без изменений. Вопрос owner: a / b / c.
 
 **OPEN-R-7 — контекст.** Тест
-`Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak`
-закрепляет отказ `RebuildComposite` при двух заявках Asset Registry на один
-ключ (`MH_E_AMBIGUOUS_GENERATED_ASSET`), а KICKOFF §5 R0 требует одновременно
-`GetAssets = 0` в preview и «`AppliedPlanAdmissionTest` остаётся до R2c».
-Обнаружить дубликат без tag-запроса нельзя: индекс (`duplicate_claim`) —
-source-плоскость, preview его не читает. Вопрос owner: живёт ли duplicate
-claim только в proof-плоскости (preflight/snapshot/export + индекс) с
-переносом теста в R2c, или preview сохраняет пробу. До ответа действует
-правило из таблицы; тест не изменён. Реализация: снятие tag-пробы из
-admission реестра и миграция теста в preflight выполняются одним срезом
-(§7.5: замена до удаления) — см. `docs/RECIPE_EXECUTION_STATUS.md`.
+`Mimir.V5.Composite.AppliedAdmission.DuplicateRootClaimBlocksPlanAndBreak` был
+заменён в R0c тестом `Mimir.V5.Composite.Registry.DuplicateClaimIsProofPlane`:
+preview сохраняет детерминированный канонический endpoint и не делает
+tag-запросов. R2c завершил перенос: `BuildProofNow` проверяет claims полного
+замыкания, поэтому preflight, snapshot и Break отказывают с
+`MH_E_AMBIGUOUS_GENERATED_ASSET`; source-плоскость независимо хранит
+`duplicate_claim` в индексе.
 
 Вопрос v1 о судьбе хэша плана резолвера снят: v2 §0 оставляет
 `ClosureHash`/`ResolvedSignature` proof-артефактами (не состоянием актора).

@@ -8,6 +8,7 @@
 #include "MHProofCache.generated.h"
 
 class AMHCompositeActor;
+class FObjectPreSaveContext;
 class UWorld;
 
 namespace UE::MimirComposite
@@ -113,6 +114,12 @@ public:
     void SetSourceHashProviderForTests(TFunction<bool(const UE::MimirComposite::FMHResourceKey&, FString&)> Provider);
 
 private:
+    struct FImpl;
+
+    bool TickPendingProofs(float DeltaTime);
+    void HandlePreSaveWorld(UWorld* World, FObjectPreSaveContext Context);
+
+    TSharedPtr<FImpl> Impl;
     TFunction<bool(const UE::MimirComposite::FMHResourceKey&, FString&)> SourceHashProviderForTests;
     int32 LastSaveAuditWarningCount = 0;
 };

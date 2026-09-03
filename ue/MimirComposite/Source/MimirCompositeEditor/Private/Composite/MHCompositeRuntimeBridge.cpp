@@ -3,7 +3,7 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
-#include "Composite/MHCompositeTransformAdmission.h"
+#include "Composite/MHProofCache.h"
 #include "Composite/MHRuntimeCompositeActor.h"
 #include "Editor.h"
 #include "Engine/Level.h"
@@ -296,11 +296,6 @@ bool MHRuntimeBridgePreflight(UWorld& World, TArray<FMHRuntimeBridgePreparedPlac
         Prepared.AppearanceSeed = Source->GetAppearanceSeed();
         Prepared.Transform = Source->GetActorTransform();
         if (!MHBuildRuntimeCompositeInput(*Source, Prepared.Input, Error)) return false;
-        FMHRandomSourceGraph Graph;
-        FMHResolvedCompositePlan Plan;
-        if (!MHDecodeRuntimeCompositeGraph(Prepared.Input.GraphBytes, Graph, Error) ||
-            !MHResolveCompositePlan(Graph, Prepared.Seed, Prepared.AppearanceSeed, Plan, Error) ||
-            !MHValidateResolvedPlacementTransforms(Plan, Prepared.Transform, Error)) return false;
         Out.Add(MoveTemp(Prepared));
     }
     return true;
@@ -476,18 +471,25 @@ bool MHBuildRuntimeCompositeInput(const AMHCompositeActor& Placement,
         OutError = MHRuntimeBridgeError(Placement.GetPathName() + TEXT(" has no applied composite definition"));
         return false;
     }
+
+    UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
+    FMHProofResult Proof;
+    if (Proofs == nullptr)
+    {
+        OutError = MHRuntimeBridgeError(TEXT("proof cache subsystem is unavailable"));
+        return false;
+    }
+    if (!Proofs->BuildProofNow(Placement, Proof, OutError))
+    {
+        return false;
+    }
+
+    // Proof is the admission authority. This second assembly only produces the
+    // transport graph bytes and bindings consumed by the runtime module; it
+    // does not retain the former independent claim/resolve preflight path.
     FMHRandomSourceGraph Graph;
     TSet<FMHResourceKey> Dependencies;
     if (!MHBuildAppliedCompositeGraph(*Asset, *Settings, Graph, Dependencies, OutError)) return false;
-    TArray<FMHResourceKey> ClaimKeys = Dependencies.Array();
-    ClaimKeys.Sort([](const FMHResourceKey& A, const FMHResourceKey& B)
-    {
-        return A.ToString() < B.ToString();
-    });
-    for (const FMHResourceKey& Key : ClaimKeys)
-    {
-        if (!MHCheckGeneratedAssetClaims(Key, OutError)) return false;
-    }
     TArray<FString> Keys;
     if (!MHCollectRuntimeCompositeBindingKeys(Graph, Keys, OutError)) return false;
     FMHRuntimeCompositeInput Input;

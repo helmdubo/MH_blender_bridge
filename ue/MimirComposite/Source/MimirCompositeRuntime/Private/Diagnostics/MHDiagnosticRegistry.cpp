@@ -59,6 +59,7 @@ const TSet<FString>& MHRegisteredErrorCodes()
         TEXT("MH_E_UNKNOWN_SCHEMA_VERSION"),
         TEXT("MH_E_NAME_MISMATCH"),
         TEXT("MH_E_TARGET_NAME_COLLISION"),
+        TEXT("MH_E_STALE_SOURCE"),
     };
     return Codes;
 }
@@ -82,6 +83,10 @@ const TSet<FString>& MHRegisteredWarningCodes()
         TEXT("MH_W_PAYLOAD_EXTERNAL_MODIFIED"),
         TEXT("MH_W_UNRESOLVED_PLACEMENT"),
         TEXT("MH_W_SCALE_NOISE_CANONICALIZED"),
+        TEXT("MH_W_PROOF_UNKNOWN"),
+        TEXT("MH_W_PROOF_PENDING"),
+        TEXT("MH_W_PROOF_STALE"),
+        TEXT("MH_W_PROOF_MISSING"),
     };
     return Codes;
 }
