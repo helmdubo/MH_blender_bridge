@@ -105,7 +105,9 @@ Unknown», «preview survives a missing unselected receipt») и отказы
   экспорт, если применимо)
 - `Private/Composite/MHCompositePlacementEvents.cpp` (`InvalidateAll` при
   нотификации)
-- `Private/Diagnostics/*` — регистрация `MH_E_STALE_SOURCE`, `MH_W_PROOF_*`
+- `MimirCompositeRuntime/Private/Diagnostics/MHDiagnosticRegistry.cpp` — регистрация
+  `MH_E_STALE_SOURCE` и четырёх `MH_W_PROOF_{UNKNOWN,PENDING,STALE,MISSING}`
+  (точные имена; реестр закреплён тестом — см. OPEN-R2C-2)
 - документы: `docs/16_recipe_model.md` (§2.6, §9), `docs/RECIPE_EXECUTION_STATUS.md`,
   `docs/receipts/recipe_r2c.md`
 
@@ -185,3 +187,24 @@ Fresh`, `stale source refuses cook preflight/snapshot`, `cache reports Stale`);
 «save builds no proof» и «fresh world passes preflight» уже зелёные.
 
 OPEN-R2C-1: закрыт.
+
+## Ответ на OPEN-R2C-2 (близнец, 2026-09-03): реестр диагностик закреплён red-коммитом
+
+Находка верна: `Mimir.V5.Random.StreamTraceAndSignatureParity` фиксирует точные
+размеры реестра (53/16), и любая регистрация ломала бы неизменяемый тест.
+Red-коммит близнеца `14a2d7d` (поверх `5276884`) переводит ожидания
+на цель R2c: **54 errors / 20 warnings** и явные проверки
+`MH_E_STALE_SOURCE`, `MH_W_PROOF_UNKNOWN`, `MH_W_PROOF_PENDING`,
+`MH_W_PROOF_STALE`, `MH_W_PROOF_MISSING`. Тест теперь красный, пока коды не
+зарегистрированы; регистрация — в
+`MimirCompositeRuntime/Private/Diagnostics/MHDiagnosticRegistry.cpp` (добавлен в
+закрытый список выше; это единственная правка Runtime-модуля в срезе). Других
+кодов не добавлять: счётчики точные.
+
+RED-лог: `E:\MimirComposite_R_M0_20260902\Saved\Logs\R2C_RED4_TEST.log`,
+строка 1076 `Result={Fail} Name={StreamTraceAndSignatureParity}`:
+`exact registered MH_E count to be 54, but it was 53`, `exact registered MH_W
+count to be 20, but it was 16` и пять `… is registered`; остальные проверки
+теста зелёные.
+
+OPEN-R2C-2: закрыт.
