@@ -395,10 +395,18 @@ bool MHExtractMaterialV4(
     const UMaterialInstanceConstant& Material,
     const UMHCompositeSettings& Settings,
     FMHMaterialDocument& OutDocument,
-    FString& OutError)
+    FString& OutError,
+    TArray<FString>* OutWarnings)
 {
     OutDocument = FMHMaterialDocument();
     OutError.Reset();
+    const auto Drop = [&](const FString& What)
+    {
+        if (OutWarnings != nullptr)
+        {
+            OutWarnings->Add(FString::Printf(TEXT("dropped from material document (not serializable in v4): %s"), *What));
+        }
+    };
     const UMaterialInterface* Parent = Material.Parent;
     if (Parent == nullptr || !MatchParent(*Parent, Settings, OutDocument.Mode, OutDocument.Parent))
     {
@@ -415,17 +423,17 @@ bool MHExtractMaterialV4(
         return true;
     }
 
-    if (Material.HasStaticParameters() || HasUnsupportedBaseOverride(Material.BasePropertyOverrides) ||
-        !Material.DoubleVectorParameterValues.IsEmpty() ||
-        !Material.TextureCollectionParameterValues.IsEmpty() ||
-        !Material.ParameterCollectionParameterValues.IsEmpty() ||
-        !Material.RuntimeVirtualTextureParameterValues.IsEmpty() ||
-        !Material.SparseVolumeTextureParameterValues.IsEmpty() ||
-        !Material.FontParameterValues.IsEmpty())
-    {
-        OutError = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: material contains unsupported local override types");
-        return false;
-    }
+    // Class form takes every override the grammar can carry and drops the rest
+    // (owner decision 2026-09-03): UE-side materials legitimately carry
+    // parameters that neither Blender nor Dagor know.
+    if (Material.HasStaticParameters()) Drop(TEXT("static parameters"));
+    if (HasUnsupportedBaseOverride(Material.BasePropertyOverrides)) Drop(TEXT("base property overrides other than TwoSided"));
+    if (!Material.DoubleVectorParameterValues.IsEmpty()) Drop(TEXT("double vector parameters"));
+    if (!Material.TextureCollectionParameterValues.IsEmpty()) Drop(TEXT("texture collection parameters"));
+    if (!Material.ParameterCollectionParameterValues.IsEmpty()) Drop(TEXT("parameter collection parameters"));
+    if (!Material.RuntimeVirtualTextureParameterValues.IsEmpty()) Drop(TEXT("runtime virtual texture parameters"));
+    if (!Material.SparseVolumeTextureParameterValues.IsEmpty()) Drop(TEXT("sparse volume texture parameters"));
+    if (!Material.FontParameterValues.IsEmpty()) Drop(TEXT("font parameters"));
     if (Material.BasePropertyOverrides.bOverride_TwoSided)
     {
         OutDocument.bHasTwoSided = true;
@@ -436,20 +444,20 @@ bool MHExtractMaterialV4(
         const FString Name = Value.ParameterInfo.Name.ToString();
         if (!IsGlobal(Value.ParameterInfo) || !MHIsCanonicalMaterialToken(Name))
         {
-            OutError = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: scalar override name is not serializable");
-            return false;
+            Drop(FString::Printf(TEXT("scalar override '%s' (name outside the canonical token grammar or layer-scoped)"), *Name));
+            continue;
         }
 #if WITH_EDITORONLY_DATA
         if (Value.AtlasData.bIsUsedAsAtlasPosition || !Value.AtlasData.Atlas.IsNull() || !Value.AtlasData.Curve.IsNull())
         {
-            OutError = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: scalar atlas override is not serializable");
-            return false;
+            Drop(FString::Printf(TEXT("scalar atlas override '%s'"), *Name));
+            continue;
         }
 #endif
         if (OutDocument.Params.Contains(Name))
         {
-            OutError = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: duplicate or cross-typed parameter override");
-            return false;
+            Drop(FString::Printf(TEXT("duplicate scalar override '%s'"), *Name));
+            continue;
         }
         FMHMaterialParameter Parameter;
         Parameter.Scalar = Value.ParameterValue;
@@ -460,8 +468,8 @@ bool MHExtractMaterialV4(
         const FString Name = Value.ParameterInfo.Name.ToString();
         if (!IsGlobal(Value.ParameterInfo) || !MHIsCanonicalMaterialToken(Name) || OutDocument.Params.Contains(Name))
         {
-            OutError = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: vector override name is not serializable or collides");
-            return false;
+            Drop(FString::Printf(TEXT("vector override '%s' (name outside the canonical token grammar, layer-scoped or colliding)"), *Name));
+            continue;
         }
         FMHMaterialParameter Parameter;
         Parameter.bVector = true;
@@ -474,14 +482,14 @@ bool MHExtractMaterialV4(
         int32 Slot = INDEX_NONE;
         if (!IsGlobal(Value.ParameterInfo) || !IsTextureSlotName(Name, Slot) || Value.ParameterValue == nullptr)
         {
-            OutError = TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: texture override is not a tex0-tex15 object reference");
-            return false;
+            Drop(FString::Printf(TEXT("texture override '%s' (not a tex0-tex15 object reference)"), *Name));
+            continue;
         }
         const FString Token = Value.ParameterValue->GetName();
         if (!MHIsCanonicalMaterialToken(Token))
         {
-            OutError = TEXT("MH_E_NONCANONICAL_TEXTURE_REFERENCE: texture asset name is not canonical");
-            return false;
+            Drop(FString::Printf(TEXT("texture override '%s' -> '%s' (texture asset name is not canonical)"), *Name, *Token));
+            continue;
         }
         OutDocument.Textures.Add(Slot, Token);
     }

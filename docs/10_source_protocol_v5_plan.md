@@ -435,6 +435,16 @@ keys, node trees материалов (восстанавливается тол
   локальной правкой (warning, не блок). Здоровый apply обязан давать
   `extract(MI) == canonical(source)` байт-в-байт — это и есть NO_CHANGE
   acceptance S2.
+- **Class-форма берёт сериализуемое и отбрасывает остальное (решение owner
+  2026-09-03).** MI в UE законно несёт параметры, которых нет ни в Blender,
+  ни в Dagor. Extract class-формы не отказывает на таком состоянии: имена
+  вне грамматики токенов, layer-параметры, atlas-скаляры, неподдерживаемые
+  типы параметров, base-property overrides кроме TwoSided, static-параметры
+  и texture-слоты вне `tex0`–`tex15` **отбрасываются** с предупреждением
+  (по строке на элемент в Message Log экспорта). Импорт симметричен: из
+  документа применяется всё, что мастер может принять; source побеждает
+  для полей грамматики. Отказ `MH_E_MATERIAL_NOT_ROUNDTRIPPABLE` в
+  class-форме остаётся только для незарегистрированного parent.
 - **Library-форма строгая (решение OPEN-V4-8).** `{"library": "<name>"}`
   без других полей и без overrides. Publish MI с library-parent и любым
   локальным override (scalar/vector/texture/base property) —

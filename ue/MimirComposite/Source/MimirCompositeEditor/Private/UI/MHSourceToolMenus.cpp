@@ -893,6 +893,10 @@ void ReportMaterialDocumentExport(
             *Failed.DestinationPath,
             *Failed.Error)));
     }
+    for (const FString& Warning : Plan.Warnings)
+    {
+        Log.Warning(FText::FromString(Warning));
+    }
     for (const FString& ExportedPath : Result.ExportedPaths)
     {
         Log.Info(FText::FromString(FString::Printf(

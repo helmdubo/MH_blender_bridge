@@ -39,6 +39,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHMaterialDocumentExportPlan
     TArray<FMHPreparedMaterialDocumentExport> Ready;
     TArray<FMHMaterialDocumentExportFailure> Skipped;
     TArray<FString> OverwritePaths;
+    /** Local state dropped from ready documents, "<material> -> <destination>: <what>". */
+    TArray<FString> Warnings;
 };
 
 struct MIMIRCOMPOSITEEDITOR_API FMHMaterialDocumentExportResult
