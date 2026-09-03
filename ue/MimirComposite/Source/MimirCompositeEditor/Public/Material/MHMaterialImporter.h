@@ -38,12 +38,21 @@ MIMIRCOMPOSITEEDITOR_API bool MHValidateMaterialAdoptTarget(
     FString& OutRelativePath,
     FString& OutError);
 
-/** Extract only v4-serializable local state; no inherited values are emitted. */
+/**
+ * Extract only v4-serializable local state; no inherited values are emitted.
+ * Class form (owner decision 2026-09-03): local state the grammar cannot carry
+ * (parameter names outside the canonical token grammar, layer-scoped
+ * parameters, atlas scalars, unsupported parameter types, base-property
+ * overrides other than TwoSided, static parameters, texture slots outside
+ * tex0-tex15) is dropped, one human-readable line per dropped item in
+ * OutWarnings when supplied. Library form stays strict (docs/10 OPEN-V4-8).
+ */
 MIMIRCOMPOSITEEDITOR_API bool MHExtractMaterialV4(
     const UMaterialInstanceConstant& Material,
     const UMHCompositeSettings& Settings,
     FMHMaterialDocument& OutDocument,
-    FString& OutError);
+    FString& OutError,
+    TArray<FString>* OutWarnings = nullptr);
 
 /** Full source-wins apply. Texture objects must be supplied for every texture token. */
 MIMIRCOMPOSITEEDITOR_API bool MHApplyMaterialV4(

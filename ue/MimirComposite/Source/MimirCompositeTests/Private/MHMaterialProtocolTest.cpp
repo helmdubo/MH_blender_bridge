@@ -407,20 +407,33 @@ bool FMHMaterialApplyExtractTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("local change detected"), MHDetectManagedMaterialLocalModification(*Material, *Settings, Warning));
     bPassed &= TestTrue(TEXT("local change warning code"), Warning.StartsWith(TEXT("MH_W_MANAGED_ASSET_LOCALLY_MODIFIED")));
 
+    // Owner decision 2026-09-03: class extraction takes what v4 can carry and
+    // drops the rest with a warning; UE-only parameters never block export.
+    Material->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(TEXT("roughness")), static_cast<float>(0.10000000001));
+    Material->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(TEXT("Roughness Scale")), 2.0f);
+    Material->SetVectorParameterValueEditorOnly(FMaterialParameterInfo(TEXT("TintColor")), FLinearColor::Red);
     FMaterialInstanceBasePropertyOverrides Unsupported;
     Unsupported.bOverride_BlendMode = true;
     Unsupported.BlendMode = BLEND_Masked;
+    Unsupported.bOverride_TwoSided = true;
+    Unsupported.TwoSided = false;
     Material->BasePropertyOverrides = Unsupported;
-    bPassed &= TestFalse(TEXT("unsupported base override rejected"), MHExtractMaterialV4(*Material, *Settings, Extracted, Error));
-    bPassed &= TestTrue(TEXT("unsupported override code"), ErrorStartsWith(Error, TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE")));
-
-    Material->BasePropertyOverrides = FMaterialInstanceBasePropertyOverrides();
     FStaticParameterSet StaticSet;
     StaticSet.StaticSwitchParameters.Add(FStaticSwitchParameter(
         FMaterialParameterInfo(TEXT("static_flag")), true, true, FGuid::NewGuid()));
-    Material->UpdateStaticPermutation(StaticSet);
-    bPassed &= TestFalse(TEXT("static override rejected"), MHExtractMaterialV4(*Material, *Settings, Extracted, Error));
-    bPassed &= TestTrue(TEXT("static override code"), ErrorStartsWith(Error, TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE")));
+    Material->UpdateStaticPermutation(StaticSet, Unsupported);
+    TArray<FString> DropWarnings;
+    bPassed &= TestTrue(TEXT("unsupported local state is dropped, not rejected: ") + Error,
+        MHExtractMaterialV4(*Material, *Settings, Extracted, Error, &DropWarnings));
+    bPassed &= TestTrue(TEXT("serializable overrides survive"),
+        Extracted.Params.Contains(TEXT("roughness")) && Extracted.Params.Contains(TEXT("negative_vector")) && Extracted.Textures.Contains(0));
+    bPassed &= TestFalse(TEXT("non-canonical scalar name is dropped"), Extracted.Params.Contains(TEXT("Roughness Scale")));
+    bPassed &= TestFalse(TEXT("non-canonical vector name is dropped"), Extracted.Params.Contains(TEXT("TintColor")));
+    bPassed &= TestTrue(TEXT("TwoSided override survives"), Extracted.bHasTwoSided && !Extracted.bTwoSided);
+    bPassed &= TestEqual(TEXT("four drop warnings: scalar, vector, base overrides, static parameters"), DropWarnings.Num(), 4);
+    TArray<uint8> LenientBytes;
+    bPassed &= TestTrue(TEXT("lenient extract stays canonical"), MHWriteCanonicalMaterialV4(Extracted, LenientBytes, Error));
+    bPassed &= TestTrue(TEXT("lenient extract equals the source document"), LenientBytes == SourceBytes);
     return bPassed;
 }
 

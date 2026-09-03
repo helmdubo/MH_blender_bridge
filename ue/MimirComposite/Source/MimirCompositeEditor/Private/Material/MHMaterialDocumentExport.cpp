@@ -227,7 +227,8 @@ bool MHPrepareMaterialDocumentExport(
 
         FMHMaterialDocument Document;
         FString ItemError;
-        if (!MHExtractMaterialV4(*Request.Material, Settings, Document, ItemError))
+        TArray<FString> ItemWarnings;
+        if (!MHExtractMaterialV4(*Request.Material, Settings, Document, ItemError, &ItemWarnings))
         {
             OutPlan.Skipped.Add(MakeFailure(
                 Request.Material,
@@ -236,6 +237,11 @@ bool MHPrepareMaterialDocumentExport(
             continue;
         }
 
+        for (const FString& Warning : ItemWarnings)
+        {
+            OutPlan.Warnings.Add(FString::Printf(TEXT("%s -> %s: %s"),
+                *Request.Material->GetPathName(), *Request.DestinationPath, *Warning));
+        }
         FMHPreparedMaterialDocumentExport& Prepared = OutPlan.Ready.AddDefaulted_GetRef();
         Prepared.Material = Request.Material;
         Prepared.LogicalName = MHGetMaterialDocumentExportLogicalName(*Request.Material);
