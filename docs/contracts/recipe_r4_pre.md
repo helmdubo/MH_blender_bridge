@@ -255,3 +255,44 @@ mutex и залоченные DLL). Работать только в ветке
 локальная ветка от неё); коммиты обычные (без force-push, без squash чужих);
 никогда не делать `git pull` на `main`, никогда не пушить `main`. PR в `main`
 один; merge — близнец после независимой проверки на своём хосте.
+
+## OPEN-R4P-2 — интерактивный Undo-gate недоступен исполнителю
+
+**Контекст.** На нетронутом HEAD `39fd4f8` (red-коммит `8e6ab13`) отдельный
+module-free host `E:\MimirComposite_R4Pre_External_20260903\HostProject.uproject`
+собран non-unity/no-PCH (`R4P_RED_BUILD_NONUNITY_02.log`, `Result: Succeeded`).
+Red-фильтр `Mimir.V5.Composite.Break.*` воспроизвёл контрактные падения:
+`NoProofNoTagQueries` — `R4P_RED_BREAK.log:1090`, один вызов
+`BuildAppliedGraph`; `TopLayerOnly` — строки 1102–1107, flatten в четыре меша
+при нуле дочерних composite-акторов; `UndoRestoresPlacement` — Success.
+
+До первой правки запущен обычный интерактивный UE 5.7 editor: процесс отвечает,
+имеет окно `HostProject - Unreal Editor`, а лог подтверждает
+`Transaction tracking system initialized` и `Engine is initialized`. Но
+доступный исполнителю UI-провайдер возвращает `apps: []`; первая попытка
+получить native-app поверхность завершается `cua.listApps is not a function`,
+точечная привязка к
+`D:\PersonalProjects\UE5\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe` —
+`cua.getApp is not a function`. Доступны только browser surfaces. Поэтому
+исполнитель не может выполнить обязательные действия Acceptance 8 через
+интерактивное меню `Break MH Composite` и `Ctrl+Z`, проверить клик/двойное
+выделение или снять сопоставимые до/после наблюдения. Это ограничение среды,
+а не свидетельство того, что дефект не воспроизводится.
+
+**Вопрос.** Каким способом закрыть обязательный интерактивный Acceptance 8 до
+начала реализации?
+
+**Варианты.**
+
+1. Близнец выполняет и публикует полевое воспроизведение до правок на своей
+   сохранённой карте, затем после implementation-коммита — повторный прогон;
+   исполнитель продолжает только после получения исходного evidence.
+2. Исполнителю предоставляется native UI-control для Unreal Editor и готовая
+   сохранённая карта ≥2 слоёв. Если вместо UI допускается editor-only C++
+   field harness, это должно быть отдельным нормативным изменением Acceptance
+   8 близнецом: текущий текст явно требует меню и `Ctrl+Z`.
+
+**Временное fail-closed правило.** Production-файлы, тесты, docs/16, tracker и
+квитанция не меняются; green-реализация и PR не создаются до ответа.
+
+**Статус:** OPEN, STOP.
