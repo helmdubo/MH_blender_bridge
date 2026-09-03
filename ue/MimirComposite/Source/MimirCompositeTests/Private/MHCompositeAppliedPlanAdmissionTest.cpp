@@ -138,9 +138,11 @@ struct FAppliedAdmissionFixture
     }
 
     /**
-     * R2b-2: the applied-graph closure and Break refusals are proof-plane facts and
-     * hold for every rejected state; only a root identity defect also blocks the
-     * preview, so callers say which plane is expected to refuse.
+     * R2b-2: the applied-graph closure refusal is a proof-plane fact and holds for
+     * every rejected state; only a root identity defect also blocks the preview,
+     * so callers say which plane is expected to refuse. R4-pre: Break is a
+     * preview-plane operation (Dagor split) — it refuses only when the preview
+     * has no plan; a closure defect never blocks it (Break.NoProofNoTagQueries).
      */
     bool ExpectRejected(UMHCompositeAsset& Root, AMHCompositeActor& Actor, const TCHAR* Diagnostic,
         const bool bPreviewRejects, FString* OutGraphError = nullptr)
@@ -163,15 +165,16 @@ struct FAppliedAdmissionFixture
             bPassed &= Test.TestNotNull(TEXT("unselected closure defect keeps the preview plan"), Actor.GetResolvedPlan());
             bPassed &= Test.TestTrue(TEXT("unselected closure defect raises no placement error"), Actor.GetLastPlacementError().IsEmpty());
         }
+        if (!bPreviewRejects) return bPassed;
         UMHCompositeLevelSubsystem* Operations = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
         if (!Test.TestNotNull(TEXT("Break subsystem exists"), Operations)) return false;
         const TArray<TObjectPtr<UActorComponent>> BeforeBreak = Actor.GetDerivedComponents();
         TArray<AActor*> BrokenActors;
         TArray<FString> Warnings;
         Error.Reset();
-        bPassed &= Test.TestFalse(TEXT("Break refuses the invalid placement before spawning"),
+        bPassed &= Test.TestFalse(TEXT("Break refuses a placement without a preview plan before spawning"),
             Operations->BreakComposites({&Actor}, BrokenActors, Warnings, Error));
-        bPassed &= Test.TestTrue(TEXT("Break refusal preserves original diagnostic"), Error.Contains(Diagnostic));
+        bPassed &= Test.TestTrue(TEXT("Break refusal preserves the preview diagnostic"), Error.Contains(Diagnostic));
         bPassed &= Test.TestTrue(TEXT("failed Break publishes no actors"), BrokenActors.IsEmpty());
         bPassed &= Test.TestTrue(TEXT("failed Break preserves original placement"), IsValid(&Actor) && !Actor.IsActorBeingDestroyed());
         bPassed &= Test.TestTrue(TEXT("failed Break preserves component objects"), Actor.GetDerivedComponents() == BeforeBreak);

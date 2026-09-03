@@ -4,13 +4,13 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeCompiler.h"
+#include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
-#include "Composite/MHProofCache.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -51,6 +51,10 @@ struct FMHBreakSpawnSpec
     FTransform WorldTransform = FTransform::Identity;
     TObjectPtr<UStaticMesh> Mesh;
     TObjectPtr<UClass> ActorClass;
+    TObjectPtr<UMHCompositeAsset> CompositeAsset;
+    int32 Seed = 0;
+    int32 AppearanceSeed = 0;
+    FName FolderPath;
 };
 
 const TCHAR* MHBreakLeafKindLabel(const EMHRandomSemanticKind Kind)
@@ -61,6 +65,8 @@ const TCHAR* MHBreakLeafKindLabel(const EMHRandomSemanticKind Kind)
         return TEXT("mesh");
     case EMHRandomSemanticKind::Actor:
         return TEXT("actor");
+    case EMHRandomSemanticKind::Composite:
+        return TEXT("composite");
     default:
         return TEXT("unknown");
     }
@@ -180,8 +186,12 @@ FBox MHSelectionBounds(const TArray<AActor*>& Actors)
 
 bool MHCollectBreakSpecs(
     const FMHResolvedCompositePlan& Plan,
+    const FMHCompiledRecipe& Recipe,
     const FTransform& PlacementTransform,
     const UMHCompositeSettings& Settings,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    const FName FolderPath,
     TArray<FMHBreakSpawnSpec>& OutSpecs,
     FString& OutError)
 {
@@ -190,48 +200,98 @@ bool MHCollectBreakSpecs(
         return false;
     }
     const FMatrix PlacementWorld = PlacementTransform.ToMatrixWithScale();
-    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+    for (const FMHResolvedCompositeNode& Node : Plan.Nodes)
     {
-        if (Leaf.Kind != EMHRandomSemanticKind::Mesh && Leaf.Kind != EMHRandomSemanticKind::Actor)
+        // A '>' enters a nested composite. Break preserves that composite as
+        // one actor, so none of its internal resolved nodes belong to this layer.
+        if (Node.NodePath.Contains(TEXT(">"))) continue;
+
+        EMHRandomSemanticKind Kind = Node.SemanticKind;
+        FString Resource = Node.Resource;
+        if (Kind == EMHRandomSemanticKind::Random)
+        {
+            const FMHCompiledRecipeComponent* Component = Recipe.Components.FindByPredicate(
+                [&Node](const FMHCompiledRecipeComponent& Value)
+                {
+                    return Value.NodePath == Node.NodePath;
+                });
+            if (Component == nullptr || !Component->Options.IsValidIndex(Node.SelectedOptionIndex))
+            {
+                OutError = FString::Printf(
+                    TEXT("MH_E_INVALID_RESOURCE_SOURCE: resolved random node %s has no current selected option"),
+                    *Node.NodePath);
+                return false;
+            }
+            const FMHCompiledRecipeOption& Option = Component->Options[Node.SelectedOptionIndex];
+            Kind = Option.Kind;
+            Resource = Option.Resource;
+        }
+
+        // Groups only carry transforms for their promoted descendants. Empty
+        // and gameobj currently have no level-entity representation.
+        if (Kind == EMHRandomSemanticKind::Group || Kind == EMHRandomSemanticKind::Empty ||
+            Kind == EMHRandomSemanticKind::GameObj || Kind == EMHRandomSemanticKind::Random) continue;
+        if (Kind != EMHRandomSemanticKind::Mesh && Kind != EMHRandomSemanticKind::Actor &&
+            Kind != EMHRandomSemanticKind::Composite)
         {
             OutError = FString::Printf(
-                TEXT("MH_E_INVALID_RESOURCE_SOURCE: resolved Break leaf %s is neither mesh nor actor"),
-                *Leaf.Origin);
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: resolved Break node %s has an unsupported semantic kind"),
+                *Node.NodePath);
             return false;
         }
+
         FMHBreakSpawnSpec& Spec = OutSpecs.AddDefaulted_GetRef();
-        Spec.Kind = Leaf.Kind;
-        Spec.Resource = Leaf.Resource;
-        Spec.DisplayLabel = !Leaf.DisplayName.IsEmpty() ? Leaf.DisplayName : Leaf.Resource;
+        Spec.Kind = Kind;
+        Spec.Resource = Resource;
+        Spec.DisplayLabel = !Node.DisplayName.IsEmpty() ? Node.DisplayName : Resource;
         // The plan keeps the full root-relative product. Only after the shared
         // shear preflight may Break decompose the final actor-world matrix.
-        Spec.WorldTransform = FTransform(Leaf.WorldMatrix * PlacementWorld);
-        if (Leaf.Kind == EMHRandomSemanticKind::Mesh)
+        Spec.WorldTransform = FTransform(Node.WorldMatrix * PlacementWorld);
+        Spec.Seed = Seed;
+        Spec.AppearanceSeed = AppearanceSeed;
+        Spec.FolderPath = FolderPath;
+        if (Kind == EMHRandomSemanticKind::Mesh)
         {
             FMHResourceKey Key;
             Key.Kind = EMHResourceKind::StaticMesh;
-            Key.LogicalName = Leaf.Resource;
+            Key.LogicalName = Resource;
             Spec.Mesh = Cast<UStaticMesh>(UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutError));
             if (!OutError.IsEmpty()) return false;
             if (Spec.Mesh == nullptr)
             {
                 OutError = FString::Printf(
                     TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: static_mesh:%s at %s is unavailable for Break"),
-                    *Leaf.Resource, *Leaf.Origin);
+                    *Resource, *Node.NodePath);
                 return false;
             }
         }
-        else
+        else if (Kind == EMHRandomSemanticKind::Actor)
         {
-            const FSoftClassPath* Path = Settings.ActorClassRegistry.Find(Leaf.Resource);
+            const FSoftClassPath* Path = Settings.ActorClassRegistry.Find(Resource);
             Spec.ActorClass = Path != nullptr ? Path->TryLoadClass<AActor>() : nullptr;
             if (!MHIsSpawnableCompositeActorClass(Spec.ActorClass))
             {
                 OutError = FString::Printf(
                     TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: actor:%s at %s is unavailable for Break"),
-                    *Leaf.Resource, *Leaf.Origin);
+                    *Resource, *Node.NodePath);
                 return false;
             }
+        }
+        else
+        {
+            FMHResourceKey Key;
+            Key.Kind = EMHResourceKind::Composite;
+            Key.LogicalName = Resource;
+            Spec.CompositeAsset = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutError));
+            if (!OutError.IsEmpty()) return false;
+            if (Spec.CompositeAsset == nullptr)
+            {
+                OutError = FString::Printf(
+                    TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:%s at %s is unavailable for Break"),
+                    *Resource, *Node.NodePath);
+                return false;
+            }
+            if (Node.DisplayName.IsEmpty()) Spec.DisplayLabel = Spec.CompositeAsset->LogicalName;
         }
     }
     return true;
@@ -274,6 +334,26 @@ AActor* MHSpawnBreakSpec(
             RF_Transactional,
             false);
     }
+    else if (Spec.Kind == EMHRandomSemanticKind::Composite)
+    {
+        AMHCompositeActor* CompositeActor = Cast<AMHCompositeActor>(GEditor->AddActor(
+            &Level,
+            AMHCompositeActor::StaticClass(),
+            Spec.WorldTransform,
+            true,
+            RF_Transactional,
+            false));
+        if (CompositeActor != nullptr)
+        {
+            CompositeActor->SetAutoSeed(false);
+            CompositeActor->SetSeed(Spec.Seed);
+            CompositeActor->SetAutoAppearanceSeed(false);
+            CompositeActor->SetAppearanceSeed(Spec.AppearanceSeed);
+            // Setting the asset is the single build point, after both seeds.
+            CompositeActor->SetCompositeAsset(Spec.CompositeAsset);
+        }
+        Spawned = CompositeActor;
+    }
     if (Spawned == nullptr)
     {
         OutError = FString::Printf(
@@ -284,6 +364,7 @@ AActor* MHSpawnBreakSpec(
     else
     {
         Spawned->SetActorLabel(Spec.DisplayLabel, false);
+        Spawned->SetFolderPath(Spec.FolderPath);
     }
     return Spawned;
 }
@@ -570,29 +651,40 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
             OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires distinct live, sealed MH Composite placements");
             return false;
         }
-        // Proof plane (Recipe Model v2 §2.6, R2b-2): Break is an exit point and
-        // admits the full applied closure itself. The preview plan of the
-        // actor never validated unselected endpoints or receipts, so it is not
-        // the authority here; the proof plan carries the same layout (shadow
-        // parity gate) plus closure and signatures.
-        FString ProofError = Actor->GetLastPlacementError();
-        FMHProofResult Proof;
-        UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
-        if (Actor->GetResolvedPlan() == nullptr || !ProofError.IsEmpty() || Proofs == nullptr ||
-            !Proofs->BuildProofNow(*Actor, Proof, ProofError) || !Proof.Plan.IsValid())
+        // Break is a preview-plane operation: the resident plan is the sole
+        // layout authority. Proof, closure and source freshness are exit-point
+        // concerns for save, snapshot and cook, not for one-layer decomposition.
+        const FMHResolvedCompositePlan* ResolvedPlan = Actor->GetResolvedPlan();
+        const FString PlacementError = Actor->GetLastPlacementError();
+        if (ResolvedPlan == nullptr || !PlacementError.IsEmpty())
         {
-            OutError = ProofError.IsEmpty()
+            OutError = PlacementError.IsEmpty()
                 ? FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires a current resolved plan for %s"), *Actor->GetPathName())
-                : ProofError + TEXT(" (Break: ") + Actor->GetPathName() + TEXT(")");
+                : PlacementError + TEXT(" (Break: ") + Actor->GetPathName() + TEXT(")");
             return false;
         }
-        const FMHResolvedCompositePlan* ResolvedPlan = Proof.Plan.Get();
+        const UMHCompositeAsset* CompositeAsset = Actor->GetCompositeAsset();
+        const UMHCompiledRecipeRegistry* Recipes = UMHCompiledRecipeRegistry::Get();
+        const FMHCompiledRecipe* Recipe = CompositeAsset != nullptr && Recipes != nullptr
+            ? Recipes->Find(*CompositeAsset)
+            : nullptr;
+        if (Recipe == nullptr)
+        {
+            OutError = FString::Printf(
+                TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires a current compiled recipe for %s"),
+                *Actor->GetPathName());
+            return false;
+        }
         FActorBreakPlan& Plan = Plans.AddDefaulted_GetRef();
         Plan.Actor = Actor;
         if (!MHCollectBreakSpecs(
                 *ResolvedPlan,
+                *Recipe,
                 Actor->GetActorTransform(),
                 *Settings,
+                Actor->GetSeed(),
+                Actor->GetAppearanceSeed(),
+                Actor->GetFolderPath(),
                 Plan.Specs,
                 OutError))
         {

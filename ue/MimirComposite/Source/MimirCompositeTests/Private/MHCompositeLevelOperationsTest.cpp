@@ -466,18 +466,23 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         const FString RandomSourceHash = RandomRootAsset->SourceHash;
         TArray<AActor*> RandomBreakActors;
         Error.Reset();
-        bPassed &= TestTrue(TEXT("Break consumes the nested random result without retaining wrappers"),
+        // R4-pre: Break removes one layer (Dagor split). The random node yields its
+        // selected variant as an entity: a nested composite stays a composite actor
+        // at the random node's world transform, with the parent's seeds forwarded.
+        bPassed &= TestTrue(TEXT("Break emits the selected random variant as one entity"),
             Subsystem->BreakComposites({RandomActor}, RandomBreakActors, Warnings, Error));
-        bPassed &= TestEqual(TEXT("nested random Break emits only the selected mesh leaf"), RandomBreakActors.Num(), 1);
+        bPassed &= TestEqual(TEXT("nested random Break emits only the selected variant"), RandomBreakActors.Num(), 1);
         if (RandomBreakActors.Num() == 1)
         {
-            bPassed &= TestTrue(TEXT("nested random Break preserves parent-local accumulation plus actor placement"),
-                RandomBreakActors[0]->GetActorLocation().Equals(FVector(175.0, 0.0, 0.0), KINDA_SMALL_NUMBER));
-            bPassed &= TestEqual(TEXT("nested random Break preserves leaf display identity"),
-                RandomBreakActors[0]->GetActorLabel(false), FString(TEXT("selected_nested_leaf")));
-            AStaticMeshActor* SelectedMeshActor = Cast<AStaticMeshActor>(RandomBreakActors[0]);
-            bPassed &= TestTrue(TEXT("nested random Break preserves selected mesh resource"),
-                SelectedMeshActor != nullptr && SelectedMeshActor->GetStaticMeshComponent()->GetStaticMesh() == MeshAsset);
+            bPassed &= TestTrue(TEXT("selected variant keeps the random node world placement (100 + actor 50)"),
+                RandomBreakActors[0]->GetActorLocation().Equals(FVector(150.0, 0.0, 0.0), KINDA_SMALL_NUMBER));
+            AMHCompositeActor* SelectedCompositeActor = Cast<AMHCompositeActor>(RandomBreakActors[0]);
+            bPassed &= TestTrue(TEXT("selected nested composite survives Break as a composite actor"),
+                SelectedCompositeActor != nullptr && SelectedCompositeActor->GetCompositeAsset() == SelectedNestedAsset);
+            bPassed &= TestTrue(TEXT("selected variant forwards the parent seed"),
+                SelectedCompositeActor != nullptr && SelectedCompositeActor->GetSeed() == 100);
+            bPassed &= TestTrue(TEXT("selected variant does not flatten its own leaf"),
+                Cast<AStaticMeshActor>(RandomBreakActors[0]) == nullptr);
             RandomBreakActors[0]->Destroy();
         }
         bPassed &= TestEqual(TEXT("random Break leaves applied source receipt untouched"), RandomRootAsset->SourceHash, RandomSourceHash);
@@ -485,12 +490,17 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         SelectedNestedAsset->MarkAsGarbage();
 
         TArray<AActor*> BrokenActors;
+        // R4-pre: Break emits the top layer of the recipe (resolved nodes without a
+        // parent) in node order: actor, mesh, nested composite, fallback mesh.
         TArray<FTransform> ExpectedBreakTransforms;
         if (const FMHResolvedCompositePlan* PreviewPlan = CompositeActor->GetResolvedPlan())
         {
-            for (const FMHResolvedCompositeLeaf& Leaf : PreviewPlan->Leaves)
+            for (const FMHResolvedCompositeNode& PlanNode : PreviewPlan->Nodes)
             {
-                ExpectedBreakTransforms.Add(FTransform(Leaf.WorldMatrix * CompositeActor->GetActorTransform().ToMatrixWithScale()));
+                if (PlanNode.ParentResolvedNodeIndex == INDEX_NONE && !PlanNode.NodePath.Contains(TEXT(">")))
+                {
+                    ExpectedBreakTransforms.Add(FTransform(PlanNode.WorldMatrix * CompositeActor->GetActorTransform().ToMatrixWithScale()));
+                }
             }
         }
         TArray<TWeakObjectPtr<UActorComponent>> DestroyedPlacementComponents;
@@ -500,13 +510,13 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         }
         Error.Reset();
         bPassed &= TestTrue(
-            TEXT("Break materializes the complete resolved plan"),
+            TEXT("Break materializes the top layer of the resolved plan"),
             Subsystem->BreakComposites({CompositeActor}, BrokenActors, Warnings, Error));
-        bPassed &= TestEqual(TEXT("Break creates only resolved mesh and actor leaves"), BrokenActors.Num(), 3);
-        bPassed &= TestEqual(TEXT("Break and cached preview have identical leaf counts"), BrokenActors.Num(), ExpectedBreakTransforms.Num());
+        bPassed &= TestEqual(TEXT("Break creates one entity per top-level component"), BrokenActors.Num(), 4);
+        bPassed &= TestEqual(TEXT("Break and cached preview have identical top-level counts"), BrokenActors.Num(), ExpectedBreakTransforms.Num());
         for (int32 Index = 0; Index < BrokenActors.Num() && Index < ExpectedBreakTransforms.Num(); ++Index)
         {
-            bPassed &= TestTrue(TEXT("Break consumes cached leaf matrices in plan order"),
+            bPassed &= TestTrue(TEXT("Break consumes cached node matrices in node order"),
                 BrokenActors[Index]->GetActorTransform().Equals(ExpectedBreakTransforms[Index], KINDA_SMALL_NUMBER));
         }
         bPassed &= TestEqual(TEXT("Break leaves applied SourceHash untouched"), Asset->SourceHash, BeforeRefreshSourceHash);
@@ -522,12 +532,20 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         {
             if (BrokenActor != nullptr)
             {
-                bPassed &= TestFalse(TEXT("Break leaves no nested composite wrapper"), BrokenActor->IsA<AMHCompositeActor>());
                 ActorsByLabel.Add(BrokenActor->GetActorLabel(false), BrokenActor);
             }
         }
         bPassed &= TestTrue(TEXT("Break restores authored mesh name"), ActorsByLabel.Contains(TEXT("authored_mesh")));
-        bPassed &= TestFalse(TEXT("empty nested composite has no resolved leaf"), ActorsByLabel.Contains(TEXT("authored_nested")));
+        if (AActor** NestedWrapper = ActorsByLabel.Find(TEXT("authored_nested")))
+        {
+            AMHCompositeActor* NestedComposite = Cast<AMHCompositeActor>(*NestedWrapper);
+            bPassed &= TestTrue(TEXT("nested composite stays a composite actor with its own asset"),
+                NestedComposite != nullptr && NestedComposite->GetCompositeAsset() == NestedAsset);
+        }
+        else
+        {
+            bPassed &= TestTrue(TEXT("Break keeps the nested composite as an entity"), false);
+        }
         bPassed &= TestTrue(TEXT("Break falls back to mesh resource name"), ActorsByLabel.Contains(MeshResource));
         if (AActor** AuthoredActor = ActorsByLabel.Find(TEXT("authored_actor")))
         {

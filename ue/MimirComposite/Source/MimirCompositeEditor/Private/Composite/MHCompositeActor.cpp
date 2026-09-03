@@ -362,7 +362,11 @@ TArray<TObjectPtr<UActorComponent>> AMHCompositeActor::CollectPreviousDerivedCom
 
 void AMHCompositeActor::ClearDerivedComponents()
 {
-    const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
+    // Undo can restore transaction-era plan-view components after the transient
+    // tracking arrays were cleared. Include every MH-tagged instance component
+    // so rebuilding from the actor record cannot leave an untracked twin.
+    const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
+    DerivedComponents.Reset();
     DestroyMHRetiredComponents(Previous, DerivedComponents);
     TopLevelPlacementComponents.Reset();
     LeafPlacementComponents.Reset();
@@ -855,6 +859,10 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
 void AMHCompositeActor::PostEditUndo()
 {
     Super::PostEditUndo();
+    // The actor is the transaction record; its plan-view is derived. Retire
+    // anything the transaction restored, discard cached state, then rebuild
+    // the preview through the normal recipe/materialization path.
+    ClearDerivedComponents();
     RebuildComposite();
 }
 
