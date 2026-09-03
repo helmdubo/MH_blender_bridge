@@ -1,8 +1,9 @@
 # R2c — точки выхода proof-плоскости
 
-Статус: **READY FOR REVIEW**. Background proof cache, non-cook save audit и
-синхронные proof-гейты preflight/snapshot/Break реализованы. Все acceptance-
-тесты, полный NullRHI suite и сборочные гейты прошли; открытых вопросов нет.
+Статус: **READY FOR RE-REVIEW** после возврата PR #88. Background proof cache,
+non-cook save audit и синхронные proof-гейты preflight/snapshot/Break
+реализованы. OPEN-R2C-3/4 исправлены; все acceptance-тесты, полный NullRHI
+suite и сборочные гейты повторно прошли; открытых вопросов нет.
 
 ## 1. База, ветка и host
 
@@ -11,8 +12,9 @@
 - red-коммиты близнеца: `94938d7` (API, stub и
   `BuildPreflightFullClosure`), `4b38f7a` (два остальных proof-теста),
   `14a2d7d` (точные счётчики и коды diagnostic registry);
-- контрактный HEAD после ответов на OPEN: `713fa66`;
-- green implementation: `e55a049`;
+- контрактный HEAD до первого review: `713fa66`; ответ близнеца на
+  OPEN-R2C-3/4: `c998ae9`;
+- green implementation: `e55a049`; реализация возврата: `2bb0b45`;
 - отдельный worktree:
   `E:\GITHUB\Mimirhead_UE5Exporter\MH_blender_bridge_r2c_executor`;
 - собственный module-free host:
@@ -85,30 +87,48 @@ E:\MimirComposite_R2C_External_20260903\Saved\Logs\R2C_RED2_REGISTRY.log
   и только планирует Unknown; proof синхронно не строится и save не блокируется.
 - Cook/build preflight, runtime snapshot и Break используют
   `BuildProofNow`; resource notification инвалидирует proof cache.
+- Proof-операции получают только уже открытый process-owned индекс через
+  `MHPeekProjectIndex()`: accessor не создаёт, не открывает и не пересоздаёт
+  SQLite. `MakeKey`, `GetProofState`, `AuditWorld` и `RequestProof` не имеют
+  index-write side effect; при закрытом индексе generation равен 0, а
+  неизвестный индексный хэш не считается stale.
+- `MHRuntimeBridgePreflight` после подготовки транспорта независимо декодирует
+  точные `GraphBytes`, выполняет resolve и transform admission, затем сравнивает
+  `ResolvedSignature` и `PlacementSignature` транспортного плана с Fresh
+  proof-планом из кэша. Расхождение закрывается точным
+  `MH_E_INVALID_RESOURCE_SOURCE: transport graph diverges from proof for <path>`.
 - Diagnostic registry содержит ровно новый `MH_E_STALE_SOURCE` и четыре
   предусмотренных контрактом warning-кода, без иных добавлений.
 
 ## 4. Green и acceptance
 
-Основной green proof-лог:
+Повторный green proof-лог после OPEN-R2C-3/4:
 
 ```text
-E:\MimirComposite_R2C_External_20260903\Saved\Logs\R2C_IMPL_PROOF_01.log
-1079: Test Completed. Result={Success} Name={BuildPreflightFullClosure}
-1088: Test Completed. Result={Success} Name={SaveWarnsWithoutProof}
-1097: Test Completed. Result={Success} Name={StaleSourceBlocksCookAndSnapshot}
+E:\MimirComposite_R2C_External_20260903\Saved\Logs\R2C_RETURN1_PROOF_NO_SOURCE_ROOT.log
+1080: Test Completed. Result={Success} Name={BuildPreflightFullClosure}
+1089: Test Completed. Result={Success} Name={SaveWarnsWithoutProof}
+1098: Test Completed. Result={Success} Name={StaleSourceBlocksCookAndSnapshot}
 ```
+
+Host не содержит настроенного Source Root. Перед прогоном существующий
+generated cache был перемещён в восстанавливаемый каталог
+`Saved\MimirBridge\R2C_RETURN1_PREEXISTING_INDEX_BACKUP\ProjectIndex.sqlite`.
+Сразу после завершения proof-фильтра ручная проверка
+`Test-Path E:\MimirComposite_R2C_External_20260903\Saved\MimirBridge\ProjectIndex.sqlite`
+вернула `False`: чтение/сборка proof без Source Root файл не создали. Позднее
+полный suite ожидаемо создал process-owned индекс в source-тестах.
 
 | # | Критерий | Результат |
 |---|---|---|
-| 1 | `Proof.BuildPreflightFullClosure`: preview Unknown, deferred Fresh, Stale, Missing, read-only audit | PASS — `R2C_IMPL_PROOF_01.log:1079` |
-| 2 | `Proof.SaveWarnsWithoutProof`: save строит 0 applied graphs, предупреждает и планирует proof; второй save после flush чист | PASS — `R2C_IMPL_PROOF_01.log:1088` |
-| 3 | `Proof.StaleSourceBlocksCookAndSnapshot`: stale блокирует preflight/snapshot, preview остаётся рабочим, refresh лечит | PASS — `R2C_IMPL_PROOF_01.log:1097` |
+| 1 | `Proof.BuildPreflightFullClosure`: preview Unknown, deferred Fresh, Stale, Missing, read-only audit; без Source Root не создаёт SQLite | PASS — `R2C_RETURN1_PROOF_NO_SOURCE_ROOT.log:1080`; после процесса `ProjectIndex.sqlite` отсутствует |
+| 2 | `Proof.SaveWarnsWithoutProof`: save строит 0 applied graphs, предупреждает и планирует proof; второй save после flush чист; без Source Root не создаёт SQLite | PASS — `R2C_RETURN1_PROOF_NO_SOURCE_ROOT.log:1089`; после процесса `ProjectIndex.sqlite` отсутствует |
+| 3 | `Proof.StaleSourceBlocksCookAndSnapshot`: stale блокирует preflight/snapshot, preview остаётся рабочим, refresh лечит | PASS — `R2C_RETURN1_PROOF_NO_SOURCE_ROOT.log:1098` |
 | 4 | точный diagnostic registry | PASS — `R2C_IMPL_REGISTRY_01.log:1075`, `StreamTraceAndSignatureParity` Success |
 | 5 | `Mimir.V5.Composite.*`, включая AppliedAdmission/Recipe/Break | PASS — 86/86, 0 Fail (`R2C_IMPL_COMPOSITE_02.log`); `RecipeShadowParity` — строка 1750 |
-| 6 | `Mimir.V5.Runtime.*` | PASS — 15/15, 0 Fail (`R2C_IMPL_RUNTIME_01.log`) |
+| 6 | `Mimir.V5.Runtime.*`, включая восстановленный decode/resolve/transform transport preflight | PASS — 15/15, 0 Fail (`R2C_RETURN1_RUNTIME.log`, completed строки 1092–1193) |
 | 7 | `Mimir.Audit.MainBaseline.BuildPreflight*` | PASS — `R2C_IMPL_BUILD_PREFLIGHT_01.log:1109` |
-| 8 | полный `Automation RunTests Mimir` | PASS — **191/191 Success, 0 Fail** (`R2C_IMPL_FULL_01.log`); proof — строки 4049/4058/4067, registry — 4621, последний completed — 4831. 17 отдельных `NOT RUN` сообщений — штатные generic-host guards |
+| 8 | полный `Automation RunTests Mimir` после возврата | PASS — **191/191 Success, 0 Fail** (`R2C_RETURN1_FULL.log`); proof — строки 4010/4019/4028, registry — 4572, последний completed — 4782, `TEST COMPLETE` — 4794 |
 | 9 | число тестов не уменьшилось | PASS — R2b baseline 188; три red proof-теста R2c дают 191; удалений нет |
 
 Предварительный `Mimir.V5.Composite` прогон выявил единственную совместимую
@@ -120,9 +140,9 @@ preview ожидает фразу `resolved plan`. Формулировка во
 
 | Gate | Результат |
 |---|---|
-| final non-unity/no-PCH editor build, `-NoEngineChanges -WarningsAsErrors` | PASS — `R2C_IMPL_BUILD_03.log:119`, `Result: Succeeded` |
-| guarded force-unity, `-ForceUnity -DisableAdaptiveUnity -NoPCH -NoSharedPCH` | PASS — `R2C_IMPL_FORCE_UNITY.log:1989`, `Result: Succeeded` |
-| `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | PASS — `R2C_IMPL_STRICT_INCLUDES.log:233`, `BUILD SUCCESSFUL`; отдельный package `E:\MimirComposite_R2C_Strict_20260903_01` |
+| final non-unity/no-PCH editor build, `-NoEngineChanges -WarningsAsErrors` | PASS — `R2C_RETURN1_BUILD_NONUNITY_02.log:2004`, `Result: Succeeded` |
+| guarded force-unity, `-ForceUnity -DisableAdaptiveUnity -NoPCH -NoSharedPCH` | PASS — `R2C_RETURN1_BUILD_FORCEUNITY.log:1989`, `Result: Succeeded` |
+| `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | PASS — `R2C_RETURN1_STRICTINCLUDES.log:1775`, `BUILD SUCCESSFUL`; строка 1777 — `ExitCode=0`; отдельный package `E:\MimirComposite_R2C_Return1_Strict_20260903_1454` |
 | `git diff --check` | PASS |
 | `python tools/check_normative_docs.py` | PASS — `normative docs: OK` |
 
@@ -134,6 +154,13 @@ preview ожидает фразу `resolved plan`. Формулировка во
 - **OPEN-R2C-2 — закрыт близнецом 2026-09-03**, коммиты `14a2d7d` и
   `713fa66`: red-тест закрепил 54 errors / 20 warnings и пять точных кодов;
   Runtime diagnostic registry добавлен в закрытый список.
+- **OPEN-R2C-3 — закрыт близнецом 2026-09-03**, коммит `c998ae9`: добавлен
+  read-only `MHPeekProjectIndex()`, второй SQLite handle и `OpenProjectIndex`
+  удалены; ручная проверка без Source Root подтвердила отсутствие нового
+  `ProjectIndex.sqlite`.
+- **OPEN-R2C-4 — закрыт близнецом 2026-09-03**, коммит `c998ae9`:
+  `MHRuntimeBridgePreflight` снова проверяет точные транспортные байты и
+  сравнивает обе подписи с proof-планом.
 
 Открытых вопросов нет.
 
@@ -149,6 +176,15 @@ Production и нормативная реализация (`e55a049`):
 - `ue/MimirComposite/Source/MimirCompositeEditor/Private/Composite/MHCompositePlacementEvents.cpp`;
 - `ue/MimirComposite/Source/MimirCompositeRuntime/Private/Diagnostics/MHDiagnosticRegistry.cpp`;
 - `docs/16_recipe_model.md` — только §2.6 и §9.
+
+Исправления возврата (`2bb0b45`):
+
+- `ue/MimirComposite/Source/MimirCompositeEditor/Public/Source/MHSourceComposition.h`
+  — только accessor `MHPeekProjectIndex()`;
+- `ue/MimirComposite/Source/MimirCompositeEditor/Private/Source/MHSourceComposition.cpp`
+  — только реализация accessor;
+- `ue/MimirComposite/Source/MimirCompositeEditor/Private/Composite/MHProofCache.cpp`;
+- `ue/MimirComposite/Source/MimirCompositeEditor/Private/Composite/MHCompositeRuntimeBridge.cpp`.
 
 Квитанция/статус:
 
