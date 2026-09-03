@@ -22,9 +22,9 @@
 | S1 | CLOSED (без кода) | OPEN-S-1 закрыт owner'ом, вариант c: S0 достаточен; полевой замер холодного скана — по протоколу M0 §6 |
 | S2 | MERGED | #77 (внешний исполнитель, приёмка близнеца; возвраты OPEN-S2-1/S2-2 закрыты нормативно); квитанция `docs/receipts/source_s2.md`. Линия S закрыта: S0 #73, S1 CLOSED (вариант c), S2 #77 |
 | R2a | MERGED (близнец) | два PR: **R2a-1** фазовое разделение resolver'а — #79 (`docs/receipts/recipe_r2a_phases.md`); **R2a-2** `FMHCompiledRecipe` + реестр + `RecipeShadowParity` как CI-гейт — #81 (`docs/receipts/recipe_r2a_compiled_recipe.md`). OPEN-R2A-1 закрыт owner 2026-09-02 (docs/16 §9). **Полевой тест owner 2026-09-02 на портфолио (main `4782082`) пройден** — `docs/receipts/field_recipe_r2a_20260902.md`. Preview-путь ещё не production → R2b |
-| R2b | IN PROGRESS (близнец) | **R2b-1** `MHMaterializeLayout` — MERGED #84 (`docs/receipts/recipe_r2b_materialize_layout.md`); **R2b-2** актор на рецептах — MERGED #86 (`docs/receipts/recipe_r2b_actor_preview.md`; OPEN-R2B-1/-2 закрыты, docs/16 §9); **R2b-3** удаления proof-состояния актора — IN REVIEW (Lead: каждое удаление), ветка `recipe/r2b-3-proof-state-deletions`, квитанция `docs/receipts/recipe_r2b_proof_state_deletions.md` §6 |
+| R2b | MERGED (близнец) | три PR: **R2b-1** `MHMaterializeLayout` — #84; **R2b-2** актор на рецептах — #86; **R2b-3** удаления proof-состояния актора и definition-кэша — #90 (owner: удаления одобрены 2026-09-03; квитанция `docs/receipts/recipe_r2b_proof_state_deletions.md` §6). ADR docs/16: `Status: NORMATIVE` (D0a: «PROPOSED → NORMATIVE после R2b») |
 | R2c | MERGED | #88 (внешний исполнитель, приёмка близнеца; возвраты OPEN-R2C-1…4 закрыты нормативно в `docs/contracts/recipe_r2c.md`); квитанция `docs/receipts/recipe_r2c.md`; `Proof.BuildPreflightFullClosure` зелёный → гейт R2b-3 открыт |
-| R3 | NEXT (внешний исполнитель, контракт близнеца после R2b-3) | — |
+| R3 | NEXT (внешний исполнитель, контракт близнеца) | пять хэшей/ревизий интерфейса меша (docs/16 §2.2 П4, восьмая строка §7.2 — код); контракт `docs/contracts/recipe_r3.md` |
 | R4 | PLANNED | — |
 | R5 | PLANNED | — |
 | R6 | PLANNED | — |
