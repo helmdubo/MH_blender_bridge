@@ -3,7 +3,6 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
-#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Composite/MHRuntimeCompositeInput.h"
@@ -189,10 +188,6 @@ bool FMHPrototypeRegistryIdentityAdmissionTest::RunTest(const FString& Parameter
     ON_SCOPE_EXIT { World->DestroyWorld(false); };
     if (GEditor != nullptr)
     {
-        if (UMHCompositeDefinitionSubsystem* Definitions = GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
-        {
-            Definitions->InvalidateAllDefinitions();
-        }
     }
     Registry->InvalidateAll();
     MHResetDefinitionCacheMetrics();

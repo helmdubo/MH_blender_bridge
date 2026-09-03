@@ -62,12 +62,6 @@ FMHResourceKey SeedTestKey(const EMHResourceKind Kind, const FString& Name)
     return Key;
 }
 
-FString SeedTestSignature(const AMHCompositeActor& Actor)
-{
-    const FStrProperty* Property = FindFProperty<FStrProperty>(AMHCompositeActor::StaticClass(), TEXT("ResolvedSignature"));
-    return Property != nullptr ? Property->GetPropertyValue_InContainer(&Actor) : FString();
-}
-
 USceneComponent* SeedTestLeafComponent(const AMHCompositeActor& Actor, const int32 Index)
 {
     return Actor.GetLeafMaterializations().IsValidIndex(Index)
@@ -505,7 +499,6 @@ bool FMHCompositeSeedDeterminismTest::RunTest(const FString& Parameters)
     SeedTestShadowParity(*this, TEXT("actor plan matches shared resolver plan"), Direct, Before);
     TestTrue(TEXT("actor trace equals shared resolver trace"), SeedTestTraceEqual(Before, Direct));
     // R2b-2: the preview plane never publishes a derived signature.
-    TestTrue(TEXT("read-only derived signature stays empty on the preview plane"), SeedTestSignature(*First).IsEmpty());
 
     const FSeedTestComponentSnapshot Components(*First);
     First->SetActorTransform(FTransform(FRotator(0.0, 90.0, 0.0), FVector(1000.0, 200.0, 50.0), FVector(2.0)));

@@ -109,9 +109,6 @@ FMHCompositeOutlinerFreshness FMHCompositeOutlinerFreshness::Capture(
     Result.Seed = Actor.GetSeed();
     Result.AppearanceSeed = Actor.GetAppearanceSeed();
     Result.PreviewRevision = Actor.GetPreviewRevision();
-    Result.ResolvedSignature = Actor.GetCompactResolvedSignature();
-    Result.AppearanceSignature = Actor.GetCompactAppearanceSignature();
-    Result.PlacementSignature = Actor.GetCompactPlacementSignature();
     return Result;
 }
 

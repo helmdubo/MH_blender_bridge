@@ -191,11 +191,11 @@ bool FMHCompositeISMBucketMaterializationTest::RunTest(const FString& Parameters
     return bPassed;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHCompositeCompactResolvedStateTest,
-    "Mimir.V5.Composite.CompactResolvedState.LazyDebugPlan",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHCompositeResidentPlanTest,
+    "Mimir.V5.Composite.ResidentPlan.SingleAuthority",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHCompositeCompactResolvedStateTest::RunTest(const FString& Parameters)
+bool FMHCompositeResidentPlanTest::RunTest(const FString& Parameters)
 {
     FMHISMMaterializationFixture Fixture(*this);
     if (!Fixture.Build(12, true)) return false;
@@ -207,77 +207,24 @@ bool FMHCompositeCompactResolvedStateTest::RunTest(const FString& Parameters)
     Actor->SetAppearanceSeed(2718);
     Actor->SetCompositeAsset(Fixture.Composite);
 
-    // R2b-2: the preview plan is resident (§2.10 "LastPlacements"); the lazy
-    // debug lease no longer owns a separate copy.
-    bool bPassed = TestFalse(TEXT("no separate debug copy is leased"),
-        Actor->HasResidentResolvedDebugPlan());
-    bPassed &= TestFalse(TEXT("compact state retains no draws, decisions, or preimages"),
-        Actor->HasCompactResolvedDiagnostics());
-    bPassed &= TestEqual(TEXT("compact state keeps every materialized leaf"),
-        Actor->GetCompactResolvedLeafCount(), 12);
-    bPassed &= TestEqual(TEXT("compact state keeps selected option indices"),
-        Actor->GetCompactSelectedOptionCount(), 12);
-
-    const FString ResolvedSignature = Actor->GetCompactResolvedSignature();
-    const FString AppearanceSignature = Actor->GetCompactAppearanceSignature();
-    const FString PlacementSignature = Actor->GetCompactPlacementSignature();
-    const FMHResolvedCompositePlan* Debug = Actor->GetResolvedPlan();
-    bPassed &= TestNotNull(TEXT("inspection reads the resident preview plan"), Debug);
-    if (Debug != nullptr)
+    // R2b-3: the preview plan is resident (§2.10 "LastPlacements") and is the
+    // only plan the actor owns: no compact signed state, no lazy debug copy.
+    const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
+    bool bPassed = TestNotNull(TEXT("placement exposes its resident preview plan"), Plan);
+    if (Plan != nullptr)
     {
+        bPassed &= TestEqual(TEXT("resident plan keeps every materialized leaf"), Plan->Leaves.Num(), 12);
+        bPassed &= TestEqual(TEXT("resident plan keeps every decision"), Plan->Decisions.Num(), 12);
         bPassed &= TestTrue(TEXT("resident plan contains the layout diagnostic trace"),
-            !Debug->Decisions.IsEmpty() && !Debug->Draws.IsEmpty() &&
-            !Debug->SignaturePreimage.IsEmpty());
-        bPassed &= TestTrue(TEXT("resident plan contains appearance trace"),
-            !Debug->Appearance.Draws.IsEmpty() &&
-            !Debug->Appearance.SignaturePreimage.IsEmpty());
-        // R2b-2: preview plane, no closure, no signatures; the compact state
-        // mirrors the (empty) preview signatures exactly.
-        bPassed &= TestTrue(TEXT("preview plan carries no signature"),
-            Debug->ResolvedSignature.IsEmpty() && Debug->Appearance.AppearanceSignature.IsEmpty() &&
-            Debug->PlacementSignature.IsEmpty() && Debug->Closure.Resources.IsEmpty());
-        bPassed &= TestEqual(TEXT("compact state mirrors the preview resolved signature"),
-            Debug->ResolvedSignature, ResolvedSignature);
-        bPassed &= TestEqual(TEXT("compact state mirrors the preview appearance signature"),
-            Debug->Appearance.AppearanceSignature, AppearanceSignature);
-        bPassed &= TestEqual(TEXT("compact state mirrors the preview placement signature"),
-            Debug->PlacementSignature, PlacementSignature);
+            !Plan->Decisions.IsEmpty() && !Plan->Draws.IsEmpty() && !Plan->SignaturePreimage.IsEmpty());
+        bPassed &= TestTrue(TEXT("resident plan contains the appearance trace"),
+            !Plan->Appearance.Draws.IsEmpty() && !Plan->Appearance.SignaturePreimage.IsEmpty());
+        bPassed &= TestTrue(TEXT("preview plan carries no closure or signature"),
+            Plan->ResolvedSignature.IsEmpty() && Plan->Appearance.AppearanceSignature.IsEmpty() &&
+            Plan->PlacementSignature.IsEmpty() && Plan->Closure.Resources.IsEmpty());
+        bPassed &= TestTrue(TEXT("repeated reads return the same resident object"), Actor->GetResolvedPlan() == Plan);
+        bPassed &= TestTrue(TEXT("preview revision advanced"), Actor->GetPreviewRevision() >= 1u);
     }
-    bPassed &= TestFalse(TEXT("inspection leases no separate debug copy"),
-        Actor->HasResidentResolvedDebugPlan());
-    const FMHResolvedCompositePlan FirstDebug = Debug != nullptr
-        ? *Debug : FMHResolvedCompositePlan();
-    Actor->ReleaseResolvedDebugPlan();
-    const FMHResolvedCompositePlan* RebuiltDebug = Actor->GetResolvedPlan();
-    bPassed &= TestNotNull(TEXT("resident plan survives lease release"), RebuiltDebug);
-    bPassed &= TestTrue(TEXT("release returns the same resident plan object"), RebuiltDebug == Debug);
-    if (RebuiltDebug != nullptr)
-    {
-        bPassed &= TestTrue(TEXT("lazy reconstruction preserves layout preimage bytes"),
-            RebuiltDebug->SignaturePreimage == FirstDebug.SignaturePreimage);
-        bPassed &= TestTrue(TEXT("lazy reconstruction preserves appearance preimage bytes"),
-            RebuiltDebug->Appearance.SignaturePreimage ==
-                FirstDebug.Appearance.SignaturePreimage);
-        bPassed &= TestEqual(TEXT("lazy reconstruction preserves decision count"),
-            RebuiltDebug->Decisions.Num(), FirstDebug.Decisions.Num());
-        for (int32 Index = 0; Index < RebuiltDebug->Decisions.Num() &&
-             FirstDebug.Decisions.IsValidIndex(Index); ++Index)
-        {
-            bPassed &= TestEqual(TEXT("lazy reconstruction preserves decision path"),
-                RebuiltDebug->Decisions[Index].NodePath,
-                FirstDebug.Decisions[Index].NodePath);
-            bPassed &= TestEqual(TEXT("lazy reconstruction preserves selected option"),
-                RebuiltDebug->Decisions[Index].OptionIndex,
-                FirstDebug.Decisions[Index].OptionIndex);
-        }
-    }
-    Actor->ReleaseResolvedDebugPlan();
-    Actor->RetainResolvedDebugPlan();
-    bPassed &= TestNotNull(TEXT("an Outliner-style lease rebuilds the debug plan"),
-        Actor->GetResolvedPlan());
-    Actor->ReleaseResolvedDebugPlan();
-    bPassed &= TestFalse(TEXT("closing the last inspection lease frees the debug plan"),
-        Actor->HasResidentResolvedDebugPlan());
 
     Actor->Destroy();
     World->DestroyWorld(false);

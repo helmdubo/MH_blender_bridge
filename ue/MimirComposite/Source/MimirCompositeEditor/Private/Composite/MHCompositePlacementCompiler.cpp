@@ -1,7 +1,6 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 
 #include "Composite/MHCompositeAppearanceTransport.h"
-#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -503,7 +502,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousHandles,
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousLeaves,
     TConstArrayView<FMHCompositeLeafMaterialization> PreviousMaterializations,
-    FMHCompositeDefinitionEntry* Definition, FMHCompositePlacementCompileResult& OutResult,
+    FMHCompositePlacementCompileResult& OutResult,
     const FString& UninstancedLeafPath)
 {
     FMHPlacementStageScope CompileStage(EMHPlacementStage::CompilePlacement);
@@ -1041,7 +1040,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
 FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
     const FMHResolvedCompositePlan& Plan, const FMHRandomComposite& RootDefinition,
     const UMHCompositeSettings& Settings, TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
-    FMHCompositeDefinitionEntry* Definition, const FString& UninstancedLeafPath)
+    const FString& UninstancedLeafPath)
 {
     FMHPlacementStageScope CompileStage(EMHPlacementStage::CompilePlacement);
     FMHCompositePlacementCompileResult Result;

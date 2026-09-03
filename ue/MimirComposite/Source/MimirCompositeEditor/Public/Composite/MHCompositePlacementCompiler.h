@@ -12,7 +12,6 @@ class USceneComponent;
 
 namespace UE::MimirComposite
 {
-struct FMHCompositeDefinitionEntry;
 
 /**
  * Plan-aligned editor materialization row. Static leaves may share Component;
@@ -45,7 +44,6 @@ MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePl
     AActor& Target, const FMHResolvedCompositePlan& Plan,
     const FMHRandomComposite& RootDefinition, const UMHCompositeSettings& Settings,
     TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
-    FMHCompositeDefinitionEntry* Definition = nullptr,
     const FString& UninstancedLeafPath = FString());
 
 /**
@@ -62,7 +60,6 @@ MIMIRCOMPOSITEEDITOR_API bool MHTryCompileCompositePlacementReseedV5(
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousHandles,
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousLeaves,
     TConstArrayView<FMHCompositeLeafMaterialization> PreviousMaterializations,
-    FMHCompositeDefinitionEntry* Definition,
     FMHCompositePlacementCompileResult& OutResult,
     const FString& UninstancedLeafPath = FString());
 

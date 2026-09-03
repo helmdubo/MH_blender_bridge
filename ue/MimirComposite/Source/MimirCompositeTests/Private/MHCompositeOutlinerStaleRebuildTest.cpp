@@ -14,9 +14,6 @@ FMHCompositeOutlinerFreshness MakeFreshness()
     Result.AppearanceSeed = 2718;
     // R2b-2: a built preview is identified by the actor's preview revision.
     Result.PreviewRevision = 3;
-    Result.ResolvedSignature = TEXT("blake3-160:resolved");
-    Result.AppearanceSignature = TEXT("blake3-160:appearance");
-    Result.PlacementSignature = TEXT("blake3-160:placement");
     return Result;
 }
 } // namespace

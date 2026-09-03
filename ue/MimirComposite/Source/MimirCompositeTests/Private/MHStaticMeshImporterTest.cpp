@@ -6,7 +6,6 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
-#include "Composite/MHCompositeDefinitionSubsystem.h"
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/StaticMeshComponent.h"
@@ -1729,11 +1728,6 @@ bool FMHPerformanceInstrumentationCountersTest::RunTest(const FString& Parameter
     MHResetPlacementMutationMetrics();
     if (GEditor != nullptr)
     {
-        if (UMHCompositeDefinitionSubsystem* Definitions =
-                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
-        {
-            Definitions->InvalidateAllDefinitions();
-        }
     }
     {
         FMHMapLoadInitialBuildScope Scope(*Actor);
@@ -1888,11 +1882,6 @@ bool FMHPerformanceEndpointCountersTest::RunTest(const FString& Parameters)
             if (UMHCompiledRecipeRegistry* Recipes = UMHCompiledRecipeRegistry::Get())
             {
                 Recipes->InvalidateAll();
-            }
-            if (UMHCompositeDefinitionSubsystem* Definitions =
-                    GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
-            {
-                Definitions->InvalidateAllDefinitions();
             }
         }
     };
@@ -2052,11 +2041,6 @@ bool FMHPerformanceSelectedMeshWaitTest::RunTest(const FString& Parameters)
     MHResetPlacementStageMetrics();
     if (GEditor != nullptr)
     {
-        if (UMHCompositeDefinitionSubsystem* Definitions =
-                GEditor->GetEditorSubsystem<UMHCompositeDefinitionSubsystem>())
-        {
-            Definitions->InvalidateAllDefinitions();
-        }
     }
     if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
     {

@@ -14,35 +14,6 @@ class UActorComponent;
 class UMHCompositeAsset;
 class USceneComponent;
 
-namespace UE::MimirComposite
-{
-struct FMHCompositeDefinitionEntry;
-
-/** Materialization authority for one leaf; diagnostic strings live in the lazy plan. */
-struct FMHCompactResolvedLeafState
-{
-    EMHRandomSemanticKind Kind = EMHRandomSemanticKind::Empty;
-    int32 ResourceIndex = INDEX_NONE;
-    FMatrix WorldMatrix = FMatrix::Identity;
-    int32 RootNodeIndex = INDEX_NONE;
-    int32 OwningResolvedNodeIndex = INDEX_NONE;
-    float AppearanceChannels[MH_APPEARANCE_CHANNELS] = {};
-};
-
-/** U7 editor-only state kept by every placement after the signed plan is consumed. */
-struct FMHCompactResolvedState
-{
-    int32 Seed = 0;
-    int32 AppearanceSeed = 0;
-    TArray<FString> Resources;
-    TArray<FMHCompactResolvedLeafState> Leaves;
-    TArray<int32> SelectedOptionIndices;
-    FString ResolvedSignature;
-    FString AppearanceSignature;
-    FString PlacementSignature;
-};
-}
-
 /** Persisted level instance of one managed composite; its component view is always derived. */
 UCLASS(NotBlueprintable)
 class MIMIRCOMPOSITEEDITOR_API AMHCompositeActor final : public AActor
@@ -82,23 +53,13 @@ public:
     /** True once this placement owns a stored AppearanceSeed (migrated or authored). */
     bool HasStoredAppearanceSeed() const { return bAppearanceSeedStored; }
 
+    /**
+     * Resident preview plan for the current seeds (R2b-2/R2b-3): Layout +
+     * Appearance on the recipe graph, no closure, no signature. Null while no
+     * preview is built or while the last build failed. Proof lives in
+     * UMHProofCacheSubsystem.
+     */
     const UE::MimirComposite::FMHResolvedCompositePlan* GetResolvedPlan() const;
-    /** Keep the lazy diagnostic plan alive while an inspection surface is open. */
-    void RetainResolvedDebugPlan() const;
-    /** Release one inspection lease; the full trace is freed with the last lease. */
-    void ReleaseResolvedDebugPlan() const;
-    /** U7 instrumentation: a full diagnostic plan is resident only on demand. */
-    bool HasResidentResolvedDebugPlan() const;
-    /** U7 instrumentation: compact placement state must never retain trace/preimage arrays. */
-    bool HasCompactResolvedDiagnostics() const;
-    /** U7 instrumentation: owned heap bytes of the placement's retained resolved state. */
-    uint64 GetCompactResolvedStateAllocatedBytes() const;
-    /** U7 instrumentation: plan-aligned leaf count without materializing a debug trace. */
-    int32 GetCompactResolvedLeafCount() const;
-    int32 GetCompactSelectedOptionCount() const;
-    const FString& GetCompactResolvedSignature() const;
-    const FString& GetCompactAppearanceSignature() const;
-    const FString& GetCompactPlacementSignature() const;
     const FString& GetLastPlacementError() const { return LastPlacementError; }
     EMHCompositeSeedEffect GetSeedAffectsResult() const { return SeedAffectsResult; }
 
@@ -194,8 +155,6 @@ private:
     void UpdatePlacementBasis(USceneComponent*, EUpdateTransformFlags, ETeleportType);
     void AttachRootTransformHook();
     void ReportPlacementError();
-    void StoreCompactResolvedState(const UE::MimirComposite::FMHResolvedCompositePlan& Plan);
-    void InvalidateResolvedDebugPlan() const;
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     TObjectPtr<USceneComponent> CompositeRoot;
@@ -231,8 +190,6 @@ private:
     UPROPERTY()
     bool bAppearanceSeedStored = false;
 
-    UPROPERTY(VisibleInstanceOnly, Transient, DuplicateTransient, TextExportTransient, Category = "Mimir|Random")
-    FString ResolvedSignature;
 
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<UActorComponent>> DerivedComponents;
@@ -246,12 +203,15 @@ private:
     /** Derived navigation rows; Components are retained by DerivedComponents. */
     TArray<UE::MimirComposite::FMHCompositeLeafMaterialization> LeafMaterializations;
 
-    TSet<UE::MimirComposite::FMHResourceKey> PlacementDependencies;
     TArray<FString> LastPlacementWarnings;
     FString LastPlacementError;
-    TSharedPtr<UE::MimirComposite::FMHCompositeDefinitionEntry> AppliedDefinition;
     TSharedPtr<const UE::MimirComposite::FMHRandomSourceGraph> AppliedGraph;
-    TOptional<UE::MimirComposite::FMHCompactResolvedState> CompactResolvedState;
+    /**
+     * Recipe graph of the last build attempt, kept even when that build failed:
+     * its resources are what a targeted notification must be able to hit so
+     * the placement retries once the missing endpoint appears (R2b-3).
+     */
+    TSharedPtr<const UE::MimirComposite::FMHRandomSourceGraph> ObservedRecipeGraph;
     /**
      * Resident preview plan (Recipe Model v2 §2.10 "LastPlacements"): Layout +
      * Appearance of the current seeds on the recipe graph, no closure, no
@@ -260,8 +220,6 @@ private:
      */
     TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> ResidentPlan;
     uint32 PreviewRevision = 0;
-    mutable TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> ResolvedDebugPlan;
-    mutable int32 ResolvedDebugPlanLeaseCount = 0;
     TOptional<UE::MimirComposite::FMHRandomSourceGraph> EditingGraph;
     TOptional<UE::MimirComposite::FMHCompositeDocument> EditingDocument;
     TArray<FTransform> LastEditHandleTransforms;
