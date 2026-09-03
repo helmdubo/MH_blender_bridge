@@ -24,7 +24,7 @@ namespace UE::MimirComposite
 {
 namespace
 {
-constexpr EObjectFlags PlanViewFlags = RF_Transactional | RF_Transient | RF_DuplicateTransient | RF_TextExportTransient;
+constexpr EObjectFlags PlanViewFlags = RF_Transient | RF_DuplicateTransient | RF_TextExportTransient;
 
 /** Instrumentation counter behind MHGetPlacementPreviousComponentProbes. */
 uint64 GMHPlacementPreviousComponentProbes = 0;

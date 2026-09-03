@@ -211,10 +211,10 @@ FMHMaterializeResult MHMaterializeLayout(
    `MH_W_PROOF_UNKNOWN`, `MH_W_PROOF_PENDING`, `MH_W_PROOF_STALE`,
    `MH_W_PROOF_MISSING`; для `Unknown` только планирует `RequestProof`.
    Синхронный proof и отказ сохранения карты здесь запрещены.
-3. Build/cook preflight (`MHValidateRuntimeCompositeWorld`), runtime snapshot
-   (`MHBuildRuntimeCompositeInput`) и `BreakComposites` вызывают
-   `BuildProofNow` синхронно и блокируют выход при `Stale`/`Missing`. Экспорт,
-   который потребляет placement, подчиняется тому же правилу.
+3. Build/cook preflight (`MHValidateRuntimeCompositeWorld`) и runtime snapshot
+   (`MHBuildRuntimeCompositeInput`) вызывают `BuildProofNow` синхронно и
+   блокируют выход при `Stale`/`Missing`. Экспорт, который потребляет
+   placement, подчиняется тому же правилу.
 4. `BuildProofNow` строит applied full closure, проверяет duplicate claims,
    выполняет `Layout → Appearance → Proof` и admission трансформов, затем
    сравнивает receipt-хэши только с `ProjectIndex` (или тестовым provider).
@@ -314,6 +314,14 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 `CompactResolvedState` как гейт, список зависимостей размещения (четвёртая
 строка §7.2), `AppliedGraph`, `AppliedDefinition`, любая логика «подпись
 устарела → rebuild» и «карта обязана построить proof до первого кадра».
+
+`BreakComposites` — операция preview-плоскости: она читает резидентный план и
+снимает ровно один слой рецепта. Вложенные композиты остаются
+`AMHCompositeActor` с layout- и appearance-сидами родителя; группы поднимают
+детей, random оставляет только выбранную опцию. Plan-view компоненты не
+транзакционны: записью Undo служит сам актор, а `PostEditUndo` ретирует
+производную материализацию и восстанавливает preview штатным путём из
+`CompositeAsset`, сидов и transform.
 
 ## 3. Точки выхода и proof — см. §2.4, §2.6
 
@@ -483,7 +491,8 @@ R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpo
 | OPEN-R2A-1 | `SelectedDependencies` в preview-плане | preview не использует поле (proof-артефакт); shadow parity сравнивает его только по ресурсам графа (composite / static_mesh / placement_profile / actor), без mesh → material → texture | закрыт 2026-09-02 (owner) |
 | OPEN-R2B-1 | Гейт удалений proof-состояния актора (R2b-3) | `BuildPreflightFullClosureTest` из KICKOFF §5 R2b = preflight-тест полного closure, который создаёт R2c; до него proof-поля актора (`CompactResolvedState`, `ResolvedSignature`, `AppliedDefinition`) — диагностика без гейтов | закрыт 2026-09-03 (owner делегировал решение близнецу) |
 | OPEN-R2B-2 | Резидентный preview-план на актор (§2.10 «LastPlacements») | план хранится целиком (decisions, draws, nodes, leaves): draws нужны Outliner-трассе и reseed-diff; сжатие — только если полевой замер R4 (пулы) покажет проблему памяти | закрыт 2026-09-03 (owner делегировал решение близнецу) |
-| OPEN-R-7 | Duplicate claim в preview | Preview-плоскость делает ноль tag-запросов. Duplicate claim обнаруживают source-плоскость (`duplicate_claim`) и `BuildProofNow` в preflight/snapshot/Break (`MH_E_AMBIGUOUS_GENERATED_ASSET`). Старый preview-тест заменён proof-plane тестом `DuplicateClaimIsProofPlane` в R0c. | закрыт D0b П2; реализован в proof-плоскости R2c (2026-09-03) |
+| OPEN-R-7 | Duplicate claim в preview | Preview-плоскость делает ноль tag-запросов. Duplicate claim обнаруживают source-плоскость (`duplicate_claim`) и `BuildProofNow` в preflight/snapshot (`MH_E_AMBIGUOUS_GENERATED_ASSET`). Старый preview-тест заменён proof-plane тестом `DuplicateClaimIsProofPlane` в R0c. | закрыт D0b П2; реализован в proof-плоскости R2c (2026-09-03) |
+| OPEN-R4P-1 | Точное воспроизведение random внутри дочернего композита после Break | ребёнок получает `Seed` и `AppearanceSeed` родителя как есть; из-за смены корневого `NodePath` внутренний random может выбрать другой вариант | открыт, fail-closed: сиды родителя |
 
 | OPEN-S-1 | Источник slot-рёбер mesh→material без парса FBX в скане (S1) | **закрыт 2026-09-02, вариант c (owner):** S0 достаточен — FBX парсится только для новых/изменённых по `(size, mtime)` файлов; S1 закрыт без кода; холодный скан портфолио измеряется полевым протоколом M0 §6 | закрыт |
 
@@ -506,7 +515,7 @@ Asset Registry их тоже не несут (10 §7: «ровно шесть»)
 заменён в R0c тестом `Mimir.V5.Composite.Registry.DuplicateClaimIsProofPlane`:
 preview сохраняет детерминированный канонический endpoint и не делает
 tag-запросов. R2c завершил перенос: `BuildProofNow` проверяет claims полного
-замыкания, поэтому preflight, snapshot и Break отказывают с
+замыкания, поэтому preflight и snapshot отказывают с
 `MH_E_AMBIGUOUS_GENERATED_ASSET`; source-плоскость независимо хранит
 `duplicate_claim` в индексе.
 
