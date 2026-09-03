@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHProofCache.h"
 #include "Composite/MHRuntimeCompositeActor.h"
@@ -296,6 +297,23 @@ bool MHRuntimeBridgePreflight(UWorld& World, TArray<FMHRuntimeBridgePreparedPlac
         Prepared.AppearanceSeed = Source->GetAppearanceSeed();
         Prepared.Transform = Source->GetActorTransform();
         if (!MHBuildRuntimeCompositeInput(*Source, Prepared.Input, Error)) return false;
+        FMHRandomSourceGraph Graph;
+        FMHResolvedCompositePlan TransportPlan;
+        if (!MHDecodeRuntimeCompositeGraph(Prepared.Input.GraphBytes, Graph, Error) ||
+            !MHResolveCompositePlan(Graph, Prepared.Seed, Prepared.AppearanceSeed, TransportPlan, Error) ||
+            !MHValidateResolvedPlacementTransforms(TransportPlan, Prepared.Transform, Error)) return false;
+        UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
+        const FMHProofResult Proof = Proofs != nullptr
+            ? Proofs->GetProofState(*Source)
+            : FMHProofResult();
+        if (Proof.State != EMHProofState::Fresh || !Proof.Plan.IsValid() ||
+            Proof.Plan->ResolvedSignature != TransportPlan.ResolvedSignature ||
+            Proof.Plan->PlacementSignature != TransportPlan.PlacementSignature)
+        {
+            Error = MHRuntimeBridgeError(
+                TEXT("transport graph diverges from proof for ") + Source->GetPathName());
+            return false;
+        }
         Out.Add(MoveTemp(Prepared));
     }
     return true;
@@ -484,9 +502,9 @@ bool MHBuildRuntimeCompositeInput(const AMHCompositeActor& Placement,
         return false;
     }
 
-    // Proof is the admission authority. This second assembly only produces the
-    // transport graph bytes and bindings consumed by the runtime module; it
-    // does not retain the former independent claim/resolve preflight path.
+    // Proof is the admission authority. This second assembly produces the
+    // transport graph bytes and bindings; preflight independently decodes and
+    // resolves those exact bytes, then compares their proof signatures.
     FMHRandomSourceGraph Graph;
     TSet<FMHResourceKey> Dependencies;
     if (!MHBuildAppliedCompositeGraph(*Asset, *Settings, Graph, Dependencies, OutError)) return false;

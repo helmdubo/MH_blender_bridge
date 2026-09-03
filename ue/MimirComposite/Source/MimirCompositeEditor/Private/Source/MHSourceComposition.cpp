@@ -160,6 +160,13 @@ void BuildAnalysisServices(
 
 } // namespace
 
+TSharedPtr<FMHProjectResourceIndex> MHPeekProjectIndex()
+{
+    return GProjectIndex.IsValid() && GProjectIndex->IsOpen()
+        ? GProjectIndex
+        : TSharedPtr<FMHProjectResourceIndex>();
+}
+
 bool MHCreateDefaultSourceAnalysisServices(
     const FString& SourceRoot,
     FMHSourceAnalysisServices& OutServices,

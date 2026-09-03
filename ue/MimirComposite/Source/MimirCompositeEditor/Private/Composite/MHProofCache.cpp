@@ -8,9 +8,9 @@
 #include "Editor.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
-#include "Index/MHProjectResourceIndex.h"
 #include "Logging/MessageLog.h"
 #include "Settings/MHCompositeSettings.h"
+#include "Source/MHSourceComposition.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/ObjectSaveContext.h"
 
@@ -105,32 +105,9 @@ struct UMHProofCacheSubsystem::FImpl
         TArray<FMHResourceKey> Dependencies;
     };
 
-    int64 OpenProjectIndex(TUniquePtr<FMHProjectResourceIndex>& OutIndex) const
-    {
-        OutIndex.Reset();
-        const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-        const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
-        if (SourceRoot.IsEmpty())
-        {
-            return 0;
-        }
-
-        TUniquePtr<FMHProjectResourceIndex> Index = MakeUnique<FMHProjectResourceIndex>(SourceRoot);
-        bool bRecreated = false;
-        FString Error;
-        if (!Index->Open(bRecreated, Error))
-        {
-            return 0;
-        }
-        const int64 Generation = Index->GetGeneration();
-        OutIndex = MoveTemp(Index);
-        return Generation;
-    }
-
     FProofKey MakeKey(
         const AMHCompositeActor& Placement,
-        const TArray<FMHResourceKey>& Dependencies,
-        const TOptional<int64> KnownProjectIndexGeneration = TOptional<int64>()) const
+        const TArray<FMHResourceKey>& Dependencies) const
     {
         FProofKey Key;
         const UMHCompositeAsset* Root = Placement.GetCompositeAsset();
@@ -145,15 +122,8 @@ struct UMHProofCacheSubsystem::FImpl
                 Key.RecipeRevision = Recipes->GetRecipeRevision(*Root);
             }
         }
-        if (KnownProjectIndexGeneration.IsSet())
-        {
-            Key.ProjectIndexGeneration = KnownProjectIndexGeneration.GetValue();
-        }
-        else
-        {
-            TUniquePtr<FMHProjectResourceIndex> Index;
-            Key.ProjectIndexGeneration = OpenProjectIndex(Index);
-        }
+        const TSharedPtr<FMHProjectResourceIndex> Index = MHPeekProjectIndex();
+        Key.ProjectIndexGeneration = Index.IsValid() ? Index->GetGeneration() : 0;
 
         if (const UMHEndpointPrototypeRegistry* Endpoints = UMHEndpointPrototypeRegistry::Get())
         {
@@ -307,8 +277,7 @@ bool UMHProofCacheSubsystem::BuildProofNow(
         return false;
     }
 
-    TUniquePtr<FMHProjectResourceIndex> ProjectIndex;
-    const int64 ProjectIndexGeneration = Impl->OpenProjectIndex(ProjectIndex);
+    const TSharedPtr<FMHProjectResourceIndex> ProjectIndex = MHPeekProjectIndex();
     TSet<FMHResourceKey> DependencySet;
     if (const FMHResourceKey RootKey = ProofRootKey(Placement); RootKey.IsCanonical())
     {
@@ -324,7 +293,7 @@ bool UMHProofCacheSubsystem::BuildProofNow(
         });
         FImpl::FCachedProof Cached;
         Cached.Dependencies = MoveTemp(Dependencies);
-        Cached.Key = Impl->MakeKey(Placement, Cached.Dependencies, ProjectIndexGeneration);
+        Cached.Key = Impl->MakeKey(Placement, Cached.Dependencies);
         Cached.Result = Result;
         Impl->Entries.Add(FObjectKey(&Placement), MoveTemp(Cached));
         Impl->Pending.RemoveAll([&Placement](const TWeakObjectPtr<const AMHCompositeActor>& Pending)

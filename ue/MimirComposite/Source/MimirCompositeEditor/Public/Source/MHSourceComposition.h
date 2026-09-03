@@ -16,6 +16,9 @@ struct MIMIRCOMPOSITEEDITOR_API FMHSourceAnalysisServices
     TUniquePtr<IMHChangeDetector> ChangeDetector;
 };
 
+/** Existing process-owned index, only when it is already valid and open. */
+MIMIRCOMPOSITEEDITOR_API TSharedPtr<FMHProjectResourceIndex> MHPeekProjectIndex();
+
 /**
  * Opens/rebuilds the project index, performs one full source/Asset Registry
  * projection, and returns indexed reader services.
