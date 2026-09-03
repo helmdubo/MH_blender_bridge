@@ -19,6 +19,8 @@ owner до merge по Acceptance 8 контракта.
   `E:\MimirComposite_R4Pre_External_20260903\HostProject.uproject`;
   stock UE 5.7.4: `D:\PersonalProjects\UE5\UE_5.7`; plugin подключён
   junction'ом к R4-pre worktree;
+- дополнительный isolated host:
+  `E:\MimirComposite_R4Pre_Isolated_20260903\MimirCompositeV5S6.uproject`;
 - основной checkout `main`, Engine, Blender addon, `golden/` и `reference/`
   не изменялись; `main` не пушился.
 
@@ -94,7 +96,7 @@ E:\MimirComposite_R4Pre_External_20260903\Saved\Logs\R4P_GREEN_COMPOSITE_01.log
 |---|---|---|
 | 1 | non-unity/no-PCH, warnings as errors | PASS — `R4P_GREEN_BUILD_NONUNITY_01.log:153760`, `Result: Succeeded` |
 | 2 | Break.*, LevelOperations, AppliedAdmission.*, Registry.*, Recipe.*, Proof.* | PASS — focused 3/3 и composite 89/89 |
-| 3 | полный generic NullRHI suite | PASS — **194/194 Success, 0 Fail**, `R4P_GREEN_FULL_01.log`; последний completed `:4865`, `TEST COMPLETE` `:4877` |
+| 3 | полный generic и isolated NullRHI suite | PASS — generic **194/194 Success, 0 Fail**, `R4P_GREEN_FULL_01.log`, последний completed `:4865`, `TEST COMPLETE` `:4877`; isolated также **194/194 Success, 0 Fail**, `R4P_ISOLATED_FULL_01.log`, последний completed `:4638`, `TEST COMPLETE` `:4650` |
 | 4 | force-unity | PASS — `R4P_GREEN_BUILD_FORCEUNITY_FINAL_01.log:6`, `Result: Succeeded` |
 | 4a | StrictIncludes | PASS — `R4P_GREEN_STRICTINCLUDES_FINAL_01.log:221`, `BUILD SUCCESSFUL`; `:223`, ExitCode 0 |
 | 5 | `git diff --check` / normative docs | PASS / PASS — `normative docs: OK` |
@@ -109,6 +111,7 @@ E:\MimirComposite_R4Pre_External_20260903\Saved\Logs\R4P_GREEN_COMPOSITE_01.log
 | final non-unity/no-PCH editor build, `-NoEngineChanges -WarningsAsErrors` | PASS — `R4P_GREEN_BUILD_NONUNITY_01.log:153760` |
 | guarded force-unity, точная команда с `-MaxParallelActions=4` | PASS — `R4P_GREEN_BUILD_FORCEUNITY_FINAL_01.log:6`; перед этим UBA достиг memory threshold при открытом owner-editor, два оставшихся unity TU безопасно достроены serial/no-UBA |
 | `BuildPlugin -StrictIncludes -DisableUnity -NoPCH -NoSharedPCH` | PASS — `R4P_GREEN_STRICTINCLUDES_FINAL_01.log:157/187/216`, все targets `Result: Succeeded`; `:221`, `BUILD SUCCESSFUL`; `:223`, ExitCode 0; package `E:\MimirComposite_R4Pre_Strict_20260903_2152_ConfigSerial` |
+| isolated `MimirCompositeV5S6Editor` build | PASS — `R4P_ISOLATED_BUILD_01.log:152`, `Result: Succeeded` |
 | `git diff --check` | PASS — `R4P_GREEN_STATIC_GATES_01.log:1` |
 | `python tools/check_normative_docs.py` | PASS — `R4P_GREEN_STATIC_GATES_01.log:3–4`, `normative docs: OK` |
 | тесты не менялись | PASS — `R4P_GREEN_STATIC_GATES_01.log:8`, diff от `8e6ab13` по `MimirCompositeTests/**` пуст |
@@ -126,6 +129,11 @@ Grep-гейт среза выполнен по Break-функции и её coll
 `MHCompositePlacementCompiler.cpp` `RF_Transactional` — 0. Одноимённые
 proof-вызовы в `BuildComposite` не относятся к Break и контрактом не менялись.
 Числа grep-гейта записаны в `R4P_GREEN_STATIC_GATES_01.log:5–8`.
+
+Оба разрешённых isolated pre-existing исключения в этом host не проявились:
+`Lifecycle.NoBuildBeforeRegistration` — Success
+(`R4P_ISOLATED_FULL_01.log:3607`), `Seed.AppearanceMigration` — Success
+(`:3995`). Break-тесты в isolated suite — Success на строках 3238/3249/3262.
 
 ## 6. Undo и путь дублей
 
