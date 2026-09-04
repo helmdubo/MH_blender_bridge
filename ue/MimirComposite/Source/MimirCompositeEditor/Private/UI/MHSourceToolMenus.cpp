@@ -16,6 +16,7 @@
 #include "Index/MHProjectResourceIndex.h"
 #include "LevelEditorMenuContext.h"
 #include "Logging/MessageLog.h"
+#include "Material/MHMaterialClipboard.h"
 #include "Material/MHMaterialDocumentExport.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -841,6 +842,84 @@ void ExecuteFindBrokenReferences(const FToolMenuContext&) { ExecuteDiagnosticVie
 void ExecuteFindOrphans(const FToolMenuContext&) { ExecuteDiagnosticView(EMHDiagnosticView::Orphans); }
 
 /**
+ * Owner workflow (2026-09-03): move live Material Instance state from a donor
+ * asset to other instances without going through source documents. The donor
+ * may predate the MH source protocol and have a parent outside MasterRoot,
+ * which no export path can represent.
+ */
+void ExecuteCopyMaterialData(const FToolMenuContext& MenuContext)
+{
+    const UContentBrowserAssetContextMenuContext* Context =
+        UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext);
+    TArray<UMaterialInstanceConstant*> Materials = Context != nullptr
+        ? Context->LoadSelectedObjects<UMaterialInstanceConstant>()
+        : TArray<UMaterialInstanceConstant*>();
+    Materials.Remove(nullptr);
+    TArray<FString> Warnings;
+    FString Error;
+    if (Materials.Num() != 1)
+    {
+        Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select exactly one Material Instance to copy");
+    }
+    else if (!MHCopyMaterialDataToClipboard(*Materials[0], Warnings, Error))
+    {
+        // Error already carries the machine-readable code.
+    }
+    NotifyOperation(
+        LOCTEXT("CopyMaterialDataPage", "Copy MH Material Data"),
+        FText::Format(
+            LOCTEXT("CopyMaterialDataResult", "Copied material data from {0}"),
+            FText::FromString(MHGetMaterialClipboardSourceLabel())),
+        Warnings,
+        Error);
+}
+
+void ExecutePasteMaterialData(const FToolMenuContext& MenuContext)
+{
+    const UContentBrowserAssetContextMenuContext* Context =
+        UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext);
+    TArray<UMaterialInstanceConstant*> Materials = Context != nullptr
+        ? Context->LoadSelectedObjects<UMaterialInstanceConstant>()
+        : TArray<UMaterialInstanceConstant*>();
+    Materials.Remove(nullptr);
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    TArray<FString> AllWarnings;
+    FString Error;
+    int32 Count = 0;
+    if (Materials.IsEmpty())
+    {
+        Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select one or more Material Instances to paste into");
+    }
+    else if (Settings != nullptr)
+    {
+        for (UMaterialInstanceConstant* Material : Materials)
+        {
+            TArray<FString> Warnings;
+            FString ItemError;
+            if (MHPasteMaterialDataFromClipboard(*Material, *Settings, Warnings, ItemError))
+            {
+                ++Count;
+            }
+            else
+            {
+                Error += FString::Printf(TEXT("%s: %s\n"), *Material->GetPathName(), *ItemError);
+            }
+            for (const FString& Warning : Warnings)
+            {
+                AllWarnings.Add(Material->GetPathName() + TEXT(": ") + Warning);
+            }
+        }
+    }
+    NotifyOperation(
+        LOCTEXT("PasteMaterialDataPage", "Paste MH Material Data"),
+        FText::Format(
+            LOCTEXT("PasteMaterialDataResult", "Pasted material data into {0} Material Instances; save them to keep the change"),
+            FText::AsNumber(Count)),
+        AllWarnings,
+        Error);
+}
+
+/**
  * Owner workflow (2026-09-03): after exporting one MI into another managed
  * material's source document, the target MI is refreshed from its source
  * without leaving the Content Browser. Same coordinator as Import Changed,
@@ -1487,6 +1566,28 @@ void MHRegisterS6ToolMenus()
                     LOCTEXT("PublishMaterialTip", "Full-overwrite the selected .material documents from their live Material Instances."),
                     FSlateIcon(),
                     Action);
+                FToolUIAction CopyAction;
+                CopyAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecuteCopyMaterialData);
+                DynamicSection.AddMenuEntry(
+                    TEXT("MHCopyMaterialData"),
+                    LOCTEXT("CopyMaterialData", "Copy MH Material Data"),
+                    LOCTEXT(
+                        "CopyMaterialDataTip",
+                        "Copy the parent material, parameter overrides and static state of the selected Material Instance into the MH buffer."),
+                    FSlateIcon(),
+                    CopyAction);
+                FToolUIAction PasteAction;
+                PasteAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecutePasteMaterialData);
+                PasteAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateLambda(
+                    [](const FToolMenuContext&) { return MHHasMaterialClipboardData(); });
+                DynamicSection.AddMenuEntry(
+                    TEXT("MHPasteMaterialData"),
+                    LOCTEXT("PasteMaterialData", "Paste MH Material Data"),
+                    LOCTEXT(
+                        "PasteMaterialDataTip",
+                        "Overwrite the selected Material Instances with the buffered parent, parameter overrides and static state."),
+                    FSlateIcon(),
+                    PasteAction);
                 FToolUIAction UpdateAction;
                 UpdateAction.ExecuteAction =
                     FToolMenuExecuteAction::CreateStatic(&ExecuteUpdateMaterialsFromSource);
