@@ -3,6 +3,7 @@
 #include "Engine/Texture.h"
 #include "Material/MHMaterialImporter.h"
 #include "Material/MHMaterialSourceData.h"
+#include "MaterialShared.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "ScopedTransaction.h"
 #include "Settings/MHCompositeSettings.h"
@@ -147,44 +148,52 @@ bool MHPasteMaterialDataFromClipboard(
 
     const FScopedTransaction Transaction(LOCTEXT("PasteMaterialData", "Paste MH Material Data"));
     Material.Modify();
-    // Same order as the Material Instance editor (UMaterialEditorInstanceConstant):
-    // the parent is swapped with a shader recache, then one parameter update
-    // context clears every override, receives the values and rebuilds the static
-    // permutation once when it closes. Mutating the instance in any other order
-    // left the render thread reading resources of the previous parent
-    // (owner crash 2026-09-04, EXCEPTION_ACCESS_VIOLATION in D3D12RHI).
-    Material.SetParentEditorOnly(Parent);
+    // A parent swap plus a static-permutation change is only safe inside a
+    // FMaterialUpdateContext: its constructor syncs with the rendering thread and
+    // drops the render state of every component, its destructor updates the
+    // material resources and re-registers them. Without it the render thread kept
+    // reading resources of the previous parent (owner crash 2026-09-04,
+    // EXCEPTION_ACCESS_VIOLATION in D3D12RHI). This mirrors
+    // UMaterialEditorInstanceConstant::UpdateSourceInstanceParent.
     {
-        FMaterialInstanceParameterUpdateContext UpdateContext(&Material, EMaterialInstanceClearParameterFlag::All);
-        FStaticParameterSet& StaticParameters = UpdateContext.GetStaticParameters();
-        StaticParameters.StaticSwitchParameters = GClipboard.StaticSwitches;
-        StaticParameters.EditorOnly.StaticComponentMaskParameters = GClipboard.StaticComponentMasks;
-        UpdateContext.SetBasePropertyOverrides(GClipboard.BaseOverrides);
-        for (const TPair<FMaterialParameterInfo, float>& Scalar : GClipboard.Scalars)
+        FMaterialUpdateContext UpdateContext;
+        // Inside it, the editor's own order: swap the parent with a shader recache,
+        // then one parameter context that clears every override, receives the values
+        // and rebuilds the static permutation once when it closes.
+        Material.SetParentEditorOnly(Parent);
         {
-            Material.SetScalarParameterValueEditorOnly(Scalar.Key, Scalar.Value);
-        }
-        for (const TPair<FMaterialParameterInfo, FLinearColor>& Vector : GClipboard.Vectors)
-        {
-            Material.SetVectorParameterValueEditorOnly(Vector.Key, Vector.Value);
-        }
-        for (const TPair<FMaterialParameterInfo, FSoftObjectPath>& Texture : GClipboard.Textures)
-        {
-            UTexture* Object = Texture.Value.IsNull() ? nullptr : Cast<UTexture>(Texture.Value.TryLoad());
-            if (Object == nullptr)
+            FMaterialInstanceParameterUpdateContext ParameterContext(&Material, EMaterialInstanceClearParameterFlag::All);
+            FStaticParameterSet& StaticParameters = ParameterContext.GetStaticParameters();
+            StaticParameters.StaticSwitchParameters = GClipboard.StaticSwitches;
+            StaticParameters.EditorOnly.StaticComponentMaskParameters = GClipboard.StaticComponentMasks;
+            ParameterContext.SetBasePropertyOverrides(GClipboard.BaseOverrides);
+            for (const TPair<FMaterialParameterInfo, float>& Scalar : GClipboard.Scalars)
             {
-                // A null texture override is never written: the renderer would
-                // have to substitute for it. The slot falls back to the parent.
-                OutWarnings.Add(FString::Printf(
-                    TEXT("texture override '%s' left at the parent value: %s"),
-                    *Texture.Key.Name.ToString(),
-                    Texture.Value.IsNull() ? TEXT("the donor had no texture there") : *Texture.Value.ToString()));
-                continue;
+                Material.SetScalarParameterValueEditorOnly(Scalar.Key, Scalar.Value);
             }
-            Material.SetTextureParameterValueEditorOnly(Texture.Key, Object);
+            for (const TPair<FMaterialParameterInfo, FLinearColor>& Vector : GClipboard.Vectors)
+            {
+                Material.SetVectorParameterValueEditorOnly(Vector.Key, Vector.Value);
+            }
+            for (const TPair<FMaterialParameterInfo, FSoftObjectPath>& Texture : GClipboard.Textures)
+            {
+                UTexture* Object = Texture.Value.IsNull() ? nullptr : Cast<UTexture>(Texture.Value.TryLoad());
+                if (Object == nullptr)
+                {
+                    // A null texture override is never written: the renderer would
+                    // have to substitute for it. The slot falls back to the parent.
+                    OutWarnings.Add(FString::Printf(
+                        TEXT("texture override '%s' left at the parent value: %s"),
+                        *Texture.Key.Name.ToString(),
+                        Texture.Value.IsNull() ? TEXT("the donor had no texture there") : *Texture.Value.ToString()));
+                    continue;
+                }
+                Material.SetTextureParameterValueEditorOnly(Texture.Key, Object);
+            }
         }
+        Material.PostEditChange();
+        UpdateContext.AddMaterialInstance(&Material);
     }
-    Material.PostEditChange();
     Material.MarkPackageDirty();
 
     // A managed target now differs from its .material source. Say so, and say
