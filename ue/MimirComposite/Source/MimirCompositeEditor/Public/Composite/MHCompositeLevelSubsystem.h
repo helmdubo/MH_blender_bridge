@@ -1,5 +1,6 @@
 #pragma once
 
+class UMHCompositeSettings;
 #include "Composite/MHCompositeProtocol.h"
 #include "CoreMinimal.h"
 #include "EditorSubsystem.h"
@@ -20,6 +21,29 @@ struct FMHCompositeAdoptTarget;
  * Source documents remain authoritative; all scene objects produced here are
  * either managed endpoints or the one persisted AMHCompositeActor row.
  */
+namespace UE::MimirComposite
+{
+struct FMHCompositeDocument;
+
+/**
+ * Pure Build preflight (R4-pre-2, owner decision 2026-09-04): assembles the
+ * recipe document for the selection exactly as BuildComposite would (pivot =
+ * selection AABB centre, one node per actor) and reports, one line per actor
+ * and per item, every piece of selected state the recipe grammar cannot carry:
+ * a child composite's Seed/AppearanceSeed (its random subtree re-rolls under
+ * the new parent), a StaticMeshActor's material overrides and custom primitive
+ * data, an Actor leaf's instance properties. Warnings never refuse; only
+ * unrepresentable objects (transform, unmanaged mesh) return false with
+ * MH_E_UNREPRESENTABLE_SCENE_OBJECT. Touches neither source root nor the scene.
+ */
+MIMIRCOMPOSITEEDITOR_API bool MHPreflightBuildComposite(
+    const TArray<AActor*>& Actors,
+    const UMHCompositeSettings& Settings,
+    FMHCompositeDocument& OutDocument,
+    TArray<FString>& OutWarnings,
+    FString& OutError);
+} // namespace UE::MimirComposite
+
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHCompositeLevelSubsystem final : public UEditorSubsystem
 {

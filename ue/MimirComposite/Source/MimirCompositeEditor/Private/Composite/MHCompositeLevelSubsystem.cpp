@@ -385,6 +385,45 @@ void MHDestroySpawnedActors(const TArray<AActor*>& Actors)
 
 using namespace UE::MimirComposite;
 
+bool UE::MimirComposite::MHPreflightBuildComposite(
+    const TArray<AActor*>& Actors,
+    const UMHCompositeSettings& Settings,
+    FMHCompositeDocument& OutDocument,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    // R4-pre-2 red stub: document assembly as BuildComposite does it today;
+    // the executor adds the lost-state warnings and routes BuildComposite
+    // through this preflight.
+    OutDocument = FMHCompositeDocument();
+    OutWarnings.Reset();
+    OutError.Reset();
+    TArray<FString> Reasons;
+    const FBox Bounds = MHSelectionBounds(Actors);
+    if (!Bounds.IsValid || Bounds.GetCenter().ContainsNaN()) Reasons.Add(TEXT("selection has no finite world AABB"));
+    const FTransform Pivot(FQuat::Identity, Bounds.IsValid ? Bounds.GetCenter() : FVector::ZeroVector);
+    for (AActor* Actor : Actors)
+    {
+        if (Actor == nullptr) { Reasons.Add(TEXT("<null>: selection contains a null actor")); continue; }
+        FMHCompositeNode Node;
+        FString Reason;
+        if (!MHBuildNodeForActor(*Actor, Pivot, Settings, Node, Reason))
+        {
+            Reasons.Add(FString::Printf(TEXT("%s: %s"), *Actor->GetPathName(), *Reason));
+        }
+        else
+        {
+            OutDocument.Nodes.Add(MoveTemp(Node));
+        }
+    }
+    if (!Reasons.IsEmpty())
+    {
+        OutError = FString::Printf(TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT: %s"), *FString::Join(Reasons, TEXT("; ")));
+        return false;
+    }
+    return true;
+}
+
 bool UMHCompositeLevelSubsystem::BuildComposite(
     const TArray<AActor*>& Actors,
     const FMHCompositeAdoptTarget& AdoptTarget,
