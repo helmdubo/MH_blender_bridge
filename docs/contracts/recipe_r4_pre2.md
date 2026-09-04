@@ -14,7 +14,7 @@ resolver) — срез R4-pre-3, близнец.
 
 ## Что уже есть в ветке (не переписывать)
 
-Ветка `recipe/r4-pre2-build-break-preserve` от `origin/main`. Red-коммит близнеца:
+Ветка `recipe/r4-pre2-build-break-preserve` от `origin/main` (`ad6d206`). Red-коммит близнеца `511d0ba`:
 
 - `Public/Composite/MHCompositeLevelSubsystem.h` — API-контракт: свободная
   функция `UE::MimirComposite::MHPreflightBuildComposite(Actors, Settings,
