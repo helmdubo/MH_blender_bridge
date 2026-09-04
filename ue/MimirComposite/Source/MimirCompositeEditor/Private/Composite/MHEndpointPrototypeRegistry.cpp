@@ -231,6 +231,14 @@ void UMHEndpointPrototypeRegistry::InvalidateAll()
     }
 }
 
+FMHEndpointInterfaceDelta UMHEndpointPrototypeRegistry::GetLastInterfaceDelta(const FMHResourceKey& Key) const
+{
+    // R3a red stub: the executor computes the five hashes/revisions in Admit and
+    // the delta against the previous Ready admission.
+    static_cast<void>(Key);
+    return FMHEndpointInterfaceDelta();
+}
+
 uint32 UMHEndpointPrototypeRegistry::GetRevision(const FMHResourceKey& Key) const
 {
     const FMHEndpointPrototype* Prototype = Prototypes.Find(Key);
