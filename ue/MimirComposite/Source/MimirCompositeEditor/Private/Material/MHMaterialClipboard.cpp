@@ -147,37 +147,42 @@ bool MHPasteMaterialDataFromClipboard(
 
     const FScopedTransaction Transaction(LOCTEXT("PasteMaterialData", "Paste MH Material Data"));
     Material.Modify();
-    Material.SetParentEditorOnly(Parent, false);
-    Material.ClearParameterValuesEditorOnly();
-
-    // Static state first: it recompiles the permutation the value overrides
-    // below are applied to. A minimal set replaces the target's static state
-    // wholesale, so nothing of the previous material survives the paste.
-    FStaticParameterSet StaticParameters;
-    StaticParameters.StaticSwitchParameters = GClipboard.StaticSwitches;
-    StaticParameters.EditorOnly.StaticComponentMaskParameters = GClipboard.StaticComponentMasks;
-    FMaterialInstanceBasePropertyOverrides BaseOverrides = GClipboard.BaseOverrides;
-    Material.UpdateStaticPermutation(StaticParameters, BaseOverrides);
-
-    for (const TPair<FMaterialParameterInfo, float>& Scalar : GClipboard.Scalars)
+    // Same order as the Material Instance editor (UMaterialEditorInstanceConstant):
+    // the parent is swapped with a shader recache, then one parameter update
+    // context clears every override, receives the values and rebuilds the static
+    // permutation once when it closes. Mutating the instance in any other order
+    // left the render thread reading resources of the previous parent
+    // (owner crash 2026-09-04, EXCEPTION_ACCESS_VIOLATION in D3D12RHI).
+    Material.SetParentEditorOnly(Parent);
     {
-        Material.SetScalarParameterValueEditorOnly(Scalar.Key, Scalar.Value);
-    }
-    for (const TPair<FMaterialParameterInfo, FLinearColor>& Vector : GClipboard.Vectors)
-    {
-        Material.SetVectorParameterValueEditorOnly(Vector.Key, Vector.Value);
-    }
-    for (const TPair<FMaterialParameterInfo, FSoftObjectPath>& Texture : GClipboard.Textures)
-    {
-        UTexture* Object = Texture.Value.IsNull() ? nullptr : Cast<UTexture>(Texture.Value.TryLoad());
-        if (Object == nullptr && !Texture.Value.IsNull())
+        FMaterialInstanceParameterUpdateContext UpdateContext(&Material, EMaterialInstanceClearParameterFlag::All);
+        FStaticParameterSet& StaticParameters = UpdateContext.GetStaticParameters();
+        StaticParameters.StaticSwitchParameters = GClipboard.StaticSwitches;
+        StaticParameters.EditorOnly.StaticComponentMaskParameters = GClipboard.StaticComponentMasks;
+        UpdateContext.SetBasePropertyOverrides(GClipboard.BaseOverrides);
+        for (const TPair<FMaterialParameterInfo, float>& Scalar : GClipboard.Scalars)
         {
-            OutWarnings.Add(FString::Printf(
-                TEXT("texture override '%s' is unset: %s is unavailable"),
-                *Texture.Key.Name.ToString(),
-                *Texture.Value.ToString()));
+            Material.SetScalarParameterValueEditorOnly(Scalar.Key, Scalar.Value);
         }
-        Material.SetTextureParameterValueEditorOnly(Texture.Key, Object);
+        for (const TPair<FMaterialParameterInfo, FLinearColor>& Vector : GClipboard.Vectors)
+        {
+            Material.SetVectorParameterValueEditorOnly(Vector.Key, Vector.Value);
+        }
+        for (const TPair<FMaterialParameterInfo, FSoftObjectPath>& Texture : GClipboard.Textures)
+        {
+            UTexture* Object = Texture.Value.IsNull() ? nullptr : Cast<UTexture>(Texture.Value.TryLoad());
+            if (Object == nullptr)
+            {
+                // A null texture override is never written: the renderer would
+                // have to substitute for it. The slot falls back to the parent.
+                OutWarnings.Add(FString::Printf(
+                    TEXT("texture override '%s' left at the parent value: %s"),
+                    *Texture.Key.Name.ToString(),
+                    Texture.Value.IsNull() ? TEXT("the donor had no texture there") : *Texture.Value.ToString()));
+                continue;
+            }
+            Material.SetTextureParameterValueEditorOnly(Texture.Key, Object);
+        }
     }
     Material.PostEditChange();
     Material.MarkPackageDirty();

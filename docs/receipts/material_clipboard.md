@@ -78,7 +78,28 @@ donor static switch», причина в `GetStaticParameterValues` (фильт�
 3. Если нужен и исходник: цель должна иметь parent под `MasterRoot`; тогда
    **Publish Material to MH Source** запишет `.material`.
 
-## 5. Вопросы
+## 5. Инцидент 2026-09-04: краш при paste в портфолио
+
+`EXCEPTION_ACCESS_VIOLATION reading 0xffffffffffffffff`, стек целиком в
+`D3D12RHI`/`Renderer` — рендер-тред читал ресурсы материала, разрушенные во
+время вставки. Причина в последовательности первой версии paste:
+`SetParentEditorOnly(Parent, /*RecacheShader*/ false)` → `Clear…` →
+`UpdateStaticPermutation` → значения: инстанс менял parent без пересборки
+шейдеров, а пермутация собиралась до значений. На хосте в NullRHI и даже под
+D3D12 автотест не воспроизводит краш: у синтетических материалов нет живых
+render-прокси, только у реальных ассетов открытого редактора.
+
+Исправление — движковая последовательность редактора инстансов
+(`UMaterialEditorInstanceConstant`): `SetParentEditorOnly(Parent)` с recache,
+затем один `FMaterialInstanceParameterUpdateContext(All)`: очистка в
+конструкторе, значения, base overrides и static-набор через
+`GetStaticParameters()`, `UpdateStaticPermutation` один раз в деструкторе.
+Null-текстуры донора не записываются (слот остаётся родительским, есть
+предупреждение). Проверка: `Mimir.V4/V5.Material` 18/18 (NullRHI),
+`ClipboardCopyPaste` Success под D3D12 (`MATCLIP4_RHI.log`); подтверждение
+на реальной сцене — за owner.
+
+## 6. Вопросы
 
 Открытых нет. Перенос material layers и редких типов параметров не
 реализован осознанно (предупреждение вместо тихой потери); при необходимости —
