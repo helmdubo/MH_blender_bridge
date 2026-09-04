@@ -24,6 +24,7 @@
 | Документ | Роль |
 | --- | --- |
 | `docs/reference_notes/dagor_composit_research.md` | исследование модели Dagor composite (evidence/research) |
+| `docs/reference_notes/dagor_composit_ue5_audit_20260904.md` | исследование Dagor composit и аудит MimirComposite на c5a951b: Build/Break, состояние экземпляров, preview/runtime, направления развития (evidence/research) |
 | `docs/reference_notes/external_audit_recipe_model_20260902.md` | внешний аудит Recipe Model v1 (evidence/research) |
 | `docs/reference_notes/external_audit_recipe_model_v2_20260902.md` | внешний аудит KICKOFF v2 (второй аудит, evidence/research); решения Lead по нему — `docs/archive/D0b_kickoff_v2_1_amendments.md` |
 | `docs/reference_notes/dag4blend_random_overlay.md` | исследование dag4blend random overlay (evidence/research) |
