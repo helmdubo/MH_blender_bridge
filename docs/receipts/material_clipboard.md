@@ -29,11 +29,12 @@ library asset`. Смягчение extract от 2026-09-03 (PR #95) сняло �
   `CopyMaterialUniformParametersEditorOnly` не используется: он разворачивает
   всю иерархию и записал бы в целевой MI все параметры базового материала.
 - Ассеты хранятся как `FSoftObjectPath`, буфер ничего не рутит и переживает GC.
-- `MHPasteMaterialDataFromClipboard` в одной транзакции (`Ctrl+Z` работает):
-  `Modify` → `SetParentEditorOnly` → `ClearParameterValuesEditorOnly` →
-  `UpdateStaticPermutation` (минимальный набор заменяет static-состояние
-  целиком) → значения параметров → `PostEditChange` + `MarkPackageDirty`.
-  Пакет не сохраняется: сохранение остаётся за пользователем.
+- `MHPasteMaterialDataFromClipboard` в одной транзакции (`Ctrl+Z` работает),
+  в порядке редактора инстансов (см. §5): `Modify` → `SetParentEditorOnly`
+  с recache → `FMaterialInstanceParameterUpdateContext(All)` (очистка, значения
+  параметров, base overrides, static-набор; `UpdateStaticPermutation` один раз
+  при закрытии контекста) → `PostEditChange` + `MarkPackageDirty`. Пакет не
+  сохраняется: сохранение остаётся за пользователем.
 - Категории, которые буфер не несёт (double vector, font, texture collection,
   RVT, sparse volume, parameter collection, atlas-скаляры, material layers),
   перечисляются предупреждениями — молчаливой потери нет.
