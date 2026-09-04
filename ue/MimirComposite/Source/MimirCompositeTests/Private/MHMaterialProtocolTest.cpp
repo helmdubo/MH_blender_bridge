@@ -16,6 +16,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "Modules/ModuleManager.h"
 #include "ObjectTools.h"
 #include "Serialization/JsonReader.h"
@@ -1323,6 +1324,15 @@ bool FMHMaterialManagedRoundTripTest::RunTest(const FString& Parameters)
 
 bool FMHMaterialAppliedParentReceiptsTest::RunTest(const FString& Parameters)
 {
+    // Adoption deliberately gives these assets a logical name different from
+    // their package name. They are valid for the publish assertions below but
+    // must not leak into later tests that validate all generated asset claims.
+    ON_SCOPE_EXIT
+    {
+        MHShutdownProjectIndex();
+        DeleteTestAssetPackage(TEXT("/Game/MH/Generated/Materials/s2_open9_class_adopt_asset"));
+        DeleteTestAssetPackage(TEXT("/Game/MH/Generated/Materials/s2_open9_library_adopt_asset"));
+    };
     const FString SourceRoot = FPaths::ConvertRelativePathToFull(
         FPaths::ProjectSavedDir(),
         TEXT("Mimir/MaterialAppliedParentReceipts"));

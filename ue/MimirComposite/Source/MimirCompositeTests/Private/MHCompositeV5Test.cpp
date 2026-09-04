@@ -20,6 +20,8 @@
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
+#include "ObjectTools.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -28,6 +30,7 @@
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceAnalyzer.h"
+#include "Source/MHSourceComposition.h"
 #include "Source/MHSourceResolver.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/Package.h"
@@ -472,6 +475,22 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FMHCompositeImportPublishReceiptTest::RunTest(const FString& Parameters)
 {
+    const FString TestPackageName = TEXT("/Game/MH/Generated/Composites/ue_s3_roundtrip");
+    // The adoption assertions below intentionally change the logical name on
+    // this same UObject. Do not leak that mismatched generated asset identity
+    // into later tests that validate all managed claims in the project.
+    ON_SCOPE_EXIT
+    {
+        MHShutdownProjectIndex();
+        const FString ObjectPath = TestPackageName + TEXT(".ue_s3_roundtrip");
+        if (UObject* Asset = StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath))
+        {
+            ObjectTools::DeleteSingleObject(Asset, false);
+        }
+        if (UPackage* Package = FindPackage(nullptr, *TestPackageName)) Package->SetDirtyFlag(false);
+        IFileManager::Get().Delete(*FPackageName::LongPackageNameToFilename(
+            TestPackageName, FPackageName::GetAssetPackageExtension()), false, true, true);
+    };
     const FString SourceRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("MimirCompositeTests/import_publish"));
     IFileManager::Get().MakeDirectory(*SourceRoot, true);
     const FString SourcePath = FPaths::Combine(SourceRoot, TEXT("ue_s3_roundtrip.composite"));

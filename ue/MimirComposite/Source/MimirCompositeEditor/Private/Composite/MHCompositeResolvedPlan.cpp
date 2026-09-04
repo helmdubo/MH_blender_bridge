@@ -238,6 +238,14 @@ struct FAppliedPlanBuilder
         if (!AddHash(Key, Receipt->SourceHash)) return false;
         FMHMaterialDocument Document;
         if (!MHExtractMaterialV4(*MaterialObject, Settings, Document, Error)) return false;
+        if (Document.Mode == EMHMaterialMode::UnrealInstance)
+        {
+            // The material source hash already includes the retained UE state
+            // and explicit asset paths. Those textures are ordinary project
+            // dependencies, not source-root texture:<logical-name> endpoints.
+            Finished.Add(Key.ToString());
+            return true;
+        }
         TArray<FString> TextureNames;
         Document.Textures.GenerateValueArray(TextureNames);
         TextureNames.Sort();

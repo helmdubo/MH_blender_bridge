@@ -7,6 +7,8 @@
 #include "HAL/FileManager.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Material/MHMaterialSourceData.h"
+#include "Material/MHUnrealMaterialDocument.h"
+#include "MaterialShared.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -22,6 +24,7 @@
 #include "Texture/MHTextureImporter.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
+#include "UObject/SoftObjectPath.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialPublish, Display, All);
 DEFINE_LOG_CATEGORY_STATIC(LogMHMaterialImport, Display, All);
@@ -75,6 +78,10 @@ FString ParentPackageName(const FString& Root, const FString& Token)
 
 FString AppliedParentReceipt(const FMHMaterialDocument& Document)
 {
+    if (Document.Mode == EMHMaterialMode::UnrealInstance)
+    {
+        return TEXT("ue_instance:") + Document.Parent;
+    }
     return FString(Document.Mode == EMHMaterialMode::Class ? TEXT("class:") : TEXT("library:")) + Document.Parent;
 }
 
@@ -108,6 +115,31 @@ UMaterialInterface* LoadParent(const FString& Root, const FString& Token, FStrin
         OutError = FString::Printf(
             TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: parent registry entry does not resolve: %s"),
             *ObjectPath);
+    }
+    return Parent;
+}
+
+UMaterialInterface* LoadDocumentParent(
+    const FMHMaterialDocument& Document,
+    const UMHCompositeSettings& Settings,
+    FString& OutError)
+{
+    if (Document.Mode != EMHMaterialMode::UnrealInstance)
+    {
+        return LoadParent(
+            Document.Mode == EMHMaterialMode::Class ? Settings.MasterRoot : Settings.LibraryRoot,
+            Document.Parent,
+            OutError);
+    }
+
+    const FSoftObjectPath ParentPath(Document.Parent);
+    UMaterialInterface* Parent = ParentPath.IsValid() && ParentPath.GetSubPathUtf8String().IsEmpty()
+        ? Cast<UMaterialInterface>(ParentPath.TryLoad()) : nullptr;
+    if (Parent == nullptr)
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_MATERIAL_NOT_ROUNDTRIPPABLE: Unreal instance parent does not resolve: %s"),
+            *Document.Parent);
     }
     return Parent;
 }
@@ -191,6 +223,12 @@ bool ResolveTextures(
     FString& OutError)
 {
     OutTextures.Reset();
+    // UE-instance texture references are project object paths, resolved by its
+    // material adapter. They are not texture:<logical-name> source resources.
+    if (Document.Mode == EMHMaterialMode::UnrealInstance)
+    {
+        return true;
+    }
     TSet<FString> Unique;
     for (const TPair<int32, FString>& Pair : Document.Textures)
     {
@@ -391,7 +429,7 @@ bool MHValidateMaterialAdoptTarget(
     return true;
 }
 
-bool MHExtractMaterialV4(
+static bool ExtractLegacyMaterialV4(
     const UMaterialInstanceConstant& Material,
     const UMHCompositeSettings& Settings,
     FMHMaterialDocument& OutDocument,
@@ -497,6 +535,38 @@ bool MHExtractMaterialV4(
     return MHWriteCanonicalMaterialV4(OutDocument, Ignored, OutError);
 }
 
+bool MHExtractMaterialV4(
+    const UMaterialInstanceConstant& Material,
+    const UMHCompositeSettings& Settings,
+    FMHMaterialDocument& OutDocument,
+    FString& OutError,
+    TArray<FString>* OutWarnings)
+{
+    const UMHMaterialSourceData* Receipt = GetSourceData(Material);
+    if (Receipt != nullptr && Receipt->AppliedParent.StartsWith(
+            TEXT("ue_instance:"), ESearchCase::CaseSensitive))
+    {
+        // Keep full-state documents in their source mode even if their parent
+        // also happens to be registered as a class or library material.
+        return MHExtractUnrealMaterialV1(Material, OutDocument, OutError);
+    }
+    return ExtractLegacyMaterialV4(Material, Settings, OutDocument, OutError, OutWarnings);
+}
+
+static bool ExtractAppliedMaterialDocument(
+    const UMaterialInstanceConstant& Material,
+    const UMHCompositeSettings& Settings,
+    const EMHMaterialMode SourceMode,
+    FMHMaterialDocument& OutDocument,
+    FString& OutError)
+{
+    // A new probe has no receipt; a reimported target still has the previous
+    // receipt. Source mode must control both round-trip checks before stamping.
+    return SourceMode == EMHMaterialMode::UnrealInstance
+        ? MHExtractUnrealMaterialV1(Material, OutDocument, OutError)
+        : ExtractLegacyMaterialV4(Material, Settings, OutDocument, OutError, nullptr);
+}
+
 bool MHApplyMaterialV4(
     UMaterialInstanceConstant& Material,
     UMaterialInterface& Parent,
@@ -505,6 +575,10 @@ bool MHApplyMaterialV4(
     FString& OutError)
 {
     OutError.Reset();
+    if (Document.Mode == EMHMaterialMode::UnrealInstance)
+    {
+        return MHApplyUnrealMaterialV1(Material, Parent, Document, OutError);
+    }
     if (Document.Mode == EMHMaterialMode::Library &&
         (Document.bHasTwoSided || !Document.Textures.IsEmpty() || !Document.Params.IsEmpty()))
     {
@@ -523,50 +597,59 @@ bool MHApplyMaterialV4(
     }
 
     Material.Modify();
-    Material.ClearParameterValuesEditorOnly();
-    Material.SetParentEditorOnly(&Parent);
-    FMaterialInstanceBasePropertyOverrides Overrides;
-    if (Document.Mode == EMHMaterialMode::Class && Document.bHasTwoSided)
     {
-        Overrides.bOverride_TwoSided = true;
-        Overrides.TwoSided = Document.bTwoSided;
-    }
-    FStaticParameterSet EmptyStaticParameters;
-    Material.UpdateStaticPermutation(EmptyStaticParameters, Overrides);
-    if (Document.Mode == EMHMaterialMode::Class)
-    {
-        TArray<FString> ParamNames;
-        Document.Params.GenerateKeyArray(ParamNames);
-        ParamNames.Sort();
-        for (const FString& Name : ParamNames)
+        // Parent and static-permutation changes must detach existing render
+        // proxies until the entire replacement has completed (clipboard fix).
+        FMaterialUpdateContext UpdateContext;
+        Material.SetParentEditorOnly(&Parent);
         {
-            const FMHMaterialParameter& Parameter = Document.Params.FindChecked(Name);
-            const FMaterialParameterInfo Info{FName(*Name)};
-            if (Parameter.bString || Parameter.bBool)
+            FMaterialInstanceParameterUpdateContext ParameterContext(
+                &Material, EMaterialInstanceClearParameterFlag::All);
+            FMaterialInstanceBasePropertyOverrides Overrides;
+            if (Document.Mode == EMHMaterialMode::Class && Document.bHasTwoSided)
             {
-                continue;
+                Overrides.bOverride_TwoSided = true;
+                Overrides.TwoSided = Document.bTwoSided;
             }
-            if (Parameter.bVector)
+            ParameterContext.SetBasePropertyOverrides(Overrides);
+            if (Document.Mode == EMHMaterialMode::Class)
             {
-                Material.SetVectorParameterValueEditorOnly(
-                    Info,
-                    FLinearColor(Parameter.Vector.X, Parameter.Vector.Y, Parameter.Vector.Z, Parameter.Vector.W));
-            }
-            else
-            {
-                Material.SetScalarParameterValueEditorOnly(Info, Parameter.Scalar);
+                TArray<FString> ParamNames;
+                Document.Params.GenerateKeyArray(ParamNames);
+                ParamNames.Sort();
+                for (const FString& Name : ParamNames)
+                {
+                    const FMHMaterialParameter& Parameter = Document.Params.FindChecked(Name);
+                    const FMaterialParameterInfo Info{FName(*Name)};
+                    if (Parameter.bString || Parameter.bBool)
+                    {
+                        continue;
+                    }
+                    if (Parameter.bVector)
+                    {
+                        Material.SetVectorParameterValueEditorOnly(
+                            Info,
+                            FLinearColor(Parameter.Vector.X, Parameter.Vector.Y, Parameter.Vector.Z, Parameter.Vector.W));
+                    }
+                    else
+                    {
+                        Material.SetScalarParameterValueEditorOnly(Info, Parameter.Scalar);
+                    }
+                }
+                TArray<int32> Slots;
+                Document.Textures.GenerateKeyArray(Slots);
+                Slots.Sort();
+                for (const int32 Slot : Slots)
+                {
+                    const FString& Token = Document.Textures.FindChecked(Slot);
+                    Material.SetTextureParameterValueEditorOnly(
+                        FMaterialParameterInfo(FName(*FString::Printf(TEXT("tex%d"), Slot))),
+                        Textures.FindChecked(Token));
+                }
             }
         }
-        TArray<int32> Slots;
-        Document.Textures.GenerateKeyArray(Slots);
-        Slots.Sort();
-        for (const int32 Slot : Slots)
-        {
-            const FString& Token = Document.Textures.FindChecked(Slot);
-            Material.SetTextureParameterValueEditorOnly(
-                FMaterialParameterInfo(FName(*FString::Printf(TEXT("tex%d"), Slot))),
-                Textures.FindChecked(Token));
-        }
+        Material.PostEditChange();
+        UpdateContext.AddMaterialInstance(&Material);
     }
     return true;
 }
@@ -638,10 +721,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
     {
         return Result;
     }
-    UMaterialInterface* Parent = LoadParent(
-        Document.Mode == EMHMaterialMode::Class ? Settings.MasterRoot : Settings.LibraryRoot,
-        Document.Parent,
-        Result.Error);
+    UMaterialInterface* Parent = LoadDocumentParent(Document, Settings, Result.Error);
     if (Parent == nullptr)
     {
         return Result;
@@ -665,7 +745,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
     }
     FMHMaterialDocument ProbeExtract;
     TArray<uint8> ProbeBytes;
-    if (!MHExtractMaterialV4(*Probe, Settings, ProbeExtract, Result.Error) ||
+    if (!ExtractAppliedMaterialDocument(*Probe, Settings, Document.Mode, ProbeExtract, Result.Error) ||
         !MHWriteCanonicalMaterialV4(ProbeExtract, ProbeBytes, Result.Error) || ProbeBytes != CanonicalAppliedSource)
     {
         Result.Error = FString::Printf(
@@ -738,7 +818,7 @@ FMHMaterialOperationResult MHImportMaterialV4(
 
     FMHMaterialDocument AppliedExtract;
     TArray<uint8> AppliedBytes;
-    if (!MHExtractMaterialV4(*Material, Settings, AppliedExtract, Result.Error) ||
+    if (!ExtractAppliedMaterialDocument(*Material, Settings, Document.Mode, AppliedExtract, Result.Error) ||
         !MHWriteCanonicalMaterialV4(AppliedExtract, AppliedBytes, Result.Error) ||
         AppliedBytes != CanonicalAppliedSource)
     {
@@ -851,9 +931,12 @@ FMHMaterialOperationResult MHPublishMaterialV4(
                 *Result.Error);
             return Result;
         }
+        // Class-only provenance has no corresponding field in a full UE
+        // instance snapshot. Do not graft legacy params onto the new form.
         for (const TPair<FString, FMHMaterialParameter>& Pair : ExistingDocument.Params)
         {
-            if (Pair.Value.bString || Pair.Value.bBool)
+            if (Document.Mode != EMHMaterialMode::UnrealInstance &&
+                (Pair.Value.bString || Pair.Value.bBool))
             {
                 Document.Params.Add(Pair.Key, Pair.Value);
             }

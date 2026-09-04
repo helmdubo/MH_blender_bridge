@@ -31,11 +31,15 @@ struct MIMIRCOMPOSITEEDITOR_API FMHPreparedMaterialDocumentExport
     TArray<uint8> CanonicalBytes;
     bool bOverwritesExistingFile = false;
     bool bMatchesAppliedHash = false;
+    /** Optional preflight hash; donor transfers reject a changed existing file. */
+    FString ExpectedDestinationHash;
 };
 
 /** Read-only preflight. No file or asset is mutated. */
 struct MIMIRCOMPOSITEEDITOR_API FMHMaterialDocumentExportPlan
 {
+    /** Set only by donor preflight; revalidate source-name mapping before commit. */
+    FString DonorSourceRoot;
     TArray<FMHPreparedMaterialDocumentExport> Ready;
     TArray<FMHMaterialDocumentExportFailure> Skipped;
     TArray<FString> OverwritePaths;
@@ -57,8 +61,7 @@ MIMIRCOMPOSITEEDITOR_API FString MHGetMaterialDocumentExportLogicalName(
 
 /**
  * Extract and canonicalize every request. A bad material is added to Skipped
- * without blocking valid peers. Any target inside SourceRoot rejects the whole
- * plan before a write can occur.
+ * without blocking valid peers. Targets inside SourceRoot are allowed.
  */
 MIMIRCOMPOSITEEDITOR_API bool MHPrepareMaterialDocumentExport(
     TConstArrayView<FMHMaterialDocumentExportRequest> Requests,

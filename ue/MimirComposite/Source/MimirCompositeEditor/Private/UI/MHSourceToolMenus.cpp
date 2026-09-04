@@ -18,6 +18,7 @@
 #include "Logging/MessageLog.h"
 #include "Material/MHMaterialClipboard.h"
 #include "Material/MHMaterialDocumentExport.h"
+#include "Material/MHMaterialDonorTransfer.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/MessageDialog.h"
@@ -36,6 +37,7 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
+#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -1200,6 +1202,129 @@ void ExecuteExportMaterialDocuments(const FToolMenuContext& MenuContext)
     ReportMaterialDocumentExport(Plan, Result, Error);
 }
 
+enum class EDonorTransferChoice { Cancel, SaveAndImport };
+
+EDonorTransferChoice ReviewDonorTransfer(const FMHMaterialDocumentExportPlan& Plan)
+{
+    EDonorTransferChoice Choice = EDonorTransferChoice::Cancel;
+    TSharedRef<SWindow> Window = SNew(SWindow)
+        .Title(LOCTEXT("DonorTransferReview", "Transfer Donor Materials"))
+        .ClientSize(FVector2D(900, 600)).SupportsMinimize(false).SupportsMaximize(false);
+    const TWeakPtr<SWindow> WeakWindow = Window;
+    FString Rows;
+    for (const FMHPreparedMaterialDocumentExport& Item : Plan.Ready)
+    {
+        Rows += FString::Printf(TEXT("%s\n  %s: %s\n  Target: /Game/MH/Generated/Materials/%s\n\n"),
+            *Item.Material->GetPathName(),
+            Item.bOverwritesExistingFile ? TEXT("Overwrite") : TEXT("Create"),
+            *Item.DestinationPath, *Item.LogicalName);
+    }
+    Window->SetContent(
+        SNew(SBorder).Padding(12)
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 12)
+            [
+                SNew(STextBlock).AutoWrapText(true).Text(FText::Format(
+                    LOCTEXT("DonorTransferDescription",
+                        "{0} donor(s), {1} existing source file(s) to overwrite. Names use m_name -> name.\n"
+                        "Save and Update also replaces the target instances' parent and overrides from these files. "
+                        "Donor instances stay unchanged. These UE-only documents cannot be read by the current Blender tools. "
+                        "Parent materials and textures must remain available in this UE project."),
+                    FText::AsNumber(Plan.Ready.Num()), FText::AsNumber(Plan.OverwritePaths.Num())))
+            ]
+            + SVerticalBox::Slot().FillHeight(1)
+            [
+                SNew(SScrollBox)
+                + SScrollBox::Slot()[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(Rows))]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 12, 0, 0)
+            [
+                SNew(SUniformGridPanel).SlotPadding(FMargin(6, 0))
+                + SUniformGridPanel::Slot(0, 0)
+                [
+                    SNew(SButton).Text(LOCTEXT("DonorTransferSaveUpdate", "Save and Update Targets"))
+                    .OnClicked_Lambda([&Choice, WeakWindow]()
+                    { Choice = EDonorTransferChoice::SaveAndImport; if (const auto Pinned = WeakWindow.Pin()) Pinned->RequestDestroyWindow(); return FReply::Handled(); })
+                ]
+                + SUniformGridPanel::Slot(1, 0)
+                [
+                    SNew(SButton).Text(LOCTEXT("DonorTransferCancel", "Cancel"))
+                    .OnClicked_Lambda([WeakWindow]() { if (const auto Pinned = WeakWindow.Pin()) Pinned->RequestDestroyWindow(); return FReply::Handled(); })
+                ]
+            ]
+        ]);
+    FSlateApplication::Get().AddModalWindow(Window, FSlateApplication::Get().FindBestParentWindowForDialogs(nullptr));
+    return Choice;
+}
+
+void ExecuteTransferDonorMaterials(const FToolMenuContext& MenuContext)
+{
+    const UContentBrowserAssetContextMenuContext* Context =
+        UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext);
+    IDesktopPlatform* Desktop = FDesktopPlatformModule::Get();
+    UMHSourceImporter* Importer = SourceImporter();
+    if (Context == nullptr || Desktop == nullptr || Importer == nullptr || !FSlateApplication::IsInitialized()) return;
+    const FString Root = SourceRoot();
+    if (Root.IsEmpty())
+    {
+        NotifyOperation(LOCTEXT("DonorTransferPage", "Transfer Donor Materials"), FText::GetEmpty(), {},
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: configure MH Source Root before transferring donors"));
+        return;
+    }
+    FString Folder;
+    if (!Desktop->OpenDirectoryDialog(
+            FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
+            LOCTEXT("DonorTransferFolder", "Choose a folder inside MH Source Root for new materials (existing sources keep their paths)").ToString(),
+            Root, Folder)) return;
+
+    TArray<UMaterialInstanceConstant*> Materials = Context->LoadSelectedObjects<UMaterialInstanceConstant>();
+    FMHMaterialDocumentExportPlan Plan;
+    FString Error;
+    if (!MHPrepareMaterialDonorTransfer(Materials, Root, Folder, Plan, Error))
+    {
+        ReportMaterialDocumentExport(Plan, FMHMaterialDocumentExportResult(), Error);
+        return;
+    }
+    const EDonorTransferChoice Choice = ReviewDonorTransfer(Plan);
+    if (Choice == EDonorTransferChoice::Cancel) return;
+
+    FMHMaterialDocumentExportResult Result;
+    MHCommitMaterialDocumentExport(Plan, true, Result, Error);
+    const FMHImportSourcesScope Scope = MHMaterialDonorImportScope(Plan, Result);
+    FMHSourceAnalysis Analysis;
+    bool bExecuted = false;
+    bool bImported = true;
+    // Empty scope means ALL in the importer. Never submit it after a failed write.
+    if (Choice == EDonorTransferChoice::SaveAndImport && !Scope.ResourceKeys.IsEmpty())
+        bImported = Importer->ImportSources(Scope, Analysis, bExecuted);
+
+    FMessageLog Log(TEXT("Mimir"));
+    Log.NewPage(LOCTEXT("DonorTransferPage", "Transfer Donor Materials"));
+    for (const FString& Path : Result.ExportedPaths)
+        Log.Info(FText::FromString(FString::Printf(TEXT("Saved: %s"), *Path)));
+    for (const FMHMaterialDocumentExportFailure& Failure : Result.FailedWrites)
+        Log.Error(FText::FromString(Failure.DestinationPath + TEXT(": ") + Failure.Error));
+    for (const FString& Diagnostic : Analysis.Warnings) AddDiagnostic(Log, Diagnostic);
+    for (const FString& Diagnostic : Analysis.Errors) AddDiagnostic(Log, Diagnostic);
+    int32 Updated = 0;
+    for (const FMHSourceAnalysisEntry& Entry : Analysis.Entries)
+    {
+        for (const FString& Diagnostic : Entry.Warnings) AddDiagnostic(Log, Diagnostic);
+        for (const FString& Diagnostic : Entry.Errors) AddDiagnostic(Log, Diagnostic);
+        if (bExecuted && Entry.Errors.IsEmpty() && Scope.ResourceKeys.Contains(Entry.Key) &&
+            (Entry.Change == EMHSourceChange::Create || Entry.Change == EMHSourceChange::Reimport || Entry.Change == EMHSourceChange::Move))
+            ++Updated;
+        Log.Info(FText::FromString(FString::Printf(TEXT("%s: %s"), *Entry.Key.ToString(), MHSourceChangeLabel(Entry.Change))));
+    }
+    if (!Error.IsEmpty()) Log.Error(FText::FromString(Error));
+    if (!bImported)
+        Log.Error(LOCTEXT("DonorTransferImportFailed", "Some targets could not be updated. Saved source files remain on disk; see the diagnostics and retry from MH Source."));
+    Log.Notify(FText::Format(LOCTEXT("DonorTransferResult", "Saved {0} of {1} material files; updated {2} target instances"),
+        FText::AsNumber(Result.ExportedCount), FText::AsNumber(Plan.Ready.Num()), FText::AsNumber(Updated)),
+        Error.IsEmpty() && bImported && !Analysis.HasErrors() ? EMessageSeverity::Info : EMessageSeverity::Error, true);
+}
+
 void ExecutePublishComposites(const FToolMenuContext& MenuContext)
 {
     const UContentBrowserAssetContextMenuContext* Context =
@@ -1600,6 +1725,13 @@ void MHRegisterS6ToolMenus()
                     FSlateIcon(),
                     UpdateAction);
                 FToolUIAction ExportAction;
+                FToolUIAction DonorAction;
+                DonorAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecuteTransferDonorMaterials);
+                DynamicSection.AddMenuEntry(
+                    TEXT("MHTransferDonorMaterials"),
+                    LOCTEXT("TransferDonorMaterials", "Transfer Donor Materials to MH Source..."),
+                    LOCTEXT("TransferDonorMaterialsTip", "Save all selected m_name Material Instances as name.material, overwrite existing sources and update their managed targets with the donor parent and overrides."),
+                    FSlateIcon(), DonorAction);
                 ExportAction.ExecuteAction =
                     FToolMenuExecuteAction::CreateStatic(&ExecuteExportMaterialDocuments);
                 DynamicSection.AddMenuEntry(

@@ -28,7 +28,8 @@ public:
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FString AppliedHash;
 
-    /** Receipt-only tagged logical token: class:<token> or library:<name>. */
+    /** Receipt-only parent: class:<token>, library:<name>, or ue_instance:<object-path>.
+     * The ue_instance prefix also preserves the full-state extraction mode. */
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     FString AppliedParent;
 

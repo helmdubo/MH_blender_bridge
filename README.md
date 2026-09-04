@@ -77,6 +77,24 @@ owner; Engine и `reference/` не изменяются.
 
 ## Состояние реализации
 
+### Перенос полишинга материалов из Import Into Level
+
+В Content Browser выберите донорские Material Instance с именами `m_<name>` →
+**Transfer Donor Materials to MH Source...**. Выберите папку внутри MH Source
+Root для новых исходников и проверьте таблицу соответствий. Существующий
+`<name>.material` будет перезаписан на его текущем месте, даже если находится
+в другой подпапке Source Root. **Save and Update Targets** сохраняет файлы и
+обновляет `/Game/MH/Generated/Materials/<name>` на месте: ссылки мешей сохраняются.
+
+Удаляется ровно один начальный `m_`: `m_wall → wall`, `m_m_wall → m_wall`.
+Неоднозначность, некорректное имя или неподдерживаемое состояние любого донора
+останавливают пакет до записи. Донорские ассеты и их receipts не изменяются.
+Новый UE-режим документа сохраняет parent, scalar/vector/texture overrides,
+static switches/masks и base-property overrides. Parent и текстуры остаются
+ссылками на UE-ассеты данного проекта; их графы/пиксели в `.material` не входят.
+Подробная граница формата — [§5.1 протокола](docs/10_source_protocol_v5_plan.md#51-ue-instance-документ-для-переноса-полишинга).
+Обычный **Export Material Document...** сохраняет прежнее поведение.
+
 Смержено в `main`: Source Protocol v5 S0–S6 (codecs, Blender random
 authoring, closure export, UE editor random, runtime-мост
 `AMHRuntimeCompositeActor`), прямой экспорт dag4blend-сцены S6.1 как field

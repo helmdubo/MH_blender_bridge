@@ -39,7 +39,9 @@ MIMIRCOMPOSITEEDITOR_API bool MHValidateMaterialAdoptTarget(
     FString& OutError);
 
 /**
- * Extract only v4-serializable local state; no inherited values are emitted.
+ * Extract local state in the managed source mode; no inherited values are emitted.
+ * A ue_instance receipt preserves the complete supported UE snapshot, including
+ * registered parents. Unmanaged and legacy assets retain the v4 extraction below.
  * Class form (owner decision 2026-09-03): local state the grammar cannot carry
  * (parameter names outside the canonical token grammar, layer-scoped
  * parameters, atlas scalars, unsupported parameter types, base-property
@@ -54,7 +56,8 @@ MIMIRCOMPOSITEEDITOR_API bool MHExtractMaterialV4(
     FString& OutError,
     TArray<FString>* OutWarnings = nullptr);
 
-/** Full source-wins apply. Texture objects must be supplied for every texture token. */
+/** Full source-wins apply. Legacy texture tokens require supplied objects;
+ * ue_instance documents resolve their explicit project asset paths internally. */
 MIMIRCOMPOSITEEDITOR_API bool MHApplyMaterialV4(
     UMaterialInstanceConstant& Material,
     UMaterialInterface& Parent,

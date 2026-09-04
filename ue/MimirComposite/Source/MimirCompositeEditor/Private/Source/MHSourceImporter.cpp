@@ -490,6 +490,18 @@ void MHFilterAnalysisToScope(
             return !Included.Contains(Entry.Key);
         });
 
+    if (Scope.bForceMaterialReimport)
+    {
+        for (FMHSourceAnalysisEntry& Entry : InOutAnalysis.Entries)
+        {
+            if (Entry.Key.Kind == EMHResourceKind::Material && Entry.Errors.IsEmpty() &&
+                Entry.Change == EMHSourceChange::NoChange)
+            {
+                Entry.Change = EMHSourceChange::Reimport;
+            }
+        }
+    }
+
     for (const FMHResourceKey& Key : Included)
     {
         if (Analyzed.Contains(Key))
@@ -513,13 +525,18 @@ void MHFilterAnalysisToScope(
             TEXT("MH_E_SOURCE_INDEX_INVALID: requested scope key is not canonical: %s"),
             *Key.ToString()));
     }
-    InOutAnalysis.Entries.Sort([](
+    InOutAnalysis.Entries.Sort([&Scope](
         const FMHSourceAnalysisEntry& A,
         const FMHSourceAnalysisEntry& B)
     {
         if (A.Key.Kind != B.Key.Kind)
         {
             return static_cast<uint8>(A.Key.Kind) < static_cast<uint8>(B.Key.Kind);
+        }
+        if (Scope.bForceMaterialReimport && A.Key.Kind == EMHResourceKind::Material)
+        {
+            // Donor scope carries prospective parent-before-child order.
+            return Scope.ResourceKeys.IndexOfByKey(A.Key) < Scope.ResourceKeys.IndexOfByKey(B.Key);
         }
         return A.Key.LogicalName < B.Key.LogicalName;
     });

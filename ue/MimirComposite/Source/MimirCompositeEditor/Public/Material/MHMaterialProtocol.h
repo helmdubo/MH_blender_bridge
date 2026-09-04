@@ -5,10 +5,13 @@
 namespace UE::MimirComposite
 {
 
+struct FMHUnrealMaterialInstanceData;
+
 enum class EMHMaterialMode : uint8
 {
     Class,
-    Library
+    Library,
+    UnrealInstance
 };
 
 struct MIMIRCOMPOSITEEDITOR_API FMHMaterialParameter
@@ -31,6 +34,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHMaterialDocument
     bool bTwoSided = false;
     TMap<int32, FString> Textures;
     TMap<FString, FMHMaterialParameter> Params;
+    /** Explicit UE 5.7 instance snapshot; absent for unchanged class/library forms. */
+    TSharedPtr<FMHUnrealMaterialInstanceData> UnrealInstance;
 };
 
 MIMIRCOMPOSITEEDITOR_API bool MHIsCanonicalMaterialToken(const FString& Value);

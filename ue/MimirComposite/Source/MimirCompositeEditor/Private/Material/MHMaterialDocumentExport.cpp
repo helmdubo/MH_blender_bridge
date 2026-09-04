@@ -3,6 +3,7 @@
 #include "Algo/Unique.h"
 #include "HAL/FileManager.h"
 #include "Material/MHMaterialImporter.h"
+#include "Material/MHMaterialDonorTransfer.h"
 #include "Material/MHMaterialProtocol.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -290,8 +291,22 @@ bool MHCommitMaterialDocumentExport(
         return true;
     }
 
+    if (!Plan.DonorSourceRoot.IsEmpty() && !MHValidateMaterialDonorDestinations(Plan, OutError))
+        return false;
+
     for (const FMHPreparedMaterialDocumentExport& Prepared : Plan.Ready)
     {
+        if (!Prepared.ExpectedDestinationHash.IsEmpty())
+        {
+            TArray<uint8> CurrentBytes;
+            if (!FFileHelper::LoadFileToArray(CurrentBytes, *Prepared.DestinationPath) ||
+                MHRawPayloadHash(CurrentBytes) != Prepared.ExpectedDestinationHash)
+            {
+                OutResult.FailedWrites.Add(MakeFailure(Prepared.Material.Get(), Prepared.DestinationPath,
+                    TEXT("MH_E_SOURCE_INDEX_SNAPSHOT_CHANGED: material document changed after donor preflight; prepare the transfer again")));
+                continue;
+            }
+        }
         if (!Prepared.bOverwritesExistingFile &&
             IFileManager::Get().FileExists(*Prepared.DestinationPath))
         {

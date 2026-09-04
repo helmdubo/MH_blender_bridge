@@ -19,6 +19,8 @@ namespace UE::MimirComposite
 struct MIMIRCOMPOSITEEDITOR_API FMHImportSourcesScope
 {
     TArray<FMHResourceKey> ResourceKeys;
+    /** Explicit donor transfer: reapply selected materials in ResourceKeys order even at equal hash. */
+    bool bForceMaterialReimport = false;
 
     static FMHImportSourcesScope All() { return FMHImportSourcesScope(); }
 };

@@ -349,8 +349,10 @@ keys, node trees материалов (восстанавливается тол
 
 ## 5. Материалы v4 (поправки №4–№7, №11)
 
-Файл `<name>.material` — лаконичный JSON без schema/version/mode/uid/имени
-(тип задан расширением). Режим определяется присутствием поля:
+Базовые формы `<name>.material` (`class` и `library`) — лаконичный JSON без
+schema/version/mode/uid/имени (тип задан расширением). Режим определяется
+присутствием поля. Отдельная UE-форма для переноса полишинга описана в §5.1;
+она не изменяет грамматику и канонические байты двух базовых форм.
 
 ```json
 { "class": "rendinst_perlin_layered",
@@ -494,6 +496,74 @@ keys, node trees материалов (восстанавливается тол
   Three-way diff/merge/`MH_E_MATERIAL_CONFLICT` — УДАЛЕНЫ из scope.
 - Импорт: source всегда побеждает; локально изменённый MI перед перезаписью
   получает warning `MH_W_MANAGED_ASSET_LOCALLY_MODIFIED` (не блок).
+
+### 5.1 UE Instance: документ для переноса полишинга
+
+По запросу owner от 2026-09-05 пакетный перенос `m_<name>` → `<name>`
+использует отдельную, взаимоисключающую с `class/library`, форму:
+
+```json
+{ "ue_instance": { "version": 1, "parent": "/Game/Art/M_Master.M_Master" } }
+```
+
+Это UE-only документ состояния инстанса в том же проекте. Он сохраняет
+реальный непосредственный parent (в том числе MI-parent вне MasterRoot),
+локальные scalar/vector/texture overrides с полным `FMaterialParameterInfo`,
+static switch/component-mask overrides и `FMaterialInstanceBasePropertyOverrides`
+UE 5.7. Имена параметров и их регистр сохраняются. Значения, унаследованные
+от parent, не разворачиваются в overrides. Родительская цепочка/шейдерные
+графы/пиксели текстур не встраиваются: parent и texture values — полные
+soft object paths на доступные UE-ассеты. Перенос в другой проект требует
+этих зависимостей по тем же путям. Перемещение зависимостей требует обновить
+ссылки в исходнике. Старый Blender-reader эту форму отвергает; она не является
+Dagor/Blender-совместимым экспортом shader_class и не подменяет базовые формы.
+
+В корне разрешено только `ue_instance`. Внутри обязательны `version: 1`
+и `parent`; опциональны массивы `scalars`, `vectors`, `textures`,
+`static_switches`, `static_masks` и объект `base_overrides`.
+Элемент массива содержит `name`, `association` (0 layer, 1 blend, 2 global),
+`index` (для global — -1), `value`. Value: конечный float, массив четырёх
+конечных float, soft object path, bool или массив четырёх bool соответственно.
+Static-элементы дополнительно содержат `expression_guid`.
+`base_overrides` содержит точные имена отражённых полей структуры UE 5.7;
+объект, если задан, должен содержать все поля. При отсутствии всего объекта
+используются defaults структуры. Неизвестные поля, неверные типы,
+невалидные paths/enum/индексы, повторяющиеся identities параметров и
+неподдерживаемая версия блокируют чтение. Канонический writer выводит все
+поля, сортирует ключи и identities, использует UTF-8/LF/2 пробела и кратчайшие
+round-trip float. `class/library` сохраняют свои прежние golden-байты.
+
+Full-state extractor отвергает unsupported parameter categories (double
+vector, font, texture collection, runtime virtual/sparse volume texture,
+parameter collection), scalar atlas bindings, material layer stacks,
+terrain layer weight parameters и null
+texture overrides: перенос не должен молча терять эти данные. Для всего
+выбранного пакета такие ошибки выявляются до записи первого файла.
+Reader/importer проверяет ссылки и циклы parent до изменения целевого MI,
+проверяет apply/extract на transient probe, заменяет parent и overrides
+под `FMaterialUpdateContext`. Источник побеждает, старые overrides очищаются.
+Receipt получает `AppliedParent = ue_instance:<parent-path>`; этот маркер
+сохраняет режим extraction/publish даже для parent внутри MasterRoot.
+`AppliedHash` покрывает весь канонический UE snapshot; `SourceHash` — raw
+байты файла. UE texture paths не маскируются под source ResourceKey и не
+включаются как `texture:<name>` в source closure; состояние самих внешних
+UE-ассетов не покрыто source hash, их lifecycle относится к UE project.
+
+Команда **Transfer Donor Materials to MH Source...** удаляет ровно один
+начальный регистрозависимый `m_`. Остаток должен быть `[a-z0-9_]+`, без
+автонормализации. Для existing source используется его единственный путь
+во всём Source Root; новая source создаётся в выбранной папке внутри корня.
+Два донора на один key, донор одновременно в роли target, циклы в будущей
+цепочке parent и неоднозначные sources блокируют весь preflight.
+Перед commit пользователь видит все назначения и create/overwrite.
+Запись атомарна на файл (temporary sibling, read-back и rename), весь пакет
+не является общей транзакцией. Изменённый после preflight existing файл
+отвергается; перед первым commit повторно проверяется source mapping.
+Ошибка отдельной записи не откатывает успешные. Отчёт разделяет
+записанные sources и обновлённые targets. Импорт получает только keys успешно
+записанных файлов и принудительно переимпортирует выбранные MI при равном
+source hash. При отсутствии успешных записей импорт не вызывается.
+Generated MI обновляется на месте, донор и его receipt не меняются.
 
 ## 6. Композиты v5: random, parent-local T/R/S и placement seed
 

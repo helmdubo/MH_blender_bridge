@@ -3,6 +3,7 @@
 #include "Canonical/MHCanonical.h"
 #include "Containers/StringConv.h"
 #include "Dom/JsonObject.h"
+#include "Material/MHUnrealMaterialDocument.h"
 
 #include <charconv>
 
@@ -134,6 +135,15 @@ bool MHParseMaterialV4(
         return GrammarError(OutError, TEXT("payload must be one UTF-8 JSON object"));
     }
     const TSharedPtr<FJsonObject> Root = RootValue->AsObject();
+    if (Root->HasField(TEXT("ue_instance")))
+    {
+        const TSharedPtr<FJsonObject>* Payload = nullptr;
+        if (Root->Values.Num() != 1 || !Root->TryGetObjectField(TEXT("ue_instance"), Payload))
+        {
+            return GrammarError(OutError, TEXT("ue_instance form must contain exactly one object field"));
+        }
+        return MHParseUnrealMaterialV1(*Payload, OutDocument, OutError);
+    }
     const bool bHasClass = Root->HasField(TEXT("class"));
     const bool bHasLibrary = Root->HasField(TEXT("library"));
     if (bHasClass == bHasLibrary)
@@ -262,6 +272,14 @@ bool MHWriteCanonicalMaterialV4(
 {
     OutBytes.Reset();
     OutError.Reset();
+    if (Document.Mode == EMHMaterialMode::UnrealInstance)
+    {
+        return MHWriteUnrealMaterialV1(Document, OutBytes, OutError);
+    }
+    if (Document.UnrealInstance.IsValid())
+    {
+        return GrammarError(OutError, TEXT("class/library form cannot contain a UE instance snapshot"));
+    }
     if (!MHIsCanonicalMaterialToken(Document.Parent))
     {
         return GrammarError(OutError, TEXT("parent registry token is not canonical"));
