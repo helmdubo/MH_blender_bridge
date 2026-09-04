@@ -90,15 +90,34 @@ donor static switch», причина в `GetStaticParameterValues` (фильт�
 D3D12 автотест не воспроизводит краш: у синтетических материалов нет живых
 render-прокси, только у реальных ассетов открытого редактора.
 
-Исправление — движковая последовательность редактора инстансов
-(`UMaterialEditorInstanceConstant`): `SetParentEditorOnly(Parent)` с recache,
-затем один `FMaterialInstanceParameterUpdateContext(All)`: очистка в
-конструкторе, значения, base overrides и static-набор через
-`GetStaticParameters()`, `UpdateStaticPermutation` один раз в деструкторе.
-Null-текстуры донора не записываются (слот остаётся родительским, есть
-предупреждение). Проверка: `Mimir.V4/V5.Material` 18/18 (NullRHI),
-`ClipboardCopyPaste` Success под D3D12 (`MATCLIP4_RHI.log`); подтверждение
-на реальной сцене — за owner.
+Первая попытка (PR #98) — движковая последовательность редактора инстансов:
+`SetParentEditorOnly(Parent)` с recache, затем один
+`FMaterialInstanceParameterUpdateContext(All)` (очистка в конструкторе,
+значения, base overrides, static-набор через `GetStaticParameters()`,
+`UpdateStaticPermutation` один раз в деструкторе). Null-текстуры донора больше
+не записываются. **Краш повторился**, только позже.
+
+Недостающая часть — `FMaterialUpdateContext` (PR #100). `MaterialShared.h`:
+«This class should *always* be used when doing so». Его конструктор
+синхронизируется с рендер-тредом и снимает render state со **всех**
+компонентов, деструктор обновляет ресурсы материала, зависимые инстансы и
+регистрирует компоненты обратно. Смена parent плюс смена static-пермутации без
+него оставляла в сцене прокси, ссылающиеся на ресурсы прежнего родителя —
+отсюда падение «чуть позже», уже на кадре рендера. Так же обёрнута смена
+parent в самом редакторе инстансов (`PreviewMaterial.cpp`
+`UpdateSourceInstanceParent` внутри `FMaterialUpdateContext`). Модуль
+`MimirCompositeEditor` получил зависимость `RHI`: конструктор контекста имеет
+дефолт `GMaxRHIShaderPlatform`.
+
+Итоговый порядок paste: транзакция → `Modify` → `FMaterialUpdateContext` →
+`SetParentEditorOnly` → `FMaterialInstanceParameterUpdateContext` (значения) →
+`PostEditChange` → `AddMaterialInstance` → закрытие контекста →
+`MarkPackageDirty`.
+
+Проверка: `Mimir.V4/V5.Material` 18/18 под **D3D12** (`MATCLIP6_RHI.log`),
+полный NullRHI suite, `BuildPlugin -StrictIncludes`. Автотесты краш не
+воспроизводят (у синтетических материалов нет живых render-прокси и компонентов
+в сцене), поэтому подтверждение на реальной сцене — за owner.
 
 ## 6. Вопросы
 

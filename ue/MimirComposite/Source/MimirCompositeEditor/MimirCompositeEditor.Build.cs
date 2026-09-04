@@ -36,6 +36,8 @@ public class MimirCompositeEditor : ModuleRules
                 "MessageLog",
                 "Projects",
                 "PropertyEditor",
+                // FMaterialUpdateContext defaults to GMaxRHIShaderPlatform.
+                "RHI",
                 "Slate",
                 "SlateCore",
                 "SQLiteCore",
