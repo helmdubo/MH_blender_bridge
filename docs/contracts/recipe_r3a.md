@@ -18,7 +18,7 @@ re-admission после `Revision++`, и классифицирует, что и
 
 ## Что уже есть в ветке (не переписывать)
 
-Ветка `recipe/r3a-endpoint-interface-hashes` от `origin/main`. Red-коммит близнеца:
+Ветка `recipe/r3a-endpoint-interface-hashes` от `origin/main` (`c5a951b`). Red-коммит близнеца `4fbb032`:
 
 - `Public/Composite/MHEndpointPrototypeRegistry.h` — API-контракт (менять
   только по STOP+OPEN): в `FMHEndpointPrototype` поля `FBox Bounds`,
