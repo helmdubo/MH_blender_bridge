@@ -5,8 +5,13 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Editor.h"
+#include "Engine/AssetManager.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/StreamableManager.h"
+#include "Misc/PackageName.h"
+#include "Settings/MHCompositeSettings.h"
 #include "Engine/Texture.h"
 #include "Containers/StringConv.h"
 #include "Hash/CityHash.h"
@@ -318,6 +323,8 @@ const FMHEndpointPrototype& UMHEndpointPrototypeRegistry::Resolve(const FMHResou
         }
         if (bLeafEndpoint) MHRecordDefinitionDeadEndpointReload();
     }
+    // A load in flight is neither a hit nor a re-admission (R4).
+    if (Prototype.State == EMHEndpointState::Loading && PendingLoads.Contains(Key)) return Prototype;
     // Unresolved, Invalid and dead prototypes re-admit: an invalid key never
     // becomes sticky, so an in-memory repair heals on the next resolve.
     Admit(Key, Prototype);
@@ -336,6 +343,56 @@ UObject* UMHEndpointPrototypeRegistry::ResolveObject(const FMHResourceKey& Key, 
         OutError = Prototype.AdmissionError;
     }
     return nullptr;
+}
+
+UStaticMesh* UMHEndpointPrototypeRegistry::ResolveMeshForPreview(
+    const FMHResourceKey& Key, const UMHCompositeSettings& Settings, bool& bOutPlaceholder, FString& OutError)
+{
+    bOutPlaceholder = false;
+    const FMHEndpointPrototype& Prototype = Resolve(Key);
+    if (Prototype.State == EMHEndpointState::Ready) return Cast<UStaticMesh>(Prototype.Object.Get());
+    if (Prototype.State == EMHEndpointState::Loading)
+    {
+        // Engine placeholder, resident after its first use; never an endpoint
+        // package load, so it is not charged to the endpoint counters.
+        UStaticMesh* Placeholder = Settings.PlaceholderMesh.LoadSynchronous();
+        if (Placeholder == nullptr)
+        {
+            OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: placeholder mesh is unavailable while static_mesh:") + Key.LogicalName + TEXT(" loads");
+            return nullptr;
+        }
+        bOutPlaceholder = true;
+        return Placeholder;
+    }
+    if (!Prototype.AdmissionError.IsEmpty()) OutError = Prototype.AdmissionError;
+    return nullptr;
+}
+
+void UMHEndpointPrototypeRegistry::OnAsyncLoadComplete(FMHResourceKey Key)
+{
+    PendingLoads.Remove(Key);
+    if (!Prototypes.Contains(Key)) return;
+    // The object is resident now. The reimport protocol (R3b) performs the
+    // first Ready admission itself (Invalidate -> Resolve), so its delta reports
+    // bFirstAdmission and the dependents rebuild from the placeholder; admitting
+    // here first would make that admission a no-change re-admission.
+    MHNotifyGeneratedResourceChanged(Key);
+}
+
+bool UMHEndpointPrototypeRegistry::FlushAsyncLoadsForTests()
+{
+    TArray<FMHResourceKey> Keys;
+    PendingLoads.GetKeys(Keys);
+    for (const FMHResourceKey& Key : Keys)
+    {
+        TSharedPtr<FStreamableHandle> Handle = PendingLoads.FindRef(Key);
+        if (Handle.IsValid() && !Handle->HasLoadCompleted()) Handle->WaitUntilComplete();
+        // WaitUntilComplete fires the completion delegate; if the manager did
+        // not, finish the admission here so the seam is deterministic.
+        if (PendingLoads.Contains(Key)) OnAsyncLoadComplete(Key);
+        if (Resolve(Key).State == EMHEndpointState::Loading) return false;
+    }
+    return true;
 }
 
 void UMHEndpointPrototypeRegistry::Invalidate(const FMHResourceKey& Key)
@@ -413,7 +470,38 @@ void UMHEndpointPrototypeRegistry::Admit(const FMHResourceKey& Key, FMHEndpointP
     }
 
     UObject* Loaded = FindObject<UObject>(nullptr, *Path);
-    if (Loaded == nullptr)
+    if (Loaded == nullptr && Key.Kind == EMHResourceKind::StaticMesh)
+    {
+        // R4 (16 §2.2): a selected mesh that only exists on disk streams in;
+        // the interactive path renders the placeholder meanwhile and is
+        // reconciled by the completion below. Absent packages stay Invalid.
+        const FString PackageName = FPackageName::ObjectPathToPackageName(Path);
+        if (FPackageName::DoesPackageExist(PackageName))
+        {
+            Prototype.State = EMHEndpointState::Loading;
+            if (!PendingLoads.Contains(Key))
+            {
+                TSharedPtr<FStreamableHandle> Handle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
+                    FSoftObjectPath(Path),
+                    FStreamableDelegate::CreateUObject(this, &UMHEndpointPrototypeRegistry::OnAsyncLoadComplete, Key),
+                    FStreamableManager::DefaultAsyncLoadPriority);
+                if (Handle.IsValid())
+                {
+                    PendingLoads.Add(Key, Handle);
+                }
+                else
+                {
+                    // The streamable manager refused (e.g. no async loading in this
+                    // process): fall back to the synchronous path and account for it.
+                    Prototype.State = EMHEndpointState::Invalid;
+                    Loaded = LoadObject<UObject>(nullptr, *Path);
+                    if (Loaded != nullptr) MHRecordEndpointPackageLoadSync();
+                }
+            }
+            if (Prototype.State == EMHEndpointState::Loading) return;
+        }
+    }
+    else if (Loaded == nullptr)
     {
         Loaded = LoadObject<UObject>(nullptr, *Path);
         if (Loaded != nullptr)

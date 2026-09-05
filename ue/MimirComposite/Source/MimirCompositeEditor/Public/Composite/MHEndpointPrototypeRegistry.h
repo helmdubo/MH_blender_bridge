@@ -6,10 +6,12 @@
 #include "MHEndpointPrototypeRegistry.generated.h"
 
 struct FAssetData;
+class UStaticMesh;
+class UMHCompositeSettings;
 
 namespace UE::MimirComposite
 {
-/** Recipe Model v2 §3.2 endpoint prototype state. Loading is reserved for R4. */
+/** Recipe Model v2 §3.2 endpoint prototype state. Loading: an async package load is in flight (R4). */
 enum class EMHEndpointState : uint8
 {
     Unresolved,
@@ -107,6 +109,28 @@ public:
     /** Ready object, or nullptr with the prototype's admission error (may stay empty when absent). */
     UObject* ResolveObject(const UE::MimirComposite::FMHResourceKey& Key, FString& OutError);
 
+    /**
+     * Preview-plane mesh for a static_mesh key (R4): the Ready mesh, or the
+     * settings placeholder while the endpoint is Loading (bOutPlaceholder =
+     * true), or nullptr with the admission error. Never loads synchronously,
+     * never waits for compilation.
+     */
+    UStaticMesh* ResolveMeshForPreview(
+        const UE::MimirComposite::FMHResourceKey& Key,
+        const UMHCompositeSettings& Settings,
+        bool& bOutPlaceholder,
+        FString& OutError);
+
+    /** True when Key has been resolved at least once this session (any state). */
+    bool HasPrototype(const UE::MimirComposite::FMHResourceKey& Key) const { return Prototypes.Contains(Key); }
+
+    /**
+     * Test seam: blocks until every in-flight async load has completed and its
+     * admission + dependent notification ran on the game thread. Returns false
+     * when a load could not be flushed.
+     */
+    bool FlushAsyncLoadsForTests();
+
     /** Revision++ and re-admission on the next Resolve. */
     void Invalidate(const UE::MimirComposite::FMHResourceKey& Key);
     void InvalidateAll();
@@ -140,6 +164,10 @@ private:
     void Admit(
         const UE::MimirComposite::FMHResourceKey& Key,
         UE::MimirComposite::FMHEndpointPrototype& Prototype);
+
+    /** R4: async package load per key; a key is Loading while it has an entry here. */
+    void OnAsyncLoadComplete(UE::MimirComposite::FMHResourceKey Key);
+    TMap<UE::MimirComposite::FMHResourceKey, TSharedPtr<struct FStreamableHandle>> PendingLoads;
 
     TMap<UE::MimirComposite::FMHResourceKey, UE::MimirComposite::FMHEndpointPrototype> Prototypes;
     TMap<UE::MimirComposite::FMHResourceKey, FReadyMeshInterface> ReadyMeshInterfaces;

@@ -2067,8 +2067,13 @@ bool FMHPerformanceSelectedMeshWaitTest::RunTest(const FString& Parameters)
         *FString::Join(Report.WaitedMeshKeys, TEXT(",")),
         *FString::Join(Report.SelectedCompilingMeshKeys, TEXT(",")),
         *FString::Join(Report.UnselectedMeshKeys, TEXT(","))));
-    bPassed &= TestTrue(TEXT("waited_mesh_set == selected_compiling_mesh_set"),
-        Report.WaitedMeshKeys == Report.SelectedCompilingMeshKeys);
+    // R4 (KICKOFF §5): the remainder of the R1 wait is gone. The report still
+    // names the selected compiling meshes, but the interactive path waits for
+    // none of them; the placement renders placeholders/compiling meshes and is
+    // reconciled once they are ready.
+    bPassed &= TestTrue(TEXT("waited_mesh_set is empty (R4: no compilation wait in the interactive path)"),
+        Report.WaitedMeshKeys.IsEmpty());
+    bPassed &= TestEqual(TEXT("wait_static_mesh_compilation_ms == 0"), Report.WaitStaticMeshCompilationMs, 0.0);
     bool bDisjoint = true;
     for (const FString& Key : Report.WaitedMeshKeys)
     {
