@@ -1,6 +1,6 @@
 # R5a (Recipe Model v2.1) — `UMHInstancePoolSubsystem`: сервис пула со стабильными хэндлами
 
-Статус: **REVIEW** (близнец). Первая половина R5 по KICKOFF §5 / docs/16 §2.8:
+Статус: **MERGED** (близнец, #111 `c8495ad`). Первая половина R5 по KICKOFF §5 / docs/16 §2.8:
 сам сервис пула и его инварианты. R5b (отдельный срез) переводит на него
 материализацию `AMHCompositeActor`, Outliner (`ReverseLookup`) и
 восстановление после Undo (OPEN-R-1).
