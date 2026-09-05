@@ -871,6 +871,9 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
     Actor->Modify();
     Actor->SetPlacementEditMode(true);
     EditingActor = Actor;
+    EditingAsset = Asset;
+    EditingInvocationPath.Reset();
+    EditingParentWorld = Actor->GetActorTransform().ToMatrixWithScale();
     EditingTopLevelComponents.Reset();
     for (USceneComponent* Component : TopLevel)
     {
@@ -887,6 +890,13 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     OutError.Reset();
     AMHCompositeActor* Actor = EditingActor.Get();
     UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
+    if (Actor != nullptr && !EditingInvocationPath.IsEmpty())
+    {
+        // R6-D0 opens the nested draft; publishing the shared definition and
+        // refreshing its consumers is R6-D2.
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: publishing a nested definition arrives with R6-D2; cancel the edit context");
+        return false;
+    }
     if (Actor == nullptr || Asset == nullptr || EditingTopLevelComponents.Num() != EditingDocument.Nodes.Num())
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid composite edit session is active");
@@ -919,9 +929,7 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
 
     const FString PreviousSourceRelativePath = Asset->SourceRelativePath;
     Actor->SetPlacementEditMode(false);
-    EditingActor.Reset();
-    EditingTopLevelComponents.Reset();
-    EditingDocument = FMHCompositeDocument();
+    ResetEditSession();
     GEditor->ResetTransaction(INVTEXT("MH Composite source Commit cannot be undone"));
 
     if (!MHApplyCompositeV5(*Asset, Edited, OutError))
@@ -983,29 +991,100 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
 
 bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Root, const FString& InvocationNodePath, FString& OutError)
 {
-    // R6-D0 red stub: no nested context yet.
-    static_cast<void>(Root);
-    static_cast<void>(InvocationNodePath);
-    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: nested edit context is not available");
-    return false;
+    OutError.Reset();
+    if (EditingActor.IsValid())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: another composite edit session is already active");
+        return false;
+    }
+    const FMHResolvedCompositePlan* Plan = Root != nullptr ? Root->GetResolvedPlan() : nullptr;
+    if (Root == nullptr || Plan == nullptr || !Root->GetLastPlacementError().IsEmpty())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Edit Contents requires a current resolved placement");
+        return false;
+    }
+    // The invocation is a node of the resident preview plan (16 §2.10); its
+    // world matrix under the placement basis is the effective parent of
+    // everything the child definition materializes here.
+    const FMHResolvedCompositeNode* Invocation = Plan->Nodes.FindByPredicate(
+        [&InvocationNodePath](const FMHResolvedCompositeNode& Node) { return Node.NodePath == InvocationNodePath; });
+    if (Invocation == nullptr || Invocation->SemanticKind != EMHRandomSemanticKind::Composite)
+    {
+        OutError = FString::Printf(TEXT("MH_E_COMPOSITE_GRAMMAR: %s is not a nested composite invocation of this placement"), *InvocationNodePath);
+        return false;
+    }
+    FMHResourceKey ChildKey;
+    ChildKey.Kind = EMHResourceKind::Composite;
+    ChildKey.LogicalName = Invocation->Resource;
+    FString AdmissionError;
+    UMHCompositeAsset* Child = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(ChildKey, AdmissionError));
+    if (Child == nullptr)
+    {
+        OutError = AdmissionError.IsEmpty()
+            ? TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: ") + ChildKey.ToString() + TEXT(" has no managed asset")
+            : AdmissionError;
+        return false;
+    }
+    if (!MHExtractCompositeV5(*Child, EditingDocument, OutError))
+    {
+        EditingDocument = FMHCompositeDocument();
+        return false;
+    }
+    // Draft only: the root keeps its preview, no handles yet (R6-D1), the
+    // source is untouched until R6-D2 publishes.
+    EditingActor = Root;
+    EditingAsset = Child;
+    EditingInvocationPath = InvocationNodePath;
+    EditingParentWorld = Invocation->WorldMatrix * Root->GetActorTransform().ToMatrixWithScale();
+    EditingTopLevelComponents.Reset();
+    return true;
 }
 
 FMHCompositeEditContext UMHCompositeLevelSubsystem::GetEditContext() const
 {
-    return FMHCompositeEditContext();
+    FMHCompositeEditContext Context;
+    AMHCompositeActor* Root = EditingActor.Get();
+    const UMHCompositeAsset* Asset = EditingAsset.Get();
+    if (Root == nullptr || Asset == nullptr) return Context;
+    Context.EditedLogicalName = Asset->LogicalName;
+    Context.EditedSourceRelativePath = Asset->SourceRelativePath;
+    Context.InvocationPath = EditingInvocationPath;
+    Context.EffectiveParentWorld = EditingParentWorld;
+    Context.RootPlacement = Root;
+    Context.SaveScope = EMHCompositeEditSaveScope::SharedDefinition;
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::Composite;
+    Key.LogicalName = Asset->LogicalName;
+    for (TObjectIterator<AMHCompositeActor> It; It; ++It)
+    {
+        const AMHCompositeActor* Placement = *It;
+        const UWorld* World = IsValid(Placement) ? Placement->GetWorld() : nullptr;
+        if (!IsValid(Placement) || Placement->IsTemplate() || Placement->IsActorBeingDestroyed() ||
+            World == nullptr || World->IsBeingCleanedUp() || World->IsCleanedUp() || !Placement->DependsOnResource(Key)) continue;
+        ++Context.ConsumerPlacements;
+    }
+    return Context;
+}
+
+void UMHCompositeLevelSubsystem::ResetEditSession()
+{
+    EditingActor.Reset();
+    EditingAsset.Reset();
+    EditingInvocationPath.Reset();
+    EditingParentWorld = FMatrix::Identity;
+    EditingTopLevelComponents.Reset();
+    EditingDocument = FMHCompositeDocument();
 }
 
 FString UMHCompositeLevelSubsystem::GetEditingCompositeLogicalName() const
 {
-    const AMHCompositeActor* Actor = EditingActor.Get();
-    const UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
+    const UMHCompositeAsset* Asset = EditingActor.IsValid() ? EditingAsset.Get() : nullptr;
     return Asset != nullptr ? Asset->LogicalName : FString();
 }
 
 FString UMHCompositeLevelSubsystem::GetEditingCompositeSourceRelativePath() const
 {
-    const AMHCompositeActor* Actor = EditingActor.Get();
-    const UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
+    const UMHCompositeAsset* Asset = EditingActor.IsValid() ? EditingAsset.Get() : nullptr;
     return Asset != nullptr ? Asset->SourceRelativePath : FString();
 }
 
@@ -1020,11 +1099,12 @@ bool UMHCompositeLevelSubsystem::CancelEditComposite(FString& OutError)
     }
     const FScopedTransaction Transaction(INVTEXT("Cancel MH Composite Edit"));
     Actor->Modify();
+    // A root session extracted handles into the placement: rebuild restores
+    // the preview. A nested draft (R6-D0) never touched the root's view.
+    const bool bRootSession = Actor->IsPlacementEditMode();
     Actor->SetPlacementEditMode(false);
-    EditingActor.Reset();
-    EditingTopLevelComponents.Reset();
-    EditingDocument = FMHCompositeDocument();
-    Actor->RebuildComposite();
+    ResetEditSession();
+    if (bRootSession) Actor->RebuildComposite();
     return true;
 }
 

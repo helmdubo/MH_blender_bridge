@@ -1,8 +1,10 @@
 #include "UI/MHCompositeOutliner.h"
 
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Editor.h"
+#include "Logging/MessageLog.h"
 #include "Editor/EditorEngine.h"
 #include "EditorModeManager.h"
 #include "Elements/Framework/EngineElementsLibrary.h"
@@ -327,6 +329,16 @@ private:
             Settings != nullptr ? Settings->GetSourceRootPath() : FString(),
             Navigation);
         FMenuBuilder Menu(true, nullptr);
+        if (Item->IsCompositeReference() && !Item->NodePath.IsEmpty() && CurrentActor.IsValid())
+        {
+            // R6-D0 (docs/16 §2.7): open the shared child definition as a draft
+            // under this placement; the source stays untouched until published.
+            Menu.AddMenuEntry(
+                LOCTEXT("EditContents", "Edit Contents..."),
+                LOCTEXT("EditContentsTip", "Open the nested composite definition as a draft in the context of this placement. Saving publishes the shared definition for every placement."),
+                FSlateIcon(),
+                FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::EditContents, Item->NodePath)));
+        }
         if (bHasNavigation && Navigation.Asset.IsValid() && Navigation.Asset->IsA<UMHCompositeAsset>())
         {
             Menu.AddMenuEntry(
@@ -373,6 +385,20 @@ private:
                 })));
         }
         return Menu.MakeWidget();
+    }
+
+    void EditContents(const FString InvocationPath)
+    {
+        UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+        AMHCompositeActor* Root = CurrentActor.Get();
+        if (Subsystem == nullptr || Root == nullptr) return;
+        FString Error;
+        if (!Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error))
+        {
+            FMessageLog("Mimir").Error(FText::FromString(Error));
+            FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
+        }
+        RefreshModel();
     }
 
     void OpenAsset(TWeakObjectPtr<UObject> Asset) const
@@ -663,7 +689,20 @@ private:
                 CurrentActor->GetSeed(), CurrentActor->GetAppearanceSeed())));
             if (StatusText.IsValid())
             {
-                if (Model.GetOverlayStatus().IsEmpty())
+                const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+                const FMHCompositeEditContext EditContext = Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext();
+                if (!EditContext.EditedLogicalName.IsEmpty() && EditContext.RootPlacement.Get() == CurrentActor.Get())
+                {
+                    // R6-D0: what is edited, where it sits, and what saving touches.
+                    const FString Context = EditContext.InvocationPath.IsEmpty()
+                        ? Asset != nullptr ? Asset->LogicalName : FString()
+                        : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
+                    StatusText->SetText(FText::FromString(FString::Printf(
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)"),
+                        *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
+                    StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
+                }
+                else if (Model.GetOverlayStatus().IsEmpty())
                 {
                     StatusText->SetText(LOCTEXT("OverlayActive", "Resolved overlay active"));
                     StatusText->SetColorAndOpacity(FSlateColor::UseSubduedForeground());
