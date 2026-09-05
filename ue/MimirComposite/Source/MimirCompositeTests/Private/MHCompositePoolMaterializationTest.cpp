@@ -26,6 +26,8 @@ struct FPoolPlacementFixture
     UWorld* World = nullptr;
     UMHInstancePoolSubsystem* Pool = nullptr;
     UMHCompositeAsset* Root = nullptr;
+    /** Same leaves, mesh B first: the first row belongs to a mesh a reimport of A does not touch. */
+    UMHCompositeAsset* RootBFirst = nullptr;
     FString MeshA, MeshB;
     UStaticMesh* MeshObjectA = nullptr;
     UStaticMesh* MeshObjectB = nullptr;
@@ -53,13 +55,23 @@ struct FPoolPlacementFixture
         }
         Root = Recipe.Composite(Recipe.Name(TEXT("pool_place_root")), Document, {});
         if (Root == nullptr) return false;
+        FMHCompositeDocument BFirst;
+        for (int32 Index = 0; Index < 3; ++Index)
+        {
+            FMHCompositeNode& Node = BFirst.Nodes.AddDefaulted_GetRef();
+            Node.Kind = EMHCompositeNodeKind::Mesh;
+            Node.Resource = Index == 0 ? MeshB : MeshA;
+            Node.Transform.TranslationCm = FVector(Index * 100.0, 0.0, 0.0);
+        }
+        RootBFirst = Recipe.Composite(Recipe.Name(TEXT("pool_place_root_bfirst")), BFirst, {});
+        if (RootBFirst == nullptr) return false;
         World = UWorld::CreateWorld(EWorldType::Editor, false);
         if (!Test.TestNotNull(TEXT("pool placement world"), World)) return false;
         Pool = UMHInstancePoolSubsystem::Get(World);
         return Test.TestNotNull(TEXT("instance pool of the editor world"), Pool);
     }
 
-    AMHCompositeActor* Spawn(const FVector& Location, const int32 Seed = 3)
+    AMHCompositeActor* Spawn(const FVector& Location, const int32 Seed = 3, UMHCompositeAsset* Asset = nullptr)
     {
         FActorSpawnParameters Params;
         Params.ObjectFlags = RF_Transactional;
@@ -69,7 +81,7 @@ struct FPoolPlacementFixture
         Actor->SetAutoAppearanceSeed(false);
         Actor->SetSeed(Seed);
         Actor->SetAppearanceSeed(5);
-        Actor->SetCompositeAsset(Root);
+        Actor->SetCompositeAsset(Asset != nullptr ? Asset : Root);
         return Actor;
     }
 
@@ -286,6 +298,100 @@ bool FMHPoolReimportMigratesSharedBucketOnceTest::RunTest(const FString& Paramet
     bPassed &= TestEqual(TEXT("migrated bucket renders both placements"), NewA != nullptr ? NewA->GetInstanceCount() : -1, 4);
     bPassed &= F.RowsAreLive(*this, *A, TEXT("A after migration"));
     bPassed &= F.RowsAreLive(*this, *B, TEXT("B after migration"));
+    return bPassed;
+}
+
+// R5-F (audit 2026-09-05 §2.1): after a bucket migration every derived view of
+// the placement (rows and the compatibility leaf array) must agree, so the next
+// move is a plain basis update: no MH_E_PLACEMENT_STATE_DESYNC, no full
+// rebuild. Covers the two orders that broke the one-shot refresh: the first
+// row on the migrated mesh, and the first row on an unaffected mesh.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHPoolReimportThenMoveTest,
+    "Mimir.V5.Composite.Pool.ReimportThenMovePreservesMapping",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPoolReimportThenMoveTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FPoolPlacementFixture F(*this);
+    if (!F.Build(*this)) return false;
+    AMHCompositeActor* A = F.Spawn(FVector(0, 0, 0));
+    AMHCompositeActor* B = F.Spawn(FVector(0, 1000, 0), 3, F.RootBFirst);
+    if (!TestNotNull(TEXT("actor A"), A) || !TestNotNull(TEXT("actor B (mesh B first)"), B)) return false;
+    bool bPassed = F.RowsAreLive(*this, *A, TEXT("initial A")) & F.RowsAreLive(*this, *B, TEXT("initial B"));
+    const uint32 RebuildsA = A->GetPlacementRebuildCount();
+    const uint32 RebuildsB = B->GetPlacementRebuildCount();
+    const uint32 DesyncsA = A->GetPlacementDesyncCount();
+    const uint32 DesyncsB = B->GetPlacementDesyncCount();
+    const uint32 RevisionA = A->GetPreviewRevision();
+    const uint32 RevisionB = B->GetPreviewRevision();
+
+    UMaterial* Slot1 = NewObject<UMaterial>(GetTransientPackage(), FName(*F.Recipe.Name(TEXT("pool_move_slot1"))));
+    F.MeshObjectA->GetStaticMaterials().Add(FStaticMaterial(Slot1, TEXT("slot1"), TEXT("slot1")));
+    MHNotifyGeneratedResourceChanged(FPoolPlacementFixture::Key(F.MeshA));
+    bPassed &= TestTrue(TEXT("registry classified a descriptor change"),
+        UMHEndpointPrototypeRegistry::Get()->GetLastInterfaceDelta(FPoolPlacementFixture::Key(F.MeshA)).bBucketDescriptor);
+    bPassed &= TestTrue(TEXT("A observed the migration (preview revision advanced)"), A->GetPreviewRevision() > RevisionA);
+    bPassed &= TestTrue(TEXT("B observed the migration although its first leaf is mesh B"), B->GetPreviewRevision() > RevisionB);
+    // Compatibility view agrees with the rows for every leaf.
+    for (AMHCompositeActor* Actor : {A, B})
+    {
+        const TArray<FMHCompositeLeafMaterialization>& Rows = Actor->GetLeafMaterializations();
+        const TArray<TObjectPtr<USceneComponent>>& Leaves = Actor->GetLeafPlacementComponents();
+        bPassed &= TestEqual(TEXT("leaf view is plan-aligned"), Leaves.Num(), Rows.Num());
+        for (int32 Index = 0; Index < Rows.Num() && Index < Leaves.Num(); ++Index)
+            bPassed &= TestTrue(FString::Printf(TEXT("leaf view %d follows the migrated row"), Index), IsValid(Leaves[Index]) && Leaves[Index] == Rows[Index].Component);
+    }
+
+    // The move after the reimport is a basis update, nothing else.
+    A->SetActorLocation(FVector(0, 0, 100));
+    B->SetActorLocation(FVector(0, 1000, 100));
+    bPassed &= TestEqual(TEXT("A: move after reimport records no desync"), A->GetPlacementDesyncCount(), DesyncsA);
+    bPassed &= TestEqual(TEXT("A: move after reimport is not a rebuild"), A->GetPlacementRebuildCount(), RebuildsA);
+    bPassed &= TestEqual(TEXT("B: move after reimport records no desync"), B->GetPlacementDesyncCount(), DesyncsB);
+    bPassed &= TestEqual(TEXT("B: move after reimport is not a rebuild"), B->GetPlacementRebuildCount(), RebuildsB);
+    bPassed &= F.RowsAreLive(*this, *A, TEXT("A moved after reimport"));
+    bPassed &= F.RowsAreLive(*this, *B, TEXT("B moved after reimport"));
+    return bPassed;
+}
+
+// R5-F (audit §2.3): Undo while Placement Edit Mode is active must not leave
+// the placement empty behind a session that blocks its own rebuild. The
+// session ends, the preview is restored from the actor's record.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHPoolUndoDuringEditTest,
+    "Mimir.V5.Composite.Pool.UndoDuringEditRestoresPreview",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPoolUndoDuringEditTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    if (GEditor == nullptr || GEditor->Trans == nullptr) return false;
+    FPoolPlacementFixture F(*this);
+    if (!F.Build(*this)) return false;
+    GEditor->Trans->Reset(INVTEXT("MH pool undo-in-edit test start"));
+    AMHCompositeActor* A = F.Spawn(FVector(0, 0, 0));
+    if (!TestNotNull(TEXT("actor A"), A)) return false;
+    bool bPassed = F.RowsAreLive(*this, *A, TEXT("initial A"));
+
+    GEditor->BeginTransaction(INVTEXT("MH pool test move before edit"));
+    A->Modify();
+    A->SetActorLocation(FVector(0, 0, 300));
+    GEditor->EndTransaction();
+    A->SetPlacementEditMode(true);
+    bPassed &= TestTrue(TEXT("edit session is active"), A->IsPlacementEditMode());
+    bPassed &= TestTrue(TEXT("undo succeeds during the edit session"), GEditor->UndoTransaction());
+    bPassed &= TestFalse(TEXT("undo ends the edit session instead of starving it"), A->IsPlacementEditMode());
+    bPassed &= TestTrue(TEXT("actor location restored"), A->GetActorLocation().Equals(FVector::ZeroVector, 1e-3));
+    bPassed &= TestNotNull(TEXT("preview restored after undo: ") + A->GetLastPlacementError(), A->GetResolvedPlan());
+    bPassed &= TestEqual(TEXT("A renders its three leaves after undo"), F.Pool->NumLiveInstances(*A), 3);
+    bPassed &= F.RowsAreLive(*this, *A, TEXT("A after undo during edit"));
+    // A fresh session still works on the restored preview.
+    A->SetPlacementEditMode(true);
+    bPassed &= TestTrue(TEXT("a new edit session starts"), A->IsPlacementEditMode());
+    A->SetPlacementEditMode(false);
+    bPassed &= F.RowsAreLive(*this, *A, TEXT("A after the new session"));
     return bPassed;
 }
 

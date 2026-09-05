@@ -361,4 +361,70 @@ bool FMHInstancePoolDriftedBucketTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+// R5-F (audit §2.4): a mesh-interface migration re-derives only the mesh
+// side of the descriptor; the bucket's placement policy (collision, render,
+// mobility, visibility, appearance layout) survives, and the next Add with the
+// same descriptor still lands in that bucket.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHInstancePoolMigrationPolicyTest,
+    "Mimir.V5.Composite.Pool.MigrationPreservesPolicy",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHInstancePoolMigrationPolicyTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FPoolFixture F;
+    if (!F.Build(*this)) return false;
+    FMHPoolBucketDescriptor Custom = F.DescA;
+    Custom.bCastShadow = !Custom.bCastShadow;
+    Custom.bVisibleInRayTracing = !Custom.bVisibleInRayTracing;
+    Custom.Mobility = Custom.Mobility == EComponentMobility::Static ? EComponentMobility::Movable : EComponentMobility::Static;
+    const FMHInstanceHandle H0 = F.Add(*F.OwnerA, TEXT("a:nodes[0]"), Custom, FVector(0, 0, 0));
+    TArray<UInstancedStaticMeshComponent*> Buckets;
+    F.Pool->GetBucketComponents(*F.MeshA, Buckets);
+    bool bPassed = TestTrue(TEXT("custom bucket exists"), H0.IsSet() && Buckets.Num() == 1);
+    if (Buckets.Num() != 1) return false;
+    bPassed &= TestTrue(TEXT("custom policy applied"), Buckets[0]->CastShadow == Custom.bCastShadow && Buckets[0]->Mobility == Custom.Mobility);
+
+    FMHEndpointInterfaceDelta Descriptor;
+    Descriptor.bBucketDescriptor = true;
+    bPassed &= TestEqual(TEXT("descriptor delta migrates the bucket"), F.Pool->ReconcileMesh(*F.MeshA, Descriptor), 1);
+    F.Pool->GetBucketComponents(*F.MeshA, Buckets);
+    bPassed &= TestTrue(TEXT("migrated component keeps the custom policy"), Buckets.Num() == 1 &&
+        Buckets[0]->CastShadow == Custom.bCastShadow && Buckets[0]->bVisibleInRayTracing == Custom.bVisibleInRayTracing && Buckets[0]->Mobility == Custom.Mobility);
+    const FMHInstanceHandle H1 = F.Add(*F.OwnerB, TEXT("b:nodes[0]"), Custom, FVector(10, 0, 0));
+    bPassed &= TestEqual(TEXT("the same descriptor still addresses the migrated bucket"), H1.BucketId, H0.BucketId);
+    bPassed &= TestEqual(TEXT("no second bucket for the custom descriptor"), F.Pool->NumBuckets(), 1);
+    bPassed &= TestTrue(TEXT("H0 survives"), F.Pool->IsValidHandle(H0));
+    return bPassed;
+}
+
+// R5-F (audit §2.6): the pool actor is a transient editor representation, not
+// an editor-only/hidden-in-game actor; otherwise Game View (G) hides every
+// pooled instance. Transient flags alone keep it out of save, cook and PIE.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHInstancePoolActorVisibleInGameViewTest,
+    "Mimir.V5.Composite.Pool.PoolActorVisibleInGameView",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHInstancePoolActorVisibleInGameViewTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FPoolFixture F;
+    if (!F.Build(*this)) return false;
+    const FMHInstanceHandle H0 = F.Add(*F.OwnerA, TEXT("a:nodes[0]"), F.DescA, FVector(0, 0, 0));
+    UInstancedStaticMeshComponent* Component = nullptr;
+    int32 Index = INDEX_NONE;
+    if (!TestTrue(TEXT("instance"), F.Pool->GetInstance(H0, Component, Index) && Component != nullptr)) return false;
+    const AActor* PoolActor = Component->GetOwner();
+    bool bPassed = TestNotNull(TEXT("pool actor"), PoolActor);
+    if (PoolActor == nullptr) return false;
+    bPassed &= TestFalse(TEXT("pool actor is not hidden in game (Game View renders it)"), PoolActor->IsHidden());
+    bPassed &= TestFalse(TEXT("pool actor is not editor-only"), PoolActor->IsEditorOnly());
+    bPassed &= TestFalse(TEXT("bucket component is not editor-only"), Component->IsEditorOnly());
+    bPassed &= TestTrue(TEXT("pool actor is transient"), PoolActor->HasAnyFlags(RF_Transient));
+    bPassed &= TestTrue(TEXT("pool actor is not duplicated into PIE"), PoolActor->HasAnyFlags(RF_DuplicateTransient));
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests
