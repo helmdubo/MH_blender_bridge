@@ -194,8 +194,9 @@ bool FMHEndpointInterfaceHashTest::RunTest(const FString& Parameters)
     const FMHEndpointPrototype Binding = Reimport(*Registry, Key);
     Delta = Registry->GetLastInterfaceDelta(Key);
     bPassed &= TestNotEqual(TEXT("swapped default material changes MaterialBindingHash"), Binding.MaterialBindingHash, AfterSlots.MaterialBindingHash);
+    bPassed &= TestEqual(TEXT("swapped default material keeps BucketDescriptorHash (slot layout unchanged)"), Binding.BucketDescriptorHash, AfterSlots.BucketDescriptorHash);
     bPassed &= TestTrue(TEXT("swapped default material is classified as binding"), Delta.bMaterialBinding);
-    bPassed &= TestFalse(TEXT("swapped default material is not a collision change"), Delta.bCollisionInterface);
+    bPassed &= TestFalse(TEXT("swapped default material is neither a descriptor nor a collision change"), Delta.bBucketDescriptor || Delta.bCollisionInterface);
 
     // G. Collision policy: only the collision interface moves.
     const FInterfaceSnapshot AfterBinding(Binding);

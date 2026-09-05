@@ -68,7 +68,7 @@ re-admission после `Revision++`, и классифицирует, что и
 |---|---|---|
 | `PayloadRevision` | `UMHStaticMeshImportData::SourceHash` (+ `ImporterVersion`) — сравнение с предыдущим снимком; `+1` при отличии, `0` при первой admission | render refresh |
 | `BoundsRevision` / `Bounds` | `GetExtendedBounds()` (origin, box extent, sphere radius) + `GetPositiveBoundsExtension()` + `GetNegativeBoundsExtension()`; `Bounds` = `GetExtendedBounds().GetBox()`, расширенный на положительное/отрицательное extension, если `GetExtendedBounds()` нулевой (меш без render data в тестах) | bounds cache |
-| `BucketDescriptorHash` | material slots: число, порядок, `MaterialSlotName`, путь default `MaterialInterface`; `GetNumSourceModels()` (LOD count); секции из `GetRenderData()` если он есть (для каждого LOD: число секций, `MaterialIndex`, `bEnableCollision`, `bCastShadow`); иначе секции не участвуют | миграция бакета |
+| `BucketDescriptorHash` | структура слотов: число, порядок, `MaterialSlotName` (**без** путей материалов — они только в `MaterialBindingHash`); `GetNumSourceModels()` (LOD count); секции из `GetRenderData()` если он есть (для каждого LOD: число секций, `MaterialIndex`, `bEnableCollision`, `bCastShadow`); иначе секции не участвуют | миграция бакета |
 | `CollisionInterfaceHash` | наличие `BodySetup`; `CollisionTraceFlag`; `bDoubleSidedGeometry`; число элементов `AggGeom` по типам; `DefaultInstance.GetCollisionProfileName()` | recreate physics |
 | `MaterialBindingHash` | слоты: `MaterialSlotName`, путь default `MaterialInterface`, путь `OverlayMaterialInterface`, порядок | reconcile материалов |
 
@@ -180,3 +180,11 @@ acceptance-тест не менялись.
 и не менять публичный API, другие документы или тест. Этот STOP-коммит
 содержит только данный OPEN-раздел. Независимый R4-pre-2 разрешён owner'ом
 в том же поручении и не требует готового R3a.
+
+**Ответ близнеца (2026-09-05): вариант 1.** Противоречие было в контракте
+(строка таблицы для `BucketDescriptorHash` перечисляла путь default material);
+норма — абзац «Разделение обязательно» и секция F теста. Исправлено в этом
+коммите: строка таблицы (пути материалов только в `MaterialBindingHash`),
+`docs/16_recipe_model.md` §2.2 (то же), и секция F red-теста усилена —
+равенство `BucketDescriptorHash` и отсутствие `bBucketDescriptor` при смене
+default material в существующем слоте. STOP снят — продолжать реализацию.

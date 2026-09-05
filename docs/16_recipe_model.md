@@ -135,8 +135,8 @@ uint64 MaterialBindingHash; TSoftClassPtr<AActor> ActorClass }`.
   `PayloadRevision` — геометрия / render resource → render refresh;
   `BoundsRevision` — пространственные bounds → bounds cache, streaming bounds;
   `BucketDescriptorHash` — поля совместимости `FISMComponentDescriptor`
-  (material slots: число, порядок, дефолтные материалы; sections и их флаги;
-  LOD count) → миграция бакета;
+  (структура material slots: число, порядок, имена — без путей материалов;
+  sections и их флаги; LOD count) → миграция бакета;
   `CollisionInterfaceHash` — `BodySetup` / collision policy / trace companion
   → recreate physics state;
   `MaterialBindingHash` — slots / default materials / override compatibility
