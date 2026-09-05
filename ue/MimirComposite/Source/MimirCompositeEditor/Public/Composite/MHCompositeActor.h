@@ -13,6 +13,7 @@
 class UActorComponent;
 class UMHCompositeAsset;
 class USceneComponent;
+namespace UE::MimirComposite { struct FMHEndpointInterfaceDelta; }
 
 /** Persisted level instance of one managed composite; its component view is always derived. */
 /**
@@ -184,9 +185,13 @@ public:
 #endif
 
 private:
+    friend void UE::MimirComposite::MHNotifyGeneratedResourceChanged(const UE::MimirComposite::FMHResourceKey& Key);
+    void ReconcileEndpoint(const UE::MimirComposite::FMHResourceKey& Key,
+        const UE::MimirComposite::FMHEndpointInterfaceDelta& Delta);
+    void ReconcileRecipe(const UE::MimirComposite::FMHResourceKey& Key);
     TArray<TObjectPtr<UActorComponent>> CollectPreviousDerivedComponents() const;
     void ClearDerivedComponents();
-    void RebuildPlacement(bool bSeedOnly);
+    void RebuildPlacement(bool bSeedOnly, bool bRecipeChanged = false);
     void UpdatePlacementBasis(USceneComponent*, EUpdateTransformFlags, ETeleportType);
     void AttachRootTransformHook();
     void ReportPlacementError();

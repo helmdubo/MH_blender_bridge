@@ -39,6 +39,10 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
     bool Succeeded() const { return Error.IsEmpty(); }
 };
 
+/** Recreate one admitted ISM through the existing bucket configuration, retaining instances and appearance. */
+MIMIRCOMPOSITEEDITOR_API UInstancedStaticMeshComponent* MHMigrateCompositePlacementBucket(
+    AActor& Target, UInstancedStaticMeshComponent& Previous);
+
 /** Reconcile only plan leaves; stable components survive seed-only changes. */
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(
     AActor& Target, const FMHResolvedCompositePlan& Plan,

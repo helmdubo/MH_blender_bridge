@@ -11,6 +11,10 @@
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/CollisionProfile.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "LevelEditor.h"
 #include "Logging/MessageLog.h"
@@ -409,7 +413,86 @@ void AMHCompositeActor::RebuildComposite()
     RebuildPlacement(false);
 }
 
-void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
+void AMHCompositeActor::ReconcileEndpoint(const UE::MimirComposite::FMHResourceKey& Key,
+    const UE::MimirComposite::FMHEndpointInterfaceDelta& Delta)
+{
+    using namespace UE::MimirComposite;
+    if (!Delta.Any() || bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed() ||
+        IsRunningCookCommandlet() || (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
+    // The contract explicitly retains the missing-endpoint recovery path until R4.
+    if (Delta.bFirstAdmission)
+    {
+        if (!bPlanAvailable || !ResidentPlan.IsValid() || ResidentPlan->Leaves.ContainsByPredicate(
+            [&](const FMHResolvedCompositeLeaf& Leaf)
+            { return Leaf.Kind == EMHRandomSemanticKind::Mesh && Leaf.Resource == Key.LogicalName; }))
+            RebuildComposite();
+        return;
+    }
+    UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get();
+    if (Registry == nullptr) return;
+    UStaticMesh* Mesh = Cast<UStaticMesh>(Registry->Resolve(Key).Object.Get());
+    if (Mesh == nullptr) return;
+    TGuardValue<bool> Guard(bRebuildInProgress, true);
+    bool bMigrated = false;
+    for (TObjectPtr<UActorComponent>& Entry : DerivedComponents)
+    {
+        UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(Entry);
+        if (!IsValid(Component) || Component->GetStaticMesh() != Mesh) continue;
+        bool bBucketMigrated = false;
+        if (UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Component);
+            Bucket != nullptr && Delta.bBucketDescriptor)
+        {
+            UInstancedStaticMeshComponent* New = MHMigrateCompositePlacementBucket(*this, *Bucket);
+            Entry = New;
+            for (TObjectPtr<USceneComponent>& Leaf : LeafPlacementComponents)
+                if (Leaf == Bucket) Leaf = New;
+            for (FMHCompositeLeafMaterialization& Row : LeafMaterializations)
+                if (Row.Component == Bucket) Row.Component = New;
+            MHRecordPlacementComponentDestroyed();
+            Bucket->DestroyComponent();
+            Component = New;
+            bBucketMigrated = bMigrated = true;
+        }
+        // Generated components inherit mesh slot/default/overlay bindings.
+        // Clear the old override array, as PlanViewConfigureBucket does for defaults.
+        if (Delta.bMaterialBinding) Component->EmptyOverrideMaterials();
+        if (Delta.bCollisionInterface) Component->RecreatePhysicsState();
+        Component->MarkRenderStateDirty();
+        Component->UpdateBounds();
+        MHRecordReimportBucket(bBucketMigrated);
+    }
+    // Bounds are derived directly from components; the actor has no separate cache.
+    // Payload/bounds-only refresh deliberately emits no Outliner tree invalidation.
+    if (bMigrated)
+    {
+        ++PreviewRevision;
+        BroadcastMHCompositeComponentsEdited();
+    }
+}
+
+void AMHCompositeActor::ReconcileRecipe(const UE::MimirComposite::FMHResourceKey& Key)
+{
+    if (Key.Kind != EMHResourceKind::Composite || bRebuildInProgress || bPlacementEditMode ||
+        IsTemplate() || IsActorBeingDestroyed() || IsRunningCookCommandlet() ||
+        (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
+    const UInstancedStaticMeshComponent* Defaults = GetDefault<UInstancedStaticMeshComponent>();
+    for (UActorComponent* Entry : DerivedComponents)
+    {
+        UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Entry);
+        if (Bucket == nullptr || Bucket->GetStaticMesh() == nullptr || Bucket->GetStaticMesh()->GetBodySetup() == nullptr) continue;
+        // DECIDED-R3B-2: the existing full compiler assigns these same values
+        // through setters that discard the profile name. Canonicalize only an
+        // exactly equivalent default policy, without changing collision behavior.
+        if (Bucket->GetCollisionProfileName() == UCollisionProfile::CustomCollisionProfileName &&
+            Bucket->GetCollisionEnabled() == Defaults->GetCollisionEnabled() &&
+            Bucket->GetCollisionObjectType() == Defaults->GetCollisionObjectType() &&
+            Bucket->GetCollisionResponseToChannels() == Defaults->GetCollisionResponseToChannels())
+            Bucket->SetCollisionProfileName(Defaults->GetCollisionProfileName());
+    }
+    RebuildPlacement(false, true);
+}
+
+void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecipeChanged)
 {
     using namespace UE::MimirComposite;
     // Play/cook consumes a fresh applied-input snapshot through the runtime
@@ -539,11 +622,11 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
     const bool bLayoutReseed = bSeedOnly && bPlanAvailable && ResidentPlan.IsValid() &&
         ResidentPlan->Seed != CandidatePlan->Seed;
     TSharedPtr<const FMHResolvedCompositePlan> PreviousPlan;
-    if (bLayoutReseed && ResidentPlan.IsValid())
+    if ((bLayoutReseed || (bRecipeChanged && bPlanAvailable)) && ResidentPlan.IsValid())
     {
         // The previous preview plan is resident: the reseed diff never re-resolves.
         PreviousPlan = ResidentPlan;
-        RecordMHPlacementReseedComparison(*PreviousPlan, *CandidatePlan);
+        if (bLayoutReseed) RecordMHPlacementReseedComparison(*PreviousPlan, *CandidatePlan);
     }
     SeedAffectsResult = MHClassifyCompositeGraph(*CandidateGraph);
     // None means visual invariance, not absence of random draws. Resolve above
@@ -576,8 +659,8 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
         return true;
     };
     bool bViewCompiled = false;
-    if (bLayoutReseed && PreviousPlan.IsValid() &&
-        SeedAffectsResult != EMHCompositeSeedEffect::None)
+    if (PreviousPlan.IsValid() &&
+        (bRecipeChanged || (bLayoutReseed && SeedAffectsResult != EMHCompositeSeedEffect::None)))
     {
         const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
         FMHCompositePlacementCompileResult View;
@@ -605,12 +688,12 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
                 BroadcastMHCompositeComponentsEdited();
                 bComponentsEditedBroadcast = true;
             }
-            MHRecordPlacementReseedIncrementalApplied();
+            if (bLayoutReseed) MHRecordPlacementReseedIncrementalApplied();
             bViewCompiled = true;
         }
         else
         {
-            MHRecordPlacementReseedFullFallback();
+            if (bLayoutReseed) MHRecordPlacementReseedFullFallback();
         }
     }
     if (!bViewCompiled && !(bSeedOnly && bPlanAvailable && SeedAffectsResult == EMHCompositeSeedEffect::None))
