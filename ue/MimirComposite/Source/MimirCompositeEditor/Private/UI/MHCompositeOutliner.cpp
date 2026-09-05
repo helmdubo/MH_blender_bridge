@@ -286,16 +286,20 @@ private:
         if (!IsValid(Component)) return;
         if (Item->PlacementInstanceIndex != INDEX_NONE)
         {
-            UInstancedStaticMeshComponent* Bucket =
-                Cast<UInstancedStaticMeshComponent>(Component);
+            // Pooled leaf (16 §2.8): the ISM address moves under swap-remove;
+            // resolve the current one through the actor's handle row.
+            const UE::MimirComposite::FMHCompositeLeafMaterialization* Row =
+                CurrentActor->FindLeafMaterializationByNodePath(Item->NodePath);
+            UInstancedStaticMeshComponent* Bucket = Row != nullptr
+                ? Cast<UInstancedStaticMeshComponent>(Row->Component.Get()) : nullptr;
+            const int32 InstanceIndex = Row != nullptr ? Row->InstanceIndex : INDEX_NONE;
             UTypedElementSelectionSet* SelectionSet =
                 GLevelEditorModeTools().GetEditorSelectionSet();
-            if (Bucket == nullptr || SelectionSet == nullptr) return;
+            if (Bucket == nullptr || InstanceIndex == INDEX_NONE || SelectionSet == nullptr) return;
             const FTypedElementHandle Handle =
-                UEngineElementsLibrary::AcquireEditorSMInstanceElementHandle(
-                    Bucket, Item->PlacementInstanceIndex);
+                UEngineElementsLibrary::AcquireEditorSMInstanceElementHandle(Bucket, InstanceIndex);
             if (!Handle) return;
-            CurrentActor->SelectPlacementLeaf(Component, Item->PlacementInstanceIndex);
+            CurrentActor->SelectPlacementLeafByNodePath(Item->NodePath);
             const TArray<FTypedElementHandle> Selection{Handle};
             SelectionSet->SetSelection(Selection, FTypedElementSelectionOptions());
             GEditor->RedrawLevelEditingViewports();
@@ -553,7 +557,9 @@ private:
                 SMInstanceElementDataUtil::GetSMInstanceFromHandle(Handle, true);
             if (!Instance) continue;
             UInstancedStaticMeshComponent* Component = Instance.GetISMComponent();
-            if (Component == nullptr || Component->GetOwner() != CurrentActor.Get()) continue;
+            // Pooled buckets belong to the pool actor; ownership is the pool's answer.
+            if (Component == nullptr ||
+                CurrentActor->FindLeafMaterialization(Component, Instance.GetISMInstanceIndex()) == nullptr) continue;
             CurrentActor->SelectPlacementLeaf(Component, Instance.GetISMInstanceIndex());
             if (TSharedPtr<FMHCompositeOutlinerItem> Item =
                     Model.FindForInstance(Component, Instance.GetISMInstanceIndex()))

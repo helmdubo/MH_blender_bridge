@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHInstancePool.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeCompiler.h"
 #include "Composite/MHCompositeImporter.h"
@@ -930,8 +931,9 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     {
         USceneComponent* First = MeshLeaves[0];
         USceneComponent* Second = MeshLeaves[1];
-        bPassed &= TestTrue(TEXT("both leaves share one ISM bucket under the placement root"),
-            First != nullptr && First == Second && First->GetAttachParent() == PlacementRoot);
+        // 16 §2.8 (R5b-1): the shared bucket is the level pool's, on its pool actor.
+        bPassed &= TestTrue(TEXT("both leaves share one pool ISM bucket"),
+            First != nullptr && First == Second && First->GetOwner() != nullptr && First->GetOwner()->IsA<AMHInstancePoolActor>());
         const TArray<FMHCompositeLeafMaterialization>& Rows = Target->GetLeafMaterializations();
         const FMHResolvedCompositePlan* MappedPlan = Target->GetResolvedPlan();
         bPassed &= TestTrue(TEXT("each top-level leaf retains exact resolved-node mapping"),

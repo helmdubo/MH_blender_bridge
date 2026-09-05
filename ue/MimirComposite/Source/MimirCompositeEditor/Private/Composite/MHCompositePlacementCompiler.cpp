@@ -1,6 +1,7 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 
 #include "Composite/MHCompositeAppearanceTransport.h"
+#include "Composite/MHInstancePool.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -29,166 +30,31 @@ constexpr EObjectFlags PlanViewFlags = RF_Transient | RF_DuplicateTransient | RF
 /** Instrumentation counter behind MHGetPlacementPreviousComponentProbes. */
 uint64 GMHPlacementPreviousComponentProbes = 0;
 
-struct FPlanViewSectionPolicy
+/** The level instance pool that materializes static leaves (16 §2.8); nullptr outside editor worlds. */
+UMHInstancePoolSubsystem* PlanViewPool(const AActor& Target)
 {
-    int32 MaterialIndex = INDEX_NONE;
-    bool bEnableCollision = false;
-    bool bCastShadow = false;
-    bool bVisibleInRayTracing = false;
-    bool bAffectDistanceFieldLighting = false;
-    bool bForceOpaque = false;
-
-    bool operator==(const FPlanViewSectionPolicy& Other) const = default;
-};
-
-/** Complete U5 bucket identity. Never remove a field without a new contract. */
-struct FPlanViewISMBucketKey
-{
-    TObjectPtr<UStaticMesh> StaticMesh = nullptr;
-    TArray<TObjectPtr<UMaterialInterface>> MaterialOverrides;
-    FName CollisionProfileName;
-    ECollisionEnabled::Type CollisionEnabled = ECollisionEnabled::NoCollision;
-    ECollisionChannel CollisionObjectType = ECC_WorldStatic;
-    FCollisionResponseContainer CollisionResponses;
-    bool bGenerateOverlapEvents = false;
-    bool bTraceComplexOnMove = false;
-    bool bReturnMaterialOnMove = false;
-    bool bCastShadow = false;
-    bool bAffectDistanceFieldLighting = false;
-    bool bVisibleInRayTracing = false;
-    TArray<FPlanViewSectionPolicy> Sections;
-    EComponentMobility::Type Mobility = EComponentMobility::Static;
-    bool bVisible = true;
-    bool bHiddenInGame = false;
-    int32 AppearanceLayout = 0;
-
-    bool operator==(const FPlanViewISMBucketKey& Other) const = default;
-};
-
-FPlanViewISMBucketKey PlanViewDefaultBucketKey(
-    UStaticMesh& StaticMesh, const int32 AppearanceLayout)
-{
-    const UInstancedStaticMeshComponent* Defaults =
-        GetDefault<UInstancedStaticMeshComponent>();
-    FPlanViewISMBucketKey Key;
-    Key.StaticMesh = &StaticMesh;
-    Key.MaterialOverrides = Defaults->OverrideMaterials;
-    Key.CollisionProfileName = Defaults->GetCollisionProfileName();
-    Key.CollisionEnabled = Defaults->GetCollisionEnabled();
-    // A transient/synthetic UStaticMesh can legitimately have no body setup.
-    // Its old SMC view was non-colliding in practice; asking ISM to create an
-    // instance body would assert inside the stock engine instead.
-    if (StaticMesh.GetBodySetup() == nullptr)
-    {
-        Key.CollisionEnabled = ECollisionEnabled::NoCollision;
-        Key.CollisionProfileName = UCollisionProfile::CustomCollisionProfileName;
-    }
-    Key.CollisionObjectType = Defaults->GetCollisionObjectType();
-    Key.CollisionResponses = Defaults->GetCollisionResponseToChannels();
-    Key.bGenerateOverlapEvents = Defaults->GetGenerateOverlapEvents();
-    Key.bTraceComplexOnMove = Defaults->bTraceComplexOnMove;
-    Key.bReturnMaterialOnMove = Defaults->bReturnMaterialOnMove;
-    Key.bCastShadow = Defaults->CastShadow;
-    Key.bAffectDistanceFieldLighting = Defaults->bAffectDistanceFieldLighting;
-    Key.bVisibleInRayTracing = Defaults->bVisibleInRayTracing;
-    Key.Mobility = Defaults->Mobility;
-    Key.bVisible = Defaults->IsVisible();
-    Key.bHiddenInGame = Defaults->bHiddenInGame;
-    Key.AppearanceLayout = AppearanceLayout;
-    for (int32 LodIndex = 0; LodIndex < StaticMesh.GetNumLODs(); ++LodIndex)
-    {
-        for (int32 SectionIndex = 0; SectionIndex < StaticMesh.GetNumSections(LodIndex); ++SectionIndex)
-        {
-            const FMeshSectionInfo Info = StaticMesh.GetSectionInfoMap().Get(LodIndex, SectionIndex);
-            Key.Sections.Add({Info.MaterialIndex, Info.bEnableCollision, Info.bCastShadow,
-                Info.bVisibleInRayTracing, Info.bAffectDistanceFieldLighting, Info.bForceOpaque});
-        }
-    }
-    return Key;
+    return UMHInstancePoolSubsystem::Get(Target.GetWorld());
 }
 
-FPlanViewISMBucketKey PlanViewLiveBucketKey(
-    UInstancedStaticMeshComponent& Component, const int32 AppearanceLayout)
+FMHPoolBucketDescriptor PlanViewPoolDescriptor(UStaticMesh& Mesh, const UMHCompositeSettings& Settings)
 {
-    UStaticMesh* StaticMesh = Component.GetStaticMesh();
-    FPlanViewISMBucketKey Key;
-    if (StaticMesh != nullptr) Key = PlanViewDefaultBucketKey(*StaticMesh, AppearanceLayout);
-    Key.StaticMesh = StaticMesh;
-    Key.MaterialOverrides = Component.OverrideMaterials;
-    Key.CollisionProfileName = Component.GetCollisionProfileName();
-    Key.CollisionEnabled = Component.GetCollisionEnabled();
-    Key.CollisionObjectType = Component.GetCollisionObjectType();
-    Key.CollisionResponses = Component.GetCollisionResponseToChannels();
-    Key.bGenerateOverlapEvents = Component.GetGenerateOverlapEvents();
-    Key.bTraceComplexOnMove = Component.bTraceComplexOnMove;
-    Key.bReturnMaterialOnMove = Component.bReturnMaterialOnMove;
-    Key.bCastShadow = Component.CastShadow;
-    Key.bAffectDistanceFieldLighting = Component.bAffectDistanceFieldLighting;
-    Key.bVisibleInRayTracing = Component.bVisibleInRayTracing;
-    Key.Mobility = Component.Mobility;
-    Key.bVisible = Component.IsVisible();
-    Key.bHiddenInGame = Component.bHiddenInGame;
-    Key.AppearanceLayout = Component.NumCustomDataFloats;
-    return Key;
+    return FMHPoolBucketDescriptor::FromMesh(Mesh,
+        Settings.AppearanceCustomDataBaseIndex + MH_APPEARANCE_CHANNELS, Settings.AppearanceCustomDataBaseIndex);
 }
 
-void PlanViewConfigureBucket(
-    UInstancedStaticMeshComponent& Component, const FPlanViewISMBucketKey& Key)
+/** Materialization row of a pooled leaf: the handle plus its current ISM address. */
+bool PlanViewPooledRow(const UMHInstancePoolSubsystem& Pool, const FMHInstanceHandle& Handle,
+    const FMHResolvedCompositeLeaf& Leaf, FMHCompositeLeafMaterialization& OutRow)
 {
-    Component.SetStaticMesh(Key.StaticMesh);
-    Component.OverrideMaterials = Key.MaterialOverrides;
-    Component.SetCollisionProfileName(Key.CollisionProfileName);
-    Component.SetCollisionEnabled(Key.CollisionEnabled);
-    Component.SetCollisionObjectType(Key.CollisionObjectType);
-    Component.SetCollisionResponseToChannels(Key.CollisionResponses);
-    Component.SetGenerateOverlapEvents(Key.bGenerateOverlapEvents);
-    Component.bTraceComplexOnMove = Key.bTraceComplexOnMove;
-    Component.bReturnMaterialOnMove = Key.bReturnMaterialOnMove;
-    Component.CastShadow = Key.bCastShadow;
-    Component.bAffectDistanceFieldLighting = Key.bAffectDistanceFieldLighting;
-    Component.bVisibleInRayTracing = Key.bVisibleInRayTracing;
-    Component.SetMobility(Key.Mobility);
-    Component.SetVisibility(Key.bVisible);
-    Component.SetHiddenInGame(Key.bHiddenInGame);
-    Component.bHasPerInstanceHitProxies = true;
-    Component.bSupportRemoveAtSwap = false;
-    Component.SetNumCustomDataFloats(Key.AppearanceLayout);
-}
-
-bool PlanViewSetInstanceAppearance(UInstancedStaticMeshComponent& Component,
-    const int32 InstanceIndex, const FMHResolvedCompositeLeaf& Leaf,
-    const int32 BaseIndex, const bool bMarkRenderStateDirty)
-{
-    if (!MHIsAdmissibleAppearanceCustomDataBaseIndex(BaseIndex) ||
-        Component.NumCustomDataFloats < BaseIndex + MH_APPEARANCE_CHANNELS ||
-        !Component.IsValidInstance(InstanceIndex)) return false;
-    for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
-    {
-        Component.SetCustomDataValue(InstanceIndex, BaseIndex + Channel,
-            Leaf.AppearanceChannels[Channel],
-            bMarkRenderStateDirty && Channel + 1 == MH_APPEARANCE_CHANNELS);
-    }
+    UInstancedStaticMeshComponent* Component = nullptr;
+    int32 InstanceIndex = INDEX_NONE;
+    if (!Pool.GetInstance(Handle, Component, InstanceIndex) || Component == nullptr) return false;
+    OutRow.Component = Component;
+    OutRow.InstanceIndex = InstanceIndex;
+    OutRow.ResolvedNodeIndex = Leaf.OwningResolvedNodeIndex;
+    OutRow.NodePath = Leaf.Origin;
+    OutRow.Handle = Handle;
     return true;
-}
-
-void PlanViewNormalizeBucketTags(
-    TConstArrayView<FMHCompositeLeafMaterialization> Materializations)
-{
-    TSet<UInstancedStaticMeshComponent*> Seen;
-    int32 BucketOrdinal = 0;
-    for (const FMHCompositeLeafMaterialization& Row : Materializations)
-    {
-        UInstancedStaticMeshComponent* Bucket =
-            Cast<UInstancedStaticMeshComponent>(Row.Component);
-        if (Bucket == nullptr || Seen.Contains(Bucket)) continue;
-        Seen.Add(Bucket);
-        Bucket->ComponentTags.RemoveAll([](const FName& Tag)
-        {
-            return Tag.ToString().StartsWith(TEXT("MH.ISMBucket:"));
-        });
-        Bucket->ComponentTags.Add(FName(*FString::Printf(
-            TEXT("MH.ISMBucket:%d"), BucketOrdinal++)));
-    }
 }
 
 FMatrix PlanViewTrsMatrix(const FMHRandomTrs& Trs)
@@ -328,40 +194,6 @@ bool PlanViewPreflight(const FMHResolvedCompositePlan& Plan, const FMHRandomComp
 }
 } // namespace
 
-UInstancedStaticMeshComponent* MHMigrateCompositePlacementBucket(
-    AActor& Target, UInstancedStaticMeshComponent& Previous)
-{
-    // Reuse the same descriptor/configuration and creation order as full compile.
-    // No layout, endpoint resolution, compilation wait or mutation of other buckets.
-    const FPlanViewISMBucketKey Key = PlanViewDefaultBucketKey(*Previous.GetStaticMesh(), Previous.NumCustomDataFloats);
-    FMHCompositePlacementCompileResult Created;
-    UInstancedStaticMeshComponent* Bucket = CastChecked<UInstancedStaticMeshComponent>(PlanViewNew(
-        Target, UInstancedStaticMeshComponent::StaticClass(), TEXT("MH_ISM_Bucket"),
-        NAME_None, Created, nullptr, [&](USceneComponent& Component)
-        {
-            auto& New = *CastChecked<UInstancedStaticMeshComponent>(&Component);
-            PlanViewConfigureBucket(New, Key);
-            // The configuration setters invalidate the profile name even when
-            // assigning identical policy. Restore the canonical named default.
-            New.SetCollisionProfileName(Key.CollisionProfileName);
-            New.ComponentTags = Previous.ComponentTags;
-            New.SetWorldTransform(Previous.GetComponentTransform());
-            New.SetCustomPrimitiveDataFloatArray(0, Previous.GetCustomPrimitiveData().Data);
-        }));
-    for (int32 Index = 0; Index < Previous.GetInstanceCount(); ++Index)
-    {
-        FTransform Transform;
-        Previous.GetInstanceTransform(Index, Transform, false);
-        const int32 Added = Bucket->AddInstance(Transform, false);
-        for (int32 Channel = 0; Channel < Previous.NumCustomDataFloats; ++Channel)
-            Bucket->SetCustomDataValue(Added, Channel,
-                Previous.PerInstanceSMCustomData[Index * Previous.NumCustomDataFloats + Channel], false);
-    }
-    Bucket->MarkRenderStateDirty();
-    Bucket->UpdateBounds();
-    return Bucket;
-}
-
 uint64 MHGetPlacementPreviousComponentProbes()
 {
     return GMHPlacementPreviousComponentProbes;
@@ -390,7 +222,7 @@ bool MHUpdateCompositePlacementBasis(AActor& Target, const FMHResolvedCompositeP
     }
     if (!PlanViewPreflight(Plan, RootDefinition, Target.GetActorTransform(), OutError)) return false;
     const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
-    TMap<UInstancedStaticMeshComponent*, TSet<int32>> InstancesByBucket;
+    UMHInstancePoolSubsystem* Pool = PlanViewPool(Target);
     for (int32 Index = 0; Index < Handles.Num(); ++Index)
     {
         if (!IsValid(Handles[Index]) || Handles[Index]->GetOwner() != &Target)
@@ -403,33 +235,24 @@ bool MHUpdateCompositePlacementBasis(AActor& Target, const FMHResolvedCompositeP
     {
         const FMHCompositeLeafMaterialization& Row = Materializations[Index];
         if (Row.Component != Leaves[Index] || Row.NodePath != Plan.Leaves[Index].Origin ||
-            Row.ResolvedNodeIndex != Plan.Leaves[Index].OwningResolvedNodeIndex ||
-            !IsValid(Row.Component) || Row.Component->GetOwner() != &Target)
+            Row.ResolvedNodeIndex != Plan.Leaves[Index].OwningResolvedNodeIndex || !IsValid(Row.Component))
         {
             OutError = TEXT("MH_E_PLACEMENT_STATE_DESYNC: leaf materialization mapping mismatch");
             return false;
         }
-        if (!Row.IsInstanced()) continue;
-        UInstancedStaticMeshComponent* Bucket =
-            Cast<UInstancedStaticMeshComponent>(Row.Component);
-        if (Bucket == nullptr || !Bucket->IsValidInstance(Row.InstanceIndex))
+        if (!Row.IsInstanced())
         {
-            OutError = TEXT("MH_E_PLACEMENT_STATE_DESYNC: invalid ISM leaf instance");
-            return false;
+            if (Row.Component->GetOwner() != &Target)
+            {
+                OutError = TEXT("MH_E_PLACEMENT_STATE_DESYNC: leaf materialization mapping mismatch");
+                return false;
+            }
+            continue;
         }
-        TSet<int32>& Instances = InstancesByBucket.FindOrAdd(Bucket);
-        if (Instances.Contains(Row.InstanceIndex))
+        // Pooled leaf (16 §2.8): the handle, not the ISM index, is the identity.
+        if (Pool == nullptr || !Row.Handle.IsSet() || !Pool->IsValidHandle(Row.Handle))
         {
-            OutError = TEXT("MH_E_PLACEMENT_STATE_DESYNC: duplicate ISM leaf instance");
-            return false;
-        }
-        Instances.Add(Row.InstanceIndex);
-    }
-    for (const TPair<UInstancedStaticMeshComponent*, TSet<int32>>& Pair : InstancesByBucket)
-    {
-        if (Pair.Key->GetInstanceCount() != Pair.Value.Num())
-        {
-            OutError = TEXT("MH_E_PLACEMENT_STATE_DESYNC: unclaimed ISM leaf instance");
+            OutError = TEXT("MH_E_PLACEMENT_STATE_DESYNC: invalid pooled leaf instance");
             return false;
         }
     }
@@ -438,24 +261,21 @@ bool MHUpdateCompositePlacementBasis(AActor& Target, const FMHResolvedCompositeP
         PlanViewSetWorld(*Handles[Index],
             PlanViewTrsMatrix(RootDefinition.Nodes[Index].Transform) * Basis);
     }
+    if (Pool != nullptr) Pool->BeginBulk();
     for (int32 Index = 0; Index < Leaves.Num(); ++Index)
     {
         const FMHCompositeLeafMaterialization& Row = Materializations[Index];
         if (Row.IsInstanced())
         {
-            UInstancedStaticMeshComponent* Bucket =
-                CastChecked<UInstancedStaticMeshComponent>(Row.Component.Get());
             MHRecordPlacementWorldTransformUpdate();
-            Bucket->UpdateInstanceTransform(Row.InstanceIndex,
-                FTransform(Plan.Leaves[Index].WorldMatrix * Basis), false, false, true);
+            Pool->Update(Row.Handle, Plan.Leaves[Index].WorldMatrix * Basis);
         }
         else
         {
             PlanViewSetWorld(*Leaves[Index], Plan.Leaves[Index].WorldMatrix * Basis);
         }
     }
-    for (const TPair<UInstancedStaticMeshComponent*, TSet<int32>>& Pair : InstancesByBucket)
-        Pair.Key->MarkRenderStateDirty();
+    if (Pool != nullptr) Pool->EndBulk();
     return true;
 }
 
@@ -465,7 +285,7 @@ int32 MHApplyCompositePlacementAppearance(
 {
     if (Materializations.Num() != Plan.Leaves.Num() ||
         !MHIsAdmissibleAppearanceCustomDataBaseIndex(BaseIndex)) return INDEX_NONE;
-    TMap<UInstancedStaticMeshComponent*, TSet<int32>> InstancesByBucket;
+    UMHInstancePoolSubsystem* Pool = nullptr;
     for (int32 Index = 0; Index < Plan.Leaves.Num(); ++Index)
     {
         const FMHCompositeLeafMaterialization& Row = Materializations[Index];
@@ -473,27 +293,22 @@ int32 MHApplyCompositePlacementAppearance(
         if (Row.NodePath != Leaf.Origin || Row.ResolvedNodeIndex != Leaf.OwningResolvedNodeIndex ||
             !IsValid(Row.Component)) return INDEX_NONE;
         if (!Row.IsInstanced()) continue;
-        UInstancedStaticMeshComponent* Bucket =
-            Cast<UInstancedStaticMeshComponent>(Row.Component);
-        if (Bucket == nullptr || Bucket->NumCustomDataFloats < BaseIndex + MH_APPEARANCE_CHANNELS ||
-            !Bucket->IsValidInstance(Row.InstanceIndex)) return INDEX_NONE;
-        TSet<int32>& Instances = InstancesByBucket.FindOrAdd(Bucket);
-        if (Instances.Contains(Row.InstanceIndex)) return INDEX_NONE;
-        Instances.Add(Row.InstanceIndex);
+        if (Pool == nullptr) Pool = UMHInstancePoolSubsystem::Get(Row.Component->GetWorld());
+        if (Pool == nullptr || !Row.Handle.IsSet() || !Pool->IsValidHandle(Row.Handle)) return INDEX_NONE;
     }
-    for (const TPair<UInstancedStaticMeshComponent*, TSet<int32>>& Pair : InstancesByBucket)
-        if (Pair.Key->GetInstanceCount() != Pair.Value.Num()) return INDEX_NONE;
     int32 Applied = 0;
+    if (Pool != nullptr) Pool->BeginBulk();
     for (int32 Index = 0; Index < Plan.Leaves.Num(); ++Index)
     {
         const FMHCompositeLeafMaterialization& Row = Materializations[Index];
         const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[Index];
         if (Row.IsInstanced())
         {
-            UInstancedStaticMeshComponent* Bucket =
-                CastChecked<UInstancedStaticMeshComponent>(Row.Component.Get());
-            if (!PlanViewSetInstanceAppearance(
-                    *Bucket, Row.InstanceIndex, Leaf, BaseIndex, false)) return INDEX_NONE;
+            if (!Pool->UpdateAppearance(Row.Handle, Leaf.AppearanceChannels))
+            {
+                Pool->EndBulk();
+                return INDEX_NONE;
+            }
             ++Applied;
         }
         else if (MHApplyLeafAppearanceCustomData(Row.Component, Leaf, BaseIndex))
@@ -501,8 +316,7 @@ int32 MHApplyCompositePlacementAppearance(
             ++Applied;
         }
     }
-    for (const TPair<UInstancedStaticMeshComponent*, TSet<int32>>& Pair : InstancesByBucket)
-        Pair.Key->MarkRenderStateDirty();
+    if (Pool != nullptr) Pool->EndBulk();
     return Applied;
 }
 
@@ -556,45 +370,39 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
         [](const FMHCompositeLeafMaterialization& Row) { return Row.IsInstanced(); });
     if (bHasInstancedLeaves)
     {
+        // Pooled view (16 §2.8, R5b-1): the diff is applied through stable
+        // handles; no ISM index arithmetic and no bucket ownership on this actor.
+        UMHInstancePoolSubsystem* Pool = PlanViewPool(Target);
+        ULevel* Level = Target.GetLevel();
+        if (Pool == nullptr || Level == nullptr) return false;
         if (PreviousHandles.Num() != RootDefinition.Nodes.Num() ||
             PreviousLeaves.Num() != PreviousPlan.Leaves.Num() ||
             PreviousMaterializations.Num() != PreviousPlan.Leaves.Num()) return false;
-        const int32 AppearanceLayout =
-            Settings.AppearanceCustomDataBaseIndex + MH_APPEARANCE_CHANNELS;
         TMap<FString, TObjectPtr<UStaticMesh>> MeshesByResource;
-        TMap<TObjectPtr<UInstancedStaticMeshComponent>, TSet<int32>> ClaimedInstances;
         for (int32 Index = 0; Index < PreviousPlan.Leaves.Num(); ++Index)
         {
             const FMHResolvedCompositeLeaf& Leaf = PreviousPlan.Leaves[Index];
             const FMHCompositeLeafMaterialization& Row = PreviousMaterializations[Index];
             if (Row.Component != PreviousLeaves[Index] || Row.NodePath != Leaf.Origin ||
-                Row.ResolvedNodeIndex != Leaf.OwningResolvedNodeIndex ||
-                !IsValid(Row.Component) || Row.Component->GetOwner() != &Target ||
-                !PreviousComponents.Contains(Row.Component)) return false;
-            if (!Row.IsInstanced()) continue;
-            UInstancedStaticMeshComponent* Bucket =
-                Cast<UInstancedStaticMeshComponent>(Row.Component);
-            if (Leaf.Kind != EMHRandomSemanticKind::Mesh || Bucket == nullptr ||
-                !Bucket->IsRegistered() || !Bucket->IsValidInstance(Row.InstanceIndex)) return false;
+                Row.ResolvedNodeIndex != Leaf.OwningResolvedNodeIndex || !IsValid(Row.Component)) return false;
+            if (!Row.IsInstanced())
+            {
+                if (Row.Component->GetOwner() != &Target || !PreviousComponents.Contains(Row.Component)) return false;
+                continue;
+            }
+            UInstancedStaticMeshComponent* Bucket = nullptr;
+            int32 InstanceIndex = INDEX_NONE;
+            if (Leaf.Kind != EMHRandomSemanticKind::Mesh || !Row.Handle.IsSet() ||
+                !Pool->GetInstance(Row.Handle, Bucket, InstanceIndex) || Bucket == nullptr) return false;
             TObjectPtr<UStaticMesh>& ExpectedMesh = MeshesByResource.FindOrAdd(Leaf.Resource);
             if (ExpectedMesh == nullptr)
             {
                 ExpectedMesh = PlanViewResolveLeafMesh(Leaf.Resource, Settings, OutResult.Error);
                 if (!OutResult.Error.IsEmpty()) return true;
             }
-            const FPlanViewISMBucketKey LiveKey =
-                PlanViewLiveBucketKey(*Bucket, AppearanceLayout);
-            const FPlanViewISMBucketKey ExpectedKey = ExpectedMesh != nullptr
-                ? PlanViewDefaultBucketKey(*ExpectedMesh, AppearanceLayout)
-                : FPlanViewISMBucketKey();
-            if (ExpectedMesh == nullptr || LiveKey != ExpectedKey) return false;
-            TSet<int32>& Instances = ClaimedInstances.FindOrAdd(Bucket);
-            if (Instances.Contains(Row.InstanceIndex)) return false;
-            Instances.Add(Row.InstanceIndex);
-        }
-        for (const TPair<TObjectPtr<UInstancedStaticMeshComponent>, TSet<int32>>& Pair : ClaimedInstances)
-        {
-            if (Pair.Key == nullptr || Pair.Key->GetInstanceCount() != Pair.Value.Num()) return false;
+            // The endpoint behind a kept handle must still be the mesh its
+            // bucket renders; anything else is the full compiler's job.
+            if (ExpectedMesh == nullptr || Bucket->GetStaticMesh() != ExpectedMesh) return false;
         }
         if (!UninstancedLeafPath.IsEmpty()) return false;
         for (int32 Index = 0; Index < PreviousHandles.Num(); ++Index)
@@ -675,21 +483,12 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             if (!PreviousKept[Index] && !PreviousMaterializations[Index].IsInstanced()) return false;
         }
 
-        TMap<TObjectPtr<UInstancedStaticMeshComponent>, TArray<int32>> RemovedByBucket;
+        const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
+        Pool->BeginBulk();
         for (int32 Index = 0; Index < PreviousPlan.Leaves.Num(); ++Index)
         {
-            if (PreviousKept[Index]) continue;
-            const FMHCompositeLeafMaterialization& Row = PreviousMaterializations[Index];
-            RemovedByBucket.FindOrAdd(
-                CastChecked<UInstancedStaticMeshComponent>(Row.Component.Get())).Add(Row.InstanceIndex);
+            if (!PreviousKept[Index]) Pool->Remove(PreviousMaterializations[Index].Handle);
         }
-        for (TPair<TObjectPtr<UInstancedStaticMeshComponent>, TArray<int32>>& Pair : RemovedByBucket)
-        {
-            Pair.Value.Sort(TGreater<int32>());
-            if (!Pair.Key->RemoveInstances(Pair.Value, true)) return false;
-        }
-
-        const FMatrix Basis = Target.GetActorTransform().ToMatrixWithScale();
         OutResult.TopLevelComponents.Append(PreviousHandles);
         OutResult.LeafComponents.SetNum(CandidatePlan.Leaves.Num());
         OutResult.LeafMaterializations.SetNum(CandidatePlan.Leaves.Num());
@@ -702,31 +501,18 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             FMHCompositeLeafMaterialization Row = PreviousMaterializations[PreviousIndex];
             if (Row.IsInstanced())
             {
-                const TArray<int32>* Removed = RemovedByBucket.Find(
-                    Cast<UInstancedStaticMeshComponent>(Row.Component));
-                if (Removed != nullptr)
-                {
-                    int32 Shift = 0;
-                    for (const int32 RemovedIndex : *Removed)
-                        if (RemovedIndex < Row.InstanceIndex) ++Shift;
-                    Row.InstanceIndex -= Shift;
-                }
-                UInstancedStaticMeshComponent* Bucket =
-                    CastChecked<UInstancedStaticMeshComponent>(Row.Component.Get());
                 if (FMemory::Memcmp(&PreviousLeaf.WorldMatrix, &CandidateLeaf.WorldMatrix,
                         sizeof(FMatrix)) != 0)
                 {
                     MHRecordPlacementWorldTransformUpdate();
-                    Bucket->UpdateInstanceTransform(Row.InstanceIndex,
-                        FTransform(CandidateLeaf.WorldMatrix * Basis), false, true, true);
+                    Pool->Update(Row.Handle, CandidateLeaf.WorldMatrix * Basis);
                 }
                 if (FMemory::Memcmp(PreviousLeaf.AppearanceChannels,
                         CandidateLeaf.AppearanceChannels,
                         sizeof(CandidateLeaf.AppearanceChannels)) != 0)
                 {
                     MHRecordPlacementAppearanceUpdate();
-                    PlanViewSetInstanceAppearance(*Bucket, Row.InstanceIndex, CandidateLeaf,
-                        Settings.AppearanceCustomDataBaseIndex, true);
+                    Pool->UpdateAppearance(Row.Handle, CandidateLeaf.AppearanceChannels);
                 }
             }
             else
@@ -739,55 +525,43 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             OutResult.LeafMaterializations[Index] = MoveTemp(Row);
         }
 
-        int32 NewBucketOrdinal = 0;
+        TMap<UStaticMesh*, FMHPoolBucketDescriptor> Descriptors;
         for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
         {
             if (PreviousIndexForCandidate[Index] != INDEX_NONE) continue;
             const FMHResolvedCompositeLeaf& Leaf = CandidatePlan.Leaves[Index];
             UStaticMesh* Mesh = ResolveMesh(Leaf.Resource);
-            if (Mesh == nullptr) return true;
-            const FPlanViewISMBucketKey DesiredKey =
-                PlanViewDefaultBucketKey(*Mesh, AppearanceLayout);
-            UInstancedStaticMeshComponent* Bucket = nullptr;
-            for (UActorComponent* Previous : PreviousComponents)
+            if (Mesh == nullptr)
             {
-                UInstancedStaticMeshComponent* CandidateBucket =
-                    Cast<UInstancedStaticMeshComponent>(Previous);
-                if (IsValid(CandidateBucket) && CandidateBucket->GetOwner() == &Target &&
-                    PlanViewLiveBucketKey(*CandidateBucket, AppearanceLayout) == DesiredKey)
-                {
-                    Bucket = CandidateBucket;
-                    break;
-                }
+                Pool->EndBulk();
+                return true;
             }
-            if (Bucket == nullptr)
-            {
-                const FName Tag(*FString::Printf(
-                    TEXT("MH.ISMBucket:reseed:%d"), NewBucketOrdinal++));
-                Bucket = CastChecked<UInstancedStaticMeshComponent>(PlanViewNew(
-                    Target, UInstancedStaticMeshComponent::StaticClass(), TEXT("MH_ISM_Bucket"),
-                    Tag, OutResult, nullptr,
-                    [&DesiredKey](USceneComponent& New)
-                    {
-                        MHRecordPlacementStaticMeshAssignment();
-                        PlanViewConfigureBucket(
-                            *CastChecked<UInstancedStaticMeshComponent>(&New), DesiredKey);
-                    }));
-                Bucket->SetAbsolute(true, true, true);
-                MHRecordPlacementAttachment();
-                Bucket->AttachToComponent(
-                    Target.GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-                PlanViewSetWorld(*Bucket, FMatrix::Identity);
-            }
-            const int32 InstanceIndex = Bucket->AddInstance(
-                FTransform(Leaf.WorldMatrix * Basis), false);
+            FMHPoolBucketDescriptor* Descriptor = Descriptors.Find(Mesh);
+            if (Descriptor == nullptr) Descriptor = &Descriptors.Add(Mesh, PlanViewPoolDescriptor(*Mesh, Settings));
             MHRecordPlacementWorldTransformUpdate();
             MHRecordPlacementAppearanceUpdate();
-            PlanViewSetInstanceAppearance(*Bucket, InstanceIndex, Leaf,
-                Settings.AppearanceCustomDataBaseIndex, true);
+            const FMHInstanceHandle Handle = Pool->Add(Target, Leaf.Origin, *Level, *Descriptor,
+                Leaf.WorldMatrix * Basis, Leaf.AppearanceChannels);
+            if (!Handle.IsSet())
+            {
+                Pool->EndBulk();
+                OutResult.Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: instance pool refused ") + Leaf.Origin + TEXT(" -> ") + Leaf.Resource;
+                return true;
+            }
+            OutResult.LeafMaterializations[Index] = {nullptr, INDEX_NONE, Leaf.OwningResolvedNodeIndex, Leaf.Origin, Handle};
+        }
+        Pool->EndBulk();
+        // Current ISM addresses behind the handles, after every removal and addition.
+        for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
+        {
+            FMHCompositeLeafMaterialization& Row = OutResult.LeafMaterializations[Index];
+            if (!Row.Handle.IsSet()) continue;
+            UInstancedStaticMeshComponent* Bucket = nullptr;
+            int32 InstanceIndex = INDEX_NONE;
+            Pool->GetInstance(Row.Handle, Bucket, InstanceIndex);
+            Row.Component = Bucket;
+            Row.InstanceIndex = InstanceIndex;
             OutResult.LeafComponents[Index] = Bucket;
-            OutResult.LeafMaterializations[Index] = {
-                Bucket, InstanceIndex, Leaf.OwningResolvedNodeIndex, Leaf.Origin};
         }
 
         OutResult.Components.Reset();
@@ -803,13 +577,10 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
         }
         for (const FMHCompositeLeafMaterialization& Row : OutResult.LeafMaterializations)
         {
-            if (IsValid(Row.Component) && !AddedComponents.Contains(Row.Component))
-            {
-                OutResult.Components.Add(Row.Component);
-                AddedComponents.Add(Row.Component);
-            }
+            if (Row.Handle.IsSet() || !IsValid(Row.Component) || AddedComponents.Contains(Row.Component)) continue;
+            OutResult.Components.Add(Row.Component);
+            AddedComponents.Add(Row.Component);
         }
-        PlanViewNormalizeBucketTags(OutResult.LeafMaterializations);
         return true;
     }
 
@@ -1126,101 +897,49 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         Result.TopLevelComponents.Add(Handle);
     }
 
-    struct FStaticBucket
-    {
-        FPlanViewISMBucketKey Key;
-        TArray<int32> LeafIndices;
-        TObjectPtr<UInstancedStaticMeshComponent> Component = nullptr;
-    };
-    TArray<FStaticBucket> Buckets;
-    TArray<int32> BucketForLeaf;
-    BucketForLeaf.Init(INDEX_NONE, Plan.Leaves.Num());
-    for (int32 LeafIndex = 0; LeafIndex < Plan.Leaves.Num(); ++LeafIndex)
-    {
-        const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[LeafIndex];
-        UStaticMesh* Mesh = Endpoints[LeafIndex].Mesh;
-        if (Mesh == nullptr || Leaf.Origin == UninstancedLeafPath) continue;
-        const FPlanViewISMBucketKey Key = PlanViewDefaultBucketKey(*Mesh, AppearanceLayout);
-        int32 BucketIndex = Buckets.IndexOfByPredicate(
-            [&Key](const FStaticBucket& Bucket) { return Bucket.Key == Key; });
-        if (BucketIndex == INDEX_NONE)
-        {
-            BucketIndex = Buckets.AddDefaulted();
-            Buckets[BucketIndex].Key = Key;
-        }
-        Buckets[BucketIndex].LeafIndices.Add(LeafIndex);
-        BucketForLeaf[LeafIndex] = BucketIndex;
-    }
-
-    TSet<UInstancedStaticMeshComponent*> ClaimedPreviousBuckets;
-    for (int32 BucketIndex = 0; BucketIndex < Buckets.Num(); ++BucketIndex)
-    {
-        FStaticBucket& Bucket = Buckets[BucketIndex];
-        for (UActorComponent* Previous : PreviousComponents)
-        {
-            UInstancedStaticMeshComponent* Candidate = Cast<UInstancedStaticMeshComponent>(Previous);
-            if (!IsValid(Candidate) || ClaimedPreviousBuckets.Contains(Candidate) ||
-                Candidate->GetOwner() != &Target) continue;
-            if (PlanViewLiveBucketKey(*Candidate, AppearanceLayout) == Bucket.Key)
-            {
-                Bucket.Component = Candidate;
-                ClaimedPreviousBuckets.Add(Candidate);
-                break;
-            }
-        }
-        if (Bucket.Component == nullptr)
-        {
-            const FName Tag(*FString::Printf(TEXT("MH.ISMBucket:%d"), BucketIndex));
-            Bucket.Component = CastChecked<UInstancedStaticMeshComponent>(PlanViewNew(
-                Target, UInstancedStaticMeshComponent::StaticClass(), TEXT("MH_ISM_Bucket"),
-                Tag, Result, nullptr,
-                [&Bucket](USceneComponent& New)
-                {
-                    MHRecordPlacementStaticMeshAssignment();
-                    PlanViewConfigureBucket(
-                        *CastChecked<UInstancedStaticMeshComponent>(&New), Bucket.Key);
-                }));
-        }
-        else
-        {
-            Result.Components.Add(Bucket.Component);
-            Bucket.Component->bHasPerInstanceHitProxies = true;
-        }
-        Bucket.Component->SetAbsolute(true, true, true);
-        MHRecordPlacementAttachment();
-        Bucket.Component->AttachToComponent(
-            Target.GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-        PlanViewSetWorld(*Bucket.Component, FMatrix::Identity);
-        Bucket.Component->ClearInstances();
-        Bucket.Component->PreAllocateInstancesMemory(Bucket.LeafIndices.Num());
-    }
-
+    // Static leaves materialize through the level's instance pool (16 §2.8,
+    // R5b-1): one bucket per {level, descriptor} shared by every placement,
+    // stable handles, no ISM on this actor. Without a pool (non-editor world)
+    // every static leaf takes the ordinary per-leaf component path below.
+    UMHInstancePoolSubsystem* Pool = PlanViewPool(Target);
+    ULevel* Level = Target.GetLevel();
+    TBitArray<> Pooled(false, Plan.Leaves.Num());
     Result.LeafComponents.SetNum(Plan.Leaves.Num());
     Result.LeafMaterializations.SetNum(Plan.Leaves.Num());
-    for (int32 BucketIndex = 0; BucketIndex < Buckets.Num(); ++BucketIndex)
+    if (Pool != nullptr && Level != nullptr)
     {
-        FStaticBucket& Bucket = Buckets[BucketIndex];
-        for (int32 BucketLeafIndex = 0; BucketLeafIndex < Bucket.LeafIndices.Num(); ++BucketLeafIndex)
+        // A full compile re-materializes this owner from scratch: the pool
+        // keeps its buckets, the handles are reissued.
+        Pool->BeginBulk();
+        Pool->RemoveOwner(Target);
+        TMap<UStaticMesh*, FMHPoolBucketDescriptor> Descriptors;
+        for (int32 LeafIndex = 0; LeafIndex < Plan.Leaves.Num(); ++LeafIndex)
         {
-            const int32 LeafIndex = Bucket.LeafIndices[BucketLeafIndex];
             const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[LeafIndex];
-            const int32 InstanceIndex = Bucket.Component->AddInstance(
-                FTransform(Leaf.WorldMatrix * Basis), false);
+            UStaticMesh* Mesh = Endpoints[LeafIndex].Mesh;
+            if (Mesh == nullptr || Leaf.Origin == UninstancedLeafPath) continue;
+            FMHPoolBucketDescriptor* Descriptor = Descriptors.Find(Mesh);
+            if (Descriptor == nullptr) Descriptor = &Descriptors.Add(Mesh, PlanViewPoolDescriptor(*Mesh, Settings));
             MHRecordPlacementWorldTransformUpdate();
             MHRecordPlacementAppearanceUpdate();
-            PlanViewSetInstanceAppearance(*Bucket.Component, InstanceIndex, Leaf,
-                Settings.AppearanceCustomDataBaseIndex,
-                BucketLeafIndex + 1 == Bucket.LeafIndices.Num());
-            Result.LeafComponents[LeafIndex] = Bucket.Component;
-            Result.LeafMaterializations[LeafIndex] = {
-                Bucket.Component, InstanceIndex, Leaf.OwningResolvedNodeIndex, Leaf.Origin};
+            const FMHInstanceHandle Handle = Pool->Add(Target, Leaf.Origin, *Level, *Descriptor,
+                Leaf.WorldMatrix * Basis, Leaf.AppearanceChannels);
+            if (!Handle.IsSet() || !PlanViewPooledRow(*Pool, Handle, Leaf, Result.LeafMaterializations[LeafIndex]))
+            {
+                Pool->RemoveOwner(Target);
+                Pool->EndBulk();
+                Result.Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: instance pool refused ") + Leaf.Origin + TEXT(" -> ") + Leaf.Resource;
+                return Result;
+            }
+            Result.LeafComponents[LeafIndex] = Result.LeafMaterializations[LeafIndex].Component;
+            Pooled[LeafIndex] = true;
         }
+        Pool->EndBulk();
     }
-    PlanViewNormalizeBucketTags(Result.LeafMaterializations);
 
     for (int32 Index = 0; Index < Plan.Leaves.Num(); ++Index)
     {
-        if (BucketForLeaf[Index] != INDEX_NONE) continue;
+        if (Pooled[Index]) continue;
         const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[Index];
         const FEndpoint& Endpoint = Endpoints[Index];
         const FString Label = Leaf.DisplayName.IsEmpty() ? Leaf.Resource : Leaf.DisplayName;

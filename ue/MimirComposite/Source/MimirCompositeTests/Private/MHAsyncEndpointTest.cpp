@@ -81,12 +81,12 @@ struct FColdMesh
     }
 };
 
-/** The mesh component rendering the single leaf (ISM bucket or plain static mesh component). */
+/** The mesh component rendering the single leaf (pool ISM bucket or plain static mesh component). */
 UStaticMeshComponent* FirstBucket(const AMHCompositeActor& Actor)
 {
-    for (UActorComponent* Component : Actor.GetDerivedComponents())
+    for (const FMHCompositeLeafMaterialization& Row : Actor.GetLeafMaterializations())
     {
-        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) return Mesh;
+        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Row.Component.Get())) return Mesh;
     }
     return nullptr;
 }

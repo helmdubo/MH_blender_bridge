@@ -5,6 +5,7 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Composite/MHInstancePool.h"
 #include "Composite/MHMaterializeLayout.h"
 #include "Performance/MHPerformanceTrace.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -237,11 +238,59 @@ const UE::MimirComposite::FMHCompositeLeafMaterialization*
 AMHCompositeActor::FindLeafMaterialization(
     const USceneComponent* Component, const int32 InstanceIndex) const
 {
+    // A pooled ISM address belongs to whichever owner the pool says (16 §2.8);
+    // only this actor's own rows answer.
+    if (const UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Component);
+        Bucket != nullptr && InstanceIndex != INDEX_NONE)
+    {
+        if (const UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld()))
+        {
+            AActor* InstanceOwner = nullptr;
+            FString NodePath;
+            if (Pool->ReverseLookup(Bucket, InstanceIndex, InstanceOwner, NodePath))
+                return InstanceOwner == this ? FindLeafMaterializationByNodePath(NodePath) : nullptr;
+        }
+    }
+    RefreshPooledRows();
     return LeafMaterializations.FindByPredicate(
         [Component, InstanceIndex](const UE::MimirComposite::FMHCompositeLeafMaterialization& Row)
         {
             return Row.Component == Component && Row.InstanceIndex == InstanceIndex;
         });
+}
+
+const UE::MimirComposite::FMHCompositeLeafMaterialization*
+AMHCompositeActor::FindLeafMaterializationByNodePath(const FString& NodePath) const
+{
+    RefreshPooledRows();
+    return LeafMaterializations.FindByPredicate(
+        [&NodePath](const UE::MimirComposite::FMHCompositeLeafMaterialization& Row)
+        {
+            return Row.NodePath == NodePath;
+        });
+}
+
+void AMHCompositeActor::RefreshPooledRows() const
+{
+    const UMHInstancePoolSubsystem* Pool = nullptr;
+    for (UE::MimirComposite::FMHCompositeLeafMaterialization& Row : LeafMaterializations)
+    {
+        if (!Row.Handle.IsSet()) continue;
+        if (Pool == nullptr) Pool = UMHInstancePoolSubsystem::Get(GetWorld());
+        if (Pool == nullptr) return;
+        UInstancedStaticMeshComponent* Bucket = nullptr;
+        int32 InstanceIndex = INDEX_NONE;
+        if (!Pool->GetInstance(Row.Handle, Bucket, InstanceIndex)) continue;
+        Row.Component = Bucket;
+        Row.InstanceIndex = InstanceIndex;
+    }
+}
+
+void AMHCompositeActor::SyncPoolVisibility()
+{
+    if (IsTemplate()) return;
+    if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld()))
+        Pool->SetOwnerEditorVisibility(*this, !IsHiddenEd());
 }
 
 bool AMHCompositeActor::SelectPlacementLeaf(
@@ -379,6 +428,9 @@ TArray<TObjectPtr<UActorComponent>> AMHCompositeActor::CollectPreviousDerivedCom
 
 void AMHCompositeActor::ClearDerivedComponents()
 {
+    // Pooled leaves are released with the owner (16 §2.8); Undo rebuilds them
+    // from the actor's record afterwards (OPEN-R-1).
+    if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld())) Pool->RemoveOwner(*this);
     // Undo can restore transaction-era plan-view components after the transient
     // tracking arrays were cleared. Include every MH-tagged instance component
     // so rebuilding from the actor record cannot leave an untracked twin.
@@ -433,33 +485,33 @@ void AMHCompositeActor::ReconcileEndpoint(const UE::MimirComposite::FMHResourceK
     UStaticMesh* Mesh = Cast<UStaticMesh>(Registry->Resolve(Key).Object.Get());
     if (Mesh == nullptr) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
+    // Pooled leaves were reconciled by the level pool before this call (R5b-0,
+    // one pass per bucket): adopt the current bucket components behind the handles.
     bool bMigrated = false;
+    if (Delta.bBucketDescriptor)
+    {
+        for (int32 Index = 0; Index < LeafMaterializations.Num(); ++Index)
+        {
+            FMHCompositeLeafMaterialization& Row = LeafMaterializations[Index];
+            if (!Row.Handle.IsSet()) continue;
+            const USceneComponent* Before = Row.Component;
+            RefreshPooledRows();
+            if (Row.Component == Before) continue;
+            if (LeafPlacementComponents.IsValidIndex(Index)) LeafPlacementComponents[Index] = Row.Component;
+            bMigrated = true;
+        }
+    }
+    // Static mesh components this actor materializes itself (the leaf extracted
+    // for Placement Edit Mode, or every static leaf without a pool).
     for (TObjectPtr<UActorComponent>& Entry : DerivedComponents)
     {
         UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(Entry);
         if (!IsValid(Component) || Component->GetStaticMesh() != Mesh) continue;
-        bool bBucketMigrated = false;
-        if (UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Component);
-            Bucket != nullptr && Delta.bBucketDescriptor)
-        {
-            UInstancedStaticMeshComponent* New = MHMigrateCompositePlacementBucket(*this, *Bucket);
-            Entry = New;
-            for (TObjectPtr<USceneComponent>& Leaf : LeafPlacementComponents)
-                if (Leaf == Bucket) Leaf = New;
-            for (FMHCompositeLeafMaterialization& Row : LeafMaterializations)
-                if (Row.Component == Bucket) Row.Component = New;
-            MHRecordPlacementComponentDestroyed();
-            Bucket->DestroyComponent();
-            Component = New;
-            bBucketMigrated = bMigrated = true;
-        }
-        // Generated components inherit mesh slot/default/overlay bindings.
-        // Clear the old override array, as PlanViewConfigureBucket does for defaults.
         if (Delta.bMaterialBinding) Component->EmptyOverrideMaterials();
         if (Delta.bCollisionInterface) Component->RecreatePhysicsState();
         Component->MarkRenderStateDirty();
         Component->UpdateBounds();
-        MHRecordReimportBucket(bBucketMigrated);
+        MHRecordReimportBucket(false);
     }
     // Bounds are derived directly from components; the actor has no separate cache.
     // Payload/bounds-only refresh deliberately emits no Outliner tree invalidation.
@@ -612,6 +664,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
         LeafMaterializations = MoveTemp(View.LeafMaterializations);
         LastPlacementWarnings = MoveTemp(View.Warnings);
         DestroyMHRetiredComponents(Previous, DerivedComponents);
+        SyncPoolVisibility();
         BroadcastMHCompositeComponentsEdited();
         ReportPlacementError();
         return;
@@ -712,6 +765,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
     ResidentPlan = CandidatePlan;
     ++PreviewRevision;
     bPlanAvailable = true;
+    SyncPoolVisibility();
     // The existing Level Editor component-edited event is also the read-only
     // semantic-overlay invalidation signal. A reseed can preserve every
     // component pointer, so component-array inequality alone is insufficient.
@@ -949,6 +1003,7 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     ++PreviewRevision;
     LastPlacementError.Reset();
     bPlanAvailable = true;
+    SyncPoolVisibility();
 }
 
 #if WITH_EDITOR
@@ -998,9 +1053,16 @@ bool AMHCompositeActor::CanEditChange(const FProperty* Property) const
     return Super::CanEditChange(Property);
 }
 
+void AMHCompositeActor::SetIsTemporarilyHiddenInEditor(const bool bIsHidden)
+{
+    Super::SetIsTemporarilyHiddenInEditor(bIsHidden);
+    SyncPoolVisibility();
+}
+
 void AMHCompositeActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
     Super::PostEditChangeProperty(PropertyChangedEvent);
+    SyncPoolVisibility();
     const FName Name = PropertyChangedEvent.GetPropertyName();
     if (Name == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, CompositeAsset)) RebuildComposite();
     else if (Name == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, Seed)) RebuildPlacement(true);

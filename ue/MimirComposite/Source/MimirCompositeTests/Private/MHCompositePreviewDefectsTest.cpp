@@ -113,8 +113,9 @@ struct FReviewPreviewRegressionFixture
 
 UStaticMeshComponent* ReviewPreviewRegressionLeaf(AMHCompositeActor& Actor)
 {
-    for (UActorComponent* Component : Actor.GetDerivedComponents())
-        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) return Mesh;
+    // 16 §2.8 (R5b-1): the static leaf renders in the level pool's bucket.
+    for (const FMHCompositeLeafMaterialization& Row : Actor.GetLeafMaterializations())
+        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Row.Component.Get())) return Mesh;
     return nullptr;
 }
 

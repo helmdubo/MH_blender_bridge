@@ -29,7 +29,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeLeafMaterialization
     FString NodePath;
     FMHInstanceHandle Handle;
 
-    bool IsInstanced() const { return InstanceIndex != INDEX_NONE; }
+    /** Pooled (handle) or otherwise ISM-addressed; a hidden pooled leaf has INDEX_NONE and is still instanced. */
+    bool IsInstanced() const { return Handle.IsSet() || InstanceIndex != INDEX_NONE; }
 };
 
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
@@ -42,10 +43,6 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
     FString Error;
     bool Succeeded() const { return Error.IsEmpty(); }
 };
-
-/** Recreate one admitted ISM through the existing bucket configuration, retaining instances and appearance. */
-MIMIRCOMPOSITEEDITOR_API UInstancedStaticMeshComponent* MHMigrateCompositePlacementBucket(
-    AActor& Target, UInstancedStaticMeshComponent& Previous);
 
 /** Reconcile only plan leaves; stable components survive seed-only changes. */
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(

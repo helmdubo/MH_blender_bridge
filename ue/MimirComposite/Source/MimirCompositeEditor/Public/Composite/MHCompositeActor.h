@@ -140,15 +140,23 @@ public:
         return LeafPlacementComponents;
     }
 
-    /** Plan-aligned component/instance rows used by viewport and Outliner navigation. */
+    /**
+     * Plan-aligned component/instance rows used by viewport and Outliner
+     * navigation. Pooled rows are refreshed to their current ISM address
+     * (16 §2.8: the handle is the identity, the index moves under swap-remove).
+     */
     const TArray<UE::MimirComposite::FMHCompositeLeafMaterialization>&
         GetLeafMaterializations() const
     {
+        RefreshPooledRows();
         return LeafMaterializations;
     }
 
+    /** Row rendered by (Component, InstanceIndex); pooled ISM addresses resolve through the pool. */
     const UE::MimirComposite::FMHCompositeLeafMaterialization* FindLeafMaterialization(
         const USceneComponent* Component, int32 InstanceIndex = INDEX_NONE) const;
+    /** Row of the leaf materialized at NodePath, or nullptr. */
+    const UE::MimirComposite::FMHCompositeLeafMaterialization* FindLeafMaterializationByNodePath(const FString& NodePath) const;
 
     /** Navigation selection only; source and resolved-plan authority are untouched. */
     bool SelectPlacementLeaf(const USceneComponent* Component, int32 InstanceIndex = INDEX_NONE);
@@ -179,6 +187,7 @@ public:
 #if WITH_EDITOR
     virtual void PostEditUndo() override;
     virtual void PostEditImport() override;
+    virtual void SetIsTemporarilyHiddenInEditor(bool bIsHidden) override;
     virtual bool CanEditChange(const FProperty* InProperty) const override;
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
     virtual bool GetReferencedContentObjects(TArray<UObject*>& Objects) const override;
@@ -195,6 +204,9 @@ private:
     void UpdatePlacementBasis(USceneComponent*, EUpdateTransformFlags, ETeleportType);
     void AttachRootTransformHook();
     void ReportPlacementError();
+    void RefreshPooledRows() const;
+    /** Pooled instances follow the actor's editor visibility (16 §2.8 owner operations). */
+    void SyncPoolVisibility();
 
     UPROPERTY(VisibleAnywhere, Category = "Mimir")
     TObjectPtr<USceneComponent> CompositeRoot;
@@ -244,8 +256,8 @@ private:
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> LeafPlacementComponents;
 
-    /** Derived navigation rows; Components are retained by DerivedComponents. */
-    TArray<UE::MimirComposite::FMHCompositeLeafMaterialization> LeafMaterializations;
+    /** Derived navigation rows; own components are retained by DerivedComponents, pooled ones by the pool. */
+    mutable TArray<UE::MimirComposite::FMHCompositeLeafMaterialization> LeafMaterializations;
 
     TArray<FString> LastPlacementWarnings;
     FString LastPlacementError;

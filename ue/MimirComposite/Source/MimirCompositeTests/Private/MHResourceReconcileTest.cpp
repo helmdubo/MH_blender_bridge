@@ -88,12 +88,12 @@ struct FReconcileFixture
         return Result;
     }
 
-    /** ISM bucket that renders LogicalName, or nullptr. */
+    /** Pool ISM bucket that renders LogicalName for this placement (16 §2.8, R5b-1), or nullptr. */
     UInstancedStaticMeshComponent* Bucket(const FString& LogicalName) const
     {
-        for (UActorComponent* Component : Actor->GetDerivedComponents())
+        for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
         {
-            UInstancedStaticMeshComponent* Ism = Cast<UInstancedStaticMeshComponent>(Component);
+            UInstancedStaticMeshComponent* Ism = Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
             if (Ism != nullptr && Ism->GetStaticMesh() != nullptr && Ism->GetStaticMesh()->GetName() == LogicalName) return Ism;
         }
         return nullptr;
