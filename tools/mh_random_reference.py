@@ -710,8 +710,18 @@ def resolve_composite(
     profiles: Mapping[str, PlacementProfile],
     raw_hashes: Mapping[ResourceKey, str],
     resource_dependencies: Mapping[ResourceKey, Sequence[ResourceKey]] | None = None,
+    *,
+    node_path_prefix: str | None = None,
+    appearance_boundary: str | None = None,
 ) -> ResolvedPlan:
-    """Resolve one immutable plan after seed-free closure validation."""
+    """Resolve one immutable plan after seed-free closure validation.
+
+    ``node_path_prefix`` / ``appearance_boundary`` form the call context of a
+    placement (Recipe Model v2.1, R4-pre-3): a child composite broken out of a
+    parent is walked under the node path that referenced it and keeps the
+    parent's appearance boundary, so it reproduces the parent's subtree. Both
+    default to the root composite name, the frozen default path.
+    """
     dependencies = resource_dependencies or {}
     closure = build_source_closure(
         root,
@@ -825,7 +835,9 @@ def resolve_composite(
                 child, world, f"{node_path}/children[{child_index}]",
                 node_boundary)
 
-    walk_composite(root, IDENTITY_TRS, root, root)
+    root_prefix = node_path_prefix or root
+    root_boundary_path = appearance_boundary or root
+    walk_composite(root, IDENTITY_TRS, root_prefix, root_boundary_path)
 
     signature_document = {
         "v": 1,
@@ -846,7 +858,7 @@ def resolve_composite(
         signature_preimage=preimage,
         resolved_signature=_blake3_160(preimage),
         nodes=tuple(nodes),
-        root_boundary=root,
+        root_boundary=root_boundary_path,
     )
 
 

@@ -126,6 +126,19 @@ int32 AMHCompositeActor::GenerateAutoSeed(const int32 DifferentFrom)
     return Result;
 }
 
+void AMHCompositeActor::SetCallContext(const FMHCompositeCallContext& NewContext)
+{
+    if (CallContext.StreamNamespace == NewContext.StreamNamespace &&
+        CallContext.AppearanceBoundary == NewContext.AppearanceBoundary &&
+        CallContext.Version == NewContext.Version)
+    {
+        return;
+    }
+    Modify();
+    CallContext = NewContext;
+    RebuildComposite();
+}
+
 void AMHCompositeActor::SetSeed(const int32 NewSeed)
 {
     if (bPlacementEditMode)
@@ -459,7 +472,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly)
             FMHMaterializeResult Materialized;
             {
                 FMHPlacementStageScope Stage(EMHPlacementStage::ResolveCompositePlan);
-                Materialized = MHMaterializeLayout(*Recipe, Seed, AppearanceSeed, GetActorTransform());
+                Materialized = MHMaterializeLayout(*Recipe, Seed, AppearanceSeed, CallContext.ToResolveContext(), GetActorTransform());
             }
             if (Materialized.Graph.IsValid())
             {
@@ -824,7 +837,7 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     }
     // Preview plane: the prospective source resolves through Layout +
     // Appearance only; proof (closure, signatures) is never built here.
-    if (!MHResolvePreviewGraph(*EditingGraph, Seed, AppearanceSeed, *Plan, Error) ||
+    if (!MHResolvePreviewGraph(*EditingGraph, Seed, AppearanceSeed, CallContext.ToResolveContext(), *Plan, Error) ||
         !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), Error))
     {
         LastPlacementError = Error;

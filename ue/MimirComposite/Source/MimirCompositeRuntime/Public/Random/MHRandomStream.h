@@ -250,6 +250,34 @@ MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositePlan(
     FString& OutError);
 
 /**
+ * Call context of a placement (R4-pre-3, owner decision 2026-09-04 on
+ * OPEN-R4P-1). Empty = the placement is its own root: NodePath prefix and
+ * appearance boundary are the root composite's name — exactly the frozen
+ * default path. A placement produced by Break carries the node path that
+ * referenced its recipe inside the parent and the parent's appearance
+ * boundary, so its streams are keyed as they were inside the parent and it
+ * reproduces the parent's subtree. Never derived, only persisted or empty.
+ */
+struct MIMIRCOMPOSITERUNTIME_API FMHResolveCallContext
+{
+    /** NodePath the root composite is walked under; empty = root composite name. */
+    FString NodePathPrefix;
+    /** Appearance boundary for leaves that declare none; empty = root composite name. */
+    FString AppearanceBoundaryPath;
+
+    bool IsEmpty() const { return NodePathPrefix.IsEmpty() && AppearanceBoundaryPath.IsEmpty(); }
+};
+
+/** Reference wrapper with a call context; the context-free overload is the empty context. */
+MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositePlan(
+    const FMHRandomSourceGraph& Graph,
+    int32 Seed,
+    int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError);
+
+/**
  * Preview plane (Recipe Model v2 §3.3): the layout stage alone — decisions,
  * draws, nodes, leaves and selected dependencies from Seed. Never builds the
  * source closure, never needs RawHashes, never computes signatures.
@@ -257,6 +285,14 @@ MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositePlan(
 MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositeLayout(
     const FMHRandomSourceGraph& Graph,
     int32 Seed,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError);
+
+/** Layout stage under a call context; the context-free overload is the empty context. */
+MIMIRCOMPOSITERUNTIME_API bool MHResolveCompositeLayout(
+    const FMHRandomSourceGraph& Graph,
+    int32 Seed,
+    const FMHResolveCallContext& Context,
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError);
 

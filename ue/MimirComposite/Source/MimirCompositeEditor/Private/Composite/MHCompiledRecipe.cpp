@@ -246,6 +246,19 @@ bool MHResolveRecipePreview(
     return MHResolvePreviewGraph(Graph, Seed, AppearanceSeed, OutPlan, OutError);
 }
 
+bool MHResolveRecipePreview(
+    const FMHCompiledRecipe& Root,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
+    FMHRandomSourceGraph Graph;
+    if (!MHBuildRecipeGraph(Root, Graph, OutError)) return false;
+    return MHResolvePreviewGraph(Graph, Seed, AppearanceSeed, Context, OutPlan, OutError);
+}
+
 bool MHResolvePreviewGraph(
     const FMHRandomSourceGraph& Graph,
     const int32 Seed,
@@ -253,7 +266,18 @@ bool MHResolvePreviewGraph(
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError)
 {
-    if (!MHResolveCompositeLayout(Graph, Seed, OutPlan, OutError)) return false;
+    return MHResolvePreviewGraph(Graph, Seed, AppearanceSeed, FMHResolveCallContext(), OutPlan, OutError);
+}
+
+bool MHResolvePreviewGraph(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
+    if (!MHResolveCompositeLayout(Graph, Seed, Context, OutPlan, OutError)) return false;
     MHResolveCompositeAppearance(OutPlan, AppearanceSeed);
     // The appearance stage refreshes the signature strings from the preimages;
     // without a closure they are not proof artifacts and must not look like

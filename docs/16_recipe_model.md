@@ -307,7 +307,20 @@ TSoftObjectPtr<UMHCompositeAsset> CompositeAsset;
 int32 Seed; bool bAutoSeed;
 int32 AppearanceSeed; bool bAutoAppearanceSeed;   // семантика как сейчас (10 §6.9)
 FMHNodeOverrideSet NodeOverrides;                  // с R6
+FMHCompositeCallContext CallContext;               // с R4-pre-3: {Version, StreamNamespace, AppearanceBoundary}
 ```
+
+`CallContext` (R4-pre-3, решение owner 2026-09-04 по OPEN-R4P-1): пустой у
+размещения-корня; заполняется **только** Break'ом для ребёнка-композита —
+`StreamNamespace` = NodePath узла родителя, ссылавшегося на рецепт ребёнка
+(`<root>:nodes[k]>child` или `…/options[j]>child`), `AppearanceBoundary` =
+boundary этого поддерева в родителе. Resolver получает его как
+`FMHResolveCallContext` (необязательный вход: префикс пути и boundary корня;
+пустой = имя корневого композита, то есть замороженный путь по умолчанию), и
+ребёнок воспроизводит поддерево родителя точно: те же решения, те же draws, тот
+же appearance. Контекст едет во все три плоскости — preview, proof
+(`BuildProofNow`) и runtime-транспорт (`FMHRuntimeCompositeInput`) — поэтому ни
+одна из них не расходится. Никогда не вычисляется из сцены.
 
 Транзиентное: хэндлы, `LastPlacements` (Outliner, reseed-diff),
 `LastWarnings`. **Перестают быть состоянием актора**: `ResolvedSignature`,
@@ -492,7 +505,7 @@ R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpo
 | OPEN-R2B-1 | Гейт удалений proof-состояния актора (R2b-3) | `BuildPreflightFullClosureTest` из KICKOFF §5 R2b = preflight-тест полного closure, который создаёт R2c; до него proof-поля актора (`CompactResolvedState`, `ResolvedSignature`, `AppliedDefinition`) — диагностика без гейтов | закрыт 2026-09-03 (owner делегировал решение близнецу) |
 | OPEN-R2B-2 | Резидентный preview-план на актор (§2.10 «LastPlacements») | план хранится целиком (decisions, draws, nodes, leaves): draws нужны Outliner-трассе и reseed-diff; сжатие — только если полевой замер R4 (пулы) покажет проблему памяти | закрыт 2026-09-03 (owner делегировал решение близнецу) |
 | OPEN-R-7 | Duplicate claim в preview | Preview-плоскость делает ноль tag-запросов. Duplicate claim обнаруживают source-плоскость (`duplicate_claim`) и `BuildProofNow` в preflight/snapshot (`MH_E_AMBIGUOUS_GENERATED_ASSET`). Старый preview-тест заменён proof-plane тестом `DuplicateClaimIsProofPlane` в R0c. | закрыт D0b П2; реализован в proof-плоскости R2c (2026-09-03) |
-| OPEN-R4P-1 | Точное воспроизведение random внутри дочернего композита после Break | ребёнок получает `Seed` и `AppearanceSeed` родителя как есть; из-за смены корневого `NodePath` внутренний random может выбрать другой вариант | открыт, fail-closed: сиды родителя **Решение owner 2026-09-04 (по аудиту `dagor_composit_ue5_audit_20260904.md` §7.A): вариант близнеца — сохраняемый, версионированный контекст вызова на акторе-ребёнке (namespace потока = путь узла в родителе, appearance boundary = корень родителя), необязательный вход resolver; пустой контекст = текущее поведение, старые ассеты не меняются. Срез R4-pre-3 (близнец).** |
+| OPEN-R4P-1 | Точное воспроизведение random внутри дочернего композита после Break | ребёнок получает `Seed` и `AppearanceSeed` родителя как есть; из-за смены корневого `NodePath` внутренний random может выбрать другой вариант | открыт, fail-closed: сиды родителя **Решение owner 2026-09-04 (по аудиту `dagor_composit_ue5_audit_20260904.md` §7.A): вариант близнеца — сохраняемый, версионированный контекст вызова на акторе-ребёнке (namespace потока = путь узла в родителе, appearance boundary = корень родителя), необязательный вход resolver; пустой контекст = текущее поведение, старые ассеты не меняются. Срез R4-pre-3 (близнец).** **Закрыт R4-pre-3 (2026-09-05):** реализован именно этот вариант, см. §2.10 `CallContext`; reference-резолвер `tools/mh_random_reference.py` принимает `node_path_prefix`/`appearance_boundary` | закрыт |
 
 | OPEN-R-8 | Runtime-бэкенд для cook/PIE (компонент на лист в `AMHRuntimeCompositeActor`, WP закрыт) | **открыт**; owner 2026-09-04: портфолио — рендер без игрового билда, но плагин станет продуктом для FAB и cook понадобится другим разработчикам; правильный ответ (bake на cook vs shared runtime recipe) пока не известен. До решения runtime-мост не меняется; fail-closed: WP-отказ и покомпонентная материализация остаются как есть | открыт |
 | OPEN-S-1 | Источник slot-рёбер mesh→material без парса FBX в скане (S1) | **закрыт 2026-09-02, вариант c (owner):** S0 достаточен — FBX парсится только для новых/изменённых по `(size, mtime)` файлов; S1 закрыт без кода; холодный скан портфолио измеряется полевым протоколом M0 §6 | закрыт |

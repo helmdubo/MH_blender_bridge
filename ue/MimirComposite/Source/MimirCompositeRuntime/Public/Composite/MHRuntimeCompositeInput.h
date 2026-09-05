@@ -35,6 +35,11 @@ struct MIMIRCOMPOSITERUNTIME_API FMHRuntimeCompositeInput
     /** Includes unselected and zero-weight variants, their dependencies, and actor classes. */
     UPROPERTY()
     TArray<FMHRuntimeCompositeBinding> Bindings;
+    /** Call context of the source placement (R4-pre-3); both empty for a root placement. */
+    UPROPERTY()
+    FString CallContextNodePathPrefix;
+    UPROPERTY()
+    FString CallContextAppearanceBoundary;
 };
 
 namespace UE::MimirComposite
@@ -52,6 +57,8 @@ MIMIRCOMPOSITERUNTIME_API bool MHDecodeRuntimeCompositeGraph(
     FMHRandomSourceGraph& OutGraph,
     FString& OutError);
 
+/** Call context carried by a runtime input (R4-pre-3); empty for root placements. */
+MIMIRCOMPOSITERUNTIME_API FMHResolveCallContext MHRuntimeInputCallContext(const FMHRuntimeCompositeInput& Input);
 /** Seed-free admission and sorted endpoint keys for ALL reachable source options. */
 MIMIRCOMPOSITERUNTIME_API bool MHCollectRuntimeCompositeBindingKeys(
     const FMHRandomSourceGraph& Graph,

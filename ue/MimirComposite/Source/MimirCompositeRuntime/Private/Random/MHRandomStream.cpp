@@ -812,6 +812,16 @@ bool MHResolveCompositeLayout(
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError)
 {
+    return MHResolveCompositeLayout(Graph, Seed, FMHResolveCallContext(), OutPlan, OutError);
+}
+
+bool MHResolveCompositeLayout(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
     // Preview plane: the layout walk never touches the source closure. The
     // draw order, the weighted selection and the transform math below are the
     // frozen reference; only the closure build moved to MHBuildCompositeProof.
@@ -1039,9 +1049,12 @@ bool MHResolveCompositeLayout(
     FMHRandomTrs Identity;
     FWalkContext Root;
     // No declared boundary anywhere means one stream for the whole placement,
-    // keyed by the root composite's own canonical NodePath prefix.
-    Root.BoundaryPath = Graph.RootComposite;
-    if (!WalkComposite(Graph.RootComposite, Identity, FMatrix::Identity, Graph.RootComposite, Root)) return false;
+    // keyed by the root composite's own canonical NodePath prefix. A call
+    // context (R4-pre-3) substitutes the prefix and boundary the placement had
+    // inside its parent; the walk itself is unchanged.
+    Root.BoundaryPath = Context.AppearanceBoundaryPath.IsEmpty() ? Graph.RootComposite : Context.AppearanceBoundaryPath;
+    const FString RootPrefix = Context.NodePathPrefix.IsEmpty() ? Graph.RootComposite : Context.NodePathPrefix;
+    if (!WalkComposite(Graph.RootComposite, Identity, FMatrix::Identity, RootPrefix, Root)) return false;
     return true;
 }
 
@@ -1052,10 +1065,21 @@ bool MHResolveCompositePlan(
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError)
 {
+    return MHResolveCompositePlan(Graph, Seed, AppearanceSeed, FMHResolveCallContext(), OutPlan, OutError);
+}
+
+bool MHResolveCompositePlan(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
     // Reference resolver = Layout -> Appearance -> Proof (Recipe Model v2 §3.3).
     // Same draws, same math, same signatures as before the phase split; the
     // closure is now built after the walk, which never read it.
-    if (!MHResolveCompositeLayout(Graph, Seed, OutPlan, OutError)) return false;
+    if (!MHResolveCompositeLayout(Graph, Seed, Context, OutPlan, OutError)) return false;
     MHResolveCompositeAppearance(OutPlan, AppearanceSeed);
     return MHBuildCompositeProof(Graph, OutPlan, OutError);
 }

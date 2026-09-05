@@ -300,7 +300,7 @@ bool MHRuntimeBridgePreflight(UWorld& World, TArray<FMHRuntimeBridgePreparedPlac
         FMHRandomSourceGraph Graph;
         FMHResolvedCompositePlan TransportPlan;
         if (!MHDecodeRuntimeCompositeGraph(Prepared.Input.GraphBytes, Graph, Error) ||
-            !MHResolveCompositePlan(Graph, Prepared.Seed, Prepared.AppearanceSeed, TransportPlan, Error) ||
+            !MHResolveCompositePlan(Graph, Prepared.Seed, Prepared.AppearanceSeed, MHRuntimeInputCallContext(Prepared.Input), TransportPlan, Error) ||
             !MHValidateResolvedPlacementTransforms(TransportPlan, Prepared.Transform, Error)) return false;
         UMHProofCacheSubsystem* Proofs = UMHProofCacheSubsystem::Get();
         const FMHProofResult Proof = Proofs != nullptr
@@ -551,6 +551,10 @@ bool MHBuildRuntimeCompositeInput(const AMHCompositeActor& Placement,
     }
     if (!MHValidateRuntimeCompositeBindings(Graph, Input.Bindings, OutError) ||
         !MHEncodeRuntimeCompositeGraph(Graph, Input.GraphBytes, OutError)) return false;
+    // R4-pre-3: the call context is part of the placement record and travels
+    // with the seeds, so the runtime resolves the same streams as the preview.
+    Input.CallContextNodePathPrefix = Placement.GetCallContext().StreamNamespace;
+    Input.CallContextAppearanceBoundary = Placement.GetCallContext().AppearanceBoundary;
     OutInput = MoveTemp(Input);
     return true;
 }
