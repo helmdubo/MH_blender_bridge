@@ -145,3 +145,53 @@ NullRHI с `-NoAssetRegistryCache -MHGoldenRoot=<repo>/golden`. Только в�
 `recipe/r3b-resource-reconcile` (или своя `codex/*` от неё — сообщить имя);
 никогда `git pull` на `main`, никогда push в `main`. Один PR; merge — близнец.
 Интерактивных шагов нет.
+
+## OPEN-R3B-1 — ForceAndNotify требует запрещённый rebuild меша
+
+Статус: **OPEN / STOP**, исполнитель, 2026-09-05. База `2f4bda3`,
+red-коммит `e00d80a`, ветка `codex/recipe-r3b-resource-reconcile`.
+Обнаружено при чтении существующих тестов до первой правки реализации.
+
+`Mimir.V4.StaticMesh.TargetedReimport.ForceAndNotify`, файл
+`ue/MimirComposite/Source/MimirCompositeTests/Private/MHStaticMeshImporterTest.cpp`,
+строки 2222–2225, требует после изменённого mesh reimport:
+
+```cpp
+TestEqual(TEXT("changed mesh reimport rebuilds the existing placed composite"),
+    PlacementActor->GetPlacementRebuildCount(), InitialPlacementRebuilds + 1);
+```
+
+Повторный force-reimport того же исходника в этом же тесте, строки 2280–2283,
+требует `InitialPlacementRebuilds + 2`. Перед обоими уведомлениями актор уже
+имеет размещённый mesh leaf; это не разрешённый §2 случай первой admission
+после Invalid. Последний Ready-снимок R3a переживает Invalidate/InvalidateAll.
+Оба обновления идут через общий `MHNotifyGeneratedResourceChanged`.
+
+§1–§2 данного контракта запрещают полный rebuild для уже Ready mesh; при
+пустой дельте действий нет, при изменении интерфейса обновляется/мигрирует
+только бакет. `PlacementRebuildCount` не растёт. RED-коммит переписал
+аналогичное ожидание `Recipe.ActorReimportViaRecipeDependents`, но оставил
+два приведённых ожидания ForceAndNotify. Тест входит в обязательный полный
+`Mimir.` suite (202 результата). Одновременно выполнить эти требования
+невозможно без правки старого теста либо нарушения новой нормы.
+
+Это статическое противоречие assertions и контракта, а не заявленный runtime
+регресс реализации: исполнитель код и тесты не менял. Собственная сборка
+RED-базы была уже запущена; её результат и прогон неизменённых тестов будут
+зафиксированы в `docs/receipts/recipe_r3b.md`.
+
+Варианты:
+
+1. **Рекомендуемый:** близнец обновляет оба ожидания ForceAndNotify на
+   отсутствие placement rebuild, сохраняя проверки реального импорта,
+   receipt/геометрии, уведомления, build/save и mesh identity. При желании
+   добавляет проверки сохранения бакета и актуализации render/bounds.
+   Исполнитель затем продолжает от нормативно согласованного red-коммита.
+2. Сохранить rebuild для standard/force reimport и исключить этот путь из
+   R3b. Отвергнуто исполнителем: меняет смысл §1–§2 и docs/16 §4, не решает
+   задачу targeted reimport. Искусственно увеличивать только счётчик также
+   запрещено: это подмена метрики и прямое нарушение контракта.
+
+DECIDED здесь неприменим: выбранный вариант требует правки замороженного
+теста; альтернативный затрагивает норматив. По правилу owner DECIDED/STOP
+это именно STOP + OPEN. До ответа близнеца/owner реализация остановлена.
