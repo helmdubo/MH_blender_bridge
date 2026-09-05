@@ -11,6 +11,10 @@
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MessageLogModule.h"
+#include "Composite/MHCompositeSelectionAdapter.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
+#include "LevelEditor.h"
+#include "Selection.h"
 #include "Misc/CoreDelegates.h"
 #include "Modules/ModuleManager.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -205,6 +209,15 @@ void FMimirCompositeEditorModule::StartupModule()
 
     UE::MimirComposite::MHRegisterCompositeActorDetails();
     UE::MimirComposite::MHRegisterCompositeOutliner();
+    // The level editor registers its own SMInstance customization in
+    // SLevelEditor::Initialize, before OnLevelEditorCreated; ours must follow
+    // it, whichever of the two modules comes up first.
+    {
+        FLevelEditorModule& LevelEditor = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
+        LevelEditorCreatedHandle = LevelEditor.OnLevelEditorCreated().AddLambda(
+            [this](TSharedPtr<ILevelEditor>) { RegisterPoolInstanceSelection(); });
+        RegisterPoolInstanceSelection();
+    }
 
     UToolMenus::RegisterStartupCallback(
         FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FMimirCompositeEditorModule::RegisterMenus));
@@ -217,6 +230,14 @@ void FMimirCompositeEditorModule::StartupModule()
         &FMimirCompositeEditorModule::UnregisterMenusBeforeExit);
 }
 
+void FMimirCompositeEditorModule::RegisterPoolInstanceSelection()
+{
+    if (GEditor == nullptr) return;
+    USelection* Actors = GEditor->GetSelectedActors();
+    UTypedElementSelectionSet* SelectionSet = Actors != nullptr ? Actors->GetElementSelectionSet() : nullptr;
+    if (SelectionSet != nullptr) UE::MimirComposite::MHRegisterPoolInstanceSelection(*SelectionSet);
+}
+
 void FMimirCompositeEditorModule::ShutdownModule()
 {
     UE::MimirComposite::MHShutdownManagedStaticMeshReimportHandler();
@@ -226,6 +247,12 @@ void FMimirCompositeEditorModule::ShutdownModule()
     {
         FCoreDelegates::OnEnginePreExit.Remove(EnginePreExitHandle);
         EnginePreExitHandle.Reset();
+    }
+    if (LevelEditorCreatedHandle.IsValid())
+    {
+        if (FLevelEditorModule* LevelEditor = FModuleManager::GetModulePtr<FLevelEditorModule>("LevelEditor"))
+            LevelEditor->OnLevelEditorCreated().Remove(LevelEditorCreatedHandle);
+        LevelEditorCreatedHandle.Reset();
     }
     if (!IsRunningCommandlet())
     {

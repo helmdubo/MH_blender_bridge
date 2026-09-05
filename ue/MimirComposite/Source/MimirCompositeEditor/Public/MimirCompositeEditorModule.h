@@ -16,5 +16,8 @@ private:
     FDelegateHandle AssetRegistryTagsHandle;
     FDelegateHandle ObjectModifiedHandle;
     FDelegateHandle EnginePreExitHandle;
+    FDelegateHandle LevelEditorCreatedHandle;
+    /** R5b-2b: the pool-instance selection seam lives on the level editor's element selection set. */
+    void RegisterPoolInstanceSelection();
     bool bOwnsToolMenusRegistration = false;
 };
