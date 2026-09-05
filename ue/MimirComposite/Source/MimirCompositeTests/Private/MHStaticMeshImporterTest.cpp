@@ -2219,16 +2219,18 @@ bool FMHTargetedStaticMeshForceReimportTest::RunTest(const FString& Parameters)
     {
         bPassed &= TestEqual(TEXT("placement notification carries mesh key"), Notifications[0].LogicalName, Fixture.LogicalName);
     }
+    // R3b (16 §4): an in-place mesh reimport is reconciled by the endpoint
+    // interface delta, never by a placement rebuild.
     bPassed &= TestEqual(
-        TEXT("changed mesh reimport rebuilds the existing placed composite"),
+        TEXT("changed mesh reimport reconciles the placed composite without a rebuild"),
         PlacementActor->GetPlacementRebuildCount(),
-        InitialPlacementRebuilds + 1);
+        InitialPlacementRebuilds);
     const TArray<TObjectPtr<USceneComponent>>& ChangedLeaves =
         PlacementActor->GetLeafPlacementComponents();
     UStaticMeshComponent* ChangedComponent = ChangedLeaves.Num() == 1
         ? Cast<UStaticMeshComponent>(ChangedLeaves[0])
         : nullptr;
-    bPassed &= TestNotNull(TEXT("rebuilt placement keeps a static-mesh leaf"), ChangedComponent);
+    bPassed &= TestNotNull(TEXT("reconciled placement keeps a static-mesh leaf"), ChangedComponent);
     if (ChangedComponent != nullptr)
     {
         bPassed &= TestEqual(
@@ -2278,9 +2280,9 @@ bool FMHTargetedStaticMeshForceReimportTest::RunTest(const FString& Parameters)
         1ull);
     bPassed &= TestEqual(TEXT("unchanged force still notifies placements"), Notifications.Num(), 1);
     bPassed &= TestEqual(
-        TEXT("unchanged force also refreshes the existing placed composite"),
+        TEXT("unchanged force reconciles the placed composite without a rebuild"),
         PlacementActor->GetPlacementRebuildCount(),
-        InitialPlacementRebuilds + 2);
+        InitialPlacementRebuilds);
     return bPassed;
 }
 
