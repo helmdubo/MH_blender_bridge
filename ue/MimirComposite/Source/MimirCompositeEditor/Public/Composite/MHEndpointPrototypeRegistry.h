@@ -122,12 +122,27 @@ public:
         const UE::MimirComposite::FMHResourceKey& Key) const;
 
 private:
+    /** Value-only last Ready admission; survives invalidation, never owns assets. */
+    struct FReadyMeshInterface
+    {
+        FString SourceHash;
+        int32 ImporterVersion = 0;
+        TArray<uint8> BoundsInput;
+        uint32 PayloadRevision = 0;
+        uint32 BoundsRevision = 0;
+        uint64 BucketDescriptorHash = 0;
+        uint64 CollisionInterfaceHash = 0;
+        uint64 MaterialBindingHash = 0;
+        UE::MimirComposite::FMHEndpointInterfaceDelta Delta;
+    };
+
     void OnAssetsChanged(TConstArrayView<FAssetData> Assets);
     void Admit(
         const UE::MimirComposite::FMHResourceKey& Key,
         UE::MimirComposite::FMHEndpointPrototype& Prototype);
 
     TMap<UE::MimirComposite::FMHResourceKey, UE::MimirComposite::FMHEndpointPrototype> Prototypes;
+    TMap<UE::MimirComposite::FMHResourceKey, FReadyMeshInterface> ReadyMeshInterfaces;
     FDelegateHandle AssetsAddedHandle;
     FDelegateHandle AssetsRemovedHandle;
 };
