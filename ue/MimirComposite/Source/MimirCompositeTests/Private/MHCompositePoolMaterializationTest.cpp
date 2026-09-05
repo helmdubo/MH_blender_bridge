@@ -440,7 +440,10 @@ bool FMHPoolPlacementSelectionAndBoundsTest::RunTest(const FString& Parameters)
     GEditor->SelectActor(A, false, true, true);
     GEditor->SelectActor(B, true, true, true);
     bPassed &= TestTrue(TEXT("selection moved to B"), RowsHighlighted(*A, false) && RowsHighlighted(*B, true));
-    GEditor->SelectNone(false, true, false);
+    // A silent SelectNone (bNoteSelectionChange = false) suppresses every
+    // selection notification by engine contract; the pool mirrors notified
+    // changes, as the details panel and outliner do.
+    GEditor->SelectNone(true, true, false);
     bPassed &= TestTrue(TEXT("no selection, no highlight"), RowsHighlighted(*A, false) && RowsHighlighted(*B, false));
     return bPassed;
 }

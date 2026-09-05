@@ -925,8 +925,15 @@ void AMHCompositeActor::PostDuplicate(const EDuplicateMode::Type DuplicateMode)
 
 FBox AMHCompositeActor::GetComponentsBoundingBox(const bool bNonColliding, const bool bIncludeFromChildActors) const
 {
-    // R5b-2a red stub: engine behaviour only.
-    return Super::GetComponentsBoundingBox(bNonColliding, bIncludeFromChildActors);
+    FBox Bounds = Super::GetComponentsBoundingBox(bNonColliding, bIncludeFromChildActors);
+    // Pooled leaves are not components of this actor (16 §2.8); F / focus and
+    // every bounds-based editor operation still frame the whole placement.
+    if (const UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld()))
+    {
+        const FBox Pooled = Pool->GetOwnerBounds(*this);
+        if (Pooled.IsValid) Bounds += Pooled;
+    }
+    return Bounds;
 }
 
 void AMHCompositeActor::Destroyed()

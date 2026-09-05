@@ -22,7 +22,7 @@
   `F`/focus и любые bounds-операции редактора видят всё размещение, хотя
   пуловые листья — не компоненты актора.
 
-## 2. Тесты (red `__RED__`)
+## 2. Тесты (red `d75e9d8`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -33,13 +33,13 @@
 
 | Gate | Результат |
 |---|---|
-| RED (`__RED__`) | `R5B2A_RED_TEST.log`: __ |
-| GREEN non-unity/no-PCH build | `R5B2A_GREEN_BUILD.log`: __ |
-| `Mimir.V5.Composite.Pool` | `R5B2A_GREEN_TEST.log`: __ |
-| полный NullRHI suite | `R5B2A_GREEN_FULL.log`: __ |
-| force-unity | `R5B2A_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R5B2A_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| RED (`d75e9d8`) | `R5B2A_RED_TEST.log`: два теста Fail |
+| GREEN non-unity/no-PCH build | `R5B2A_GREEN_BUILD3.log`: Succeeded |
+| `Mimir.V5.Composite.Pool` | `R5B2A_GREEN_TEST3.log`: 13/0 |
+| полный NullRHI suite | `R5B2A_GREEN_FULL.log`: `Success=218 Fail=0` (216 + 2) |
+| force-unity | `R5B2A_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `R5B2A_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
