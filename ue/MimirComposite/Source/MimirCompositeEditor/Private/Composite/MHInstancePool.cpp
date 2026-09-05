@@ -333,6 +333,26 @@ void UMHInstancePoolSubsystem::MoveOwner(const AActor& Owner, const FMatrix& Del
     EndBulk();
 }
 
+int32 UMHInstancePoolSubsystem::ReconcileMesh(const UStaticMesh& Mesh, const FMHEndpointInterfaceDelta& Delta)
+{
+    // R5b-0 red stub: the pool does not reconcile yet.
+    static_cast<void>(Mesh);
+    static_cast<void>(Delta);
+    return 0;
+}
+
+void UMHInstancePoolSubsystem::GetBucketComponents(const UStaticMesh& Mesh, TArray<UInstancedStaticMeshComponent*>& OutComponents) const
+{
+    static_cast<void>(Mesh);
+    OutComponents.Reset();
+}
+
+bool UMHInstancePoolSubsystem::MigrateBucket(FBucket& Bucket)
+{
+    static_cast<void>(Bucket);
+    return false;
+}
+
 int32 UMHInstancePoolSubsystem::NumLiveInstances(const AActor& Owner) const
 {
     int32 Count = 0;
