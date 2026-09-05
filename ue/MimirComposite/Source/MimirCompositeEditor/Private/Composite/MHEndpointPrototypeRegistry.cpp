@@ -8,12 +8,17 @@
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
+#include "Containers/StringConv.h"
+#include "Hash/CityHash.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "PhysicsEngine/BodySetup.h"
+#include "PhysicsEngine/AggregateGeom.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
+#include "StaticMeshResources.h"
 #include "Texture/MHTextureSourceData.h"
 #include "UObject/UObjectGlobals.h"
 
@@ -37,6 +42,129 @@ FString MHEndpointObjectPath(const FMHResourceKey& Key)
 
 namespace
 {
+/** Explicit framing and endian order; no UObject addresses, FName ids or padding. */
+struct FMHEndpointInterfaceBytes
+{
+    TArray<uint8> Data;
+
+    explicit FMHEndpointInterfaceBytes(const TCHAR* Domain)
+    {
+        Data.Reserve(128);
+        Text(Domain);
+    }
+
+    void U8(uint8 Value) { Data.Add(Value); }
+    void U32(uint32 Value)
+    {
+        for (int32 Shift = 0; Shift < 32; Shift += 8) U8(static_cast<uint8>(Value >> Shift));
+    }
+    void Double(double Value)
+    {
+        uint64 Bits;
+        static_assert(sizeof(Bits) == sizeof(Value));
+        FMemory::Memcpy(&Bits, &Value, sizeof(Bits));
+        for (int32 Shift = 0; Shift < 64; Shift += 8) U8(static_cast<uint8>(Bits >> Shift));
+    }
+    void Vector(const FVector& Value) { Double(Value.X); Double(Value.Y); Double(Value.Z); }
+    void Text(const FString& Value)
+    {
+        const FTCHARToUTF8 Utf8(*Value);
+        U32(static_cast<uint32>(Utf8.Length()));
+        Data.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+    }
+    uint64 Hash() const
+    {
+        const uint64 Value = CityHash64(reinterpret_cast<const char*>(Data.GetData()), static_cast<uint32>(Data.Num()));
+        return Value == 0 ? 1 : Value;
+    }
+};
+
+struct FMHEndpointMeshInterface
+{
+    FBox Bounds = FBox(ForceInit);
+    TArray<uint8> BoundsInput;
+    uint64 BucketDescriptorHash = 0;
+    uint64 CollisionInterfaceHash = 0;
+    uint64 MaterialBindingHash = 0;
+};
+
+FMHEndpointMeshInterface MHReadEndpointMeshInterface(const UStaticMesh& Mesh)
+{
+    FMHEndpointMeshInterface Result;
+    const FBoxSphereBounds Extended = Mesh.GetExtendedBounds();
+    const FVector Positive = Mesh.GetPositiveBoundsExtension();
+    const FVector Negative = Mesh.GetNegativeBoundsExtension();
+    FMHEndpointInterfaceBytes Bounds(TEXT("mh.endpoint.bounds:1"));
+    Bounds.Vector(Extended.Origin);
+    Bounds.Vector(Extended.BoxExtent);
+    Bounds.Double(Extended.SphereRadius);
+    Bounds.Vector(Positive);
+    Bounds.Vector(Negative);
+    Result.BoundsInput = MoveTemp(Bounds.Data);
+    Result.Bounds = Extended.GetBox();
+    // Synthetic meshes have no render bounds. Real extended bounds already
+    // include extensions and must not receive them a second time.
+    if (Extended.Origin == FVector::ZeroVector && Extended.BoxExtent == FVector::ZeroVector && Extended.SphereRadius == 0.0)
+    {
+        Result.Bounds.Min -= Negative;
+        Result.Bounds.Max += Positive;
+    }
+
+    FMHEndpointInterfaceBytes Bucket(TEXT("mh.endpoint.bucket:1"));
+    FMHEndpointInterfaceBytes Binding(TEXT("mh.endpoint.binding:1"));
+    const TArray<FStaticMaterial>& Slots = Mesh.GetStaticMaterials();
+    Bucket.U32(static_cast<uint32>(Slots.Num()));
+    Binding.U32(static_cast<uint32>(Slots.Num()));
+    for (const FStaticMaterial& Slot : Slots)
+    {
+        const FString SlotName = Slot.MaterialSlotName.ToString();
+        Bucket.Text(SlotName);
+        Binding.Text(SlotName);
+        // TObjectPtr obtains paths without resolving unloaded object handles.
+        // OPEN-R3A-1: material identities never enter the bucket descriptor.
+        Binding.Text(Slot.MaterialInterface.GetPathName());
+        Binding.Text(Slot.OverlayMaterialInterface.GetPathName());
+    }
+    Bucket.U32(static_cast<uint32>(Mesh.GetNumSourceModels()));
+    if (const FStaticMeshRenderData* RenderData = Mesh.GetRenderData())
+    {
+        Bucket.U32(static_cast<uint32>(RenderData->LODResources.Num()));
+        for (const FStaticMeshLODResources& Lod : RenderData->LODResources)
+        {
+            Bucket.U32(static_cast<uint32>(Lod.Sections.Num()));
+            for (const FStaticMeshSection& Section : Lod.Sections)
+            {
+                Bucket.U32(Section.MaterialIndex);
+                Bucket.U8(Section.bEnableCollision ? 1 : 0);
+                Bucket.U8(Section.bCastShadow ? 1 : 0);
+            }
+        }
+    }
+    Result.BucketDescriptorHash = Bucket.Hash();
+    Result.MaterialBindingHash = Binding.Hash();
+
+    FMHEndpointInterfaceBytes Collision(TEXT("mh.endpoint.collision:1"));
+    const UBodySetup* Body = Mesh.GetBodySetup();
+    Collision.U8(Body != nullptr ? 1 : 0);
+    if (Body != nullptr)
+    {
+        Collision.U8(static_cast<uint8>(Body->CollisionTraceFlag));
+        Collision.U8(Body->bDoubleSidedGeometry ? 1 : 0);
+        Collision.U32(static_cast<uint32>(Body->AggGeom.SphereElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.BoxElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.SphylElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.ConvexElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.TaperedCapsuleElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.LevelSetElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.SkinnedLevelSetElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.MLLevelSetElems.Num()));
+        Collision.U32(static_cast<uint32>(Body->AggGeom.SkinnedTriangleMeshElems.Num()));
+        Collision.Text(Body->DefaultInstance.GetCollisionProfileName().ToString());
+    }
+    Result.CollisionInterfaceHash = Collision.Hash();
+    return Result;
+}
+
 bool ReceiptSourcePathMatchesKey(const FString& SourcePath, const FMHResourceKey& Key)
 {
     TArray<FString> Segments;
@@ -155,6 +283,7 @@ void UMHEndpointPrototypeRegistry::Deinitialize()
     AssetsAddedHandle.Reset();
     AssetsRemovedHandle.Reset();
     Prototypes.Reset();
+    ReadyMeshInterfaces.Reset();
     Super::Deinitialize();
 }
 
@@ -213,10 +342,9 @@ void UMHEndpointPrototypeRegistry::Invalidate(const FMHResourceKey& Key)
 {
     if (FMHEndpointPrototype* Prototype = Prototypes.Find(Key))
     {
-        ++Prototype->Revision;
-        Prototype->State = EMHEndpointState::Unresolved;
-        Prototype->Object.Reset();
-        Prototype->AdmissionError.Reset();
+        const uint32 NextRevision = Prototype->Revision + 1u;
+        *Prototype = FMHEndpointPrototype();
+        Prototype->Revision = NextRevision;
     }
 }
 
@@ -224,11 +352,19 @@ void UMHEndpointPrototypeRegistry::InvalidateAll()
 {
     for (TPair<FMHResourceKey, FMHEndpointPrototype>& Pair : Prototypes)
     {
-        ++Pair.Value.Revision;
-        Pair.Value.State = EMHEndpointState::Unresolved;
-        Pair.Value.Object.Reset();
-        Pair.Value.AdmissionError.Reset();
+        const uint32 NextRevision = Pair.Value.Revision + 1u;
+        Pair.Value = FMHEndpointPrototype();
+        Pair.Value.Revision = NextRevision;
     }
+}
+
+FMHEndpointInterfaceDelta UMHEndpointPrototypeRegistry::GetLastInterfaceDelta(const FMHResourceKey& Key) const
+{
+    const FMHEndpointPrototype* Prototype = Prototypes.Find(Key);
+    if (Key.Kind != EMHResourceKind::StaticMesh || Prototype == nullptr ||
+        Prototype->State != EMHEndpointState::Ready || !Prototype->Object.IsValid()) return FMHEndpointInterfaceDelta();
+    const FReadyMeshInterface* Interface = ReadyMeshInterfaces.Find(Key);
+    return Interface != nullptr ? Interface->Delta : FMHEndpointInterfaceDelta();
 }
 
 uint32 UMHEndpointPrototypeRegistry::GetRevision(const FMHResourceKey& Key) const
@@ -260,9 +396,10 @@ void UMHEndpointPrototypeRegistry::Admit(const FMHResourceKey& Key, FMHEndpointP
 {
     MHRecordEndpointRegistryLookup();
     if (Key.Kind == EMHResourceKind::StaticMesh) MHRecordDefinitionEndpointResolve();
-    Prototype.Object.Reset();
+    const uint32 Revision = Prototype.Revision;
+    Prototype = FMHEndpointPrototype();
+    Prototype.Revision = Revision;
     Prototype.State = EMHEndpointState::Invalid;
-    Prototype.AdmissionError.Reset();
     if (!Key.IsCanonical())
     {
         Prototype.AdmissionError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: ") + Key.ToString();
@@ -297,6 +434,40 @@ void UMHEndpointPrototypeRegistry::Admit(const FMHResourceKey& Key, FMHEndpointP
         Prototype.AdmissionError = MoveTemp(Error);
         return;
     }
+    if (Key.Kind == EMHResourceKind::StaticMesh)
+    {
+        const UStaticMesh& Mesh = *CastChecked<UStaticMesh>(Loaded);
+        const UMHStaticMeshImportData& Receipt = *CastChecked<UMHStaticMeshImportData>(Mesh.GetAssetImportData());
+        FMHEndpointMeshInterface Values = MHReadEndpointMeshInterface(Mesh);
+        FReadyMeshInterface Current;
+        Current.SourceHash = Receipt.SourceHash;
+        Current.ImporterVersion = Receipt.ImporterVersion;
+        Current.BoundsInput = MoveTemp(Values.BoundsInput);
+        Current.BucketDescriptorHash = Values.BucketDescriptorHash;
+        Current.CollisionInterfaceHash = Values.CollisionInterfaceHash;
+        Current.MaterialBindingHash = Values.MaterialBindingHash;
+        if (const FReadyMeshInterface* Previous = ReadyMeshInterfaces.Find(Key))
+        {
+            Current.Delta.bPayload = Current.SourceHash != Previous->SourceHash || Current.ImporterVersion != Previous->ImporterVersion;
+            Current.Delta.bBounds = Current.BoundsInput != Previous->BoundsInput;
+            Current.Delta.bBucketDescriptor = Current.BucketDescriptorHash != Previous->BucketDescriptorHash;
+            Current.Delta.bCollisionInterface = Current.CollisionInterfaceHash != Previous->CollisionInterfaceHash;
+            Current.Delta.bMaterialBinding = Current.MaterialBindingHash != Previous->MaterialBindingHash;
+            Current.PayloadRevision = Previous->PayloadRevision + static_cast<uint32>(Current.Delta.bPayload);
+            Current.BoundsRevision = Previous->BoundsRevision + static_cast<uint32>(Current.Delta.bBounds);
+        }
+        else
+        {
+            Current.Delta.bFirstAdmission = true;
+        }
+        Prototype.Bounds = Values.Bounds;
+        Prototype.PayloadRevision = Current.PayloadRevision;
+        Prototype.BoundsRevision = Current.BoundsRevision;
+        Prototype.BucketDescriptorHash = Current.BucketDescriptorHash;
+        Prototype.CollisionInterfaceHash = Current.CollisionInterfaceHash;
+        Prototype.MaterialBindingHash = Current.MaterialBindingHash;
+        ReadyMeshInterfaces.Add(Key, MoveTemp(Current));
+        MHRecordDefinitionEndpointStore();
+    }
     Prototype.State = EMHEndpointState::Ready;
-    if (Key.Kind == EMHResourceKind::StaticMesh) MHRecordDefinitionEndpointStore();
 }
