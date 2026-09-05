@@ -81,6 +81,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHInstanceHandle
 struct MIMIRCOMPOSITEEDITOR_API FMHInstancePoolMetrics
 {
     uint64 BucketsCreated = 0;
+    uint64 BucketsMigrated = 0;
     uint64 RenderStateRefreshes = 0;
     uint64 PhysicsRefreshes = 0;
     uint64 InstancesAdded = 0;
