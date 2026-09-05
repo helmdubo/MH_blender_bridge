@@ -165,6 +165,10 @@ private:
         const UE::MimirComposite::FMHResourceKey& Key,
         UE::MimirComposite::FMHEndpointPrototype& Prototype);
 
+    /** R4: async package load per key; a key is Loading while it has an entry here. */
+    void OnAsyncLoadComplete(UE::MimirComposite::FMHResourceKey Key);
+    TMap<UE::MimirComposite::FMHResourceKey, TSharedPtr<struct FStreamableHandle>> PendingLoads;
+
     TMap<UE::MimirComposite::FMHResourceKey, UE::MimirComposite::FMHEndpointPrototype> Prototypes;
     TMap<UE::MimirComposite::FMHResourceKey, FReadyMeshInterface> ReadyMeshInterfaces;
     FDelegateHandle AssetsAddedHandle;

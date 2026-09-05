@@ -511,22 +511,31 @@ int32 MHApplyCompositePlacementAppearance(
  * closure loads every option for proof but never waits; R4 removes this wait
  * with placeholders and async prototypes.
  */
+/**
+ * R4 (KICKOFF §5, 16 §2.2): the interactive path never waits for static mesh
+ * compilation. A selected mesh that is still compiling is bound as it is; the
+ * engine swaps its render data in when the compilation lands. The report keeps
+ * naming selected compiling meshes; waited_meshes stays empty by construction.
+ */
 void PlanViewWaitSelectedMeshes(const TMap<FMHResourceKey, UStaticMesh*>& SelectedMeshes)
 {
-    TArray<UStaticMesh*> Compiling;
-    for (const TPair<FMHResourceKey, UStaticMesh*>& Pair : SelectedMeshes)
+    static_cast<void>(SelectedMeshes);
+}
+
+/** Registry mesh for a leaf: the Ready mesh, or the placeholder while it loads (R4). */
+UStaticMesh* PlanViewResolveLeafMesh(const FString& Resource, const UMHCompositeSettings& Settings, FString& OutError)
+{
+    FMHResourceKey Key;
+    Key.Kind = EMHResourceKind::StaticMesh;
+    Key.LogicalName = Resource;
+    UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get();
+    if (Registry == nullptr)
     {
-        if (Pair.Value != nullptr && Pair.Value->IsCompiling())
-        {
-            MHRecordMapLoadWaitedMesh(Pair.Key);
-            Compiling.Add(Pair.Value);
-        }
+        OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: endpoint prototype registry unavailable for ") + Key.ToString();
+        return nullptr;
     }
-    if (!Compiling.IsEmpty())
-    {
-        FMHPlacementStageScope Stage(EMHPlacementStage::WaitStaticMeshCompilation);
-        FStaticMeshCompilingManager::Get().FinishCompilation(Compiling);
-    }
+    bool bPlaceholder = false;
+    return Registry->ResolveMeshForPreview(Key, Settings, bPlaceholder, OutError);
 }
 
 bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
@@ -570,11 +579,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             TObjectPtr<UStaticMesh>& ExpectedMesh = MeshesByResource.FindOrAdd(Leaf.Resource);
             if (ExpectedMesh == nullptr)
             {
-                FMHResourceKey Key;
-                Key.Kind = EMHResourceKind::StaticMesh;
-                Key.LogicalName = Leaf.Resource;
-                ExpectedMesh = Cast<UStaticMesh>(
-                    UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutResult.Error));
+                ExpectedMesh = PlanViewResolveLeafMesh(Leaf.Resource, Settings, OutResult.Error);
                 if (!OutResult.Error.IsEmpty()) return true;
             }
             const FPlanViewISMBucketKey LiveKey =
@@ -652,11 +657,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
         {
             TObjectPtr<UStaticMesh>& Cached = MeshesByResource.FindOrAdd(Resource);
             if (Cached != nullptr) return Cached;
-            FMHResourceKey Key;
-            Key.Kind = EMHResourceKind::StaticMesh;
-            Key.LogicalName = Resource;
-            Cached = Cast<UStaticMesh>(
-                UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutResult.Error));
+            Cached = PlanViewResolveLeafMesh(Resource, Settings, OutResult.Error);
             return Cached;
         };
         for (int32 Index = 0; Index < CandidatePlan.Leaves.Num(); ++Index)
@@ -871,11 +872,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
         if (const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component))
         {
             const UStaticMesh* BoundMesh = Mesh->GetStaticMesh();
-            FMHResourceKey MeshKey;
-            MeshKey.Kind = EMHResourceKind::StaticMesh;
-            MeshKey.LogicalName = Leaf.Resource;
-            const UStaticMesh* ExpectedMesh = Cast<UStaticMesh>(
-                UMHEndpointPrototypeRegistry::ResolveEndpoint(MeshKey, OutResult.Error));
+            const UStaticMesh* ExpectedMesh = PlanViewResolveLeafMesh(Leaf.Resource, Settings, OutResult.Error);
             if (!OutResult.Error.IsEmpty()) return true;
             if (!IsValid(BoundMesh) || BoundMesh != ExpectedMesh) return false;
             if (!MHIsAdmissibleAppearanceCustomDataBaseIndex(Settings.AppearanceCustomDataBaseIndex)) return false;
@@ -966,8 +963,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
                 FMHResourceKey Key;
                 Key.Kind = EMHResourceKind::StaticMesh;
                 Key.LogicalName = Leaf.Resource;
-                Endpoint.Mesh = Cast<UStaticMesh>(
-                    UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, OutResult.Error));
+                Endpoint.Mesh = PlanViewResolveLeafMesh(Leaf.Resource, Settings, OutResult.Error);
                 if (!OutResult.Error.IsEmpty()) return true;
                 if (Endpoint.Mesh != nullptr) SelectedMeshes.Add(Key, Endpoint.Mesh);
             }
@@ -1100,8 +1096,7 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
                 FMHResourceKey Key;
                 Key.Kind = EMHResourceKind::StaticMesh;
                 Key.LogicalName = Leaf.Resource;
-                Endpoint.Mesh = Cast<UStaticMesh>(
-                    UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, Result.Error));
+                Endpoint.Mesh = PlanViewResolveLeafMesh(Leaf.Resource, Settings, Result.Error);
                 if (!Result.Error.IsEmpty()) return Result;
                 if (Endpoint.Mesh != nullptr) SelectedMeshes.Add(Key, Endpoint.Mesh);
             }

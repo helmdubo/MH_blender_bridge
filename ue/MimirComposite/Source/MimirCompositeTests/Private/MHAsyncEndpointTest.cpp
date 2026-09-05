@@ -1,6 +1,7 @@
 #include "MHRecipeTestFixture.h"
 
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
@@ -80,11 +81,12 @@ struct FColdMesh
     }
 };
 
-UInstancedStaticMeshComponent* FirstBucket(const AMHCompositeActor& Actor)
+/** The mesh component rendering the single leaf (ISM bucket or plain static mesh component). */
+UStaticMeshComponent* FirstBucket(const AMHCompositeActor& Actor)
 {
     for (UActorComponent* Component : Actor.GetDerivedComponents())
     {
-        if (UInstancedStaticMeshComponent* Ism = Cast<UInstancedStaticMeshComponent>(Component)) return Ism;
+        if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) return Mesh;
     }
     return nullptr;
 }
@@ -107,8 +109,10 @@ bool FMHAsyncColdEndpointTest::RunTest(const FString& Parameters)
     UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get();
     if (!TestNotNull(TEXT("endpoint registry"), Registry)) return false;
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    UStaticMesh* Placeholder = Settings->PlaceholderMesh.LoadSynchronous();
-    if (!TestNotNull(TEXT("placeholder mesh setting resolves (default /Engine/BasicShapes/Cube)"), Placeholder)) return false;
+    // Engine content is not rooted: compare the placeholder by path, the object
+    // may be collected and reloaded by the fixture's forced GC.
+    const FString PlaceholderPath = Settings->PlaceholderMesh.ToSoftObjectPath().ToString();
+    if (!TestTrue(TEXT("placeholder mesh setting is set (default /Engine/BasicShapes/Cube)"), !PlaceholderPath.IsEmpty())) return false;
 
     FRecipeFixture Recipe(*this);
     FColdMesh Selected, Unselected;
@@ -154,8 +158,9 @@ bool FMHAsyncColdEndpointTest::RunTest(const FString& Parameters)
         MHGetPlacementStageMetrics().Get(EMHPlacementStage::WaitStaticMeshCompilation).Calls, 0ull);
     const FMHEndpointPrototype& Loading = Registry->Resolve(FColdMesh::Key(Selected.LogicalName));
     bPassed &= TestTrue(TEXT("selected cold endpoint is Loading"), Loading.State == EMHEndpointState::Loading);
-    UInstancedStaticMeshComponent* Bucket = FirstBucket(*Actor);
-    bPassed &= TestTrue(TEXT("first frame renders the placeholder mesh"), Bucket != nullptr && Bucket->GetStaticMesh() == Placeholder);
+    UStaticMeshComponent* Bucket = FirstBucket(*Actor);
+    bPassed &= TestTrue(TEXT("first frame renders the placeholder mesh"),
+        Bucket != nullptr && Bucket->GetStaticMesh() != nullptr && Bucket->GetStaticMesh()->GetPathName() == PlaceholderPath);
     bPassed &= TestFalse(TEXT("unselected variant is never resolved"), Registry->HasPrototype(FColdMesh::Key(Unselected.LogicalName)));
 
     // Completion: the registry admits the loaded object and the placement is
