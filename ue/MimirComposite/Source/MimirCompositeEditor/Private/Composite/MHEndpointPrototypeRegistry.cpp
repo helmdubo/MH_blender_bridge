@@ -338,6 +338,21 @@ UObject* UMHEndpointPrototypeRegistry::ResolveObject(const FMHResourceKey& Key, 
     return nullptr;
 }
 
+UStaticMesh* UMHEndpointPrototypeRegistry::ResolveMeshForPreview(
+    const FMHResourceKey& Key, const UMHCompositeSettings& Settings, bool& bOutPlaceholder, FString& OutError)
+{
+    // R4 red stub: today's synchronous path.
+    static_cast<void>(Settings);
+    bOutPlaceholder = false;
+    return Cast<UStaticMesh>(ResolveObject(Key, OutError));
+}
+
+bool UMHEndpointPrototypeRegistry::FlushAsyncLoadsForTests()
+{
+    // R4 red stub: nothing is ever in flight.
+    return true;
+}
+
 void UMHEndpointPrototypeRegistry::Invalidate(const FMHResourceKey& Key)
 {
     if (FMHEndpointPrototype* Prototype = Prototypes.Find(Key))

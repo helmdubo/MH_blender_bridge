@@ -1,5 +1,6 @@
 #pragma once
 
+class UStaticMesh;
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
 #include "Engine/EngineTypes.h"
@@ -44,6 +45,15 @@ public:
     /** Absolute scan boundary of the Source Protocol v4 source tree. */
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     FDirectoryPath SourceRoot;
+
+    /**
+     * Mesh rendered for a selected endpoint while it is still loading (16 §2.2,
+     * R4). The interactive path never blocks on a package load or on static
+     * mesh compilation; the placement is reconciled to the real mesh when the
+     * load completes.
+     */
+    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
+    TSoftObjectPtr<UStaticMesh> PlaceholderMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Cube.Cube")));
 
     /** Package root containing class parents named exactly by class token. */
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
