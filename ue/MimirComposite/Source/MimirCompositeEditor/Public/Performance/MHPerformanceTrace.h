@@ -92,6 +92,10 @@ struct MIMIRCOMPOSITEEDITOR_API FMHReimportPerfReport
     double ActorRebuildMsTotal = 0.0;
     double TotalMs = 0.0;
     uint64 EmittedReports = 0;
+    uint64 RecipesRecompiled = 0;
+    uint64 ParentRecipesRecompiled = 0;
+    uint64 BucketsRefreshed = 0;
+    uint64 BucketsMigrated = 0;
 };
 
 MIMIRCOMPOSITEEDITOR_API int32 MHGetPerfTraceLevel();
@@ -184,4 +188,8 @@ MIMIRCOMPOSITEEDITOR_API void MHRecordReimportNotifiedResource(
 MIMIRCOMPOSITEEDITOR_API void MHRecordReimportActorRebuild(
     const UObject& Actor,
     uint64 Cycles);
+/** Notification handled without an actor rebuild; does not charge rebuild time. */
+MIMIRCOMPOSITEEDITOR_API void MHRecordReimportActorReconciled();
+MIMIRCOMPOSITEEDITOR_API void MHRecordReimportBucket(bool bMigrated);
+MIMIRCOMPOSITEEDITOR_API void MHRecordReimportRecipeCompilations(uint64 Total, uint64 Parents);
 } // namespace UE::MimirComposite

@@ -285,7 +285,7 @@ void LogStartupScanReport(const FMHStartupScanPerfReport& Report)
 void LogReimportReport(const FMHReimportPerfReport& Report)
 {
     UE_LOG(LogMHPerformanceTrace, Display,
-        TEXT("MH_PERF_REIMPORT resource_key=%s full_scan_count_delta=%lld incremental_paths=%llu analysis_services_ms=%.3f import_build_ms=%.3f compile_wait_ms=%.3f save_packages_ms=%.3f projection_ms=%.3f notified_resource_keys=%llu notified_actors=%llu actor_rebuild_ms_total=%.3f total_ms=%.3f"),
+        TEXT("MH_PERF_REIMPORT resource_key=%s full_scan_count_delta=%lld incremental_paths=%llu analysis_services_ms=%.3f import_build_ms=%.3f compile_wait_ms=%.3f save_packages_ms=%.3f projection_ms=%.3f notified_resource_keys=%llu notified_actors=%llu actor_rebuild_ms_total=%.3f total_ms=%.3f recipes_recompiled=%llu parent_recipes_recompiled=%llu buckets_refreshed=%llu buckets_migrated=%llu"),
         *Report.ResourceKey,
         Report.FullScanCountDelta,
         Report.IncrementalPaths,
@@ -297,7 +297,11 @@ void LogReimportReport(const FMHReimportPerfReport& Report)
         Report.NotifiedResourceKeys,
         Report.NotifiedActors,
         Report.ActorRebuildMsTotal,
-        Report.TotalMs);
+        Report.TotalMs,
+        Report.RecipesRecompiled,
+        Report.ParentRecipesRecompiled,
+        Report.BucketsRefreshed,
+        Report.BucketsMigrated);
 }
 } // namespace
 
@@ -760,5 +764,24 @@ void MHRecordReimportActorRebuild(const UObject& Actor, const uint64 Cycles)
                 CyclesToMilliseconds(Cycles);
         }
     }
+}
+
+void MHRecordReimportActorReconciled()
+{
+    if (GActiveReimport != nullptr) ++GActiveReimport->Values.NotifiedActors;
+}
+
+void MHRecordReimportBucket(const bool bMigrated)
+{
+    if (GActiveReimport == nullptr) return;
+    if (bMigrated) ++GActiveReimport->Values.BucketsMigrated;
+    else ++GActiveReimport->Values.BucketsRefreshed;
+}
+
+void MHRecordReimportRecipeCompilations(const uint64 Total, const uint64 Parents)
+{
+    if (GActiveReimport == nullptr) return;
+    GActiveReimport->Values.RecipesRecompiled += Total;
+    GActiveReimport->Values.ParentRecipesRecompiled += Parents;
 }
 } // namespace UE::MimirComposite

@@ -328,6 +328,40 @@ bool PlanViewPreflight(const FMHResolvedCompositePlan& Plan, const FMHRandomComp
 }
 } // namespace
 
+UInstancedStaticMeshComponent* MHMigrateCompositePlacementBucket(
+    AActor& Target, UInstancedStaticMeshComponent& Previous)
+{
+    // Reuse the same descriptor/configuration and creation order as full compile.
+    // No layout, endpoint resolution, compilation wait or mutation of other buckets.
+    const FPlanViewISMBucketKey Key = PlanViewDefaultBucketKey(*Previous.GetStaticMesh(), Previous.NumCustomDataFloats);
+    FMHCompositePlacementCompileResult Created;
+    UInstancedStaticMeshComponent* Bucket = CastChecked<UInstancedStaticMeshComponent>(PlanViewNew(
+        Target, UInstancedStaticMeshComponent::StaticClass(), TEXT("MH_ISM_Bucket"),
+        NAME_None, Created, nullptr, [&](USceneComponent& Component)
+        {
+            auto& New = *CastChecked<UInstancedStaticMeshComponent>(&Component);
+            PlanViewConfigureBucket(New, Key);
+            // The configuration setters invalidate the profile name even when
+            // assigning identical policy. Restore the canonical named default.
+            New.SetCollisionProfileName(Key.CollisionProfileName);
+            New.ComponentTags = Previous.ComponentTags;
+            New.SetWorldTransform(Previous.GetComponentTransform());
+            New.SetCustomPrimitiveDataFloatArray(0, Previous.GetCustomPrimitiveData().Data);
+        }));
+    for (int32 Index = 0; Index < Previous.GetInstanceCount(); ++Index)
+    {
+        FTransform Transform;
+        Previous.GetInstanceTransform(Index, Transform, false);
+        const int32 Added = Bucket->AddInstance(Transform, false);
+        for (int32 Channel = 0; Channel < Previous.NumCustomDataFloats; ++Channel)
+            Bucket->SetCustomDataValue(Added, Channel,
+                Previous.PerInstanceSMCustomData[Index * Previous.NumCustomDataFloats + Channel], false);
+    }
+    Bucket->MarkRenderStateDirty();
+    Bucket->UpdateBounds();
+    return Bucket;
+}
+
 uint64 MHGetPlacementPreviousComponentProbes()
 {
     return GMHPlacementPreviousComponentProbes;

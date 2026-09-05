@@ -55,15 +55,67 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
     }
 #endif
 
+    FMHEndpointInterfaceDelta Delta;
+    TArray<TWeakObjectPtr<AMHCompositeActor>> AffectedActors;
+    bool bNeedsMeshAdmission = false;
+    for (TObjectIterator<AMHCompositeActor> It; It; ++It)
+    {
+        AMHCompositeActor* Actor = *It;
+        UWorld* World = IsValid(Actor) ? Actor->GetWorld() : nullptr;
+        if (!IsValid(Actor) || Actor->IsTemplate() || Actor->IsActorBeingDestroyed() ||
+            World == nullptr || World->IsBeingCleanedUp() || World->IsCleanedUp() ||
+            !Actor->DependsOnResource(Key)) continue;
+        AffectedActors.Add(Actor);
+        const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
+        // Dependency graphs include unselected options. First admission of such
+        // an option is not recovery of a missing rendered leaf (DECIDED-R3B-1).
+        bNeedsMeshAdmission |= Plan == nullptr || Plan->Leaves.ContainsByPredicate(
+            [&](const FMHResolvedCompositeLeaf& Leaf)
+            { return Leaf.Kind == EMHRandomSemanticKind::Mesh && Leaf.Resource == Key.LogicalName; });
+    }
+    bool bMeshDeltaKnown = false;
+    UMHCompiledRecipeRegistry* Recipes = UMHCompiledRecipeRegistry::Get();
+    const bool bTrace = MHIsReimportPerfActive();
+    const uint32 GenerationBefore = bTrace && Recipes != nullptr ? Recipes->GetGeneration() : 0;
+    // Observe actual compilations through the existing registry API. Do not
+    // compile recipes merely to measure them, and do no extra traversal with tracing off.
+    TMap<TWeakObjectPtr<const UMHCompositeAsset>, TOptional<uint32>> ParentRecipesBefore;
+    if (bTrace && Recipes != nullptr && Key.Kind == EMHResourceKind::Composite)
+    {
+        TArray<FMHResourceKey> Pending = {Key};
+        TSet<FString> Seen = {Key.LogicalName};
+        while (!Pending.IsEmpty())
+        {
+            const FMHResourceKey Dependency = Pending.Pop();
+            for (const TWeakObjectPtr<const UMHCompositeAsset>& Parent : Recipes->GetDependents(Dependency))
+            {
+                const UMHCompositeAsset* Asset = Parent.Get();
+                if (Asset == nullptr || Seen.Contains(Asset->LogicalName)) continue;
+                Seen.Add(Asset->LogicalName);
+                const FMHCompiledRecipe* Cached = Recipes->Find(*Asset);
+                ParentRecipesBefore.Add(Parent, Cached != nullptr
+                    ? TOptional<uint32>(Cached->RecipeRevision) : TOptional<uint32>());
+                FMHResourceKey ParentKey;
+                ParentKey.Kind = EMHResourceKind::Composite;
+                ParentKey.LogicalName = Asset->LogicalName;
+                Pending.Add(ParentKey);
+            }
+        }
+    }
     if (GEditor != nullptr)
     {
         if (UMHEndpointPrototypeRegistry* Registry =
                 GEditor->GetEditorSubsystem<UMHEndpointPrototypeRegistry>())
         {
-            // Revision++: the prototype re-admits on its next resolve (16 §2.2).
             Registry->Invalidate(Key);
+            if (Key.Kind == EMHResourceKind::StaticMesh && bNeedsMeshAdmission)
+            {
+                Registry->Resolve(Key);
+                Delta = Registry->GetLastInterfaceDelta(Key);
+                bMeshDeltaKnown = true;
+            }
         }
-        if (UMHCompiledRecipeRegistry* Recipes = GEditor->GetEditorSubsystem<UMHCompiledRecipeRegistry>())
+        if (Recipes != nullptr)
         {
             // 16 §4: a composite reimport recompiles that recipe only; an inlined
             // profile reimport recompiles the recipes carrying it (R2b-2).
@@ -72,13 +124,15 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         }
         if (UMHProofCacheSubsystem* Proofs = GEditor->GetEditorSubsystem<UMHProofCacheSubsystem>())
         {
-            Proofs->InvalidateAll();
+            if (Key.Kind != EMHResourceKind::StaticMesh || !bMeshDeltaKnown || Delta.Any()) Proofs->InvalidateAll();
         }
     }
 
-    for (TObjectIterator<AMHCompositeActor> It; It; ++It)
+    if (Key.Kind == EMHResourceKind::Material || Key.Kind == EMHResourceKind::Texture) return;
+
+    for (const TWeakObjectPtr<AMHCompositeActor>& Affected : AffectedActors)
     {
-        AMHCompositeActor* Actor = *It;
+        AMHCompositeActor* Actor = Affected.Get();
         UWorld* World = IsValid(Actor) ? Actor->GetWorld() : nullptr;
         if (!IsValid(Actor) || Actor->IsTemplate() || Actor->IsActorBeingDestroyed() ||
             World == nullptr || World->IsBeingCleanedUp() || World->IsCleanedUp() ||
@@ -86,18 +140,37 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         {
             continue;
         }
-        if (MHIsReimportPerfActive())
+        const auto Reconcile = [&]()
+        {
+            if (Key.Kind == EMHResourceKind::StaticMesh) Actor->ReconcileEndpoint(Key, Delta);
+            else if (Key.Kind == EMHResourceKind::Composite) Actor->ReconcileRecipe(Key);
+            else Actor->RebuildComposite();
+        };
+        if (bTrace)
         {
             const uint64 RebuildStart = FPlatformTime::Cycles64();
-            Actor->RebuildComposite();
-            MHRecordReimportActorRebuild(
-                *Actor,
-                FPlatformTime::Cycles64() - RebuildStart);
+            const uint32 RebuildsBefore = Actor->GetPlacementRebuildCount();
+            Reconcile();
+            if (Actor->GetPlacementRebuildCount() != RebuildsBefore)
+                MHRecordReimportActorRebuild(*Actor, FPlatformTime::Cycles64() - RebuildStart);
+            else MHRecordReimportActorReconciled();
         }
         else
         {
-            Actor->RebuildComposite();
+            Reconcile();
         }
+    }
+    if (bTrace && Recipes != nullptr)
+    {
+        uint64 ParentsRecompiled = 0;
+        for (const auto& Pair : ParentRecipesBefore)
+        {
+            const UMHCompositeAsset* Parent = Pair.Key.Get();
+            const FMHCompiledRecipe* After = Parent != nullptr ? Recipes->Find(*Parent) : nullptr;
+            if (After != nullptr && (!Pair.Value.IsSet() || Pair.Value.GetValue() != After->RecipeRevision))
+                ++ParentsRecompiled;
+        }
+        MHRecordReimportRecipeCompilations(Recipes->GetGeneration() - GenerationBefore, ParentsRecompiled);
     }
 }
 
