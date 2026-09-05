@@ -224,12 +224,68 @@ FMHMaterializeResult MHMaterializeLayout(
 Preview не читает этот кэш и не строит ни closure, ни подписи, ни source
 freshness proof.
 
-### 2.7 `NodeOverrides` (вводится в R6, после R5)
+### 2.7 R6: контекст вложенного редактирования → публикация → уникальность → persistent overrides
 
-Слой per-instance переопределений локального трансформа узла — основа для
-физической симуляции и автосборки (производители overrides, вне программы).
+Реструктурировано owner 2026-09-06 после внешнего аудита
+(`docs/reference_notes/dagor_composit_ue5_audit_20260904.md`). Прежний
+единый срез «`NodeOverrides` + UI» заменён семьёй срезов с порядком
+**R6-D0 → R6-D1 → R6-D2 → R6-U → R6-O (опц., последним)**; программный
+порядок вокруг семьи — §8.
 
-- Ключ: `FMHNodeOverrideKey { FString NodePath; uint64 NodeFingerprint }`.
+**R6-D0 — контекст вложенного редактирования.** Пользователь выбирает
+корневой `AMHCompositeActor`, входит в режим Edit Contents, выбирает
+вложенный вызов; открывается draft определения подкомпозита с сохранением
+root-размещения и effective transform родителя как контекста. UI показывает
+«Редактируется: `<child>.composite` / Контекст: `<путь root → child>` /
+Сохранение: общее определение». Cancel не меняет источник. Правятся
+логические узлы (адрес в скомпилированном рецепте), не ISM-инстансы пула —
+пул только отображает результат draft.
+
+**R6-D1 — gizmo вложенного узла.** Относительно effective transform
+непосредственного родителя (row-vector порядок проекта: `World = LocalEffective
+* ParentEffectiveWorld`, `EditedLocal = EditedWorld * inverse(ParentEffectiveWorld)`);
+проверка представимости результирующей матрицы существующим transform
+admission до `FTransform`. Multiselect родителя и потомка — движение
+применяется один раз; одна Undo-транзакция на drag; Cancel восстанавливает
+исходное состояние. Transform-only drag не вызывает `RemoveOwner`/`Add` всего
+композита.
+
+**R6-D2 — публикация общего определения (Apply Shared Definition).**
+Подготовить bytes → проверить → записать атомарно в Source Root →
+импортировать → targeted refresh всех потребителей этого определения; при
+ошибке записи/импорта исходное состояние сохраняется.
+
+Решение owner (а), 2026-09-06: Blender остаётся единственным источником
+истины; двустороннего контроля ревизий **нет** — более свежий `.composite`,
+выгруженный из UE, может быть перезаписан последующим экспортом из Blender
+без конфликта. Это принятое решение, не открытый вопрос (закрывает OPEN-R-9,
+§9).
+
+**R6-U — Save Unique / Make Unique.** Явно выбранная область уникальности:
+«Edit Shared Definition» (общее определение и все потребители), «Make Child
+Unique in This Definition» (ссылка внутри редактируемого определения), «Make
+Unique for This Placement» (только это размещение в карте; минимальная
+copy-on-write цепочка определений до root размещения; неизменённые соседние
+ссылки остаются общими). Различать procedural variant и Bake Current Result;
+random call-context (`CallContext`, R4-pre-3, §2.10) при переименовании/
+копировании рецептов сохраняется или явно запекается — совпадения `Seed`
+недостаточно.
+
+**R6-O — persistent instance overrides (бывший `NodeOverrides`; опциональный,
+последний срез семьи, после R6-D/R6-U).** Слой per-instance переопределений
+локального трансформа узла — основа для физической симуляции и автосборки
+(производители overrides, вне программы).
+
+- Устойчивая identity узла: `NodeUID` + цепочка вызовов (occurrence address).
+  Fingerprint — только guard содержимого, не идентификатор. `NodeUID` не
+  заменяет random `StreamNamespace` (R4-pre-3, §2.10) — разные механизмы.
+- Состояния: `Applied | Inactive | Orphan | Conflict`.
+- Parity обязателен на четырёх плоскостях/срезах: Preview / Proof / Export /
+  Runtime snapshot.
+- Требует версии wire-формата **v6** с планом миграции; frozen v5 (10 §6.1–6.2)
+  не меняется неявно.
+- Ключ узла (наследует прежний дизайн, уточнён через `NodeUID`):
+  `FMHNodeOverrideKey { FString NodePath; uint64 NodeFingerprint }`.
   Индексный `NodePath` сдвигается при вставке sibling, поэтому путь без
   fingerprint не идентифицирует узел.
 
@@ -249,20 +305,21 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
 - Canonical-представление трансформа: нормализованный знак кватерниона,
   `-0.0 → 0.0`, фиксированная сериализация float, порядок компонентов, запрет
   NaN/Inf. Raw-байты `FTransform` не хэшируются.
-- Правило: изменился authored transform **самого** узла → override не
-  применяется, `MH_W_ORPHAN_OVERRIDE_IDENTITY_CHANGED`; изменился transform
-  **предка** → override валиден и движется с предком; сменился семантический
-  родитель → override не применяется.
+- **Нормативная политика (переносится без изменений): изменился authored
+  transform самого узла → override не применяется**,
+  `MH_W_ORPHAN_OVERRIDE_IDENTITY_CHANGED`; **изменился transform предка →
+  override валиден и движется с предком**; сменился семантический родитель →
+  override не применяется.
 - Применение: путь найден и fingerprint совпал → override заменяет локальный
   трансформ (после генерации, до умножения на родителя). Путь найден,
   fingerprint не совпал → **не применять**,
   `MH_W_ORPHAN_OVERRIDE_IDENTITY_CHANGED`. Путь не найден →
   `MH_W_ORPHAN_OVERRIDE`. Orphan-записи сохраняются, не удаляются молча.
-- Жизненный цикл (решение owner): override — рабочий слой; штатный финал —
-  `Promote to composite` (новый `.composite` через экспортный путь level
-  subsystem, актор переключается на него, overrides очищаются). Консервативный
-  fingerprint принят: правка authored-трансформа **самого** узла гасит override
-  с warning; сдвиг предка override не гасит — он движется с предком.
+- Жизненный цикл: override — рабочий слой; штатный финал — `Promote to
+  composite` (новый `.composite` через экспортный путь level subsystem, актор
+  переключается на него, overrides очищаются). Консервативный fingerprint
+  принят: правка authored-трансформа **самого** узла гасит override с
+  warning; сдвиг предка override не гасит — он движется с предком.
 - Операции: `Reset override`, `Reset all`, `Promote to composite…`.
 
 ### 2.8 `UMHInstancePoolSubsystem` (World subsystem, Editor)
@@ -277,10 +334,19 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
   `RemoveInstance` обе карты обновляются. `(Component*, InstanceIndex)` наружу
   не выдаётся никогда.
 - API: `Add/Update/Remove(Handle)`, `ReverseLookup(Component, ISMIndex) →
-  (Actor, NodePath)`, `BeginBulk()/EndBulk()` (один `MarkRenderStateDirty` и
-  один physics/nav refresh на скоуп), групповые операции по owner:
+  (Actor, NodePath)`, `BeginBulk()/EndBulk()` (собственный `MarkRenderStateDirty`
+  пула и bounds refresh — один раз на затронутый бакет за скоуп), групповые
+  операции по owner:
   `HideOwner/ShowOwner/RemoveOwner/MoveOwner/SetOwnerEditorVisibility` —
   `SetVisibility()` на ISM-компоненте для этого **непригоден**.
+  `BeginBulk/EndBulk` коалесцирует только собственную работу пула
+  (`MarkRenderStateDirty`/bounds refresh на бакет); он **не** подавляет
+  внутреннюю работу движка внутри штатных `AddInstance`/`RemoveInstance`/
+  `UpdateInstanceTransform` — она выполняется движком на каждый вызов как
+  обычно. Счётчик `PhysicsRefreshes` считает bounds refresh'и на скоуп, а не
+  реальные физика/nav-затраты; настоящие затраты (Owner→handles index,
+  Component→bucket index, физика/nav, аллокации графа/плана в
+  `MHMaterializeLayout`) — предмет замера R8 (§8, §9).
 - **Reconcile по пяти хэшам/ревизиям** (§4): только `PayloadRevision`/
   `BoundsRevision` → render/bounds refresh; `BucketDescriptorHash` → миграция
   бакета; `CollisionInterfaceHash` → recreate physics state;
@@ -490,9 +556,18 @@ PlacementInterfaceHash
 S0–S2 параллельно → R2a (фазовый resolver + shadow parity, не production) →
 R2b (preview на `MHMaterializeLayout`, актор §2.10) → R2c (точки выхода) →
 R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpoint'ы) → R5 (пулы
-по `ULevel`, стабильные хэндлы) → R6 (`NodeOverrides` + UI) → R7 (actor-листья)
-→ R8 опц. (нормализация/схлопывание после exhaustive parity). С R2a
-`RecipeShadowParityTest` обязателен в каждом срезе.
+по `ULevel`, стабильные хэндлы; R5a/R5b-0/R5b-1a/R5b-1) → **R5-F** (lifecycle-
+фиксы из аудита: rows/leaf-array sync после миграции бакета, Undo во время
+Edit завершает сессию, `MigrateBucket` сохраняет placement policy, pool-актор
+виден в Game View) → **R5b-2** (viewport selection adapter: hit → pool
+`ReverseLookup` → выделяется owner-композит) → **R6-D0** (контекст вложенного
+редактирования) → **R6-D1** (gizmo вложенного узла) → **R6-D2** (публикация
+общего определения) → **R6-U** (Save Unique / Make Unique) → **R6-O** опц.
+(persistent instance overrides, §2.7) → **R7-0** (capability-контракт
+actor-листьев) → **R7-1** (миграция `UChildActorComponent`/`TryLoadClass` на
+контракт R7-0) → R8 опц. (нормализация/схлопывание после exhaustive parity, не
+первый кандидат — только после замеров §2.8). С R2a `RecipeShadowParityTest`
+обязателен в каждом срезе.
 
 Инструментация M0 (`mh.PerfTrace`, `MH_PERF_MAPLOAD` /
 `MH_PERF_STARTUP_SCAN` / `MH_PERF_REIMPORT`) смержена в `main` (PR #60);
@@ -518,6 +593,8 @@ R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpo
 | OPEN-R2B-2 | Резидентный preview-план на актор (§2.10 «LastPlacements») | план хранится целиком (decisions, draws, nodes, leaves): draws нужны Outliner-трассе и reseed-diff; сжатие — только если полевой замер R4 (пулы) покажет проблему памяти | закрыт 2026-09-03 (owner делегировал решение близнецу) |
 | OPEN-R-7 | Duplicate claim в preview | Preview-плоскость делает ноль tag-запросов. Duplicate claim обнаруживают source-плоскость (`duplicate_claim`) и `BuildProofNow` в preflight/snapshot (`MH_E_AMBIGUOUS_GENERATED_ASSET`). Старый preview-тест заменён proof-plane тестом `DuplicateClaimIsProofPlane` в R0c. | закрыт D0b П2; реализован в proof-плоскости R2c (2026-09-03) |
 | OPEN-R4P-1 | Точное воспроизведение random внутри дочернего композита после Break | ребёнок получает `Seed` и `AppearanceSeed` родителя как есть; из-за смены корневого `NodePath` внутренний random может выбрать другой вариант | открыт, fail-closed: сиды родителя **Решение owner 2026-09-04 (по аудиту `dagor_composit_ue5_audit_20260904.md` §7.A): вариант близнеца — сохраняемый, версионированный контекст вызова на акторе-ребёнке (namespace потока = путь узла в родителе, appearance boundary = корень родителя), необязательный вход resolver; пустой контекст = текущее поведение, старые ассеты не меняются. Срез R4-pre-3 (близнец).** **Закрыт R4-pre-3 (2026-09-05):** реализован именно этот вариант, см. §2.10 `CallContext`; reference-резолвер `tools/mh_random_reference.py` принимает `node_path_prefix`/`appearance_boundary` | закрыт |
+| OPEN-R-9 | UE↔Blender ревизии при публикации общего определения (R6-D2) | Blender остаётся единственным источником истины; публикация из UE не защищена от перезаписи последующим экспортом из Blender | закрыт решением owner (а) 2026-09-06: двустороннего контроля ревизий нет, более свежий `.composite`, выгруженный из UE, может быть перезаписан без конфликта — принятое поведение, см. §2.7 |
+| OPEN-R-10 | `NodeUID` / формат wire v6 для persistent instance overrides (R6-O) | нужен только для R6-O; frozen v5 (10 §6.1–6.2) не меняется неявно до отдельного решения | открыт |
 
 | OPEN-R-8 | Runtime-бэкенд для cook/PIE (компонент на лист в `AMHRuntimeCompositeActor`, WP закрыт) | **открыт**; owner 2026-09-04: портфолио — рендер без игрового билда, но плагин станет продуктом для FAB и cook понадобится другим разработчикам; правильный ответ (bake на cook vs shared runtime recipe) пока не известен. До решения runtime-мост не меняется; fail-closed: WP-отказ и покомпонентная материализация остаются как есть | открыт |
 | OPEN-S-1 | Источник slot-рёбер mesh→material без парса FBX в скане (S1) | **закрыт 2026-09-02, вариант c (owner):** S0 достаточен — FBX парсится только для новых/изменённых по `(size, mtime)` файлов; S1 закрыт без кода; холодный скан портфолио измеряется полевым протоколом M0 §6 | закрыт |

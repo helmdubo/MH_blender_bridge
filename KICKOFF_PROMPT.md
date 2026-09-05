@@ -211,11 +211,16 @@ FMHMaterializeResult MHMaterializeLayout(
    admission (явные действия пользователя).
 2. Build preflight (`MHCompositeBuildPreflight*`) — error, блокирует.
 3. Runtime snapshot (`MHRuntimeCompositeInput` admission) — error.
-4. Export / `UMHCompositeLevelSubsystem::Build/Break` — error.
+4. Export / `UMHCompositeLevelSubsystem::Build` (preflight) — error.
 
 Только здесь строится full closure и читаются `SourceHash`/`AppliedHash`.
 
-### 3.7 `NodeOverrides` (вводится в R6, после R5)
+`Break` — **не** proof boundary, а операция preview-плоскости
+(`docs/16_recipe_model.md` §2.6): она читает резидентный план и снимает ровно
+один слой рецепта, не строит full closure и не делает tag-запросов Asset
+Registry.
+
+### 3.7 `NodeOverrides` (R6-O — опциональный последний срез семьи R6; контекст, публикация и уникальность — R6-D0…R6-U, docs/16 §2.7)
 
 Слой per-instance переопределений локального трансформа узла — основа для
 физической симуляции и автосборки (производители overrides, вне программы).
@@ -348,9 +353,16 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 | **R3** | семантический reconcile §4 по пяти хэшам/ревизиям П4: mesh, material, texture, phmat, child recipe (без перекомпиляции родителей) | targeted reimport меша с тем же интерфейсом: `actor_rebuild_ms_total == 0`, `recipes_recompiled == 0`; изменение child-рецепта: `parent_recipes_recompiled == 0` | `ResourceReconcileTest` |
 | **R4** | async-загрузка выбранных endpoint'ов, заглушки; **снятие остатка ожидания из R1** | cold DDC: `package_loads_sync == 0`, `wait_static_mesh_compilation_ms == 0`; первый кадр раньше готовности мешей | — |
 | **R5** | `UMHInstancePoolSubsystem` по домену `ULevel`, стабильные хэндлы, owner-операции видимости, Outliner через `ReverseLookup` | remove одного инстанса не ломает `ReverseLookup` остальных (swap-remove тест); `HideOwner` скрывает только инстансы актора; undo восстанавливает | `InstancePoolHandleStabilityTest` |
-| **R6** | `NodeOverrides` §3.7 + UI (Reset, Reset all, Promote) | override с несовпавшим fingerprint не применяется и даёт warning; promote воспроизводит трансформы при импорте | `NodeOverrideIdentityTest` |
-| **R7** | Actor-листья §3.9 | preview-актор editor-only, не в cook/PIE, умирает с актором, переживает duplicate/undo; класс вне whitelist → заглушка | — |
-| **R8** (опц.) | нормализация весов / схлопывание матриц | exhaustive parity = 0 | расширение `RecipeShadowParityTest` |
+| **R5-F** | Lifecycle-фиксы по аудиту: sync rows/leaf-array после миграции бакета, Undo во время Edit завершает сессию, `MigrateBucket` сохраняет placement policy, pool-актор виден в Game View | после миграции бакета во время активного Edit Contents строки компилятора и leaf-array пула не расходятся; Undo, начатый во время Edit, закрывает сессию, а не оставляет открытый невалидный draft | `Pool.RowsSyncAfterBucketMigration`, `Edit.UndoDuringEditEndsSession` |
+| **R5b-2** | Selection-seam вьюпорта: клик по инстансу пула → `ReverseLookup` → выделяется owner-композит; работает при закрытом Composite Outliner; highlight только инстансов owner'а; F — по bounds owner'а; Delete/Duplicate/gizmo действуют на root | клик по ISM-инстансу без открытого Outliner выделяет owner `AMHCompositeActor`, не pool-актор; F фокусирует камеру на bounds owner'а, не всего бакета | `Viewport.ClickSelectsOwnerViaReverseLookup`, `Viewport.FFocusesOwnerBounds` |
+| **R6-D0** | Контекст вложенного редактирования: root actor → Edit Contents → вложенный вызов → draft подкомпозита с root-размещением и effective transform родителя как контекстом; UI «Редактируется / Контекст / Сохранение»; Cancel не меняет источник; правятся логические узлы, не ISM-инстансы пула | открытие draft вложенного вызова не меняет исходный `.composite` до явного сохранения; Cancel восстанавливает состояние без побочных правок источника | `Edit.NestedLeafRoundTrip`, `Edit.CancelLeavesSourceUnchanged` |
+| **R6-D1** | Gizmo вложенного узла относительно effective transform непосредственного родителя (`World = LocalEffective * ParentEffectiveWorld`), проверка представимости до `FTransform`, multiselect родитель+потомок — один раз, одна Undo-транзакция на drag | drag вложенного узла при одновременно выбранных родителе и потомке применяет перемещение ровно один раз; transform-only drag не вызывает `RemoveOwner`/`Add` всего композита | `Gizmo.NestedNodeSingleApplyWithParentSelected`, `Gizmo.TransformOnlyDragSkipsOwnerRebuild` |
+| **R6-D2** | Публикация общего определения (Apply Shared Definition): bytes → проверка → атомарная запись в Source Root → импорт → targeted refresh всех потребителей; ошибка записи/импорта сохраняет исходное состояние | неудачная запись/импорт не меняет резидентное состояние ни одного потребителя; успешная публикация обновляет всех потребителей без полного rebuild карты | `Publish.FailedWriteLeavesConsumersUnchanged`, `Publish.TargetedRefreshAllConsumers` |
+| **R6-U** | Save Unique / Make Unique с явной областью: Edit Shared Definition / Make Child Unique in This Definition / Make Unique for This Placement (copy-on-write до root); различие procedural variant vs Bake Current Result; `CallContext` при переименовании/копировании сохраняется или явно запекается | Make Unique for This Placement не меняет соседние размещения того же общего определения; совпадение `Seed` без сохранённого/запечённого `CallContext` недостаточно для идентичного воспроизведения | `Promote.NestedOccurrenceIsolation`, `MakeUnique.SeedAloneInsufficientWithoutCallContext` |
+| **R6-O** (опц., последний в семье R6) | Persistent instance overrides (бывший `NodeOverrides`): устойчивая identity (`NodeUID` + occurrence address), состояния Applied/Inactive/Orphan/Conflict, parity Preview/Proof/Export/Runtime, wire-формат v6 с планом миграции | два структурно идентичных sibling-узла получают разный устойчивый `NodeUID` и не путают чужие overrides; правка authored transform самого узла даёт Conflict, движение предка — нет | `NodeOverride.RepeatedIdenticalSiblingIdentity`, `NodeOverride.AncestorMoveDoesNotConflict` |
+| **R7-0** | Capability-контракт actor-листьев: поддержанные классы и их preview lifecycle, разрешённые параметры, appearance/seed inputs; runtime backend (OPEN-R-8) и World Partition (OPEN-R-5) — отдельные контракты, не внутри R7 | класс вне capability-контракта → `Invalid` + заглушка, как сейчас whitelist | `Capability.ClassOutsideContractFallsBackToPlaceholder` |
+| **R7-1** | Миграция существующего `UChildActorComponent`/`TryLoadClass` пути компилятора на контракт R7-0; `gameobj` placeholder не становится исполняемым actor автоматически; без generic сериализации всех Blueprint properties; без автопулинга actor-листьев | миграция не меняет наблюдаемое поведение существующих actor-листьев вне контракта; `gameobj`-заглушка остаётся заглушкой без явного маппинга класса | `Migrate.ChildActorPathPreservesBehavior` |
+| **R8** (опц.) | нормализация весов / схлопывание матриц — только после замеров (Owner→handles index, Component→bucket index, реальные physics/nav-затраты, аллокации графа/плана в `MHMaterializeLayout`); не первый кандидат | exhaustive parity = 0 | расширение `RecipeShadowParityTest` |
 
 После R6 — физическая симуляция и автосборка по объёмам как производители
 `FMHNodeOverrideSet`-транзакций (вход `LastPlacements`, выход — транзакция в
