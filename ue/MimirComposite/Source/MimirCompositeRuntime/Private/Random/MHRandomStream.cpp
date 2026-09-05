@@ -1045,6 +1045,30 @@ bool MHResolveCompositeLayout(
     return true;
 }
 
+bool MHResolveCompositeLayout(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
+    // R4-pre-3 red stub: the context is not applied yet.
+    static_cast<void>(Context);
+    return MHResolveCompositeLayout(Graph, Seed, OutPlan, OutError);
+}
+
+bool MHResolveCompositePlan(
+    const FMHRandomSourceGraph& Graph,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError)
+{
+    static_cast<void>(Context);
+    return MHResolveCompositePlan(Graph, Seed, AppearanceSeed, OutPlan, OutError);
+}
+
 bool MHResolveCompositePlan(
     const FMHRandomSourceGraph& Graph,
     const int32 Seed,

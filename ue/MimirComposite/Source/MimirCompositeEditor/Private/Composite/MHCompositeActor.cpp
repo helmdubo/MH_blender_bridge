@@ -126,6 +126,12 @@ int32 AMHCompositeActor::GenerateAutoSeed(const int32 DifferentFrom)
     return Result;
 }
 
+void AMHCompositeActor::SetCallContext(const FMHCompositeCallContext& NewContext)
+{
+    // R4-pre-3 red stub: stored, not yet applied by the preview.
+    CallContext = NewContext;
+}
+
 void AMHCompositeActor::SetSeed(const int32 NewSeed)
 {
     if (bPlacementEditMode)

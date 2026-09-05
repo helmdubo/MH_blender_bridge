@@ -115,11 +115,28 @@ MIMIRCOMPOSITEEDITOR_API bool MHResolveRecipePreview(
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError);
 
+/** Preview under a call context (R4-pre-3); the context-free overload is the empty context. */
+MIMIRCOMPOSITEEDITOR_API bool MHResolveRecipePreview(
+    const FMHCompiledRecipe& Root,
+    int32 Seed,
+    int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError);
+
 /** Same preview stages over an already assembled preview graph (edit sessions, materialization). */
 MIMIRCOMPOSITEEDITOR_API bool MHResolvePreviewGraph(
     const FMHRandomSourceGraph& Graph,
     int32 Seed,
     int32 AppearanceSeed,
+    FMHResolvedCompositePlan& OutPlan,
+    FString& OutError);
+
+MIMIRCOMPOSITEEDITOR_API bool MHResolvePreviewGraph(
+    const FMHRandomSourceGraph& Graph,
+    int32 Seed,
+    int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
     FMHResolvedCompositePlan& OutPlan,
     FString& OutError);
 

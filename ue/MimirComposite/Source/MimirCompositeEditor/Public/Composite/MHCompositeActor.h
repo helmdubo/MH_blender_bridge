@@ -15,6 +15,37 @@ class UMHCompositeAsset;
 class USceneComponent;
 
 /** Persisted level instance of one managed composite; its component view is always derived. */
+/**
+ * Persisted call context of a placement (R4-pre-3, 16 §2.10). Empty for a
+ * placement authored as a root; filled by Break for a child composite so the
+ * child keeps the streams it had inside its parent. Never computed from the
+ * scene, only written by Break (or cleared by the user).
+ */
+USTRUCT()
+struct MIMIRCOMPOSITEEDITOR_API FMHCompositeCallContext
+{
+    GENERATED_BODY()
+
+    /** Format version of this record; 1 = namespace + appearance boundary. */
+    UPROPERTY()
+    int32 Version = 1;
+    /** NodePath the recipe root is walked under; empty = own root. */
+    UPROPERTY(VisibleInstanceOnly, Category = "Mimir|Random")
+    FString StreamNamespace;
+    /** Appearance boundary for leaves without a declared one; empty = own root. */
+    UPROPERTY(VisibleInstanceOnly, Category = "Mimir|Random")
+    FString AppearanceBoundary;
+
+    bool IsEmpty() const { return StreamNamespace.IsEmpty() && AppearanceBoundary.IsEmpty(); }
+    UE::MimirComposite::FMHResolveCallContext ToResolveContext() const
+    {
+        UE::MimirComposite::FMHResolveCallContext Result;
+        Result.NodePathPrefix = StreamNamespace;
+        Result.AppearanceBoundaryPath = AppearanceBoundary;
+        return Result;
+    }
+};
+
 UCLASS(NotBlueprintable)
 class MIMIRCOMPOSITEEDITOR_API AMHCompositeActor final : public AActor
 {
@@ -32,6 +63,10 @@ public:
 
     void SetCompositeAsset(UMHCompositeAsset* Asset);
     UMHCompositeAsset* GetCompositeAsset() const;
+
+    const FMHCompositeCallContext& GetCallContext() const { return CallContext; }
+    /** Rebuilds the preview under the new context. */
+    void SetCallContext(const FMHCompositeCallContext& NewContext);
 
     int32 GetSeed() const { return Seed; }
     bool GetAutoSeed() const { return bAutoSeed; }
@@ -169,6 +204,10 @@ private:
      */
     UPROPERTY(EditInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Layout Seed"))
     int32 Seed = 0;
+
+    /** R4-pre-3: where this placement's streams are keyed; see FMHCompositeCallContext. */
+    UPROPERTY(VisibleInstanceOnly, AdvancedDisplay, Category = "Mimir|Random", meta = (DisplayName = "Call Context"))
+    FMHCompositeCallContext CallContext;
 
     /** Default duplicate reseeds; explicit Lock/Keep Seed disables it. */
     UPROPERTY(EditInstanceOnly, Category = "Mimir|Random", meta = (DisplayName = "Auto Seed on Duplicate"))

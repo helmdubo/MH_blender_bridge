@@ -35,6 +35,11 @@ struct MIMIRCOMPOSITERUNTIME_API FMHRuntimeCompositeInput
     /** Includes unselected and zero-weight variants, their dependencies, and actor classes. */
     UPROPERTY()
     TArray<FMHRuntimeCompositeBinding> Bindings;
+    /** Call context of the source placement (R4-pre-3); both empty for a root placement. */
+    UPROPERTY()
+    FString CallContextNodePathPrefix;
+    UPROPERTY()
+    FString CallContextAppearanceBoundary;
 };
 
 namespace UE::MimirComposite
