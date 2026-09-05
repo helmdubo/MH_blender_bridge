@@ -1,6 +1,6 @@
 # R5b-1 (Recipe Model v2.1) — размещения материализуют static-листья через пул
 
-Статус: **REVIEW** (близнец). Вторая половина R5 по KICKOFF §5 / docs/16 §2.8:
+Статус: **MERGED** (близнец, #116 `1eda77d`). Вторая половина R5 по KICKOFF §5 / docs/16 §2.8:
 компилятор размещений, актор, маршрутизация reimport-уведомлений и Outliner
 переведены на `UMHInstancePoolSubsystem` (R5a) и его reconcile (R5b-0).
 Закрывает OPEN-R-1 (Undo для пула).
