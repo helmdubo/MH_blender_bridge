@@ -29,7 +29,7 @@
   Transient/DuplicateTransient-флаги по-прежнему держат его вне save, cook
   и PIE. **Полевая проверка owner: G на портфолио.**
 
-## 2. Тесты (red `af88d67`)
+## 2. Тесты (red `c5177ff`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -42,7 +42,7 @@
 
 | Gate | Результат |
 |---|---|
-| RED (`af88d67`) | `R5F_RED_TEST.log`: четыре теста Fail |
+| RED (`c5177ff`) | `R5F_RED_TEST.log`: четыре теста Fail |
 | GREEN non-unity/no-PCH build | `R5F_GREEN_BUILD.log`: Succeeded |
 | `Mimir.V5.Composite.Pool` | `R5F_GREEN_TEST.log`: 11/0 |
 | полный NullRHI suite | `R5F_GREEN_FULL.log`: `Success=216 Fail=0` (212 + 4) |
