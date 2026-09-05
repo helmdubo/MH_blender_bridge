@@ -12,6 +12,8 @@
 class ULevel;
 class UStaticMesh;
 class UMaterialInterface;
+class USelection;
+class UTypedElementSelectionSet;
 
 namespace UE::MimirComposite
 {
@@ -115,6 +117,7 @@ class MIMIRCOMPOSITEEDITOR_API UMHInstancePoolSubsystem final : public UWorldSub
 
 public:
     virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
+    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
 
     static UMHInstancePoolSubsystem* Get(const UWorld* World);
@@ -163,6 +166,17 @@ public:
     /** Live bucket components rendering Mesh (any level), in bucket order. */
     void GetBucketComponents(const UStaticMesh& Mesh, TArray<UInstancedStaticMeshComponent*>& OutComponents) const;
 
+    /**
+     * Editor selection highlight of one owner (R5b-2a): only that owner's
+     * live instances are marked selected on the shared ISM; the state
+     * survives Hide/Show and bucket migration. The pool mirrors the editor's
+     * actor selection onto its owners automatically.
+     */
+    void SetOwnerSelected(const AActor& Owner, bool bSelected);
+    bool IsOwnerSelected(const AActor& Owner) const;
+    /** World-space bounds of the owner's live instances (mesh bounds under each instance matrix); invalid box when none. */
+    FBox GetOwnerBounds(const AActor& Owner) const;
+
     int32 NumBuckets() const { return Buckets.Num(); }
     int32 NumLiveInstances(const AActor& Owner) const;
     const UE::MimirComposite::FMHInstancePoolMetrics& GetMetrics() const { return Metrics; }
@@ -203,9 +217,22 @@ private:
     void MarkDirty(FBucket& Bucket, bool bPhysics);
     void Flush(FBucket& Bucket);
     bool MigrateBucket(FBucket& Bucket);
+    /** Editor selection mirror: an owner's instances follow its actor selection. */
+    void OnEditorSelectionChanged(UObject* Object);
+    void OnEditorObjectSelected(UObject* Object);
+    /** The level editor's element selection set changes without legacy notifications (SelectNone, batches); bind to it directly. */
+    void BindSelectionSet(UTypedElementSelectionSet* SelectionSet);
+    void OnElementSelectionChanged(const UTypedElementSelectionSet* SelectionSet);
+    void OnSelectionSetPtrChanged(USelection* Selection, UTypedElementSelectionSet* OldSet, UTypedElementSelectionSet* NewSet);
 
     TArray<FBucket> Buckets;
     TMap<TWeakObjectPtr<ULevel>, TWeakObjectPtr<AMHInstancePoolActor>> PoolActors;
+    TSet<TWeakObjectPtr<const AActor>> SelectedOwners;
+    FDelegateHandle SelectionChangedHandle;
+    FDelegateHandle SelectObjectHandle;
+    FDelegateHandle SelectionSetPtrHandle;
+    TWeakObjectPtr<UTypedElementSelectionSet> BoundSelectionSet;
+    FDelegateHandle BoundSelectionSetHandle;
     int32 BulkDepth = 0;
     UE::MimirComposite::FMHInstancePoolMetrics Metrics;
 };

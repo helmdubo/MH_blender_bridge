@@ -395,4 +395,57 @@ bool FMHPoolUndoDuringEditTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+// R5b-2a on placements: F / focus frames the placement's pooled instances
+// (GetComponentsBoundingBox), and selecting the composite actor in the editor
+// highlights only its instances on the shared bucket.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHPoolPlacementSelectionAndBoundsTest,
+    "Mimir.V5.Composite.Pool.SelectedPlacementHighlightsAndBounds",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPoolPlacementSelectionAndBoundsTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    if (GEditor == nullptr) return false;
+    FPoolPlacementFixture F(*this);
+    if (!F.Build(*this)) return false;
+    AMHCompositeActor* A = F.Spawn(FVector(0, 0, 0));
+    AMHCompositeActor* B = F.Spawn(FVector(0, 5000, 0));
+    if (!TestNotNull(TEXT("actor A"), A) || !TestNotNull(TEXT("actor B"), B)) return false;
+    bool bPassed = F.RowsAreLive(*this, *A, TEXT("initial A")) & F.RowsAreLive(*this, *B, TEXT("initial B"));
+
+    const FBox BoundsA = A->GetComponentsBoundingBox(true);
+    bPassed &= TestTrue(TEXT("A's bounds are valid without own primitives"), BoundsA.IsValid != 0);
+    const FMHResolvedCompositePlan* PlanA = A->GetResolvedPlan();
+    if (PlanA != nullptr)
+    {
+        for (const FMHResolvedCompositeLeaf& Leaf : PlanA->Leaves)
+            bPassed &= TestTrue(TEXT("A's bounds cover its leaf ") + Leaf.Origin, BoundsA.IsInsideOrOn(FTransform(Leaf.WorldMatrix * A->GetActorTransform().ToMatrixWithScale()).GetLocation()));
+    }
+    bPassed &= TestFalse(TEXT("A's bounds exclude B's placement"), BoundsA.IsInsideOrOn(B->GetActorLocation()));
+
+    const auto RowsHighlighted = [](const AMHCompositeActor& Actor, const bool bExpected)
+    {
+        for (const FMHCompositeLeafMaterialization& Row : Actor.GetLeafMaterializations())
+        {
+            const UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
+            if (Bucket == nullptr || Row.InstanceIndex == INDEX_NONE || Bucket->IsInstanceSelected(Row.InstanceIndex) != bExpected) return false;
+        }
+        return true;
+    };
+    GEditor->SelectNone(false, true, false);
+    GEditor->SelectActor(A, true, true, true);
+    bPassed &= TestTrue(TEXT("selecting A highlights A's instances"), RowsHighlighted(*A, true));
+    bPassed &= TestTrue(TEXT("selecting A leaves B's instances unhighlighted"), RowsHighlighted(*B, false));
+    GEditor->SelectActor(A, false, true, true);
+    GEditor->SelectActor(B, true, true, true);
+    bPassed &= TestTrue(TEXT("selection moved to B"), RowsHighlighted(*A, false) && RowsHighlighted(*B, true));
+    // A silent SelectNone (bNoteSelectionChange = false) suppresses every
+    // selection notification by engine contract; the pool mirrors notified
+    // changes, as the details panel and outliner do.
+    GEditor->SelectNone(true, true, false);
+    bPassed &= TestTrue(TEXT("no selection, no highlight"), RowsHighlighted(*A, false) && RowsHighlighted(*B, false));
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests

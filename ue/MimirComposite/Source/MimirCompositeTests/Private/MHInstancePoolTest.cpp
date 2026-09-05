@@ -427,4 +427,56 @@ bool FMHInstancePoolActorVisibleInGameViewTest::RunTest(const FString& Parameter
     return bPassed;
 }
 
+// R5b-2a: selecting an owner highlights only that owner's instances on the
+// shared ISM (stock component selection would highlight every owner), the
+// highlight survives Hide/Show and migration, and the owner's bounds cover
+// exactly its own instances.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHInstancePoolOwnerSelectionTest,
+    "Mimir.V5.Composite.Pool.OwnerSelectionHighlightsOnlyOwner",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHInstancePoolOwnerSelectionTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FPoolFixture F;
+    if (!F.Build(*this)) return false;
+    const FMHInstanceHandle A0 = F.Add(*F.OwnerA, TEXT("a:nodes[0]"), F.DescA, FVector(0, 0, 0));
+    const FMHInstanceHandle A1 = F.Add(*F.OwnerA, TEXT("a:nodes[1]"), F.DescA, FVector(10, 0, 0));
+    const FMHInstanceHandle B0 = F.Add(*F.OwnerB, TEXT("b:nodes[0]"), F.DescA, FVector(2000, 0, 0));
+    UInstancedStaticMeshComponent* Component = nullptr;
+    int32 IA0 = INDEX_NONE, IA1 = INDEX_NONE, IB0 = INDEX_NONE;
+    bool bPassed = TestTrue(TEXT("instances"), F.Pool->GetInstance(A0, Component, IA0) && F.Pool->GetInstance(A1, Component, IA1) && F.Pool->GetInstance(B0, Component, IB0) && Component != nullptr);
+    if (Component == nullptr) return false;
+    const auto Highlighted = [&](const FMHInstanceHandle& H)
+    {
+        UInstancedStaticMeshComponent* C = nullptr;
+        int32 I = INDEX_NONE;
+        return F.Pool->GetInstance(H, C, I) && C != nullptr && I != INDEX_NONE && C->IsInstanceSelected(I);
+    };
+
+    F.Pool->SetOwnerSelected(*F.OwnerA, true);
+    bPassed &= TestTrue(TEXT("owner A reports selected"), F.Pool->IsOwnerSelected(*F.OwnerA));
+    bPassed &= TestTrue(TEXT("A's instances are highlighted"), Highlighted(A0) && Highlighted(A1));
+    bPassed &= TestFalse(TEXT("B's instance is not highlighted"), Highlighted(B0));
+    F.Pool->HideOwner(*F.OwnerA);
+    F.Pool->ShowOwner(*F.OwnerA);
+    bPassed &= TestTrue(TEXT("highlight survives Hide/Show"), Highlighted(A0) && Highlighted(A1) && !Highlighted(B0));
+    FMHEndpointInterfaceDelta Descriptor;
+    Descriptor.bBucketDescriptor = true;
+    F.Pool->ReconcileMesh(*F.MeshA, Descriptor);
+    bPassed &= TestTrue(TEXT("highlight survives bucket migration"), Highlighted(A0) && Highlighted(A1) && !Highlighted(B0));
+    F.Pool->SetOwnerSelected(*F.OwnerA, false);
+    F.Pool->SetOwnerSelected(*F.OwnerB, true);
+    bPassed &= TestTrue(TEXT("only B is highlighted now"), !Highlighted(A0) && !Highlighted(A1) && Highlighted(B0));
+    bPassed &= TestFalse(TEXT("owner A reports deselected"), F.Pool->IsOwnerSelected(*F.OwnerA));
+
+    const FBox BoundsA = F.Pool->GetOwnerBounds(*F.OwnerA);
+    bPassed &= TestTrue(TEXT("A's bounds are valid and cover A's instances"), BoundsA.IsValid != 0 && BoundsA.IsInsideOrOn(FVector(0, 0, 0)) && BoundsA.IsInsideOrOn(FVector(10, 0, 0)));
+    bPassed &= TestFalse(TEXT("A's bounds exclude B's instance"), BoundsA.IsInsideOrOn(FVector(2000, 0, 0)));
+    F.Pool->RemoveOwner(*F.OwnerA);
+    bPassed &= TestFalse(TEXT("no instances, no bounds"), F.Pool->GetOwnerBounds(*F.OwnerA).IsValid != 0);
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests

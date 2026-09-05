@@ -5,7 +5,10 @@
 #include "Engine/Level.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Editor.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
 #include "Performance/MHPerformanceTrace.h"
+#include "Selection.h"
 
 using namespace UE::MimirComposite;
 
@@ -149,11 +152,127 @@ bool UMHInstancePoolSubsystem::ShouldCreateSubsystem(UObject* Outer) const
     return World != nullptr && (World->WorldType == EWorldType::Editor || World->WorldType == EWorldType::EditorPreview);
 }
 
+void UMHInstancePoolSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+    Super::Initialize(Collection);
+    // R5b-2a: the editor's actor selection is mirrored onto the owners'
+    // instances; a shared ISM never highlights as a whole component.
+    SelectionChangedHandle = USelection::SelectionChangedEvent.AddUObject(this, &UMHInstancePoolSubsystem::OnEditorSelectionChanged);
+    SelectObjectHandle = USelection::SelectObjectEvent.AddUObject(this, &UMHInstancePoolSubsystem::OnEditorObjectSelected);
+    SelectionSetPtrHandle = USelection::SelectionElementSelectionPtrChanged.AddUObject(this, &UMHInstancePoolSubsystem::OnSelectionSetPtrChanged);
+    if (GEditor != nullptr)
+    {
+        if (USelection* Actors = GEditor->GetSelectedActors()) BindSelectionSet(Actors->GetElementSelectionSet());
+    }
+}
+
+void UMHInstancePoolSubsystem::BindSelectionSet(UTypedElementSelectionSet* SelectionSet)
+{
+    if (UTypedElementSelectionSet* Bound = BoundSelectionSet.Get())
+    {
+        Bound->OnChanged().Remove(BoundSelectionSetHandle);
+        BoundSelectionSetHandle.Reset();
+    }
+    BoundSelectionSet = SelectionSet;
+    if (SelectionSet != nullptr)
+        BoundSelectionSetHandle = SelectionSet->OnChanged().AddUObject(this, &UMHInstancePoolSubsystem::OnElementSelectionChanged);
+}
+
+void UMHInstancePoolSubsystem::OnSelectionSetPtrChanged(USelection* Selection, UTypedElementSelectionSet* OldSet, UTypedElementSelectionSet* NewSet)
+{
+    static_cast<void>(OldSet);
+    if (GEditor != nullptr && Selection == GEditor->GetSelectedActors()) BindSelectionSet(NewSet);
+}
+
+void UMHInstancePoolSubsystem::OnElementSelectionChanged(const UTypedElementSelectionSet* SelectionSet)
+{
+    static_cast<void>(SelectionSet);
+    OnEditorSelectionChanged(nullptr);
+}
+
 void UMHInstancePoolSubsystem::Deinitialize()
 {
+    USelection::SelectionChangedEvent.Remove(SelectionChangedHandle);
+    USelection::SelectObjectEvent.Remove(SelectObjectHandle);
+    USelection::SelectionElementSelectionPtrChanged.Remove(SelectionSetPtrHandle);
+    BindSelectionSet(nullptr);
     Buckets.Reset();
     PoolActors.Reset();
+    SelectedOwners.Reset();
     Super::Deinitialize();
+}
+
+void UMHInstancePoolSubsystem::OnEditorObjectSelected(UObject* Object)
+{
+    const AActor* Actor = Cast<AActor>(Object);
+    if (Actor == nullptr || Actor->GetWorld() != GetWorld()) return;
+    const bool bSelected = Actor->IsSelected();
+    if (bSelected == SelectedOwners.Contains(Actor)) return;
+    SetOwnerSelected(*Actor, bSelected);
+}
+
+void UMHInstancePoolSubsystem::OnEditorSelectionChanged(UObject* Object)
+{
+    static_cast<void>(Object);
+    TSet<const AActor*> Owners;
+    for (const FBucket& Bucket : Buckets)
+    {
+        for (const FSlot& Slot : Bucket.Slots)
+        {
+            if (const AActor* Owner = Slot.Owner.Get(); !Slot.bFree && Owner != nullptr) Owners.Add(Owner);
+        }
+    }
+    for (const TWeakObjectPtr<const AActor>& Selected : SelectedOwners)
+    {
+        if (const AActor* Owner = Selected.Get()) Owners.Add(Owner);
+    }
+    for (const AActor* Owner : Owners)
+    {
+        const bool bSelected = Owner->IsSelected();
+        if (bSelected != SelectedOwners.Contains(Owner)) SetOwnerSelected(*Owner, bSelected);
+    }
+}
+
+void UMHInstancePoolSubsystem::SetOwnerSelected(const AActor& Owner, const bool bSelected)
+{
+    if (bSelected) SelectedOwners.Add(&Owner);
+    else SelectedOwners.Remove(&Owner);
+    BeginBulk();
+    for (FBucket& Bucket : Buckets)
+    {
+        UInstancedStaticMeshComponent* Component = Bucket.Component.Get();
+        if (Component == nullptr) continue;
+        bool bTouched = false;
+        for (const FSlot& Slot : Bucket.Slots)
+        {
+            if (Slot.bFree || Slot.bHidden || Slot.Owner.Get() != &Owner || !Component->IsValidInstance(Slot.InstanceIndex)) continue;
+            Component->SelectInstance(bSelected, Slot.InstanceIndex);
+            bTouched = true;
+        }
+        if (bTouched) MarkDirty(Bucket, false);
+    }
+    EndBulk();
+}
+
+bool UMHInstancePoolSubsystem::IsOwnerSelected(const AActor& Owner) const
+{
+    return SelectedOwners.Contains(&Owner);
+}
+
+FBox UMHInstancePoolSubsystem::GetOwnerBounds(const AActor& Owner) const
+{
+    FBox Bounds(ForceInit);
+    for (const FBucket& Bucket : Buckets)
+    {
+        const UStaticMesh* Mesh = Bucket.Descriptor.StaticMesh;
+        const FBox MeshBox = Mesh != nullptr ? Mesh->GetBoundingBox() : FBox(FVector::ZeroVector, FVector::ZeroVector);
+        for (const FSlot& Slot : Bucket.Slots)
+        {
+            if (Slot.bFree || Slot.bHidden || Slot.Owner.Get() != &Owner) continue;
+            Bounds += MeshBox.TransformBy(Slot.WorldMatrix);
+        }
+    }
+    return Bounds;
 }
 
 UMHInstancePoolSubsystem* UMHInstancePoolSubsystem::Get(const UWorld* World)
@@ -563,6 +682,7 @@ void UMHInstancePoolSubsystem::AddInstanceToComponent(FBucket& Bucket, const int
     check(Index == Bucket.InstanceToSlot.Num());
     Bucket.InstanceToSlot.Add(SlotId);
     Slot.InstanceIndex = Index;
+    if (SelectedOwners.Contains(Slot.Owner)) Component->SelectInstance(true, Index);
     if (PoolAppearanceFits(Bucket.Descriptor))
     {
         const int32 Base = Bucket.Descriptor.AppearanceCustomDataBaseIndex;
