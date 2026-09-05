@@ -296,4 +296,69 @@ bool FMHInstancePoolReconcileMeshTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+// 16 §2.8 bucket identity: the descriptor, never the live component state.
+// A bucket whose component drifted from its descriptor (external policy or
+// mesh mutation) is retired on the next Add: a fresh component configured from
+// the descriptor takes its instances, handles survive, and Adds without drift
+// never migrate anything.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHInstancePoolDriftedBucketTest,
+    "Mimir.V5.Composite.Pool.DriftedBucketIsRetired",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHInstancePoolDriftedBucketTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FPoolFixture F;
+    if (!F.Build(*this)) return false;
+    F.Pool->ResetMetricsForTests();
+    const FMHInstanceHandle H0 = F.Add(*F.OwnerA, TEXT("a:nodes[0]"), F.DescA, FVector(0, 0, 0));
+    const FMHInstanceHandle H1 = F.Add(*F.OwnerB, TEXT("b:nodes[0]"), F.DescA, FVector(10, 0, 0));
+    TArray<UInstancedStaticMeshComponent*> Buckets;
+    F.Pool->GetBucketComponents(*F.MeshA, Buckets);
+    bool bPassed = TestEqual(TEXT("one bucket for mesh A"), Buckets.Num(), 1);
+    bPassed &= TestEqual(TEXT("adds without drift migrate nothing"), F.Pool->GetMetrics().BucketsMigrated, 0ull);
+    if (Buckets.Num() != 1) return false;
+    UInstancedStaticMeshComponent* C0 = Buckets[0];
+    const bool bDescriptorCastShadow = F.DescA.bCastShadow;
+
+    // Policy drift on the shared component.
+    C0->CastShadow = !C0->CastShadow;
+    const FMHInstanceHandle H2 = F.Add(*F.OwnerA, TEXT("a:nodes[1]"), F.DescA, FVector(20, 0, 0));
+    F.Pool->GetBucketComponents(*F.MeshA, Buckets);
+    bPassed &= TestTrue(TEXT("drifted bucket is retired for a fresh component"), Buckets.Num() == 1 && Buckets[0] != C0 && IsValid(Buckets[0]));
+    bPassed &= TestFalse(TEXT("drifted component is destroyed"), IsValid(C0));
+    bPassed &= TestEqual(TEXT("one migration"), F.Pool->GetMetrics().BucketsMigrated, 1ull);
+    bPassed &= TestEqual(TEXT("still one bucket"), F.Pool->NumBuckets(), 1);
+    UInstancedStaticMeshComponent* C1 = Buckets.Num() == 1 ? Buckets[0] : nullptr;
+    bPassed &= TestTrue(TEXT("fresh component follows the descriptor"), C1 != nullptr && C1->CastShadow == bDescriptorCastShadow && C1->GetStaticMesh() == F.MeshA);
+    bPassed &= TestEqual(TEXT("fresh component renders every instance"), C1 != nullptr ? C1->GetInstanceCount() : -1, 3);
+    bPassed &= TestTrue(TEXT("handles survive the retirement"), F.Pool->IsValidHandle(H0) && F.Pool->IsValidHandle(H1) && F.Pool->IsValidHandle(H2));
+    UInstancedStaticMeshComponent* Component = nullptr;
+    int32 Index = INDEX_NONE;
+    bPassed &= TestTrue(TEXT("H1 keeps its transform in the fresh component"), F.Pool->GetInstance(H1, Component, Index) && Component == C1 && [&]
+    {
+        FTransform T;
+        return Component->GetInstanceTransform(Index, T, true) && T.GetLocation().Equals(FVector(10, 0, 0), 1e-3);
+    }());
+    AActor* Owner = nullptr;
+    FString Path;
+    bPassed &= TestTrue(TEXT("H0 reverse lookup after retirement"), F.Lookup(H0, Owner, Path, Index) && Owner == F.OwnerA && Path == TEXT("a:nodes[0]"));
+
+    // Endpoint drift: the component renders another mesh than its descriptor.
+    if (C1 != nullptr) C1->SetStaticMesh(F.MeshB);
+    const FMHInstanceHandle H3 = F.Add(*F.OwnerB, TEXT("b:nodes[1]"), F.DescA, FVector(30, 0, 0));
+    F.Pool->GetBucketComponents(*F.MeshA, Buckets);
+    bPassed &= TestTrue(TEXT("mesh drift retires the bucket again"), Buckets.Num() == 1 && Buckets[0] != C1 && IsValid(Buckets[0]) && Buckets[0]->GetStaticMesh() == F.MeshA);
+    bPassed &= TestEqual(TEXT("two migrations"), F.Pool->GetMetrics().BucketsMigrated, 2ull);
+    bPassed &= TestEqual(TEXT("fresh component renders four instances"), Buckets.Num() == 1 ? Buckets[0]->GetInstanceCount() : -1, 4);
+    bPassed &= TestTrue(TEXT("H3 is live"), F.Pool->IsValidHandle(H3));
+    // No drift: the next Add reuses the component.
+    UInstancedStaticMeshComponent* C2 = Buckets.Num() == 1 ? Buckets[0] : nullptr;
+    F.Add(*F.OwnerA, TEXT("a:nodes[2]"), F.DescA, FVector(40, 0, 0));
+    F.Pool->GetBucketComponents(*F.MeshA, Buckets);
+    bPassed &= TestTrue(TEXT("no drift, no migration"), Buckets.Num() == 1 && Buckets[0] == C2 && F.Pool->GetMetrics().BucketsMigrated == 2ull);
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests
