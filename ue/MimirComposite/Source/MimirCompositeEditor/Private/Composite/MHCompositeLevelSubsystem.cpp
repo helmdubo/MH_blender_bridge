@@ -2,6 +2,7 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeAppearanceTransport.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeCompiler.h"
 #include "Composite/MHCompiledRecipe.h"
@@ -32,6 +33,7 @@
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UObjectIterator.h"
+#include "UObject/UnrealType.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeLevelSubsystem)
 
@@ -54,6 +56,8 @@ struct FMHBreakSpawnSpec
     TObjectPtr<UMHCompositeAsset> CompositeAsset;
     int32 Seed = 0;
     int32 AppearanceSeed = 0;
+    float AppearanceChannels[MH_APPEARANCE_CHANNELS] = {};
+    int32 AppearanceBaseIndex = 0;
     FName FolderPath;
 };
 
@@ -200,6 +204,14 @@ bool MHCollectBreakSpecs(
         return false;
     }
     const FMatrix PlacementWorld = PlacementTransform.ToMatrixWithScale();
+    // Lookup only: top-layer selection still comes from Nodes, so nested
+    // composite leaves never become separate actors during this Break.
+    TMap<int32, const FMHResolvedCompositeLeaf*> MeshLeaves;
+    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+    {
+        if (Leaf.Kind == EMHRandomSemanticKind::Mesh)
+            MeshLeaves.Add(Leaf.OwningResolvedNodeIndex, &Leaf);
+    }
     for (const FMHResolvedCompositeNode& Node : Plan.Nodes)
     {
         // A '>' enters a nested composite. Break preserves that composite as
@@ -252,6 +264,21 @@ bool MHCollectBreakSpecs(
         Spec.FolderPath = FolderPath;
         if (Kind == EMHRandomSemanticKind::Mesh)
         {
+            const int32 NodeIndex = static_cast<int32>(&Node - Plan.Nodes.GetData());
+            const FMHResolvedCompositeLeaf* const* FoundLeaf = MeshLeaves.Find(NodeIndex);
+            if (FoundLeaf == nullptr || (*FoundLeaf)->Resource != Resource ||
+                !MHIsAdmissibleAppearanceCustomDataBaseIndex(Settings.AppearanceCustomDataBaseIndex))
+            {
+                OutError = FString::Printf(
+                    TEXT("MH_E_INVALID_RESOURCE_SOURCE: mesh:%s at %s has no matching appearance leaf or valid custom-data window for Break"),
+                    *Resource, *Node.NodePath);
+                return false;
+            }
+            const FMHResolvedCompositeLeaf& Leaf = **FoundLeaf;
+            Spec.WorldTransform = FTransform(Leaf.WorldMatrix * PlacementWorld);
+            Spec.AppearanceBaseIndex = Settings.AppearanceCustomDataBaseIndex;
+            for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+                Spec.AppearanceChannels[Channel] = Leaf.AppearanceChannels[Channel];
             FMHResourceKey Key;
             Key.Kind = EMHResourceKind::StaticMesh;
             Key.LogicalName = Resource;
@@ -320,7 +347,18 @@ AActor* MHSpawnBreakSpec(
             false));
         if (MeshActor != nullptr && MeshActor->GetStaticMeshComponent() != nullptr)
         {
-            MeshActor->GetStaticMeshComponent()->SetStaticMesh(Spec.Mesh);
+            UStaticMeshComponent* Component = MeshActor->GetStaticMeshComponent();
+            Component->SetStaticMesh(Spec.Mesh);
+            FMHResolvedCompositeLeaf Leaf;
+            Leaf.Kind = EMHRandomSemanticKind::Mesh;
+            for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel)
+                Leaf.AppearanceChannels[Channel] = Spec.AppearanceChannels[Channel];
+            // The shared transport writes transient render data. The new
+            // standalone actor also needs defaults for save/load and re-register.
+            Component->Modify();
+            Component->SetDefaultCustomPrimitiveDataFloatArray(
+                Spec.AppearanceBaseIndex, MakeArrayView(Spec.AppearanceChannels));
+            MHApplyLeafAppearanceCustomData(Component, Leaf, Spec.AppearanceBaseIndex);
         }
         Spawned = MeshActor;
     }
@@ -385,6 +423,94 @@ void MHDestroySpawnedActors(const TArray<AActor*>& Actors)
 
 using namespace UE::MimirComposite;
 
+bool UE::MimirComposite::MHPreflightBuildComposite(
+    const TArray<AActor*>& Actors,
+    const UMHCompositeSettings& Settings,
+    FMHCompositeDocument& OutDocument,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutDocument = FMHCompositeDocument();
+    OutWarnings.Reset();
+    OutError.Reset();
+    TArray<FString> Reasons;
+    const FBox Bounds = MHSelectionBounds(Actors);
+    if (!Bounds.IsValid || Bounds.GetCenter().ContainsNaN()) Reasons.Add(TEXT("selection has no finite world AABB"));
+    const FTransform Pivot(FQuat::Identity, Bounds.IsValid ? Bounds.GetCenter() : FVector::ZeroVector);
+    const ULevel* TargetLevel = !Actors.IsEmpty() && Actors[0] != nullptr ? Actors[0]->GetLevel() : nullptr;
+    const auto HasEditedProperties = [](const UObject& Object, const UObject* Defaults)
+    {
+        if (Defaults == nullptr || Object.GetClass() != Defaults->GetClass()) return true;
+        for (TFieldIterator<FProperty> Property(Object.GetClass()); Property; ++Property)
+        {
+            // EditAnywhere, including inherited fields and fixed-size arrays.
+            if (!Property->HasAnyPropertyFlags(CPF_Edit) ||
+                Property->HasAnyPropertyFlags(CPF_DisableEditOnInstance | CPF_DisableEditOnTemplate)) continue;
+            for (int32 Index = 0; Index < Property->ArrayDim; ++Index)
+                if (!Property->Identical_InContainer(&Object, Defaults, Index)) return true;
+        }
+        return false;
+    };
+    for (AActor* Actor : Actors)
+    {
+        if (Actor == nullptr) { Reasons.Add(TEXT("<null>: selection contains a null actor")); continue; }
+        if (Actor->GetLevel() != TargetLevel)
+            Reasons.Add(FString::Printf(TEXT("%s: selection spans multiple levels"), *Actor->GetPathName()));
+        FMHCompositeNode Node;
+        FString Reason;
+        if (!MHBuildNodeForActor(*Actor, Pivot, Settings, Node, Reason))
+        {
+            Reasons.Add(FString::Printf(TEXT("%s: %s"), *Actor->GetPathName(), *Reason));
+        }
+        else
+        {
+            if (const AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Actor))
+            {
+                OutWarnings.Add(FString::Printf(
+                    TEXT("%s: child composite seeds (Seed=%d, AppearanceSeed=%d) are not representable in the recipe; its random subtree re-rolls under the new parent"),
+                    *Actor->GetPathName(), Composite->GetSeed(), Composite->GetAppearanceSeed()));
+            }
+            else if (const AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(Actor))
+            {
+                const UStaticMeshComponent* Component = MeshActor->GetStaticMeshComponent();
+                for (int32 Slot = 0; Slot < Component->OverrideMaterials.Num(); ++Slot)
+                {
+                    if (const UMaterialInterface* Material = Component->OverrideMaterials[Slot])
+                        OutWarnings.Add(FString::Printf(
+                            TEXT("%s: material override in slot %d (%s) is not representable in the recipe and is dropped"),
+                            *Actor->GetPathName(), Slot, *Material->GetPathName()));
+                }
+                if (!Component->GetCustomPrimitiveData().Data.IsEmpty())
+                    OutWarnings.Add(FString::Printf(
+                        TEXT("%s: custom primitive data (%d floats) is not representable in the recipe and is dropped"),
+                        *Actor->GetPathName(), Component->GetCustomPrimitiveData().Data.Num()));
+            }
+            else
+            {
+                const AActor* Defaults = Cast<AActor>(Actor->GetClass()->GetDefaultObject(false));
+                const USceneComponent* Root = Actor->GetRootComponent();
+                const UObject* RootDefaults = Defaults != nullptr ? Defaults->GetRootComponent() : nullptr;
+                // Blueprint-created roots may live on an archetype rather than
+                // on the actor CDO; compare that template without creating one.
+                if (Root != nullptr && (RootDefaults == nullptr || RootDefaults->GetClass() != Root->GetClass()))
+                    RootDefaults = Root->GetArchetype();
+                if (HasEditedProperties(*Actor, Defaults) ||
+                    (Root != nullptr && HasEditedProperties(*Root, RootDefaults)))
+                    OutWarnings.Add(FString::Printf(
+                        TEXT("%s: instance properties differing from class defaults are not representable in the recipe and are dropped"),
+                        *Actor->GetPathName()));
+            }
+            OutDocument.Nodes.Add(MoveTemp(Node));
+        }
+    }
+    if (!Reasons.IsEmpty())
+    {
+        OutError = FString::Printf(TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT: %s"), *FString::Join(Reasons, TEXT("; ")));
+        return false;
+    }
+    return true;
+}
+
 bool UMHCompositeLevelSubsystem::BuildComposite(
     const TArray<AActor*>& Actors,
     const FMHCompositeAdoptTarget& AdoptTarget,
@@ -414,50 +540,12 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     }
 
     ULevel* TargetLevel = Actors[0] != nullptr ? Actors[0]->GetLevel() : nullptr;
-    TArray<FString> Reasons;
-    for (AActor* Actor : Actors)
-    {
-        if (Actor == nullptr)
-        {
-            Reasons.Add(TEXT("<null>: selection contains a null actor"));
-        }
-        else if (Actor->GetLevel() != TargetLevel)
-        {
-            Reasons.Add(FString::Printf(TEXT("%s: selection spans multiple levels"), *Actor->GetPathName()));
-        }
-    }
-
-    const FBox Bounds = MHSelectionBounds(Actors);
-    if (!Bounds.IsValid || Bounds.GetCenter().ContainsNaN())
-    {
-        Reasons.Add(TEXT("selection has no finite world AABB"));
-    }
-    const FTransform Pivot(FQuat::Identity, Bounds.IsValid ? Bounds.GetCenter() : FVector::ZeroVector);
     FMHCompositeDocument Document;
-    for (AActor* Actor : Actors)
+    if (!MHPreflightBuildComposite(Actors, *Settings, Document, OutWarnings, OutError))
     {
-        if (Actor == nullptr)
-        {
-            continue;
-        }
-        FMHCompositeNode Node;
-        FString Reason;
-        if (!MHBuildNodeForActor(*Actor, Pivot, *Settings, Node, Reason))
-        {
-            Reasons.Add(FString::Printf(TEXT("%s: %s"), *Actor->GetPathName(), *Reason));
-        }
-        else
-        {
-            Document.Nodes.Add(MoveTemp(Node));
-        }
-    }
-    if (!Reasons.IsEmpty())
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_UNREPRESENTABLE_SCENE_OBJECT: %s"),
-            *FString::Join(Reasons, TEXT("; ")));
         return false;
     }
+    const FTransform Pivot(FQuat::Identity, MHSelectionBounds(Actors).GetCenter());
 
     FString SourcePath;
     FString SourceRelativePath;

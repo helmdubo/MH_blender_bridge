@@ -326,6 +326,21 @@ void ExecuteBuildComposite(const TArray<TWeakObjectPtr<AActor>>& ActorSnapshot)
     }
     TArray<FString> Warnings;
     FString Error;
+    FMHCompositeDocument Document;
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (Settings == nullptr || !MHPreflightBuildComposite(Actors, *Settings, Document, Warnings, Error))
+    {
+        if (Error.IsEmpty()) Error = TEXT("MH_E_SOURCE_INDEX_INVALID: settings are unavailable");
+        NotifyOperation(
+            LOCTEXT("BuildCompositePage", "Build MH Composite"),
+            LOCTEXT("BuildCompositeFailed", "Build Composite failed"), Warnings, Error);
+        return;
+    }
+    if (!Warnings.IsEmpty())
+        NotifyOperation(
+            LOCTEXT("BuildCompositePage", "Build MH Composite"),
+            LOCTEXT("BuildCompositeLostState", "Build Composite will discard unrepresentable instance state"),
+            Warnings, {});
     AMHCompositeActor* Result = nullptr;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
     if (Subsystem == nullptr || !Subsystem->BuildComposite(Actors, Target, Result, Warnings, Error))

@@ -27,6 +27,7 @@
 | R3 | NEXT (внешний исполнитель, контракт близнеца) | пять хэшей/ревизий интерфейса меша (docs/16 §2.2 П4, восьмая строка §7.2 — код); контракт `docs/contracts/recipe_r3.md` |
 | RS-1 | MERGED (внешний агент, ресёрч; owner залил в `main` коммитом `28e898d`) | `docs/reference_notes/dagor_composite_build_break_20260903.md` — daEditor: «Split composites» снимает один слой, undo хранит записи `(asset, tm, seeds)`, «Export as composit» = файл на диск без изменения сцены; сводка для R4-pre в §6 |
 | R4-pre | MERGED (внешний исполнитель, приёмка близнеца) | #93 (`e8256b6`): Break = один слой рецепта в preview-плоскости (без proof/tag-запросов), дети-композиты остаются `AMHCompositeActor` с сидами родителя, plan-view компоненты не транзакционны, `PostEditUndo` восстанавливает из записи; близнец: 194/194 на generic-хосте; owner на портфолио: дубли после Undo не воспроизводятся (2026-09-03); квитанция `docs/receipts/recipe_r4_pre.md`; OPEN-R4P-1 открыт (fail-closed: сиды родителя) |
+| R4-pre-2 | READY FOR REVIEW (внешний исполнитель) | `codex/recipe-r4-pre2-build-break-preserve` от контрактной ветки `401d73f`, red `511d0ba`, реализация `9221626`: mesh Break переносит appearance, Build предупреждает о непредставимом состоянии через чистый preflight; 13/13 focused, full NullRHI 198 reported Success / 0 Fail (три условных NOT RUN отмечены в квитанции), force-unity и StrictIncludes PASS; квитанция `docs/receipts/recipe_r4_pre2.md`; merge — близнец, полевой smoke — owner после merge |
 | R4 | PLANNED | — |
 | R5 | PLANNED | — |
 | R6 | PLANNED | — |
