@@ -287,6 +287,12 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
   `MaterialBindingHash` → reconcile дескриптора материалов.
 - Undo: транзакционен только актор композита; пул восстанавливает
   материализацию из его состояния в `PostEditUndo` (OPEN-R-1).
+- Статус: **R5a** (близнец) — сервис и инварианты (`Public/Composite/
+  MHInstancePool.h`): бакет `{ULevel, FMHPoolBucketDescriptor}`, swap-remove с
+  двумя картами, generation-хэндлы, owner-операции, bulk-скоуп; квитанция
+  `docs/receipts/recipe_r5a.md`. **R5b** — перевод материализации
+  `AMHCompositeActor`, Outliner (`ReverseLookup`) и восстановления после Undo
+  на пул.
 
 ### 2.9 `Actor`-листья (R7, после capability-контракта)
 
