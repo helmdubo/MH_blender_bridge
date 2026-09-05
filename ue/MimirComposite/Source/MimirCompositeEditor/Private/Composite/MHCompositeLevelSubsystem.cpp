@@ -59,6 +59,8 @@ struct FMHBreakSpawnSpec
     float AppearanceChannels[MH_APPEARANCE_CHANNELS] = {};
     int32 AppearanceBaseIndex = 0;
     FName FolderPath;
+    /** R4-pre-3: the child composite's place inside the parent. */
+    FMHCompositeCallContext CallContext;
 };
 
 const TCHAR* MHBreakLeafKindLabel(const EMHRandomSemanticKind Kind)
@@ -319,6 +321,23 @@ bool MHCollectBreakSpecs(
                 return false;
             }
             if (Node.DisplayName.IsEmpty()) Spec.DisplayLabel = Spec.CompositeAsset->LogicalName;
+            // The child keeps the streams it had here: its recipe root is walked
+            // under the path that referenced it, and its leaves keep the parent's
+            // appearance boundary unless the subtree declares its own (in which
+            // case the first leaf under the path already carries it).
+            const FString OptionPath = Node.SemanticKind == EMHRandomSemanticKind::Random
+                ? FString::Printf(TEXT("%s/options[%d]"), *Node.NodePath, Node.SelectedOptionIndex)
+                : Node.NodePath;
+            Spec.CallContext.StreamNamespace = OptionPath + TEXT(">") + Resource;
+            for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+            {
+                if (Leaf.Origin.StartsWith(Spec.CallContext.StreamNamespace))
+                {
+                    Spec.CallContext.AppearanceBoundary = Leaf.AppearanceBoundaryPath;
+                    break;
+                }
+            }
+            if (Spec.CallContext.AppearanceBoundary.IsEmpty()) Spec.CallContext.AppearanceBoundary = Plan.Nodes.IsValidIndex(0) ? Plan.Nodes[0].NodePath.Left(Plan.Nodes[0].NodePath.Find(TEXT(":"))) : FString();
         }
     }
     return true;
@@ -387,7 +406,8 @@ AActor* MHSpawnBreakSpec(
             CompositeActor->SetSeed(Spec.Seed);
             CompositeActor->SetAutoAppearanceSeed(false);
             CompositeActor->SetAppearanceSeed(Spec.AppearanceSeed);
-            // Setting the asset is the single build point, after both seeds.
+            // Context before the asset: setting the asset is the single build point.
+            CompositeActor->SetCallContext(Spec.CallContext);
             CompositeActor->SetCompositeAsset(Spec.CompositeAsset);
         }
         Spawned = CompositeActor;

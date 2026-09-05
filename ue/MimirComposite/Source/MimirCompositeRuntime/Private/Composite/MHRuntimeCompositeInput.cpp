@@ -11,6 +11,14 @@
 
 namespace UE::MimirComposite
 {
+FMHResolveCallContext MHRuntimeInputCallContext(const FMHRuntimeCompositeInput& Input)
+{
+    FMHResolveCallContext Context;
+    Context.NodePathPrefix = Input.CallContextNodePathPrefix;
+    Context.AppearanceBoundaryPath = Input.CallContextAppearanceBoundary;
+    return Context;
+}
+
 namespace
 {
 

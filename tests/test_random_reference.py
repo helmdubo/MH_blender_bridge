@@ -411,3 +411,41 @@ def test_profile_validation_rejects_invalid_scale_domain_before_sampling():
 
 def test_shared_random_golden_is_byte_identical():
     assert GOLDEN_PATH.read_bytes() == golden_bytes()
+
+
+def test_call_context_reproduces_parent_subtree():
+    """R4-pre-3: the audit 7.A example. A child resolved under the call context
+    of its place inside the parent selects the same variant and draws the same
+    raw value as the parent's subtree; standalone it is its own root."""
+    from tools.mh_random_reference import (
+        Composite, Node, RandomOption, ResourceKey, raw_payload_hash, resolve_composite,
+    )
+    child = Composite("child_cmp", (Node("random", options=(
+        RandomOption("mesh", 1, "mesh_a"),
+        RandomOption("mesh", 1, "mesh_b"),
+    )),))
+    root = Composite("root_cmp", (Node("composite", resource="child_cmp"),))
+    composites = {"root_cmp": root, "child_cmp": child}
+    hashes = {
+        ResourceKey(kind, name): raw_payload_hash((kind + ":" + name).encode())
+        for kind, name in (
+            ("composite", "root_cmp"), ("composite", "child_cmp"),
+            ("static_mesh", "mesh_a"), ("static_mesh", "mesh_b"),
+        )
+    }
+    for seed in (0, 17):
+        parent = resolve_composite("root_cmp", seed, composites, {}, hashes)
+        in_context = resolve_composite(
+            "child_cmp", seed, composites, {}, hashes,
+            node_path_prefix="root_cmp:nodes[0]>child_cmp", appearance_boundary="root_cmp",
+        )
+        standalone = resolve_composite("child_cmp", seed, composites, {}, hashes)
+        assert in_context.decisions[0].path == parent.decisions[0].path
+        assert in_context.decisions[0].raw_u32 == parent.decisions[0].raw_u32
+        assert in_context.leaves[0].resource == parent.leaves[0].resource
+        assert standalone.decisions[0].path == "child_cmp:nodes[0]"
+    # The audit numbers: seed 0 picks mesh_b inside the parent, mesh_a standalone.
+    parent0 = resolve_composite("root_cmp", 0, composites, {}, hashes)
+    standalone0 = resolve_composite("child_cmp", 0, composites, {}, hashes)
+    assert parent0.leaves[0].resource == "mesh_b"
+    assert standalone0.leaves[0].resource == "mesh_a"

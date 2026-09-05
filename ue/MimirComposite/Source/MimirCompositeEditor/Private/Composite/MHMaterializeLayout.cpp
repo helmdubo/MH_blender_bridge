@@ -43,6 +43,16 @@ FMHMaterializeResult MHMaterializeLayout(
     const int32 AppearanceSeed,
     const FTransform& ActorTransform)
 {
+    return MHMaterializeLayout(Recipe, Seed, AppearanceSeed, FMHResolveCallContext(), ActorTransform);
+}
+
+FMHMaterializeResult MHMaterializeLayout(
+    const FMHCompiledRecipe& Recipe,
+    const int32 Seed,
+    const int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    const FTransform& ActorTransform)
+{
     // Preview plane (§2.5): recipe graph -> Layout -> Appearance -> transform
     // admission -> world-space leaves. No asset load, no spawn, no world read,
     // no closure, no signature. Errors keep the placement compiler's codes.
@@ -60,7 +70,7 @@ FMHMaterializeResult MHMaterializeLayout(
     // The graph is reported even when layout fails: its resources are what a
     // caller must watch to retry once a missing dependency appears.
     Result.Graph = Graph;
-    if (!MHResolvePreviewGraph(*Graph, Seed, AppearanceSeed, *Plan, Error))
+    if (!MHResolvePreviewGraph(*Graph, Seed, AppearanceSeed, Context, *Plan, Error))
     {
         Result.Error = Error.StartsWith(TEXT("MH_E_")) ? Error : TEXT("MH_E_COMPOSITE_GRAMMAR: ") + Error;
         return Result;

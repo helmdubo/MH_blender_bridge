@@ -65,4 +65,12 @@ MIMIRCOMPOSITEEDITOR_API FMHMaterializeResult MHMaterializeLayout(
     int32 AppearanceSeed,
     const FTransform& ActorTransform);
 
+/** Same, under the placement's call context (R4-pre-3); empty context = the overload above. */
+MIMIRCOMPOSITEEDITOR_API FMHMaterializeResult MHMaterializeLayout(
+    const FMHCompiledRecipe& Recipe,
+    int32 Seed,
+    int32 AppearanceSeed,
+    const FMHResolveCallContext& Context,
+    const FTransform& ActorTransform);
+
 } // namespace UE::MimirComposite

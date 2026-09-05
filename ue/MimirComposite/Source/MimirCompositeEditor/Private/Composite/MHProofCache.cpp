@@ -343,6 +343,7 @@ bool UMHProofCacheSubsystem::BuildProofNow(
             Graph,
             Placement.GetSeed(),
             Placement.GetAppearanceSeed(),
+            Placement.GetCallContext().ToResolveContext(),
             *Plan,
             Diagnostic) ||
         !MHValidateResolvedPlacementTransforms(*Plan, Placement.GetActorTransform(), Diagnostic))

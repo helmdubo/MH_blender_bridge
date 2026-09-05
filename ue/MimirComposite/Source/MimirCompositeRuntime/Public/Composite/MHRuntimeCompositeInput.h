@@ -57,6 +57,8 @@ MIMIRCOMPOSITERUNTIME_API bool MHDecodeRuntimeCompositeGraph(
     FMHRandomSourceGraph& OutGraph,
     FString& OutError);
 
+/** Call context carried by a runtime input (R4-pre-3); empty for root placements. */
+MIMIRCOMPOSITERUNTIME_API FMHResolveCallContext MHRuntimeInputCallContext(const FMHRuntimeCompositeInput& Input);
 /** Seed-free admission and sorted endpoint keys for ALL reachable source options. */
 MIMIRCOMPOSITERUNTIME_API bool MHCollectRuntimeCompositeBindingKeys(
     const FMHRandomSourceGraph& Graph,

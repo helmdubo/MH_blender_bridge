@@ -35,7 +35,7 @@ bool AMHRuntimeCompositeActor::BuildCandidate(const FMHRuntimeCompositeInput& In
     // Admission uses all source options, never the selected subset.
     return MHDecodeRuntimeCompositeGraph(Input.GraphBytes, Graph, OutError) &&
         MHValidateRuntimeCompositeBindings(Graph, Input.Bindings, OutError) &&
-        MHResolveCompositePlan(Graph, InSeed, InAppearanceSeed, OutPlan, OutError) &&
+        MHResolveCompositePlan(Graph, InSeed, InAppearanceSeed, MHRuntimeInputCallContext(Input), OutPlan, OutError) &&
         MHValidateResolvedPlacementTransforms(OutPlan, GetActorTransform(), OutError);
 }
 
