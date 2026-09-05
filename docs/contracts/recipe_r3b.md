@@ -20,7 +20,7 @@ API/resolver/норматива/кодов диагностик и с опоро
 
 ## Что уже есть в ветке (не переписывать)
 
-Ветка `recipe/r3b-resource-reconcile` от `origin/main`. Red-коммит близнеца:
+Ветка `recipe/r3b-resource-reconcile` от `origin/main` (`a519e6a`). Red-коммит близнеца `e00d80a`:
 
 - новый файл `MimirCompositeTests/Private/MHResourceReconcileTest.cpp` —
   **acceptance**:
