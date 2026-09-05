@@ -490,15 +490,28 @@ void AMHCompositeActor::ReconcileEndpoint(const UE::MimirComposite::FMHResourceK
     bool bMigrated = false;
     if (Delta.bBucketDescriptor)
     {
-        for (int32 Index = 0; Index < LeafMaterializations.Num(); ++Index)
+        // R5-F: one pass, each row resolves its own handle and both derived
+        // views follow it together. A getter that refreshed every row at once
+        // hid the migration from the rows after the first one and left the
+        // compatibility array stale (audit 2026-09-05 §2.1).
+        if (const UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld()))
         {
-            FMHCompositeLeafMaterialization& Row = LeafMaterializations[Index];
-            if (!Row.Handle.IsSet()) continue;
-            const USceneComponent* Before = Row.Component;
-            RefreshPooledRows();
-            if (Row.Component == Before) continue;
-            if (LeafPlacementComponents.IsValidIndex(Index)) LeafPlacementComponents[Index] = Row.Component;
-            bMigrated = true;
+            for (int32 Index = 0; Index < LeafMaterializations.Num(); ++Index)
+            {
+                FMHCompositeLeafMaterialization& Row = LeafMaterializations[Index];
+                if (!Row.Handle.IsSet()) continue;
+                UInstancedStaticMeshComponent* Bucket = nullptr;
+                int32 InstanceIndex = INDEX_NONE;
+                if (!Pool->GetInstance(Row.Handle, Bucket, InstanceIndex) || Bucket == nullptr) continue;
+                bMigrated |= Row.Component != Bucket;
+                Row.Component = Bucket;
+                Row.InstanceIndex = InstanceIndex;
+                if (LeafPlacementComponents.IsValidIndex(Index) && LeafPlacementComponents[Index] != Bucket)
+                {
+                    LeafPlacementComponents[Index] = Bucket;
+                    bMigrated = true;
+                }
+            }
         }
     }
     // Static mesh components this actor materializes itself (the leaf extracted
@@ -1010,6 +1023,18 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
 void AMHCompositeActor::PostEditUndo()
 {
     Super::PostEditUndo();
+    // R5-F: a live Placement Edit session would block its own restore (the
+    // rebuild gate is closed while editing) and then tick against an empty
+    // view. The session is transient state, not part of the record: end it.
+    if (bPlacementEditMode)
+    {
+        bPlacementEditMode = false;
+        bExtractSelectedLeafForEdit = false;
+        EditingGraph.Reset();
+        EditingDocument.Reset();
+        LastEditHandleTransforms.Reset();
+        SetActorTickEnabled(false);
+    }
     // The actor is the transaction record; its plan-view is derived. Retire
     // anything the transaction restored, discard cached state, then rebuild
     // the preview through the normal recipe/materialization path.

@@ -135,11 +135,12 @@ AMHInstancePoolActor::AMHInstancePoolActor()
     USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("PoolRoot"));
     Root->SetMobility(EComponentMobility::Static);
     RootComponent = Root;
-    bIsEditorOnlyActor = true;
+    // A transient editor representation, not an editor-only or hidden-in-game
+    // actor: Game View (G) must still render the pooled instances. The
+    // transient/duplicate-transient flags keep it out of save, cook and PIE.
 #if WITH_EDITORONLY_DATA
     bListedInSceneOutliner = false;
 #endif
-    SetActorHiddenInGame(true);
 }
 
 bool UMHInstancePoolSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -421,12 +422,18 @@ bool UMHInstancePoolSubsystem::MigrateBucket(FBucket& Bucket)
     UStaticMesh* Mesh = Bucket.Descriptor.StaticMesh;
     AMHInstancePoolActor* PoolActor = Old != nullptr ? Cast<AMHInstancePoolActor>(Old->GetOwner()) : nullptr;
     if (Mesh == nullptr || PoolActor == nullptr || PoolActor->GetRootComponent() == nullptr) return false;
-    // The descriptor follows the mesh's current interface (sections, body
-    // setup); the bucket's own material overrides are kept.
-    FMHPoolBucketDescriptor Fresh = FMHPoolBucketDescriptor::FromMesh(
+    // Only the mesh side of the descriptor is re-derived (section policies,
+    // collision availability); the bucket's placement policy — collision,
+    // render, mobility, visibility, appearance layout, material overrides —
+    // is the bucket's own and survives the migration (R5-F).
+    const FMHPoolBucketDescriptor Fresh = FMHPoolBucketDescriptor::FromMesh(
         *Mesh, Bucket.Descriptor.AppearanceLayout, Bucket.Descriptor.AppearanceCustomDataBaseIndex);
-    Fresh.MaterialOverrides = Bucket.Descriptor.MaterialOverrides;
-    Bucket.Descriptor = MoveTemp(Fresh);
+    Bucket.Descriptor.Sections = Fresh.Sections;
+    if (Mesh->GetBodySetup() == nullptr)
+    {
+        Bucket.Descriptor.CollisionEnabled = ECollisionEnabled::NoCollision;
+        Bucket.Descriptor.CollisionProfileName = UCollisionProfile::CustomCollisionProfileName;
+    }
     UInstancedStaticMeshComponent* New = PoolNewBucketComponent(*PoolActor, Bucket.Descriptor);
     // Re-add the live instances in their current ISM order: every handle keeps
     // its slot, hidden slots stay out of the component.
