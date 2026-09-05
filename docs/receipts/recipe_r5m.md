@@ -1,6 +1,6 @@
 # R5-M (Recipe Model v2.1) — ISM-usage материалов при admission меша
 
-Статус: **REVIEW** (близнец). Полевой дефект owner 2026-09-05: минутные
+Статус: **MERGED** (близнец, #124 `70a89a4`). Полевой дефект owner 2026-09-05: минутные
 фризы с `LogMaterial: Material … needed to have new flag set
 bUsedWithInstancedStaticMeshes`. С R5b-1 каждый static-лист рендерится через
 ISM, и движок лениво ставит usage-флаг базовому материалу в момент создания

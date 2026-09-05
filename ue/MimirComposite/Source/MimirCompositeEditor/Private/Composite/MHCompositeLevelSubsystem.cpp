@@ -981,6 +981,20 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     return true;
 }
 
+bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Root, const FString& InvocationNodePath, FString& OutError)
+{
+    // R6-D0 red stub: no nested context yet.
+    static_cast<void>(Root);
+    static_cast<void>(InvocationNodePath);
+    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: nested edit context is not available");
+    return false;
+}
+
+FMHCompositeEditContext UMHCompositeLevelSubsystem::GetEditContext() const
+{
+    return FMHCompositeEditContext();
+}
+
 FString UMHCompositeLevelSubsystem::GetEditingCompositeLogicalName() const
 {
     const AMHCompositeActor* Actor = EditingActor.Get();
