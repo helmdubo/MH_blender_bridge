@@ -181,10 +181,12 @@ bool FMHActorRecipeDependentsTest::RunTest(const FString& Parameters)
     bool bPassed = TestTrue(TEXT("depends on the nested composite mesh"), Fixture.Actor->DependsOnResource(PreviewMeshKey(Fixture.MeshC)));
     bPassed &= TestFalse(TEXT("does not depend on a foreign mesh"), Fixture.Actor->DependsOnResource(PreviewMeshKey(Fixture.Recipe.Name(TEXT("foreign_mesh")))));
     const uint32 Rebuilds = Fixture.Actor->GetPlacementRebuildCount();
+    // R3b (16 §4): the notification reaches the placement, but an unchanged
+    // interface (empty delta) is reconciled without a placement rebuild.
     MHNotifyGeneratedResourceChanged(PreviewMeshKey(Fixture.MeshC));
-    bPassed &= TestEqual(TEXT("nested mesh change rebuilds the placement"), Fixture.Actor->GetPlacementRebuildCount(), Rebuilds + 1);
+    bPassed &= TestEqual(TEXT("nested mesh notification with an unchanged interface is not a rebuild"), Fixture.Actor->GetPlacementRebuildCount(), Rebuilds);
     MHNotifyGeneratedResourceChanged(PreviewMeshKey(Fixture.Recipe.Name(TEXT("foreign_mesh"))));
-    bPassed &= TestEqual(TEXT("foreign change leaves the placement alone"), Fixture.Actor->GetPlacementRebuildCount(), Rebuilds + 1);
+    bPassed &= TestEqual(TEXT("foreign change leaves the placement alone"), Fixture.Actor->GetPlacementRebuildCount(), Rebuilds);
     bPassed &= TestTrue(TEXT("no error after notifications: ") + Fixture.Actor->GetLastPlacementError(), Fixture.Actor->GetLastPlacementError().IsEmpty());
     return bPassed;
 }
