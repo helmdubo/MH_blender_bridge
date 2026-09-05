@@ -923,6 +923,12 @@ void AMHCompositeActor::PostDuplicate(const EDuplicateMode::Type DuplicateMode)
     else bNeedsInitialPlacementBuild = true;
 }
 
+FBox AMHCompositeActor::GetComponentsBoundingBox(const bool bNonColliding, const bool bIncludeFromChildActors) const
+{
+    // R5b-2a red stub: engine behaviour only.
+    return Super::GetComponentsBoundingBox(bNonColliding, bIncludeFromChildActors);
+}
+
 void AMHCompositeActor::Destroyed()
 {
     if (CompositeRoot != nullptr) CompositeRoot->TransformUpdated.RemoveAll(this);

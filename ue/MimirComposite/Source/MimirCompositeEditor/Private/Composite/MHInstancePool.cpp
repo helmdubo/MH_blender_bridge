@@ -450,6 +450,25 @@ bool UMHInstancePoolSubsystem::MigrateBucket(FBucket& Bucket)
     return true;
 }
 
+void UMHInstancePoolSubsystem::SetOwnerSelected(const AActor& Owner, const bool bSelected)
+{
+    // R5b-2a red stub.
+    static_cast<void>(Owner);
+    static_cast<void>(bSelected);
+}
+
+bool UMHInstancePoolSubsystem::IsOwnerSelected(const AActor& Owner) const
+{
+    static_cast<void>(Owner);
+    return false;
+}
+
+FBox UMHInstancePoolSubsystem::GetOwnerBounds(const AActor& Owner) const
+{
+    static_cast<void>(Owner);
+    return FBox(ForceInit);
+}
+
 int32 UMHInstancePoolSubsystem::NumLiveInstances(const AActor& Owner) const
 {
     int32 Count = 0;

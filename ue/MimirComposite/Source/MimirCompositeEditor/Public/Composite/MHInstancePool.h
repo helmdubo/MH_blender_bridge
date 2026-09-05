@@ -163,6 +163,17 @@ public:
     /** Live bucket components rendering Mesh (any level), in bucket order. */
     void GetBucketComponents(const UStaticMesh& Mesh, TArray<UInstancedStaticMeshComponent*>& OutComponents) const;
 
+    /**
+     * Editor selection highlight of one owner (R5b-2a): only that owner's
+     * live instances are marked selected on the shared ISM; the state
+     * survives Hide/Show and bucket migration. The pool mirrors the editor's
+     * actor selection onto its owners automatically.
+     */
+    void SetOwnerSelected(const AActor& Owner, bool bSelected);
+    bool IsOwnerSelected(const AActor& Owner) const;
+    /** World-space bounds of the owner's live instances (mesh bounds under each instance matrix); invalid box when none. */
+    FBox GetOwnerBounds(const AActor& Owner) const;
+
     int32 NumBuckets() const { return Buckets.Num(); }
     int32 NumLiveInstances(const AActor& Owner) const;
     const UE::MimirComposite::FMHInstancePoolMetrics& GetMetrics() const { return Metrics; }

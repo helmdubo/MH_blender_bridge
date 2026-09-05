@@ -183,6 +183,8 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     virtual bool ShouldTickIfViewportsOnly() const override { return bPlacementEditMode; }
     virtual void Destroyed() override;
+    /** Own components plus the pooled instances of this placement (16 §2.8): F / focus frames the whole placement. */
+    virtual FBox GetComponentsBoundingBox(bool bNonColliding = false, bool bIncludeFromChildActors = false) const override;
 
 #if WITH_EDITOR
     virtual void PostEditUndo() override;
