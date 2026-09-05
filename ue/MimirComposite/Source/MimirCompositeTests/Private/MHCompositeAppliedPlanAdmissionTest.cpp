@@ -300,8 +300,11 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     if (Root == nullptr) return false;
     AMHCompositeActor* Actor = Fixture.Spawn(*Root);
     if (Actor == nullptr || !TestNotNull(TEXT("Edit starts from admitted placement"), Actor->GetResolvedPlan())) return false;
+    // 16 §2.8 (R5b-1): the flattened static leaf renders in the level pool; the
+    // actor's own derived components are its authored handles.
     if (!TestEqual(TEXT("one authored root edit handle"), Actor->GetTopLevelPlacementComponents().Num(), 1) ||
-        !TestEqual(TEXT("one handle plus one flattened leaf"), Actor->GetDerivedComponents().Num(), 2)) return false;
+        !TestEqual(TEXT("one handle; the flattened leaf is pooled"), Actor->GetDerivedComponents().Num(), 1) ||
+        !TestTrue(TEXT("one pooled flattened leaf"), Actor->GetLeafMaterializations().Num() == 1 && Actor->GetLeafMaterializations()[0].Handle.IsSet())) return false;
     const FMHResolvedCompositePlan AppliedPlan = *Actor->GetResolvedPlan();
     const FString SourceHash = Root->SourceHash;
     const FString AppliedHash = Root->AppliedHash;
@@ -325,7 +328,8 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
         MHCompareRecipeShadowParity(AppliedPlan, *Actor->GetResolvedPlan(), Mismatches));
     TestTrue(TEXT("preview plan carries no source closure"), Actor->GetResolvedPlan()->Closure.Resources.IsEmpty());
     TestEqual(TEXT("moving in Edit keeps authored handle object"), Actor->GetTopLevelPlacementComponents()[0].Get(), Handle);
-    TestEqual(TEXT("moving in Edit keeps leaf object"), Actor->GetDerivedComponents()[1].Get(), static_cast<UActorComponent*>(Leaf));
+    // 16 §2.8 (R5b-1): the pooled leaf keeps its bucket component; the actor owns only the handle.
+    TestEqual(TEXT("moving in Edit keeps leaf object"), Actor->GetLeafMaterializations()[0].Component.Get(), Leaf);
     TestTrue(TEXT("authored handle follows placement basis without baking profile"), MHMatrixElementsWithinTrsTolerance(
         Handle->GetComponentTransform().ToMatrixWithScale(), FTransform(FVector(100.0, 0.0, 0.0)).ToMatrixWithScale() * MovedBasis.ToMatrixWithScale()));
     FTransform MovedLeafTransform;

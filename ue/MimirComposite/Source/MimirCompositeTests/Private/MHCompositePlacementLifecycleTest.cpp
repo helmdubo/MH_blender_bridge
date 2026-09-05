@@ -1,4 +1,5 @@
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHInstancePool.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -104,14 +105,15 @@ bool LifecycleIsolatedHost(FAutomationTestBase& Test)
 
 int32 LifecycleLeafCount(const AMHCompositeActor& Actor)
 {
+    // 16 §2.8 (R5b-1): pooled leaves are counted by the level pool; the actor
+    // itself owns only unpooled static mesh components.
     int32 Count = 0;
+    if (const UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(Actor.GetWorld()))
+        Count += Pool->NumLiveInstances(Actor);
     for (UActorComponent* Component : Actor.GetDerivedComponents())
     {
-        if (const UInstancedStaticMeshComponent* Bucket =
-                Cast<UInstancedStaticMeshComponent>(Component))
-            Count += Bucket->GetInstanceCount();
-        else if (Cast<UStaticMeshComponent>(Component) != nullptr)
-            ++Count;
+        if (Cast<UInstancedStaticMeshComponent>(Component) != nullptr) continue;
+        if (Cast<UStaticMeshComponent>(Component) != nullptr) ++Count;
     }
     return Count;
 }

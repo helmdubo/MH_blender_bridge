@@ -372,14 +372,17 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(
             TEXT("startup refresh visits the loaded unresolved placement"),
             StartupRefreshCount > 0);
+        // 16 §2.8 (R5b-1): the restored endpoint renders in the level pool; the
+        // actor keeps only its authored handle and no placeholder.
         bPassed &= TestEqual(
             TEXT("startup refresh replaces same-name placeholder with endpoint"),
             Actor->GetDerivedComponents().Num(),
-            2);
+            1);
         bPassed &= TestTrue(
-            TEXT("restored endpoint compiles as static mesh component"),
-            Actor->GetDerivedComponents().Num() == 2 &&
-                Cast<UStaticMeshComponent>(Actor->GetDerivedComponents()[1]) != nullptr);
+            TEXT("restored endpoint compiles as a pooled static mesh instance"),
+            Actor->GetLeafMaterializations().Num() == 1 &&
+                Actor->GetLeafMaterializations()[0].IsInstanced() &&
+                Cast<UStaticMeshComponent>(Actor->GetLeafMaterializations()[0].Component.Get()) != nullptr);
         bPassed &= TestNotNull(TEXT("managed receipt restores a fresh plan"), Actor->GetResolvedPlan());
         bPassed &= TestTrue(
             TEXT("healed placement has no unresolved warning"),

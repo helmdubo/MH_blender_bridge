@@ -283,6 +283,15 @@ bool FMHBreakUndoRestoresPlacementTest::RunTest(const FString& Parameters)
     const int32 DerivedBefore = Fixture.Actor->GetDerivedComponents().Num();
     const int32 LeavesBefore = Fixture.Actor->GetLeafMaterializations().Num();
     const int32 BucketsBefore = CountISM(*Fixture.Actor);
+    const auto CountWorldISM = [&Fixture]()
+    {
+        int32 Count = 0;
+        for (TObjectIterator<UInstancedStaticMeshComponent> It; It; ++It)
+            if (It->GetWorld() == Fixture.World && It->IsRegistered()) ++Count;
+        return Count;
+    };
+    // 16 §2.8 (R5b-1): the buckets are the level pool's and outlive the placement.
+    const int32 WorldISMBefore = CountWorldISM();
     const uint32 RevisionBefore = Fixture.Actor->GetPreviewRevision();
 
     TArray<AActor*> Broken;
@@ -329,12 +338,7 @@ bool FMHBreakUndoRestoresPlacementTest::RunTest(const FString& Parameters)
     }, false);
     bPassed &= TestEqual(TEXT("registered components under the actor equal the derived count"), RegisteredUnderActor, DerivedBefore);
     bPassed &= TestEqual(TEXT("no registered component escapes the actor bookkeeping"), UntrackedRegistered, 0);
-    int32 WorldISM = 0;
-    for (TObjectIterator<UInstancedStaticMeshComponent> It; It; ++It)
-    {
-        if (It->GetWorld() == Fixture.World && It->IsRegistered()) ++WorldISM;
-    }
-    bPassed &= TestEqual(TEXT("registered ISM buckets in the world equal the count before Break"), WorldISM, BucketsBefore);
+    bPassed &= TestEqual(TEXT("registered ISM buckets in the world equal the count before Break"), CountWorldISM(), WorldISMBefore);
 
     bPassed &= TestTrue(TEXT("Redo of Break succeeds"), GEditor->RedoTransaction());
     bPassed &= TestTrue(TEXT("Redo retires the composite again"), !IsValid(Original.Get()) || Original->IsActorBeingDestroyed());

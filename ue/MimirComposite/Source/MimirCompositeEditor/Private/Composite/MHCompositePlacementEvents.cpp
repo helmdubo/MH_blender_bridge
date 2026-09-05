@@ -4,7 +4,9 @@
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Composite/MHInstancePool.h"
 #include "Composite/MHProofCache.h"
+#include "Engine/StaticMesh.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
@@ -129,6 +131,25 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
     }
 
     if (Key.Kind == EMHResourceKind::Material || Key.Kind == EMHResourceKind::Texture) return;
+
+    // 16 §4 on the pool (R5b-0/R5b-1): a mesh interface delta reconciles each
+    // level pool once per bucket, before any placement adopts the result.
+    if (Key.Kind == EMHResourceKind::StaticMesh && bMeshDeltaKnown && Delta.Any() && !Delta.bFirstAdmission && GEditor != nullptr)
+    {
+        UMHEndpointPrototypeRegistry* Registry = GEditor->GetEditorSubsystem<UMHEndpointPrototypeRegistry>();
+        UStaticMesh* Mesh = Registry != nullptr ? Cast<UStaticMesh>(Registry->Resolve(Key).Object.Get()) : nullptr;
+        TSet<UWorld*> Worlds;
+        for (const TWeakObjectPtr<AMHCompositeActor>& Affected : AffectedActors)
+        {
+            const AMHCompositeActor* Actor = Affected.Get();
+            if (IsValid(Actor) && Actor->GetWorld() != nullptr) Worlds.Add(Actor->GetWorld());
+        }
+        for (UWorld* World : Worlds)
+        {
+            if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(World); Pool != nullptr && Mesh != nullptr)
+                Pool->ReconcileMesh(*Mesh, Delta);
+        }
+    }
 
     for (const TWeakObjectPtr<AMHCompositeActor>& Affected : AffectedActors)
     {

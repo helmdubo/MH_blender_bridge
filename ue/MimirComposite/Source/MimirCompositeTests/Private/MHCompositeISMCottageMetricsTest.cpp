@@ -2,6 +2,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHInstancePool.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
 #include "Composite/MHCompositeResolvedPlan.h"
@@ -38,6 +39,16 @@ FString CottageMetricsLine(
     int32 OrdinaryStaticMeshes = 0;
     int32 ISMBuckets = 0;
     int32 ISMInstances = 0;
+    // 16 §2.8 (R5b-1): pooled leaves render in the level pool's buckets.
+    if (const UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(Actor.GetWorld()))
+    {
+        ISMInstances += Pool->NumLiveInstances(Actor);
+        TSet<const USceneComponent*> PoolBuckets;
+        for (const FMHCompositeLeafMaterialization& Row : Actor.GetLeafMaterializations())
+            if (Row.Handle.IsSet() && Row.Component != nullptr) PoolBuckets.Add(Row.Component);
+        ISMBuckets += PoolBuckets.Num();
+        StaticMaterializers += PoolBuckets.Num();
+    }
     for (UActorComponent* Component : Actor.GetDerivedComponents())
     {
         if (Cast<USceneComponent>(Component) != nullptr) ++SceneComponents;

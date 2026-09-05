@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHInstancePool.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeCompiler.h"
 #include "Composite/MHCompositeImporter.h"
@@ -822,9 +823,10 @@ bool FMHCompositeCompilerParentLocalTransformTest::RunTest(const FString& Parame
                 Group->GetComponentLocation().Equals(FVector(100, 0, 0), UE_KINDA_SMALL_NUMBER));
             bPassed &= TestTrue(TEXT("parent 100 plus child local 25 equals world 125"),
                 ChildTransform.GetLocation().Equals(FVector(125, 0, 0), UE_KINDA_SMALL_NUMBER));
-            bPassed &= TestTrue(TEXT("ISM bucket remains absolute under the placement root"),
-                Child->GetAttachParent() == Target->GetRootComponent() && Child->IsUsingAbsoluteLocation() &&
-                Child->IsUsingAbsoluteRotation() && Child->IsUsingAbsoluteScale());
+            // 16 §2.8 (R5b-1): the bucket is the level pool's, on its pool actor at
+            // identity; the leaf's world matrix is the pool instance transform.
+            bPassed &= TestTrue(TEXT("ISM bucket belongs to the level pool actor"),
+                Child->GetOwner() != nullptr && Child->GetOwner()->IsA<AMHInstancePoolActor>());
             const FMHResolvedCompositePlan* Plan = Target->GetResolvedPlan();
             bPassed &= TestTrue(TEXT("plan retains the accumulated parent-local leaf matrix"),
                 Plan != nullptr && Plan->Leaves.Num() == 1 &&
@@ -930,8 +932,9 @@ bool FMHCompositeCompilerTopLevelAttachmentTest::RunTest(const FString& Paramete
     {
         USceneComponent* First = MeshLeaves[0];
         USceneComponent* Second = MeshLeaves[1];
-        bPassed &= TestTrue(TEXT("both leaves share one ISM bucket under the placement root"),
-            First != nullptr && First == Second && First->GetAttachParent() == PlacementRoot);
+        // 16 §2.8 (R5b-1): the shared bucket is the level pool's, on its pool actor.
+        bPassed &= TestTrue(TEXT("both leaves share one pool ISM bucket"),
+            First != nullptr && First == Second && First->GetOwner() != nullptr && First->GetOwner()->IsA<AMHInstancePoolActor>());
         const TArray<FMHCompositeLeafMaterialization>& Rows = Target->GetLeafMaterializations();
         const FMHResolvedCompositePlan* MappedPlan = Target->GetResolvedPlan();
         bPassed &= TestTrue(TEXT("each top-level leaf retains exact resolved-node mapping"),

@@ -107,11 +107,13 @@ bool FMHCompositeISMBucketMaterializationTest::RunTest(const FString& Parameters
     Actor->SetAutoAppearanceSeed(false);
     Actor->SetCompositeAsset(Fixture.Composite);
 
+    // 16 §2.8 (R5b-1): buckets live on the level pool, not on the actor; the
+    // rows name the bucket each leaf renders in.
     TArray<UInstancedStaticMeshComponent*> Buckets;
-    for (UActorComponent* Component : Actor->GetDerivedComponents())
+    for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
     {
-        if (UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Component))
-            Buckets.Add(Bucket);
+        if (UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Row.Component.Get()))
+            Buckets.AddUnique(Bucket);
     }
     bool bPassed = TestEqual(TEXT("identical static leaves share one ISM bucket"), Buckets.Num(), 1);
     if (Buckets.Num() == 1)
@@ -247,9 +249,9 @@ bool FMHCompositeISMBucketPolicyAdmissionTest::RunTest(const FString& Parameters
 
     const auto FindBucket = [Actor]() -> UInstancedStaticMeshComponent*
     {
-        for (UActorComponent* Component : Actor->GetDerivedComponents())
+        for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
             if (UInstancedStaticMeshComponent* Bucket =
-                    Cast<UInstancedStaticMeshComponent>(Component)) return Bucket;
+                    Cast<UInstancedStaticMeshComponent>(Row.Component.Get())) return Bucket;
         return nullptr;
     };
     struct FPolicyMutation
@@ -309,6 +311,7 @@ bool FMHCompositeISMBucketPolicyAdmissionTest::RunTest(const FString& Parameters
         bPassed &= TestNotNull(
             *FString::Printf(TEXT("%s rebuild has a bucket"), Mutation.Label), Current);
         if (Current == nullptr) break;
+        // R5b-1a: the pool retires a component that drifted from its descriptor.
         bPassed &= TestNotEqual(
             *FString::Printf(TEXT("%s cannot reuse a mismatched bucket"), Mutation.Label),
             Current, Previous);
