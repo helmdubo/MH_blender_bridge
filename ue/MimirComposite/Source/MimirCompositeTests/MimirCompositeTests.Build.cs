@@ -26,7 +26,9 @@ public class MimirCompositeTests : ModuleRules
                 "RenderCore",
                 "RHI",
                 "StaticMeshDescription",
-                "UnrealEd"
+                "UnrealEd",
+                "TypedElementFramework",
+                "TypedElementRuntime"
             });
 
         // S5 index acceptance generates one real material-bound FBX fixture
