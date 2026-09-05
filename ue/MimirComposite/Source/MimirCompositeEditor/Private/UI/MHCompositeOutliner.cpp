@@ -534,6 +534,16 @@ private:
     void EditorSelectionChanged(UObject*)
     {
         if (!CurrentActor.IsValid() || GEditor == nullptr || !TreeView.IsValid()) return;
+        // R5b-2b: a viewport hit on a pooled instance selects the composite
+        // actor and records the leaf on it; reveal that row.
+        if (CurrentActor->IsSelected() && !CurrentActor->GetSelectedPlacementLeafPath().IsEmpty())
+        {
+            if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindByNodePath(CurrentActor->GetSelectedPlacementLeafPath()))
+            {
+                RevealItem(Item);
+                return;
+            }
+        }
         TArray<UObject*> SelectedComponents;
         GEditor->GetSelectedComponents()->GetSelectedObjects(SelectedComponents);
         for (UObject* Object : SelectedComponents)

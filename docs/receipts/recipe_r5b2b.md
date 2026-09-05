@@ -26,7 +26,7 @@
 - **Outliner**: при выделении композита раскрывает строку листа, записанного
   адаптером (`GetSelectedPlacementLeafPath`).
 
-## 2. Тесты (red `__RED__`)
+## 2. Тесты (red `ee9c534`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -36,13 +36,13 @@
 
 | Gate | Результат |
 |---|---|
-| RED (`__RED__`) | `R5B2B_RED_TEST.log`: __ |
-| GREEN non-unity/no-PCH build | `R5B2B_GREEN_BUILD.log`: __ |
-| `Mimir.V5.Composite.Selection` | `R5B2B_GREEN_TEST.log`: __ |
-| полный NullRHI suite | `R5B2B_GREEN_FULL.log`: __ |
-| force-unity | `R5B2B_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R5B2B_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| RED (`ee9c534`) | `R5B2B_RED_TEST.log`: Fail (ничего не регистрируется, инстанс → pool-актор) |
+| GREEN non-unity/no-PCH build | `R5B2B_GREEN_BUILD.log`: Succeeded |
+| `Mimir.V5.Composite.Selection` | `R5B2B_GREEN_TEST.log`: 1/0 (интеграционная ветка на selection-set редактора выполнена) |
+| полный NullRHI suite | `R5B2B_GREEN_FULL.log`: `Success=219 Fail=0` (218 + 1) |
+| force-unity | `R5B2B_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `R5B2B_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
