@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/Actor.h"
 #include "Random/MHRandomStream.h"
@@ -80,6 +81,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHInstanceHandle
 struct MIMIRCOMPOSITEEDITOR_API FMHInstancePoolMetrics
 {
     uint64 BucketsCreated = 0;
+    uint64 BucketsMigrated = 0;
     uint64 RenderStateRefreshes = 0;
     uint64 PhysicsRefreshes = 0;
     uint64 InstancesAdded = 0;
@@ -148,6 +150,19 @@ public:
     void MoveOwner(const AActor& Owner, const FMatrix& Delta);
     void SetOwnerEditorVisibility(const AActor& Owner, bool bVisible) { bVisible ? ShowOwner(Owner) : HideOwner(Owner); }
 
+    /**
+     * Reimport reconcile for every bucket rendering Mesh (16 §4, R5b-0):
+     * payload/bounds -> render + bounds refresh; bucket descriptor -> the
+     * bucket migrates to a new ISM configured from the mesh's current
+     * interface, every handle survives (hidden ones stay hidden); collision
+     * -> physics state recreated; material binding -> override materials
+     * reset. Returns the number of buckets touched; an empty delta touches none.
+     */
+    int32 ReconcileMesh(const UStaticMesh& Mesh, const UE::MimirComposite::FMHEndpointInterfaceDelta& Delta);
+
+    /** Live bucket components rendering Mesh (any level), in bucket order. */
+    void GetBucketComponents(const UStaticMesh& Mesh, TArray<UInstancedStaticMeshComponent*>& OutComponents) const;
+
     int32 NumBuckets() const { return Buckets.Num(); }
     int32 NumLiveInstances(const AActor& Owner) const;
     const UE::MimirComposite::FMHInstancePoolMetrics& GetMetrics() const { return Metrics; }
@@ -187,6 +202,7 @@ private:
     void AddInstanceToComponent(FBucket& Bucket, int32 SlotId);
     void MarkDirty(FBucket& Bucket, bool bPhysics);
     void Flush(FBucket& Bucket);
+    bool MigrateBucket(FBucket& Bucket);
 
     TArray<FBucket> Buckets;
     TMap<TWeakObjectPtr<ULevel>, TWeakObjectPtr<AMHInstancePoolActor>> PoolActors;

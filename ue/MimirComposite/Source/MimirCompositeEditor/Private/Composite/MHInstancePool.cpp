@@ -5,6 +5,7 @@
 #include "Engine/Level.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Performance/MHPerformanceTrace.h"
 
 using namespace UE::MimirComposite;
 
@@ -80,6 +81,16 @@ void PoolConfigureBucket(UInstancedStaticMeshComponent& Component, const FMHPool
     Component.bHasPerInstanceHitProxies = true;
     Component.bSupportRemoveAtSwap = true;
     Component.SetNumCustomDataFloats(Descriptor.AppearanceLayout);
+}
+
+UInstancedStaticMeshComponent* PoolNewBucketComponent(AMHInstancePoolActor& PoolActor, const FMHPoolBucketDescriptor& Descriptor)
+{
+    UInstancedStaticMeshComponent* Component = NewObject<UInstancedStaticMeshComponent>(&PoolActor, NAME_None, PoolObjectFlags);
+    PoolConfigureBucket(*Component, Descriptor);
+    Component->SetupAttachment(PoolActor.GetRootComponent());
+    PoolActor.AddInstanceComponent(Component);
+    Component->RegisterComponent();
+    return Component;
 }
 
 bool PoolAppearanceFits(const FMHPoolBucketDescriptor& Descriptor)
@@ -333,6 +344,75 @@ void UMHInstancePoolSubsystem::MoveOwner(const AActor& Owner, const FMatrix& Del
     EndBulk();
 }
 
+int32 UMHInstancePoolSubsystem::ReconcileMesh(const UStaticMesh& Mesh, const FMHEndpointInterfaceDelta& Delta)
+{
+    if (!Delta.Any()) return 0;
+    int32 Touched = 0;
+    BeginBulk();
+    for (FBucket& Bucket : Buckets)
+    {
+        if (Bucket.Descriptor.StaticMesh != &Mesh || !Bucket.Component.IsValid()) continue;
+        // 16 §4: descriptor -> migrate this bucket only; the migrated
+        // component already carries the fresh collision and material binding.
+        const bool bMigrated = Delta.bBucketDescriptor && MigrateBucket(Bucket);
+        UInstancedStaticMeshComponent* Component = Bucket.Component.Get();
+        if (Component == nullptr) continue;
+        if (!bMigrated)
+        {
+            if (Delta.bMaterialBinding) Component->EmptyOverrideMaterials();
+            if (Delta.bCollisionInterface)
+            {
+                Component->RecreatePhysicsState();
+                ++Metrics.PhysicsRefreshes;
+            }
+            if (Delta.bBounds || Delta.bPayload) Component->UpdateBounds();
+        }
+        MarkDirty(Bucket, bMigrated);
+        MHRecordReimportBucket(bMigrated);
+        ++Touched;
+    }
+    EndBulk();
+    return Touched;
+}
+
+void UMHInstancePoolSubsystem::GetBucketComponents(const UStaticMesh& Mesh, TArray<UInstancedStaticMeshComponent*>& OutComponents) const
+{
+    OutComponents.Reset();
+    for (const FBucket& Bucket : Buckets)
+    {
+        UInstancedStaticMeshComponent* Component = Bucket.Component.Get();
+        if (Bucket.Descriptor.StaticMesh == &Mesh && IsValid(Component)) OutComponents.Add(Component);
+    }
+}
+
+bool UMHInstancePoolSubsystem::MigrateBucket(FBucket& Bucket)
+{
+    UInstancedStaticMeshComponent* Old = Bucket.Component.Get();
+    UStaticMesh* Mesh = Bucket.Descriptor.StaticMesh;
+    AMHInstancePoolActor* PoolActor = Old != nullptr ? Cast<AMHInstancePoolActor>(Old->GetOwner()) : nullptr;
+    if (Mesh == nullptr || PoolActor == nullptr || PoolActor->GetRootComponent() == nullptr) return false;
+    // The descriptor follows the mesh's current interface (sections, body
+    // setup); the bucket's own material overrides are kept.
+    FMHPoolBucketDescriptor Fresh = FMHPoolBucketDescriptor::FromMesh(
+        *Mesh, Bucket.Descriptor.AppearanceLayout, Bucket.Descriptor.AppearanceCustomDataBaseIndex);
+    Fresh.MaterialOverrides = Bucket.Descriptor.MaterialOverrides;
+    Bucket.Descriptor = MoveTemp(Fresh);
+    UInstancedStaticMeshComponent* New = PoolNewBucketComponent(*PoolActor, Bucket.Descriptor);
+    // Re-add the live instances in their current ISM order: every handle keeps
+    // its slot, hidden slots stay out of the component.
+    const TArray<int32> Order = Bucket.InstanceToSlot;
+    Bucket.InstanceToSlot.Reset();
+    Bucket.Component = New;
+    for (const int32 SlotId : Order)
+    {
+        if (!Bucket.Slots.IsValidIndex(SlotId) || Bucket.Slots[SlotId].bFree || Bucket.Slots[SlotId].bHidden) continue;
+        AddInstanceToComponent(Bucket, SlotId);
+    }
+    Old->DestroyComponent();
+    ++Metrics.BucketsMigrated;
+    return true;
+}
+
 int32 UMHInstancePoolSubsystem::NumLiveInstances(const AActor& Owner) const
 {
     int32 Count = 0;
@@ -355,11 +435,7 @@ int32 UMHInstancePoolSubsystem::FindOrCreateBucket(ULevel& Level, const FMHPoolB
     }
     AMHInstancePoolActor* PoolActor = FindOrCreatePoolActor(Level);
     if (PoolActor == nullptr || PoolActor->GetRootComponent() == nullptr) return INDEX_NONE;
-    UInstancedStaticMeshComponent* Component = NewObject<UInstancedStaticMeshComponent>(PoolActor, NAME_None, PoolObjectFlags);
-    PoolConfigureBucket(*Component, Descriptor);
-    Component->SetupAttachment(PoolActor->GetRootComponent());
-    PoolActor->AddInstanceComponent(Component);
-    Component->RegisterComponent();
+    UInstancedStaticMeshComponent* Component = PoolNewBucketComponent(*PoolActor, Descriptor);
 
     const int32 BucketId = Buckets.AddDefaulted();
     FBucket& Bucket = Buckets[BucketId];

@@ -207,4 +207,93 @@ bool FMHInstancePoolOwnerOperationsTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+// 16 §4 / R5b-0: a mesh reimport reconciles the pool per bucket, never per
+// owner. Payload/bounds only refresh; a bucket-descriptor change migrates the
+// bucket to a fresh ISM while every handle (hidden ones included) survives with
+// its owner, node path and transform; collision recreates physics; an empty
+// delta and an unrelated mesh touch nothing.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHInstancePoolReconcileMeshTest,
+    "Mimir.V5.Composite.Pool.ReconcileMesh",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHInstancePoolReconcileMeshTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FPoolFixture F;
+    if (!F.Build(*this)) return false;
+    const FMHInstanceHandle A0 = F.Add(*F.OwnerA, TEXT("a:nodes[0]"), F.DescA, FVector(0, 0, 0));
+    const FMHInstanceHandle A1 = F.Add(*F.OwnerA, TEXT("a:nodes[1]"), F.DescA, FVector(10, 0, 0));
+    const FMHInstanceHandle B0 = F.Add(*F.OwnerB, TEXT("b:nodes[0]"), F.DescA, FVector(20, 0, 0));
+    const FMHInstanceHandle BB = F.Add(*F.OwnerB, TEXT("b:nodes[1]"), F.DescB, FVector(30, 0, 0));
+    TArray<UInstancedStaticMeshComponent*> BucketsA, BucketsB;
+    F.Pool->GetBucketComponents(*F.MeshA, BucketsA);
+    F.Pool->GetBucketComponents(*F.MeshB, BucketsB);
+    bool bPassed = TestEqual(TEXT("one bucket renders mesh A"), BucketsA.Num(), 1);
+    bPassed &= TestEqual(TEXT("one bucket renders mesh B"), BucketsB.Num(), 1);
+    if (BucketsA.Num() != 1 || BucketsB.Num() != 1) return false;
+    UInstancedStaticMeshComponent* OldA = BucketsA[0];
+    UInstancedStaticMeshComponent* OldB = BucketsB[0];
+    F.Pool->HideOwner(*F.OwnerB);
+    bPassed &= TestEqual(TEXT("B hidden: bucket A renders A's two instances"), OldA->GetInstanceCount(), 2);
+
+    // Empty delta: nothing.
+    FMHEndpointInterfaceDelta None;
+    F.Pool->ResetMetricsForTests();
+    bPassed &= TestEqual(TEXT("empty delta touches no bucket"), F.Pool->ReconcileMesh(*F.MeshA, None), 0);
+    bPassed &= TestEqual(TEXT("empty delta refreshes nothing"), F.Pool->GetMetrics().RenderStateRefreshes, 0ull);
+
+    // Payload: refresh in place, same component objects.
+    FMHEndpointInterfaceDelta Payload;
+    Payload.bPayload = true;
+    Payload.bBounds = true;
+    bPassed &= TestEqual(TEXT("payload delta touches mesh A's bucket only"), F.Pool->ReconcileMesh(*F.MeshA, Payload), 1);
+    bPassed &= TestEqual(TEXT("payload delta refreshes render state once"), F.Pool->GetMetrics().RenderStateRefreshes, 1ull);
+    F.Pool->GetBucketComponents(*F.MeshA, BucketsA);
+    bPassed &= TestTrue(TEXT("payload delta keeps bucket A's component"), BucketsA.Num() == 1 && BucketsA[0] == OldA);
+
+    // Collision: physics recreated, same component.
+    FMHEndpointInterfaceDelta Collision;
+    Collision.bCollisionInterface = true;
+    bPassed &= TestEqual(TEXT("collision delta touches one bucket"), F.Pool->ReconcileMesh(*F.MeshA, Collision), 1);
+    bPassed &= TestEqual(TEXT("collision delta refreshes physics once"), F.Pool->GetMetrics().PhysicsRefreshes, 1ull);
+
+    // Descriptor: the bucket migrates to a new ISM; handles, owners, paths,
+    // transforms and the hidden state all survive; mesh B is untouched.
+    FMHEndpointInterfaceDelta Descriptor;
+    Descriptor.bBucketDescriptor = true;
+    bPassed &= TestEqual(TEXT("descriptor delta touches one bucket"), F.Pool->ReconcileMesh(*F.MeshA, Descriptor), 1);
+    F.Pool->GetBucketComponents(*F.MeshA, BucketsA);
+    bPassed &= TestTrue(TEXT("descriptor delta migrates bucket A to a new component"), BucketsA.Num() == 1 && BucketsA[0] != OldA && IsValid(BucketsA[0]));
+    bPassed &= TestFalse(TEXT("the old bucket component is destroyed"), IsValid(OldA));
+    F.Pool->GetBucketComponents(*F.MeshB, BucketsB);
+    bPassed &= TestTrue(TEXT("mesh B's bucket keeps its component"), BucketsB.Num() == 1 && BucketsB[0] == OldB);
+    bPassed &= TestEqual(TEXT("bucket count is unchanged"), F.Pool->NumBuckets(), 2);
+    UInstancedStaticMeshComponent* NewA = BucketsA.Num() == 1 ? BucketsA[0] : nullptr;
+    bPassed &= TestTrue(TEXT("migrated bucket lives on the pool actor"), NewA != nullptr && NewA->GetOwner() != nullptr && NewA->GetOwner()->IsA<AMHInstancePoolActor>());
+    bPassed &= TestEqual(TEXT("migrated bucket renders the two live instances"), NewA != nullptr ? NewA->GetInstanceCount() : -1, 2);
+    bPassed &= TestTrue(TEXT("handles survive migration"), F.Pool->IsValidHandle(A0) && F.Pool->IsValidHandle(A1) && F.Pool->IsValidHandle(B0));
+    AActor* Owner = nullptr;
+    FString Path;
+    int32 Index = INDEX_NONE;
+    bPassed &= TestTrue(TEXT("A1 reverse lookup after migration"), F.Lookup(A1, Owner, Path, Index) && Owner == F.OwnerA && Path == TEXT("a:nodes[1]"));
+    UInstancedStaticMeshComponent* Component = nullptr;
+    bPassed &= TestTrue(TEXT("A1 keeps its transform after migration"), F.Pool->GetInstance(A1, Component, Index) && Component == NewA && [&]
+    {
+        FTransform T;
+        return Component->GetInstanceTransform(Index, T, true) && T.GetLocation().Equals(FVector(10, 0, 0), 1e-3);
+    }());
+    bPassed &= TestEqual(TEXT("B stays hidden through migration"), F.Pool->NumLiveInstances(*F.OwnerB), 0);
+    F.Pool->ShowOwner(*F.OwnerB);
+    bPassed &= TestEqual(TEXT("ShowOwner after migration lands in the new bucket"), NewA != nullptr ? NewA->GetInstanceCount() : -1, 3);
+    bPassed &= TestTrue(TEXT("B0 reverse lookup after show"), F.Lookup(B0, Owner, Path, Index) && Owner == F.OwnerB && Path == TEXT("b:nodes[0]"));
+    // The migrated bucket still serves the descriptor: a new Add joins it.
+    const FMHInstanceHandle A2 = F.Add(*F.OwnerA, TEXT("a:nodes[2]"), F.DescA, FVector(40, 0, 0));
+    bPassed &= TestEqual(TEXT("new instance joins the migrated bucket"), A2.BucketId, A0.BucketId);
+    bPassed &= TestEqual(TEXT("still two buckets"), F.Pool->NumBuckets(), 2);
+    // Unrelated mesh: nothing.
+    bPassed &= TestEqual(TEXT("unrelated mesh reconciles no bucket"), F.Pool->ReconcileMesh(*F.MeshB, None), 0);
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests
