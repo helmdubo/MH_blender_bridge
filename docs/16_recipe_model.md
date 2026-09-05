@@ -290,9 +290,15 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
 - Статус: **R5a** (близнец) — сервис и инварианты (`Public/Composite/
   MHInstancePool.h`): бакет `{ULevel, FMHPoolBucketDescriptor}`, swap-remove с
   двумя картами, generation-хэндлы, owner-операции, bulk-скоуп; квитанция
-  `docs/receipts/recipe_r5a.md`. **R5b** — перевод материализации
-  `AMHCompositeActor`, Outliner (`ReverseLookup`) и восстановления после Undo
-  на пул.
+  `docs/receipts/recipe_r5a.md`. **R5b-0** — reconcile реимпорта на уровне
+  пула (`ReconcileMesh`, миграция бакета с сохранением хэндлов). **R5b-1a** —
+  дрейфнувший живой компонент бакета не переиспользуется. **R5b-1** —
+  компилятор размещений, актор, уведомления и Outliner на пуле: строки
+  `FMHCompositeLeafMaterialization` несут `FMHInstanceHandle`, на акторе ISM
+  нет, `PostEditUndo`/`Destroyed` освобождают owner'а (OPEN-R-1 закрыт),
+  видимость актора в редакторе → `SetOwnerEditorVisibility`
+  (`docs/receipts/recipe_r5b1.md`). **R5b-2** — selection-seam вьюпорта
+  (клик по инстансу пула выделяет owner-композит).
 
 ### 2.9 `Actor`-листья (R7, после capability-контракта)
 
@@ -501,7 +507,7 @@ R3 (reconcile по пяти хэшам/ревизиям П4) → R4 (async endpo
 
 | # | Вопрос | Временное правило | Статус |
 |---|---|---|---|
-| OPEN-R-1 | Undo для пула | транзакционен только актор; пул восстанавливается в `PostEditUndo` | открыт |
+| OPEN-R-1 | Undo для пула | транзакционен только актор; пул восстанавливается в `PostEditUndo` | закрыт R5b-1 (близнец): `ClearDerivedComponents` → `RemoveOwner`, `PostEditUndo` = rebuild из записи актора; тест `Pool.UndoRestoresPooledPlacement` |
 | OPEN-R-2 | Заглушка | `/Engine/BasicShapes/Cube`, настраивается в `UMHCompositeSettings::PlaceholderMesh` | открыт |
 | OPEN-R-3 | Actor-листья и runtime-снапшот | участвуют как сейчас `ActorClassRegistry`; runtime-мост не расширяется до отдельного решения | открыт |
 | OPEN-R-4 | Ключ дескриптора | `FISMComponentDescriptor` + `AppearanceCustomDataBaseIndex`; кастомный ключ — только по доказанному тестом случаю | открыт |

@@ -311,9 +311,10 @@ bool FMHCompositeISMBucketPolicyAdmissionTest::RunTest(const FString& Parameters
         bPassed &= TestNotNull(
             *FString::Printf(TEXT("%s rebuild has a bucket"), Mutation.Label), Current);
         if (Current == nullptr) break;
-        // R5b-1: the bucket is the pool's; its descriptor, not the live
-        // component state, is the identity. A rebuild after policy drift on
-        // the shared component keeps serving every instance from the pool.
+        // R5b-1a: the pool retires a component that drifted from its descriptor.
+        bPassed &= TestNotEqual(
+            *FString::Printf(TEXT("%s cannot reuse a mismatched bucket"), Mutation.Label),
+            Current, Previous);
         bPassed &= TestEqual(
             *FString::Printf(TEXT("%s rebuild preserves all instances"), Mutation.Label),
             Current->GetInstanceCount(), 3);

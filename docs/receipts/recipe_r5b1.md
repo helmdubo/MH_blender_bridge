@@ -45,7 +45,7 @@
   если `FindLeafMaterialization(component, index)` (через `ReverseLookup` пула)
   называет текущий актор — проверка «owner компонента == актор» снята.
 
-## 2. Тесты (red `95d20c0`)
+## 2. Тесты (red `29c3a76`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -55,25 +55,29 @@
 
 Переписанные замороженные ожидания (KICKOFF §7.5, по контракту пула):
 `ISMMaterializationTest` (бакеты ищутся по строкам, а не по derived-компонентам
-актора; «дрейф политики на общем компоненте пула → новый бакет» снят: бакет
-идентифицирует дескриптор пула, инстансы сохраняются),
-`ResourceReconcileTest` (`Bucket()` по строкам), `PlacementLifecycleTest`
-(`LifecycleLeafCount` = живые инстансы пула + свои SMC), `PreviewDefectsTest`,
-`AsyncEndpointTest` (компонент листа по строке), `CompositeV5Test` (общий
-бакет принадлежит pool-актору), `ISMCottageMetricsTest` (метрики считают
-пул).
+актора; инвариант «дрейф политики → новый компонент» сохранён и теперь
+исполняется пулом, R5b-1a), `ResourceReconcileTest` (`Bucket()` по строкам),
+`PlacementLifecycleTest` (`LifecycleLeafCount` = живые инстансы пула + свои
+SMC), `PreviewDefectsTest`, `AsyncEndpointTest` (компонент листа по строке),
+`CompositeV5Test` (общий бакет принадлежит pool-актору, не «absolute под
+корнем размещения»), `AppliedPlanAdmissionTest` (derived = хэндлы, лист в
+пуле, «лист сохраняет объект» — по строке), `CompositePlacementTest`
+(восстановленный endpoint — пуловый инстанс, без placeholder'а на акторе),
+`BreakTest`
+(ISM мира считаются до Break, бакеты пула переживают размещение),
+`ISMCottageMetricsTest` (метрики считают пул).
 
 ## 3. Гейты
 
 | Gate | Результат |
 |---|---|
-| RED (`95d20c0`) | `R5B1_RED_TEST.log`: три новых теста Fail (нет бакетов пула, ISM на акторе) |
-| GREEN non-unity/no-PCH build | `R5B1_GREEN_BUILD2.log`: Succeeded |
+| RED (`29c3a76`) | `R5B1_RED_TEST.log`: три новых теста Fail (нет бакетов пула, ISM на акторе) |
+| GREEN non-unity/no-PCH build | `R5B1_GREEN_BUILD6.log`: Succeeded |
 | `Mimir.V5.Composite.Pool` | `R5B1_GREEN_TEST.log`: 6/0 |
-| полный NullRHI suite | `R5B1_GREEN_FULL.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R5B1_STRICT.log`: __ |
-| force-unity | `R5B1_FORCE_UNITY.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| полный NullRHI suite | `R5B1_GREEN_FULL4.log`: `Success=212 Fail=0` (209 + 3); первые прогоны: `R5B1_GREEN_FULL.log` — краш `BodySetup` на дрейфе бакета → R5b-1a; `FULL2/3` — два переписанных ожидания |
+| `BuildPlugin -StrictIncludes` | `R5B1_STRICT.log`: ExitCode=0 (Success) |
+| force-unity | `R5B1_FORCE_UNITY.log`: Succeeded |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
