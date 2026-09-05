@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Composite/MHInstancePool.h"
 #include "CoreMinimal.h"
 #include "Random/MHRandomStream.h"
 #include "UObject/ObjectPtr.h"
@@ -14,9 +15,11 @@ namespace UE::MimirComposite
 {
 
 /**
- * Plan-aligned editor materialization row. Static leaves may share Component;
- * InstanceIndex then identifies the exact ISM instance. Non-static leaves and
- * the one leaf extracted for Placement Edit Mode use INDEX_NONE.
+ * Plan-aligned editor materialization row. Static leaves render through the
+ * level's instance pool (16 §2.8, R5b-1): Handle is their stable identity,
+ * Component/InstanceIndex the current ISM address behind it (refreshed from
+ * the pool by the actor). Non-static leaves and the one leaf extracted for
+ * Placement Edit Mode own Component and use INDEX_NONE.
  */
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositeLeafMaterialization
 {
@@ -24,6 +27,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeLeafMaterialization
     int32 InstanceIndex = INDEX_NONE;
     int32 ResolvedNodeIndex = INDEX_NONE;
     FString NodePath;
+    FMHInstanceHandle Handle;
 
     bool IsInstanced() const { return InstanceIndex != INDEX_NONE; }
 };
