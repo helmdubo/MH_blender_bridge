@@ -215,4 +215,29 @@ bool FMHReconcileChildRecipeTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+// R5-M (owner field defect 2026-09-05, minute-long freezes): every static leaf
+// renders through ISM since R5b-1, so a material bound to an admitted mesh
+// needs bUsedWithInstancedStaticMeshes. The registry sets it at admission
+// (async shader cache, package dirty) instead of the engine's lazy path in the
+// middle of a frame.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHAdmissionSetsInstancedUsageTest,
+    "Mimir.V5.Composite.Reconcile.AdmissionSetsInstancedMaterialUsage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHAdmissionSetsInstancedUsageTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FReconcileFixture Fixture(*this);
+    if (!Fixture.Build(*this)) return false;
+    UMaterial* Slot = NewObject<UMaterial>(GetTransientPackage(), FName(*Fixture.Recipe.Name(TEXT("usage_slot"))));
+    bool bPassed = TestFalse(TEXT("a fresh material has no ISM usage"), Slot->GetUsageByFlag(MATUSAGE_InstancedStaticMeshes));
+    Fixture.MeshObjectA->GetStaticMaterials().Add(FStaticMaterial(Slot, TEXT("usage"), TEXT("usage")));
+    MHNotifyGeneratedResourceChanged(FReconcileFixture::Key(EMHResourceKind::StaticMesh, Fixture.MeshA));
+    bPassed &= TestTrue(TEXT("registry re-admitted mesh A"), UMHEndpointPrototypeRegistry::Get()->Resolve(FReconcileFixture::Key(EMHResourceKind::StaticMesh, Fixture.MeshA)).State == EMHEndpointState::Ready);
+    bPassed &= TestTrue(TEXT("admission set bUsedWithInstancedStaticMeshes on the bound material"), Slot->GetUsageByFlag(MATUSAGE_InstancedStaticMeshes));
+    bPassed &= TestTrue(TEXT("no error after admission: ") + Fixture.Actor->GetLastPlacementError(), Fixture.Actor->GetLastPlacementError().IsEmpty());
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests
