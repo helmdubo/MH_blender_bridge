@@ -81,6 +81,36 @@ void PoolConfigureBucket(UInstancedStaticMeshComponent& Component, const FMHPool
     Component.bHasPerInstanceHitProxies = true;
     Component.bSupportRemoveAtSwap = true;
     Component.SetNumCustomDataFloats(Descriptor.AppearanceLayout);
+    // The collision setters invalidate the profile name even when assigning
+    // identical policy; restore the descriptor's named profile last.
+    Component.SetCollisionProfileName(Descriptor.CollisionProfileName);
+}
+
+/**
+ * 16 §2.8: the descriptor is the bucket's identity. A component whose live
+ * state drifted from it (policy or mesh mutation by anything outside the
+ * pool) is never reused; the caller retires it through MigrateBucket.
+ */
+bool PoolLiveMatchesDescriptor(const UInstancedStaticMeshComponent& Component, const FMHPoolBucketDescriptor& Descriptor)
+{
+    FMHPoolBucketDescriptor Live = Descriptor;
+    Live.StaticMesh = Component.GetStaticMesh();
+    Live.MaterialOverrides = Component.OverrideMaterials;
+    Live.CollisionProfileName = Component.GetCollisionProfileName();
+    Live.CollisionEnabled = Component.GetCollisionEnabled();
+    Live.CollisionObjectType = Component.GetCollisionObjectType();
+    Live.CollisionResponses = Component.GetCollisionResponseToChannels();
+    Live.bGenerateOverlapEvents = Component.GetGenerateOverlapEvents();
+    Live.bTraceComplexOnMove = Component.bTraceComplexOnMove;
+    Live.bReturnMaterialOnMove = Component.bReturnMaterialOnMove;
+    Live.bCastShadow = Component.CastShadow;
+    Live.bAffectDistanceFieldLighting = Component.bAffectDistanceFieldLighting;
+    Live.bVisibleInRayTracing = Component.bVisibleInRayTracing;
+    Live.Mobility = Component.Mobility;
+    Live.bVisible = Component.IsVisible();
+    Live.bHiddenInGame = Component.bHiddenInGame;
+    Live.AppearanceLayout = Component.NumCustomDataFloats;
+    return Live == Descriptor;
 }
 
 UInstancedStaticMeshComponent* PoolNewBucketComponent(AMHInstancePoolActor& PoolActor, const FMHPoolBucketDescriptor& Descriptor)
@@ -430,8 +460,12 @@ int32 UMHInstancePoolSubsystem::FindOrCreateBucket(ULevel& Level, const FMHPoolB
 {
     for (int32 BucketId = 0; BucketId < Buckets.Num(); ++BucketId)
     {
-        const FBucket& Bucket = Buckets[BucketId];
-        if (Bucket.Level.Get() == &Level && Bucket.Component.IsValid() && Bucket.Descriptor == Descriptor) return BucketId;
+        FBucket& Bucket = Buckets[BucketId];
+        if (Bucket.Level.Get() != &Level || !Bucket.Component.IsValid() || !(Bucket.Descriptor == Descriptor)) continue;
+        // A drifted component is retired here, once; its instances and
+        // handles move to a fresh component configured from the descriptor.
+        if (!PoolLiveMatchesDescriptor(*Bucket.Component.Get(), Bucket.Descriptor)) MigrateBucket(Bucket);
+        return BucketId;
     }
     AMHInstancePoolActor* PoolActor = FindOrCreatePoolActor(Level);
     if (PoolActor == nullptr || PoolActor->GetRootComponent() == nullptr) return INDEX_NONE;
