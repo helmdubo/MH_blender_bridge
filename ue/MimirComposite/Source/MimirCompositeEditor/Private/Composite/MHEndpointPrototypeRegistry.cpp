@@ -9,6 +9,8 @@
 #include "Editor.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInterface.h"
 #include "Engine/StreamableManager.h"
 #include "Misc/PackageName.h"
 #include "Settings/MHCompositeSettings.h"
@@ -547,6 +549,17 @@ void UMHEndpointPrototypeRegistry::Admit(const FMHResourceKey& Key, FMHEndpointP
         else
         {
             Current.Delta.bFirstAdmission = true;
+        }
+        // R5-M: every static leaf renders through ISM (16 §2.8). Give each
+        // bound base material its ISM usage now — an async shader cache and a
+        // dirty package — instead of the engine's lazy CheckMaterialUsage in
+        // the middle of a frame (owner field defect 2026-09-05).
+        for (const FStaticMaterial& Binding : Mesh.GetStaticMaterials())
+        {
+            UMaterial* Base = Binding.MaterialInterface != nullptr ? Binding.MaterialInterface->GetMaterial() : nullptr;
+            if (Base == nullptr || Base->GetUsageByFlag(MATUSAGE_InstancedStaticMeshes)) continue;
+            bool bNeedsRecompile = false;
+            Base->SetMaterialUsage(bNeedsRecompile, MATUSAGE_InstancedStaticMeshes, Binding.MaterialInterface);
         }
         Prototype.Bounds = Values.Bounds;
         Prototype.PayloadRevision = Current.PayloadRevision;
