@@ -7,17 +7,6 @@
 
 namespace UE::MimirComposite::Tests
 {
-namespace
-{
-
-bool AssetBytes(const UMHCompositeAsset& Asset, TArray<uint8>& OutBytes)
-{
-    FMHCompositeDocument Document;
-    FString Error;
-    return MHExtractCompositeV5(Asset, Document, Error) && MHWriteCanonicalCompositeV5(Document, OutBytes, Error);
-}
-
-} // namespace
 
 // CE-1 (spec §5.1): one owner of the session — identity, epoch, frozen
 // context, immutable original, transactional draft — reachable through the
@@ -39,7 +28,7 @@ bool FMHEditSessionOwnerTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("second invocation"), Second)) return false;
     const FString InvocationPath = Second->NodePath;
     TArray<uint8> ChildBefore;
-    if (!TestTrue(TEXT("child bytes"), AssetBytes(*F.Child, ChildBefore))) return false;
+    if (!TestTrue(TEXT("child bytes"), FCompositeEditFixture::AssetBytes(*F.Child, ChildBefore))) return false;
 
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
@@ -79,14 +68,14 @@ bool FMHEditSessionOwnerTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(TEXT("closed session refuses commands"), Kept->SetNodeTransform(PlainId, FTransform::Identity, Error));
     bPassed &= TestTrue(TEXT("the refusal says so"), Error.Contains(TEXT("closed")));
     TArray<uint8> ChildAfter;
-    bPassed &= TestTrue(TEXT("no-op begin/cancel wrote nothing"), AssetBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
+    bPassed &= TestTrue(TEXT("no-op begin/cancel wrote nothing"), FCompositeEditFixture::AssetBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
 
     // A root session is a session too.
     if (!TestTrue(TEXT("root session: ") + Error, Subsystem->BeginEditComposite(F.B, Error))) return false;
     UMHCompositeEditSession* RootSession = Subsystem->GetEditSession();
     TArray<uint8> RootBytes;
     bPassed &= TestTrue(TEXT("root session exists"), RootSession != nullptr && !RootSession->IsNested() && RootSession->GetEditedAsset() == F.Root);
-    bPassed &= TestTrue(TEXT("root session original is the root's source"), AssetBytes(*F.Root, RootBytes) && RootSession != nullptr && RootSession->GetOriginalBytes() == RootBytes);
+    bPassed &= TestTrue(TEXT("root session original is the root's source"), FCompositeEditFixture::AssetBytes(*F.Root, RootBytes) && RootSession != nullptr && RootSession->GetOriginalBytes() == RootBytes);
     bPassed &= TestTrue(TEXT("cancel root"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }

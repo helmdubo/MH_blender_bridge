@@ -181,6 +181,14 @@ struct FCompositeEditFixture
         return Result;
     }
 
+    /** Canonical bytes of an asset's document: "the source was (not) touched". */
+    static bool AssetBytes(const UMHCompositeAsset& Asset, TArray<uint8>& OutBytes)
+    {
+        FMHCompositeDocument Document;
+        FString Error;
+        return MHExtractCompositeV5(Asset, Document, Error) && MHWriteCanonicalCompositeV5(Document, OutBytes, Error);
+    }
+
     static bool SameLocations(const TArray<FVector>& Left, const TArray<FVector>& Right, const double Tolerance = 1e-2)
     {
         if (Left.Num() != Right.Num()) return false;
