@@ -10,10 +10,10 @@
 | Решение | Значение |
 |---|---|
 | Программа | CE-0 → CE-1 → CE-2 → CE-3 → CE-4a → CE-4b → CE-5 → CE-6 заменяет текущий Edit Contents (actor-хэндлы + `Tick`); backend R6-D2/U1/U2 (publish, Unique, Bake), пул и resolver сохраняются за фасадом subsystem |
-| Проекция | **компоненты одного transient projection-актора на сессию** (не actor на узел) |
+| Проекция | **компоненты одного transient projection-актора на сессию** (не actor на узел). Подтверждено owner по BPP (2026-09-07): на время Edit листья — отдельные `StaticMeshComponent`, после Save/Cancel — снова ISM пула |
 | Undo | BPP-политика v1: `ResetTransaction` на входе и терминальном выходе, внутри — полноценный Undo/Redo, один gesture = одна запись |
 | Клавиатура | Esc: gesture → снять выделение → Exit (диалог ниже); Enter не публикует; глобальный Slate processor R6-UX2a уходит |
-| Панель режима | **как у BPP**: только `<breadcrumb> | Exit`, никаких других кнопок. Exit при изменениях → стандартный диалог «Save changes? Unsaved composite changes will get discarded. Do you want to save them now?» **Yes** (Apply Shared Definition) / **No** (discard) / **Cancel** (остаться). Без изменений — выход сразу. Save As Unique Copy… — только из контекстного меню Composite Outliner / Composite Actions (owner 2026-09-06) |
+| Панель режима | **как у Level Instance Edit** (уточнение owner 2026-09-07 по скриншоту): `<breadcrumb> | Save | Cancel`, других кнопок нет. **Save** — Apply Shared Definition и выход; **Cancel** — отбросить draft и выйти, при изменениях подтверждение «Discard unsaved composite changes?»; Esc = Cancel. Save As Unique Copy… — только из контекстного меню Composite Outliner / Composite Actions |
 | Структура | в режиме можно **добавлять узлы**: empty/group, ссылка на composite, static mesh, actor/gameobj (CE-4b, только уже управляемые ресурсы) |
 | Навигация | Composite Outliner сохраняется; правый клик по любому подкомпозиту → Edit Contents его определения (breadcrumbs), как Edit у Packed Level Actor |
 | Контекст | locked context + рамка/outline обязательны; native dimming через show flag `EditingLevelInstance` — проверить визуально в spike (см. §3) |
