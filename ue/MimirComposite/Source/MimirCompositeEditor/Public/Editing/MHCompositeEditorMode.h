@@ -9,6 +9,7 @@
 class UMHCompositeEditSession;
 class USceneComponent;
 class HHitProxy;
+struct FMHCompositeEditContext;
 
 /** CE-3a: the mode's commands (Escape = Cancel, like Level Instance Edit). */
 class MIMIRCOMPOSITEEDITOR_API FMHCompositeEditCommands final : public TCommands<FMHCompositeEditCommands>
@@ -66,6 +67,15 @@ public:
     /** CE-3b: a viewport click. True = handled (a projection node grabbed, or a locked target swallowed). */
     bool HandleHitProxy(HHitProxy* HitProxy);
     virtual bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click) override;
+    /**
+     * CE-3d: one writable session — leave the current definition (clean: at
+     * once; dirty: Save / Discard / stay) and open another one of the same
+     * placement; an empty path is the root definition. False when the user
+     * stays or the target cannot be opened; true when nothing had to change.
+     */
+    bool RequestSwitch(const FString& InvocationPath);
+    /** CE-3d: the breadcrumb — label and the invocation path each crumb opens (root first, the current scope last); empty without a session. */
+    static TArray<TPair<FString, FString>> BreadcrumbTargets(const FMHCompositeEditContext& Context);
 
     virtual void Enter() override;
     virtual void Exit() override;
@@ -80,6 +90,8 @@ public:
 #if WITH_DEV_AUTOMATION_TESTS
     /** Stands in for the "Discard unsaved composite changes?" question: true = discard. */
     static void SetDiscardConfirmForTests(TFunction<bool()> Confirm);
+    /** Stands in for "Save changes before editing …?": Yes = save, No = discard, Cancel = stay. */
+    static void SetSwitchConfirmForTests(TFunction<EAppReturnType::Type()> Confirm);
 #endif
 
 private:

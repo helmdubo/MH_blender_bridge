@@ -50,6 +50,7 @@ namespace
 
 #if WITH_DEV_AUTOMATION_TESTS
 TFunction<bool()> GDiscardConfirmForTests;
+TFunction<EAppReturnType::Type()> GSwitchConfirmForTests;
 #endif
 /** Set while the subsystem itself ends the session: Exit must not cancel it a second time. */
 bool GDeactivatingForSession = false;
@@ -196,7 +197,24 @@ void UMHCompositeEditorMode::SetDiscardConfirmForTests(TFunction<bool()> Confirm
 {
     GDiscardConfirmForTests = MoveTemp(Confirm);
 }
+
+void UMHCompositeEditorMode::SetSwitchConfirmForTests(TFunction<EAppReturnType::Type()> Confirm)
+{
+    GSwitchConfirmForTests = MoveTemp(Confirm);
+}
 #endif
+
+bool UMHCompositeEditorMode::RequestSwitch(const FString& InvocationPath)
+{
+    static_cast<void>(InvocationPath);
+    return false;
+}
+
+TArray<TPair<FString, FString>> UMHCompositeEditorMode::BreadcrumbTargets(const FMHCompositeEditContext& Context)
+{
+    static_cast<void>(Context);
+    return {};
+}
 
 UMHCompositeEditSession* UMHCompositeEditorMode::GetSession() const
 {
