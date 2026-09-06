@@ -1,6 +1,7 @@
 #include "UI/MHEditSessionKeys.h"
 
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Editing/MHCompositeEditorMode.h"
 #include "Editor.h"
 #include "Framework/Application/IInputProcessor.h"
 #include "Framework/Application/SlateApplication.h"
@@ -30,7 +31,10 @@ public:
     {
         if (KeyEvent.IsRepeat()) return false;
         const UMHCompositeLevelSubsystem* Subsystem = EditSessionSubsystem();
-        if (MHEditSessionKeyAction(KeyEvent.GetKey(), Subsystem != nullptr && Subsystem->IsEditingComposite()) == EMHEditSessionKeyAction::None) return false;
+        const EMHEditSessionKeyAction Action = MHEditSessionKeyAction(KeyEvent.GetKey(), Subsystem != nullptr && Subsystem->IsEditingComposite());
+        if (Action == EMHEditSessionKeyAction::None) return false;
+        // CE-3b: under the Composite Edit Mode Enter means nothing (Save is a button).
+        if (Action == EMHEditSessionKeyAction::Apply && UMHCompositeEditorMode::IsActive()) return false;
         const TSharedPtr<SWidget> Focused = SlateApp.GetKeyboardFocusedWidget();
         if (!Focused.IsValid() || Focused->GetType() != TEXT("SViewport")) return false;
         return MHHandleEditSessionKey(KeyEvent.GetKey());
@@ -57,6 +61,27 @@ bool MHHandleEditSessionKey(const FKey& Key, const bool bDeferApply)
     {
     case EMHEditSessionKeyAction::Cancel:
     {
+        // CE-3b: under the mode Escape is the mode's Cancel (asks when the
+        // draft is dirty). The question is modal: never open it from inside
+        // the input path that delivered the key.
+        if (UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive())
+        {
+            if (bDeferApply && GEditor != nullptr)
+            {
+                const uint32 Epoch = Subsystem->GetEditSessionEpoch();
+                GEditor->GetTimerManager()->SetTimerForNextTick([Epoch]()
+                {
+                    const UMHCompositeLevelSubsystem* Current = EditSessionSubsystem();
+                    UMHCompositeEditorMode* CurrentMode = UMHCompositeEditorMode::GetActive();
+                    if (Current != nullptr && Current->IsEditingComposite() && Current->GetEditSessionEpoch() == Epoch && CurrentMode != nullptr) CurrentMode->RequestCancel();
+                });
+            }
+            else
+            {
+                Mode->RequestCancel();
+            }
+            return true;
+        }
         FString Error;
         if (!Subsystem->CancelEditComposite(Error) && !Error.IsEmpty())
         {
@@ -66,6 +91,8 @@ bool MHHandleEditSessionKey(const FKey& Key, const bool bDeferApply)
         return true;
     }
     case EMHEditSessionKeyAction::Apply:
+        // CE-3b: Enter never publishes under the mode.
+        if (UMHCompositeEditorMode::IsActive()) return false;
         // The confirmation is modal: never open it from inside the input
         // path that delivered the key.
         if (bDeferApply && GEditor != nullptr)

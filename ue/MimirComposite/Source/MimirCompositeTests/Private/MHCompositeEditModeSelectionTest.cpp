@@ -1,10 +1,16 @@
 #include "MHCompositeEditFixture.h"
 
 #include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Misc/CommandLine.h"
+#include "PrimitiveSceneProxy.h"
+#include "RenderingThread.h"
 #include "Selection.h"
 #include "Settings/MHCompositeSettings.h"
 #include "UI/MHEditSessionKeys.h"
@@ -98,9 +104,15 @@ bool FMHEditModeClickSelectionTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
-// CE-3b: the projection renders as the edited thing — its primitives carry
-// the Level Instance editing state, so the `EditingLevelInstance` show flag
-// dims everything else.
+// CE-3b: the projection renders as the edited thing — its scene proxies
+// carry the Level Instance editing state, so the `EditingLevelInstance` show
+// flag dims everything else (the foreign bucket stays dimmed). Scene proxies
+// exist only with a real RHI: the proxy assertions are the RHI lane
+// (`-RenderOffscreen -MHPreviewRenderSmoke`, the same lane as the preview
+// hit-proxy regression); under -nullrhi the test covers the push being safe
+// and idempotent without proxies. Fixture meshes carry no render data (no
+// proxy even with an RHI), so the lane swaps the engine cube in — a
+// re-created proxy is exactly what the tick-time push has to cover.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditModeTintTest,
     "Mimir.V5.Composite.EditMode.Selection.ProjectionCarriesTheEditingTint",
@@ -122,17 +134,43 @@ bool FMHEditModeTintTest::RunTest(const FString& Parameters)
     UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
     AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
     if (!TestNotNull(TEXT("projection actor"), ProjectionActor)) return false;
-    bool bPassed = TestTrue(TEXT("the projection actor is in the editing hierarchy"), ProjectionActor->IsInEditLevelInstanceHierarchy());
     int32 Primitives = 0;
     for (const TObjectPtr<USceneComponent>& Component : Projection->GetComponents())
     {
-        const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component.Get());
-        if (Primitive == nullptr) continue;
-        ++Primitives;
-        bPassed &= TestTrue(TEXT("primitive carries the editing state: ") + Projection->GetOriginForComponent(Primitive), Primitive->GetLevelInstanceEditingState());
+        if (Cast<UPrimitiveComponent>(Component.Get()) != nullptr) ++Primitives;
     }
-    bPassed &= TestTrue(TEXT("the projection has primitives"), Primitives > 0);
-    bPassed &= TestFalse(TEXT("the root placement stays dimmed"), F.A->IsInEditLevelInstanceHierarchy());
+    bool bPassed = TestTrue(TEXT("the projection has primitives"), Primitives > 0);
+    // Safe and idempotent with or without proxies (the mode calls it every tick).
+    Projection->PushEditingTint();
+    Projection->PushEditingTint();
+    if (!FParse::Param(FCommandLine::Get(), TEXT("MHPreviewRenderSmoke")))
+    {
+        AddInfo(TEXT("RHI lane NOT RUN: the scene-proxy editing state needs -RenderOffscreen -MHPreviewRenderSmoke without -nullrhi"));
+    }
+    else
+    {
+        UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+        if (!TestNotNull(TEXT("engine cube"), Cube)) return false;
+        for (const TObjectPtr<USceneComponent>& Component : Projection->GetComponents())
+        {
+            if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component.Get())) Mesh->SetStaticMesh(Cube);
+        }
+        if (F.ForeignBucket != nullptr) F.ForeignBucket->SetStaticMesh(Cube);
+        F.World->SendAllEndOfFrameUpdates();
+        Projection->PushEditingTint();
+        FlushRenderingCommands();
+        for (const TObjectPtr<USceneComponent>& Component : Projection->GetComponents())
+        {
+            const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component.Get());
+            if (Primitive == nullptr) continue;
+            const FString Origin = Projection->GetOriginForComponent(Primitive);
+            const FPrimitiveSceneProxy* Proxy = Primitive->GetSceneProxy();
+            if (!TestNotNull(TEXT("scene proxy: ") + Origin, Proxy)) continue;
+            bPassed &= TestTrue(TEXT("proxy carries the editing state: ") + Origin, Proxy->IsEditingLevelInstanceChild());
+        }
+        const FPrimitiveSceneProxy* ForeignProxy = F.ForeignBucket != nullptr ? F.ForeignBucket->GetSceneProxy() : nullptr;
+        bPassed &= TestTrue(TEXT("the foreign bucket stays dimmed"), ForeignProxy != nullptr && !ForeignProxy->IsEditingLevelInstanceChild());
+    }
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }

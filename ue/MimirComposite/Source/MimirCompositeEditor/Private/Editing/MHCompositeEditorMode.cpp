@@ -3,11 +3,14 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editor.h"
 #include "EditorModeManager.h"
 #include "EditorModes.h"
+#include "EngineUtils.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Commands/UICommandList.h"
 #include "LevelEditorActions.h"
@@ -236,13 +239,53 @@ bool UMHCompositeEditorMode::RequestCancel()
 
 bool UMHCompositeEditorMode::SelectComponent(USceneComponent* Component)
 {
-    static_cast<void>(Component);
-    return false;
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
+    if (GEditor == nullptr || ProjectionActor == nullptr || !IsValid(Component) || Component->GetOwner() != ProjectionActor) return false;
+    // The projection actor exclusively, then the node's component: the
+    // engine's gizmo follows the selected component.
+    if (!ProjectionActor->IsSelected() || GEditor->GetSelectedActorCount() != 1)
+    {
+        GEditor->SelectNone(false, true, false);
+        GEditor->SelectActor(ProjectionActor, true, true, true);
+    }
+    USelection* Components = GEditor->GetSelectedComponents();
+    Components->BeginBatchSelectOperation();
+    Components->DeselectAll();
+    GEditor->SelectComponent(Component, true, false, true);
+    Components->EndBatchSelectOperation(true);
+    GEditor->NoteSelectionChange();
+    GEditor->RedrawLevelEditingViewports();
+    return true;
 }
 
 bool UMHCompositeEditorMode::HandleHitProxy(HHitProxy* HitProxy)
 {
-    static_cast<void>(HitProxy);
+    if (HitProxy == nullptr) return false;
+    if (HitProxy->IsA(HActor::StaticGetType()))
+    {
+        const HActor* ActorHit = static_cast<const HActor*>(HitProxy);
+        const UMHCompositeEditSession* Session = GetSession();
+        const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+        AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
+        if (ProjectionActor != nullptr && ActorHit->Actor == ProjectionActor)
+        {
+            // Projection geometry: the node under the cursor.
+            UPrimitiveComponent* Hit = const_cast<UPrimitiveComponent*>(ActorHit->PrimComponent.Get());
+            if (!SelectComponent(Hit) && GEditor != nullptr && !ProjectionActor->IsSelected())
+            {
+                GEditor->SelectNone(false, true, false);
+                GEditor->SelectActor(ProjectionActor, true, true, true);
+            }
+            return true;
+        }
+        // Locked context: any other actor is not a target while editing.
+        return true;
+    }
+    // Pooled instances (shared ISM buckets) are locked too.
+    if (HitProxy->IsA(HInstancedStaticMeshInstance::StaticGetType())) return true;
+    // Gizmo axes, brush handles, empty space: not ours.
     return false;
 }
 
@@ -320,6 +363,11 @@ void UMHCompositeEditorMode::ModeTick(const float DeltaTime)
     UEdMode::ModeTick(DeltaTime);
     // Viewports created after Enter (new windows) pick up the dimming too.
     UpdateEngineShowFlags(true);
+    // CE-3b: a re-created proxy (mesh, material, visibility) is tinted again.
+    if (UMHCompositeEditSession* Session = GetSession())
+    {
+        if (UMHCompositeEditProjection* Projection = Session->GetProjection()) Projection->PushEditingTint();
+    }
 }
 
 void UMHCompositeEditorMode::BindCommands()
