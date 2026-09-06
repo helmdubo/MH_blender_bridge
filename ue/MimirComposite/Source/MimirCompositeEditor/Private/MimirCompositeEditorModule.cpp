@@ -28,6 +28,7 @@
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
 #include "UI/MHCompositeOutliner.h"
+#include "UI/MHEditSessionKeys.h"
 #include "UI/MHCompositeActorDetails.h"
 #include "UI/MHSourceToolMenus.h"
 #include "UObject/AssetRegistryTagsContext.h"
@@ -209,6 +210,7 @@ void FMimirCompositeEditorModule::StartupModule()
 
     UE::MimirComposite::MHRegisterCompositeActorDetails();
     UE::MimirComposite::MHRegisterCompositeOutliner();
+    MHRegisterEditSessionKeys();
     // The level editor registers its own SMInstance customization in
     // SLevelEditor::Initialize, before OnLevelEditorCreated; ours must follow
     // it, whichever of the two modules comes up first.
@@ -256,6 +258,7 @@ void FMimirCompositeEditorModule::ShutdownModule()
     }
     if (!IsRunningCommandlet())
     {
+        MHUnregisterEditSessionKeys();
         UE::MimirComposite::MHUnregisterCompositeActorDetails();
         // Dynamic plugin unload still needs cleanup, but engine exit must not
         // touch ToolMenus: its singleton can already be torn down even though

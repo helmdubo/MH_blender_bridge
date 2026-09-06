@@ -1555,7 +1555,7 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
             AddLevelAction(Section, TEXT("MHBakeUniqueForPlacement"), LOCTEXT("BakeUniqueForPlacement", "Make Unique for This Placement (Bake Current Result)"),
                 LOCTEXT("BakeUniqueForPlacementTip", "Save the resolved result of the edited definition as a new composite of plain mesh/actor nodes (no random draws), copy the chain up to the root, and switch only this placement to the new root."),
                 FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext&) { ExecuteSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::BakeCurrentResult); }));
-            AddLevelAction(Section, TEXT("MHCancelCompositeEdit"), LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
+            AddLevelAction(Section, TEXT("MHCancelCompositeEdit"), LOCTEXT("CancelEditContents", "Cancel Edit Contents (Esc)"),
                 LOCTEXT("CancelEditContentsTip", "Discard the edited nested definition and restore the placement from the unchanged source."),
                 FToolMenuExecuteAction::CreateStatic(&ExecuteCancelEditComposite));
             return;
