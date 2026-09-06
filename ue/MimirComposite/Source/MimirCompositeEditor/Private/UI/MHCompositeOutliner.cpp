@@ -345,12 +345,12 @@ private:
                     LOCTEXT("MakeUniqueInDefinition", "Make Child Unique in This Definition"),
                     LOCTEXT("MakeUniqueInDefinitionTip", "Save the edited definition as a new unique composite and point the definition that invokes it at the copy; every placement of that definition follows."),
                     FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::InParentDefinition)));
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural)));
                 Menu.AddMenuEntry(
                     LOCTEXT("MakeUniqueForPlacement", "Make Unique for This Placement"),
                     LOCTEXT("MakeUniqueForPlacementTip", "Save the edited definition and every definition up to this placement's root as new unique composites; only this placement switches to the new root."),
                     FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement)));
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural)));
             }
             Menu.AddMenuEntry(
                 LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
@@ -449,9 +449,9 @@ private:
         RefreshModel();
     }
 
-    void MakeUnique(const EMHCompositeUniqueScope Scope)
+    void MakeUnique(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant)
     {
-        MHExecuteSaveUniqueInteractive(Scope);
+        MHExecuteSaveUniqueInteractive(Scope, Variant);
         RefreshModel();
     }
 

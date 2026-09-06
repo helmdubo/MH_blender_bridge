@@ -1199,8 +1199,15 @@ bool UE::MimirComposite::MHCompositeDocumentHasRandomization(const FMHCompositeD
     return NodesHaveRandomization(Document.Nodes);
 }
 
-bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScope Scope, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const
+bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const
 {
+    if (Variant == EMHCompositeUniqueVariant::BakeCurrentResult)
+    {
+        // R6-U2 red stub.
+        OutPlan = FMHCompositeSaveUniquePlan();
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Bake Current Result arrives with R6-U2");
+        return false;
+    }
     // R6-U (docs/16 §2.7): innermost first — the edited definition, then (for
     // this placement) every definition of the invocation chain up to the root.
     OutPlan = FMHCompositeSaveUniquePlan();
@@ -1258,6 +1265,7 @@ bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScop
 
 bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     const EMHCompositeUniqueScope Scope,
+    const EMHCompositeUniqueVariant Variant,
     const TArray<FMHCompositeAdoptTarget>& Targets,
     TArray<FString>& OutWarnings,
     FString& OutError)
@@ -1265,7 +1273,7 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     OutWarnings.Reset();
     OutError.Reset();
     FMHCompositeSaveUniquePlan Plan;
-    if (!DescribeSaveUnique(Scope, Plan, OutError)) return false;
+    if (!DescribeSaveUnique(Scope, Variant, Plan, OutError)) return false;
     OutWarnings.Append(Plan.Warnings);
     AMHCompositeActor* Root = EditingActor.Get();
     UMHCompositeAsset* Edited = EditingAsset.Get();

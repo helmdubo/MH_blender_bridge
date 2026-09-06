@@ -456,7 +456,7 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
         Error);
 }
 
-void ExecuteSaveUnique(const EMHCompositeUniqueScope Scope)
+void ExecuteSaveUnique(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant)
 {
     // R6-U1: names are prompted per copy (innermost first); the parent scope
     // overwrites the invoking shared definition behind the usual confirmation.
@@ -468,7 +468,7 @@ void ExecuteSaveUnique(const EMHCompositeUniqueScope Scope)
     FString Error;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
     FMHCompositeSaveUniquePlan Plan;
-    if (Subsystem == nullptr || !Subsystem->DescribeSaveUnique(Scope, Plan, Error))
+    if (Subsystem == nullptr || !Subsystem->DescribeSaveUnique(Scope, Variant, Plan, Error))
     {
         if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no nested composite edit session is active");
         NotifyOperation(Page, FText::GetEmpty(), Warnings, Error);
@@ -488,9 +488,9 @@ void ExecuteSaveUnique(const EMHCompositeUniqueScope Scope)
         }
         Targets.Add(Target);
     }
-    const auto Save = [&Subsystem, &Scope, &Targets, &Warnings, &Error]()
+    const auto Save = [&Subsystem, &Scope, &Variant, &Targets, &Warnings, &Error]()
     {
-        return Subsystem->SaveEditAsUnique(Scope, Targets, Warnings, Error);
+        return Subsystem->SaveEditAsUnique(Scope, Variant, Targets, Warnings, Error);
     };
     if (bPlacement)
     {
@@ -1543,10 +1543,10 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
             // R6-U1: explicit uniqueness scopes for the edited draft.
             AddLevelAction(Section, TEXT("MHMakeUniqueInDefinition"), LOCTEXT("MakeUniqueInDefinition", "Make Child Unique in This Definition"),
                 LOCTEXT("MakeUniqueInDefinitionTip", "Save the edited definition as a new unique composite and point the definition that invokes it at the copy; every placement of that definition follows."),
-                FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext&) { ExecuteSaveUnique(EMHCompositeUniqueScope::InParentDefinition); }));
+                FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext&) { ExecuteSaveUnique(EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural); }));
             AddLevelAction(Section, TEXT("MHMakeUniqueForPlacement"), LOCTEXT("MakeUniqueForPlacement", "Make Unique for This Placement"),
                 LOCTEXT("MakeUniqueForPlacementTip", "Save the edited definition and every definition up to this placement's root as new unique composites; only this placement switches to the new root."),
-                FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext&) { ExecuteSaveUnique(EMHCompositeUniqueScope::ForThisPlacement); }));
+                FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext&) { ExecuteSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural); }));
             AddLevelAction(Section, TEXT("MHCancelCompositeEdit"), LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
                 LOCTEXT("CancelEditContentsTip", "Discard the edited nested definition and restore the placement from the unchanged source."),
                 FToolMenuExecuteAction::CreateStatic(&ExecuteCancelEditComposite));
@@ -1615,9 +1615,9 @@ void MHExecuteCommitEditCompositeInteractive()
     ExecuteCommitEditComposite(FToolMenuContext());
 }
 
-void MHExecuteSaveUniqueInteractive(const EMHCompositeUniqueScope Scope)
+void MHExecuteSaveUniqueInteractive(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant)
 {
-    ExecuteSaveUnique(Scope);
+    ExecuteSaveUnique(Scope, Variant);
 }
 
 void MHRegisterS6ToolMenus()

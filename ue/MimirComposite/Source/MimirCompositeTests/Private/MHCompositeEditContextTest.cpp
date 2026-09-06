@@ -79,7 +79,7 @@ struct FEditContextFixture
             Test.TestTrue(TEXT("A previews: ") + A->GetLastPlacementError(), A->GetResolvedPlan() != nullptr);
     }
 
-    AMHCompositeActor* Spawn(const FTransform& Transform)
+    AMHCompositeActor* Spawn(const FTransform& Transform, UMHCompositeAsset* Asset = nullptr)
     {
         FActorSpawnParameters Params;
         Params.ObjectFlags = RF_Transactional;
@@ -89,7 +89,7 @@ struct FEditContextFixture
         Actor->SetAutoAppearanceSeed(false);
         Actor->SetSeed(7);
         Actor->SetAppearanceSeed(11);
-        Actor->SetCompositeAsset(Root);
+        Actor->SetCompositeAsset(Asset != nullptr ? Asset : Root);
         return Actor;
     }
 
@@ -125,6 +125,19 @@ bool LeafWorldLocation(const AMHCompositeActor& Actor, const FString& Resource, 
         return true;
     }
     return false;
+}
+
+/** World locations of every pooled leaf row of Actor, in row order. */
+TArray<FVector> AllLeafWorldLocations(const AMHCompositeActor& Actor)
+{
+    TArray<FVector> Result;
+    for (const FMHCompositeLeafMaterialization& Row : Actor.GetLeafMaterializations())
+    {
+        UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
+        FTransform T;
+        if (Bucket != nullptr && Bucket->GetInstanceTransform(Row.InstanceIndex, T, true)) Result.Add(T.GetLocation());
+    }
+    return Result;
 }
 
 } // namespace
@@ -429,7 +442,7 @@ bool FMHEditContextMakeUniqueForPlacementTest::RunTest(const FString& Parameters
     const FVector ExpectedLocal = FTransform(FTransform(HandleBefore + FVector(100, 0, 0)).ToMatrixWithScale() * ParentWorld.Inverse()).GetLocation();
 
     FMHCompositeSaveUniquePlan Plan;
-    bPassed &= TestTrue(TEXT("describe: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, Plan, Error));
+    bPassed &= TestTrue(TEXT("describe: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural, Plan, Error));
     bPassed &= TestTrue(TEXT("copies: the edited child, then the placement's root"),
         Plan.Copies.Num() == 2 && Plan.Copies[0] == F.Child->LogicalName && Plan.Copies[1] == F.Root->LogicalName);
     bPassed &= TestTrue(TEXT("no shared definition is overwritten for this scope"), Plan.OverwrittenDefinition.IsEmpty());
@@ -451,7 +464,7 @@ bool FMHEditContextMakeUniqueForPlacementTest::RunTest(const FString& Parameters
         Target.LogicalName = Copy + TEXT("_u");
     }
     TArray<FString> Warnings;
-    const bool bSaved = Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, Targets, Warnings, Error);
+    const bool bSaved = Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural, Targets, Warnings, Error);
     Subsystem->SetDefinitionCreatorForTests({});
     bPassed &= TestTrue(TEXT("save unique: ") + Error, bSaved);
     bPassed &= TestTrue(TEXT("definitions are created innermost first"),
@@ -513,7 +526,7 @@ bool FMHEditContextMakeUniqueInDefinitionTest::RunTest(const FString& Parameters
     Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(100, 0, 0));
 
     FMHCompositeSaveUniquePlan Plan;
-    bPassed &= TestTrue(TEXT("describe: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::InParentDefinition, Plan, Error));
+    bPassed &= TestTrue(TEXT("describe: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural, Plan, Error));
     bPassed &= TestTrue(TEXT("only the edited child is copied"), Plan.Copies.Num() == 1 && Plan.Copies[0] == F.Child->LogicalName);
     bPassed &= TestEqual(TEXT("the invoking definition is overwritten"), Plan.OverwrittenDefinition, F.Root->LogicalName);
     if (Plan.Copies.Num() != 1) return false;
@@ -534,7 +547,7 @@ bool FMHEditContextMakeUniqueInDefinitionTest::RunTest(const FString& Parameters
     TArray<FMHCompositeAdoptTarget> Targets;
     Targets.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName + TEXT("_u");
     TArray<FString> Warnings;
-    const bool bSaved = Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, Targets, Warnings, Error);
+    const bool bSaved = Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural, Targets, Warnings, Error);
     Subsystem->SetDefinitionCreatorForTests({});
     Subsystem->SetCommitPublisherForTests({});
     bPassed &= TestTrue(TEXT("save unique: ") + Error, bSaved);
@@ -586,7 +599,7 @@ bool FMHEditContextSaveUniqueValidationTest::RunTest(const FString& Parameters)
     FString Error;
     TArray<FString> Warnings;
     FMHCompositeSaveUniquePlan Plan;
-    bool bPassed = TestFalse(TEXT("no session: describe refuses"), Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, Plan, Error));
+    bool bPassed = TestFalse(TEXT("no session: describe refuses"), Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural, Plan, Error));
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
 
     bool bCreatorCalled = false;
@@ -597,22 +610,147 @@ bool FMHEditContextSaveUniqueValidationTest::RunTest(const FString& Parameters)
             return nullptr;
         });
     TArray<FMHCompositeAdoptTarget> TooFew;
-    bPassed &= TestFalse(TEXT("wrong target count refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, TooFew, Warnings, Error));
+    bPassed &= TestFalse(TEXT("wrong target count refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural, TooFew, Warnings, Error));
     TArray<FMHCompositeAdoptTarget> BadName;
     BadName.AddDefaulted_GetRef().LogicalName = TEXT("Not Canonical");
-    bPassed &= TestFalse(TEXT("non-canonical name refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, BadName, Warnings, Error));
+    bPassed &= TestFalse(TEXT("non-canonical name refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural, BadName, Warnings, Error));
     bPassed &= TestTrue(TEXT("the refusal names the token rule"), Error.Contains(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME")));
     TArray<FMHCompositeAdoptTarget> SameAsOriginal;
     SameAsOriginal.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName;
-    bPassed &= TestFalse(TEXT("a name already on the chain is refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, SameAsOriginal, Warnings, Error));
+    bPassed &= TestFalse(TEXT("a name already on the chain is refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural, SameAsOriginal, Warnings, Error));
     TArray<FMHCompositeAdoptTarget> Duplicate;
     Duplicate.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName + TEXT("_same");
     Duplicate.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName + TEXT("_same");
-    bPassed &= TestFalse(TEXT("duplicate target names are refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, Duplicate, Warnings, Error));
+    bPassed &= TestFalse(TEXT("duplicate target names are refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural, Duplicate, Warnings, Error));
     Subsystem->SetDefinitionCreatorForTests({});
     bPassed &= TestFalse(TEXT("nothing was created"), bCreatorCalled);
     bPassed &= TestTrue(TEXT("the session survives refused saves"), Subsystem->IsEditingComposite() && F.A->IsPlacementEditMode());
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
+    return bPassed;
+}
+
+// R6-U2 (docs/16 §2.7): Bake Current Result — the unique copy is the resolved
+// subtree of the edited definition under this placement, as concrete mesh and
+// actor nodes: no random draws, so nothing re-rolls under the new name.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextBakeCurrentResultTest,
+    "Mimir.V5.Composite.EditContext.BakeCurrentResultKeepsResolvedLeaves",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextBakeCurrentResultTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+
+    // A definition that draws: a random mesh (C or A) at z=40 and a group carrying mesh C.
+    FMHCompositeDocument RandomChildDocument;
+    {
+        FMHCompositeNode& Random = RandomChildDocument.Nodes.AddDefaulted_GetRef();
+        Random.Kind = EMHCompositeNodeKind::Random;
+        Random.Name = TEXT("pick");
+        Random.Transform.TranslationCm = FVector(0.0, 0.0, 40.0);
+        FMHCompositeOption& OptionC = Random.Options.AddDefaulted_GetRef();
+        OptionC.Kind = EMHCompositeOptionKind::Mesh;
+        OptionC.Resource = F.MeshC;
+        OptionC.Weight = 1.0f;
+        FMHCompositeOption& OptionA = Random.Options.AddDefaulted_GetRef();
+        OptionA.Kind = EMHCompositeOptionKind::Mesh;
+        OptionA.Resource = F.MeshA;
+        OptionA.Weight = 1.0f;
+        FMHCompositeNode& Group = RandomChildDocument.Nodes.AddDefaulted_GetRef();
+        Group.Kind = EMHCompositeNodeKind::Group;
+        Group.Transform.TranslationCm = FVector(10.0, 0.0, 0.0);
+        FMHCompositeNode& Grouped = Group.Children.AddDefaulted_GetRef();
+        Grouped.Kind = EMHCompositeNodeKind::Mesh;
+        Grouped.Resource = F.MeshC;
+        Grouped.Transform.TranslationCm = FVector(0.0, 0.0, 5.0);
+    }
+    UMHCompositeAsset* RandomChild = F.Recipe.Composite(F.Recipe.Name(TEXT("editctx_child_rnd")), RandomChildDocument, {});
+    FMHCompositeDocument RandomRootDocument;
+    {
+        FMHCompositeNode& Node = RandomRootDocument.Nodes.AddDefaulted_GetRef();
+        Node.Kind = EMHCompositeNodeKind::Mesh;
+        Node.Resource = F.MeshA;
+        FMHCompositeNode& Nested = RandomRootDocument.Nodes.AddDefaulted_GetRef();
+        Nested.Kind = EMHCompositeNodeKind::Composite;
+        Nested.Resource = RandomChild != nullptr ? RandomChild->LogicalName : FString();
+        Nested.Transform.TranslationCm = FVector(300.0, 0.0, 0.0);
+        Nested.Transform.RotationQuat = FQuat(FRotator(0.0, 90.0, 0.0));
+    }
+    UMHCompositeAsset* RandomRoot = RandomChild != nullptr ? F.Recipe.Composite(F.Recipe.Name(TEXT("editctx_root_rnd")), RandomRootDocument, {}) : nullptr;
+    if (!TestNotNull(TEXT("random child"), RandomChild) || !TestNotNull(TEXT("random root"), RandomRoot)) return false;
+    AMHCompositeActor* P = F.Spawn(FTransform(FVector(0.0, -3000.0, 0.0)), RandomRoot);
+    if (!TestNotNull(TEXT("P"), P) || !TestTrue(TEXT("P previews: ") + P->GetLastPlacementError(), P->GetResolvedPlan() != nullptr)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*P);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FMHResolvedCompositeNode InvocationCopy = *InvocationNode;
+    const TArray<FVector> LeavesBefore = AllLeafWorldLocations(*P);
+    bool bPassed = TestEqual(TEXT("P renders mesh A, the random pick and the grouped mesh"), LeavesBefore.Num(), 3);
+
+    FString Error;
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(P, InvocationCopy.NodePath, Error))) return false;
+    // The resolved leaves under the edited definition, before anything changes.
+    const FString Prefix = InvocationCopy.NodePath + TEXT(">") + RandomChild->LogicalName + TEXT(":");
+    TArray<TPair<FString, FMatrix>> ExpectedLeaves;
+    for (const FMHResolvedCompositeLeaf& Leaf : P->GetResolvedPlan()->Leaves)
+    {
+        if (Leaf.Origin.StartsWith(Prefix) && Leaf.Kind == EMHRandomSemanticKind::Mesh) ExpectedLeaves.Emplace(Leaf.Resource, Leaf.WorldMatrix);
+    }
+    bPassed &= TestEqual(TEXT("two resolved leaves under the child"), ExpectedLeaves.Num(), 2);
+    const FMatrix InvocationInverse = InvocationCopy.WorldMatrix.Inverse();
+
+    // Procedural would re-roll the child's draws; the bake keeps them.
+    FMHCompositeSaveUniquePlan ProceduralPlan, BakedPlan;
+    bPassed &= TestTrue(TEXT("describe procedural: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural, ProceduralPlan, Error));
+    bPassed &= TestTrue(TEXT("procedural warns about the child's random draws"),
+        ProceduralPlan.Warnings.Num() == 1 && ProceduralPlan.Warnings[0].Contains(RandomChild->LogicalName));
+    bPassed &= TestTrue(TEXT("describe bake: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::BakeCurrentResult, BakedPlan, Error));
+    bPassed &= TestTrue(TEXT("bake has nothing to re-roll"), BakedPlan.Warnings.IsEmpty());
+    bPassed &= TestTrue(TEXT("bake copies the child and the root"),
+        BakedPlan.Copies.Num() == 2 && BakedPlan.Copies[0] == RandomChild->LogicalName && BakedPlan.Copies[1] == RandomRoot->LogicalName);
+    if (BakedPlan.Copies.Num() != 2) return false;
+
+    Subsystem->SetDefinitionCreatorForTests(
+        [&F](const FMHCompositeDocument& Document, const FMHCompositeAdoptTarget& Target, FString&) -> UMHCompositeAsset*
+        {
+            return F.Recipe.Composite(Target.LogicalName, Document, {});
+        });
+    TArray<FMHCompositeAdoptTarget> Targets;
+    for (const FString& Copy : BakedPlan.Copies) Targets.AddDefaulted_GetRef().LogicalName = Copy + TEXT("_b");
+    TArray<FString> Warnings;
+    const bool bSaved = Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::BakeCurrentResult, Targets, Warnings, Error);
+    Subsystem->SetDefinitionCreatorForTests({});
+    bPassed &= TestTrue(TEXT("bake: ") + Error, bSaved);
+    bPassed &= TestTrue(TEXT("no warnings for a bake under the root boundary"), Warnings.IsEmpty());
+    bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
+
+    const UMHCompositeAsset* BakedChild = F.Recipe.Composites.FindRef(Targets[0].LogicalName);
+    FMHCompositeDocument BakedDocument;
+    if (!TestTrue(TEXT("baked child extracts"), BakedChild != nullptr && MHExtractCompositeV5(*BakedChild, BakedDocument, Error))) return false;
+    bPassed &= TestEqual(TEXT("one concrete node per resolved leaf"), BakedDocument.Nodes.Num(), ExpectedLeaves.Num());
+    for (int32 Index = 0; Index < BakedDocument.Nodes.Num() && Index < ExpectedLeaves.Num(); ++Index)
+    {
+        const FMHCompositeNode& Node = BakedDocument.Nodes[Index];
+        bPassed &= TestTrue(*FString::Printf(TEXT("baked node %d is a plain mesh node"), Index),
+            Node.Kind == EMHCompositeNodeKind::Mesh && Node.Options.IsEmpty() && Node.Children.IsEmpty() && !Node.bHasInlinePlacement && Node.Profile.IsEmpty());
+        bPassed &= TestEqual(*FString::Printf(TEXT("baked node %d keeps the resolved resource"), Index), Node.Resource, ExpectedLeaves[Index].Key);
+        const FVector ExpectedLocal = FTransform(ExpectedLeaves[Index].Value * InvocationInverse).GetLocation();
+        bPassed &= TestTrue(*FString::Printf(TEXT("baked node %d sits where the leaf resolved, relative to the invocation"), Index),
+            Node.Transform.TranslationCm.Equals(ExpectedLocal, 1e-2));
+    }
+    bPassed &= TestTrue(TEXT("this placement now invokes the baked root"), P->GetCompositeAsset() != nullptr && P->GetCompositeAsset()->LogicalName == Targets[1].LogicalName);
+    bPassed &= TestEqual(TEXT("root-level streams stay keyed by the original root"), P->GetCallContext().StreamNamespace, RandomRoot->LogicalName);
+    const TArray<FVector> LeavesAfter = AllLeafWorldLocations(*P);
+    bPassed &= TestEqual(TEXT("the same number of leaves renders"), LeavesAfter.Num(), LeavesBefore.Num());
+    for (const FVector& Before : LeavesBefore)
+    {
+        bPassed &= TestTrue(*FString::Printf(TEXT("leaf at %s renders where it did"), *Before.ToString()),
+            LeavesAfter.ContainsByPredicate([&Before](const FVector& After) { return After.Equals(Before, 1e-2); }));
+    }
+    bPassed &= TestTrue(TEXT("the shared placements are untouched"), F.A->GetCompositeAsset() == F.Root && F.B->GetCompositeAsset() == F.Root);
     return bPassed;
 }
 

@@ -21,5 +21,6 @@ void MHRegisterS6ToolMenus();
 void MHExecuteCommitEditCompositeInteractive();
 
 enum class EMHCompositeUniqueScope : uint8;
-/** R6-U1: saves the active Edit Contents draft as unique definitions for Scope; one name is prompted per copy. */
-void MHExecuteSaveUniqueInteractive(EMHCompositeUniqueScope Scope);
+enum class EMHCompositeUniqueVariant : uint8;
+/** R6-U1/U2: saves the active Edit Contents draft as unique definitions for Scope (procedural or baked); one name is prompted per copy. */
+void MHExecuteSaveUniqueInteractive(EMHCompositeUniqueScope Scope, EMHCompositeUniqueVariant Variant);
