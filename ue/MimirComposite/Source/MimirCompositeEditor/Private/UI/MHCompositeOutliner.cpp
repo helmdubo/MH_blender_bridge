@@ -329,13 +329,23 @@ private:
             Settings != nullptr ? Settings->GetSourceRootPath() : FString(),
             Navigation);
         FMenuBuilder Menu(true, nullptr);
-        if (Item->IsCompositeReference() && !Item->NodePath.IsEmpty() && CurrentActor.IsValid())
+        const UMHCompositeLevelSubsystem* EditSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+        const bool bSessionActive = EditSubsystem != nullptr && EditSubsystem->IsEditingComposite();
+        if (bSessionActive)
+        {
+            Menu.AddMenuEntry(
+                LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
+                LOCTEXT("CancelEditContentsTip", "Close the active edit session and discard its draft. The source is not changed."),
+                FSlateIcon(),
+                FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::CancelEditContents)));
+        }
+        else if (Item->IsCompositeReference() && !Item->NodePath.IsEmpty() && CurrentActor.IsValid())
         {
             // R6-D0 (docs/16 §2.7): open the shared child definition as a draft
             // under this placement; the source stays untouched until published.
             Menu.AddMenuEntry(
                 LOCTEXT("EditContents", "Edit Contents..."),
-                LOCTEXT("EditContentsTip", "Open the nested composite definition as a draft in the context of this placement. Saving publishes the shared definition for every placement."),
+                LOCTEXT("EditContentsTip", "Open the nested composite definition as a draft in the context of this placement. Node editing arrives with the next update; Cancel closes the session."),
                 FSlateIcon(),
                 FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::EditContents, Item->NodePath)));
         }
@@ -394,6 +404,19 @@ private:
         if (Subsystem == nullptr || Root == nullptr) return;
         FString Error;
         if (!Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error))
+        {
+            FMessageLog("Mimir").Error(FText::FromString(Error));
+            FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
+        }
+        RefreshModel();
+    }
+
+    void CancelEditContents()
+    {
+        UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+        if (Subsystem == nullptr) return;
+        FString Error;
+        if (!Subsystem->CancelEditComposite(Error) && !Error.IsEmpty())
         {
             FMessageLog("Mimir").Error(FText::FromString(Error));
             FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
@@ -698,7 +721,7 @@ private:
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)"),
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Draft only: node editing arrives with the next update; right-click > Cancel Edit Contents to leave"),
                         *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
