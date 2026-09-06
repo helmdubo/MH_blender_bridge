@@ -100,4 +100,5 @@ private:
     void UpdateEngineShowFlags(bool bEditing);
     UMHCompositeEditSession* GetSession() const;
     bool ConfirmDiscard() const;
+    EAppReturnType::Type ConfirmSwitch(const FString& TargetInvocationPath) const;
 };

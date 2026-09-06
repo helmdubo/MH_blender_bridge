@@ -58,7 +58,23 @@ bool UMHCompositeEditProjection::Open(UMHCompositeEditSession& InSession, FStrin
     Params.bCreateActorPackage = false;
     Params.ObjectFlags = RF_Transient;
     Params.bNoFail = true;
-    AMHCompositeEditProjectionActor* Actor = World->SpawnActor<AMHCompositeEditProjectionActor>(Root->GetActorLocation(), Root->GetActorRotation(), Params);
+    // CE-3d: the actor's pivot is the occurrence's transform (the gizmo of
+    // the framed occurrence sits there, not at the placement's origin);
+    // components are absolute, so the pivot carries no geometry.
+    FTransform Pivot = Root->GetActorTransform();
+    if (InSession.IsNested())
+    {
+        if (const UE::MimirComposite::FMHResolvedCompositePlan* RootPlan = Root->GetResolvedPlan())
+        {
+            for (const UE::MimirComposite::FMHResolvedCompositeNode& Node : RootPlan->Nodes)
+            {
+                if (Node.NodePath != InSession.GetInvocationPath()) continue;
+                Pivot = FTransform(Node.WorldMatrix * Root->GetActorTransform().ToMatrixWithScale());
+                break;
+            }
+        }
+    }
+    AMHCompositeEditProjectionActor* Actor = World->SpawnActor<AMHCompositeEditProjectionActor>(Pivot.GetLocation(), Pivot.Rotator(), Params);
     if (Actor == nullptr)
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the edit projection actor could not be spawned");

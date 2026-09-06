@@ -385,17 +385,9 @@ private:
             RevealItem(Item);
             if (TreeView.IsValid()) TreeView->SetItemExpansion(Item, true);
         }
-        // CE-3b: the CE backend grabs the draft's first node.
-        if (UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive())
-        {
-            if (const UMHCompositeEditSession* Session = SessionOf(Root))
-            {
-                const UMHCompositeEditProjection* Projection = Session->GetProjection();
-                const UMHCompositeEditDocument* Draft = Session->GetDraft();
-                if (Projection != nullptr && Draft != nullptr && Draft->Num() > 0) Mode->SelectComponent(Projection->FindComponentForNodeId(Draft->GetNodeId(0)));
-                return;
-            }
-        }
+        // CE-3d: under the CE backend the mode framed the occurrence on enter
+        // (the projection actor is the selection); a row then grabs its node.
+        if (UMHCompositeEditorMode::IsActive() && SessionOf(Root) != nullptr) return;
         const TArray<TObjectPtr<USceneComponent>>& Handles = Root->GetEditScopeHandles();
         if (!Handles.IsEmpty() && IsValid(Handles[0])) SelectHandle(Handles[0]);
     }
@@ -429,6 +421,17 @@ private:
                     LOCTEXT("SaveUniqueCopyTip", "Save the edited definition as a new unique composite: choose whether it takes effect in this definition or for this placement only, and whether to bake the current result."),
                     FSlateIcon(),
                     FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::SaveAsUniqueCopy)));
+            }
+            // CE-3d: another definition of this placement from the open session
+            // (Save / Discard / stay first when there are changes).
+            if (UMHCompositeEditorMode::IsActive() && Item->IsCompositeReference() && !Item->NodePath.IsEmpty() &&
+                Item->NodePath != EditSubsystem->GetEditContext().InvocationPath && EditSubsystem->IsEditingComposite(CurrentActor.Get()))
+            {
+                Menu.AddMenuEntry(
+                    LOCTEXT("SwitchEditContents", "Edit Contents..."),
+                    LOCTEXT("SwitchEditContentsTip", "Leave the definition being edited (Save, Discard or stay) and edit this one in the context of this placement."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::SwitchEditContents, Item->NodePath)));
             }
             Menu.AddMenuEntry(
                 LOCTEXT("CancelEditContents", "Cancel Edit Contents (Esc)"),
@@ -508,6 +511,16 @@ private:
         }
         RefreshModel();
         if (bStarted) FocusEditScope(InvocationPath);
+    }
+
+    /** CE-3d: switch the open session to another definition of this placement. */
+    void SwitchEditContents(const FString InvocationPath)
+    {
+        UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+        if (Mode == nullptr) return;
+        const bool bSwitched = Mode->RequestSwitch(InvocationPath);
+        RefreshModel();
+        if (bSwitched) FocusEditScope(InvocationPath);
     }
 
     void CancelEditContents()

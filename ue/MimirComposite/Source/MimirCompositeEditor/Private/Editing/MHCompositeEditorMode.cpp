@@ -15,10 +15,12 @@
 #include "Framework/Commands/UICommandList.h"
 #include "LevelEditorActions.h"
 #include "LevelEditorViewport.h"
+#include "Logging/MessageLog.h"
 #include "Misc/MessageDialog.h"
 #include "Selection.h"
 #include "Styling/AppStyle.h"
 #include "Styling/SlateIconFinder.h"
+#include "TimerManager.h"
 #include "Toolkits/BaseToolkit.h"
 #include "Toolkits/IToolkitHost.h"
 #include "UI/MHSourceToolMenus.h"
@@ -65,23 +67,59 @@ FEditorModeTools* LevelModeTools()
     return GEditor != nullptr ? &GLevelEditorModeTools() : nullptr;
 }
 
-/** "root > child > grandchild" from the session's invocation chain. */
+/** The current scope's crumb: "<edited>[ *]". */
 FText Breadcrumb()
 {
     const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
     const FMHCompositeEditContext Context = Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext();
-    TArray<FString> Trail;
-    TArray<FString> Segments;
-    Context.InvocationPath.ParseIntoArray(Segments, TEXT(">"), true);
-    for (const FString& Segment : Segments)
-    {
-        FString Definition, Selector;
-        Trail.Add(Segment.Split(TEXT(":"), &Definition, &Selector) ? Definition : Segment);
-    }
-    if (!Context.EditedLogicalName.IsEmpty()) Trail.Add(Context.EditedLogicalName);
     const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
     const TCHAR* Dirty = Session != nullptr && Session->IsDirty() ? TEXT(" *") : TEXT("");
-    return FText::FromString(FString::Printf(TEXT("Composite Edit  |  %s%s"), *FString::Join(Trail, TEXT(" > ")), Dirty));
+    return FText::FromString(Context.EditedLogicalName + Dirty);
+}
+
+/**
+ * CE-3d: `Composite Edit | root > child > current*` — every crumb but the
+ * last is a button that switches to that definition (deferred: the switch
+ * closes this toolkit). The chain is fixed for a session's lifetime: a
+ * switch re-enters the mode and rebuilds the overlay.
+ */
+TSharedRef<SWidget> BuildCrumbs(TWeakObjectPtr<UMHCompositeEditorMode> Mode)
+{
+    const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    const TArray<TPair<FString, FString>> Targets = UMHCompositeEditorMode::BreadcrumbTargets(Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext());
+    TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
+    Box->AddSlot().AutoWidth().VAlign(VAlign_Center)
+    [
+        SNew(STextBlock).Text(LOCTEXT("OverlayTitle", "Composite Edit  |  "))
+    ];
+    for (int32 Index = 0; Index + 1 < Targets.Num(); ++Index)
+    {
+        const FString Path = Targets[Index].Value;
+        Box->AddSlot().AutoWidth().VAlign(VAlign_Center)
+        [
+            SNew(SButton)
+            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .ContentPadding(FMargin(2.0f, 0.0f))
+            .ToolTipText(LOCTEXT("CrumbTip", "Edit this definition (Save, Discard or stay first when there are changes)."))
+            .OnClicked_Lambda([Mode, Path]()
+            {
+                if (GEditor != nullptr) GEditor->GetTimerManager()->SetTimerForNextTick([Mode, Path]() { if (Mode.IsValid()) Mode->RequestSwitch(Path); });
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString(Targets[Index].Key))
+            ]
+        ];
+        Box->AddSlot().AutoWidth().VAlign(VAlign_Center)
+        [
+            SNew(STextBlock).Text(LOCTEXT("CrumbSeparator", " > "))
+        ];
+    }
+    Box->AddSlot().AutoWidth().VAlign(VAlign_Center)
+    [
+        SNew(STextBlock).Text_Static(&Breadcrumb)
+    ];
+    return Box;
 }
 
 /** The viewport overlay: `<icon> <breadcrumb> [Save] [Cancel]`, the Level Instance Edit shape. */
@@ -111,7 +149,7 @@ public:
                 ]
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(FMargin(8.0f, 0.0f, 0.0f, 0.0f))
                 [
-                    SNew(STextBlock).Text_Static(&Breadcrumb)
+                    BuildCrumbs(Mode)
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(FMargin(8.0f, 0.0f, 0.0f, 0.0f))
                 [
@@ -166,7 +204,11 @@ void UMHCompositeEditorMode::DeactivateForSession()
     {
         if (!Tools->IsModeActive(EM_MHCompositeEditModeId)) return;
         TGuardValue<bool> Guard(GDeactivatingForSession, true);
-        Tools->DeactivateMode(EM_MHCompositeEditModeId);
+        // DeactivateMode defers Exit to the manager's tick and a session
+        // re-opened in the same tick (CE-3d switch) would resume the pending
+        // mode without Enter — no framing, no overlay. DestroyMode exits now;
+        // the next session gets a fresh mode object.
+        Tools->DestroyMode(EM_MHCompositeEditModeId);
     }
 }
 
@@ -206,14 +248,98 @@ void UMHCompositeEditorMode::SetSwitchConfirmForTests(TFunction<EAppReturnType::
 
 bool UMHCompositeEditorMode::RequestSwitch(const FString& InvocationPath)
 {
-    static_cast<void>(InvocationPath);
-    return false;
+    if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetActiveModalWindow().IsValid()) return false;
+    UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    UMHCompositeEditSession* Session = GetSession();
+    AMHCompositeActor* Root = Session != nullptr ? Session->GetRootPlacement() : nullptr;
+    if (Subsystem == nullptr || Session == nullptr || Root == nullptr) return false;
+    if (Session->GetInvocationPath() == InvocationPath) return true;
+    // One writable session (spec §5.2, LI EditLevelInstanceInternal): the
+    // current one is resolved before the target opens.
+    if (Session->IsDirty())
+    {
+        switch (ConfirmSwitch(InvocationPath))
+        {
+        case EAppReturnType::Yes:
+            // The usual overwrite confirmation; a declined or failed publish keeps the session.
+            MHExecuteCommitEditCompositeInteractive();
+            if (Subsystem->IsEditingComposite()) return false;
+            break;
+        case EAppReturnType::No:
+        {
+            FString CancelError;
+            Subsystem->CancelEditComposite(CancelError);
+            break;
+        }
+        default:
+            return false;
+        }
+    }
+    else
+    {
+        FString CancelError;
+        Subsystem->CancelEditComposite(CancelError);
+    }
+    // This object may be recycled by the mode manager from here on: no members.
+    FString Error;
+    const bool bOpened = InvocationPath.IsEmpty()
+        ? Subsystem->BeginEditComposite(Root, Error)
+        : Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error);
+    if (!bOpened && !Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
+    return bOpened;
 }
 
 TArray<TPair<FString, FString>> UMHCompositeEditorMode::BreadcrumbTargets(const FMHCompositeEditContext& Context)
 {
-    static_cast<void>(Context);
-    return {};
+    TArray<TPair<FString, FString>> Targets;
+    if (Context.EditedLogicalName.IsEmpty()) return Targets;
+    // "root:nodes[i]>child:nodes[j]": segment k names the definition that
+    // contains node k; the definition it invokes is named by segment k+1, or
+    // is the edited one for the last segment.
+    TArray<FString> Segments;
+    Context.InvocationPath.ParseIntoArray(Segments, TEXT(">"), true);
+    auto DefinitionOf = [](const FString& Segment)
+    {
+        FString Definition, Selector;
+        return Segment.Split(TEXT(":"), &Definition, &Selector) ? Definition : Segment;
+    };
+    const AMHCompositeActor* Root = Context.RootPlacement.Get();
+    const UMHCompositeAsset* RootAsset = Root != nullptr ? Root->GetCompositeAsset() : nullptr;
+    Targets.Emplace(Segments.Num() > 0 ? DefinitionOf(Segments[0]) : RootAsset != nullptr ? RootAsset->LogicalName : Context.EditedLogicalName, FString());
+    FString Path;
+    for (int32 Index = 0; Index < Segments.Num(); ++Index)
+    {
+        Path = Index == 0 ? Segments[0] : Path + TEXT(">") + Segments[Index];
+        Targets.Emplace(Index + 1 < Segments.Num() ? DefinitionOf(Segments[Index + 1]) : Context.EditedLogicalName, Path);
+    }
+    return Targets;
+}
+
+EAppReturnType::Type UMHCompositeEditorMode::ConfirmSwitch(const FString& TargetInvocationPath) const
+{
+#if WITH_DEV_AUTOMATION_TESTS
+    if (GSwitchConfirmForTests) return GSwitchConfirmForTests();
+#endif
+    const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    const FMHCompositeEditContext Context = Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext();
+    FString Target;
+    if (const AMHCompositeActor* Root = Context.RootPlacement.Get())
+    {
+        if (TargetInvocationPath.IsEmpty())
+        {
+            Target = Root->GetCompositeAsset() != nullptr ? Root->GetCompositeAsset()->LogicalName : FString();
+        }
+        else if (const UE::MimirComposite::FMHResolvedCompositePlan* Plan = Root->GetResolvedPlan())
+        {
+            for (const UE::MimirComposite::FMHResolvedCompositeNode& Node : Plan->Nodes)
+            {
+                if (Node.NodePath == TargetInvocationPath) { Target = Node.Resource; break; }
+            }
+        }
+    }
+    return FMessageDialog::Open(EAppMsgType::YesNoCancel,
+        FText::Format(LOCTEXT("SwitchPrompt", "Save changes to {0} before editing {1}?"), FText::FromString(Context.EditedLogicalName), FText::FromString(Target)),
+        LOCTEXT("SwitchTitle", "Edit Contents"));
 }
 
 UMHCompositeEditSession* UMHCompositeEditorMode::GetSession() const
@@ -319,6 +445,17 @@ void UMHCompositeEditorMode::Enter()
     UEdMode::Enter();
     UpdateEngineShowFlags(true);
     FEditorDelegates::PreBeginPIE.AddUObject(this, &UMHCompositeEditorMode::OnPreBeginPIE);
+    // CE-3d: entering frames the occurrence — the projection actor is the
+    // exclusive selection (its outline covers every projected node), no
+    // component yet; a row or a click then grabs a node.
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
+    if (GEditor != nullptr && ProjectionActor != nullptr)
+    {
+        GEditor->SelectNone(false, true, false);
+        GEditor->SelectActor(ProjectionActor, true, true, true);
+    }
 }
 
 void UMHCompositeEditorMode::Exit()

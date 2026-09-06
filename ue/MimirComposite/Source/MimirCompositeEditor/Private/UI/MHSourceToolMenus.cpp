@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Editing/MHCompositeEditorMode.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Diagnostics/MHSourceOperations.h"
 #include "DesktopPlatformModule.h"
@@ -384,6 +385,16 @@ void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnap
     AMHCompositeActor* Actor = ActorSnapshot.Get();
     FString Error;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    // CE-3d: from an open CE session on this placement, Edit switches to the
+    // root definition (Save / Discard / stay first when there are changes).
+    if (Actor != nullptr && Subsystem != nullptr && Subsystem->IsEditingComposite(Actor))
+    {
+        if (UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive())
+        {
+            Mode->RequestSwitch(FString());
+            return;
+        }
+    }
     if (Actor == nullptr || Subsystem == nullptr || !Subsystem->BeginEditComposite(Actor, Error))
     {
         if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select exactly one MH Composite actor");
