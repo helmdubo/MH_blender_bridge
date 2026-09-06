@@ -76,6 +76,15 @@ public:
     bool RequestSwitch(const FString& InvocationPath);
     /** CE-3d: the breadcrumb — label and the invocation path each crumb opens (root first, the current scope last); empty without a session. */
     static TArray<TPair<FString, FString>> BreadcrumbTargets(const FMHCompositeEditContext& Context);
+    /**
+     * CE-4a: a gizmo gesture on a projection node is one transaction — Start
+     * opens it, every delta writes the node's local transform into the draft
+     * (the projection follows), End closes it (an empty gesture is cancelled).
+     * The framed occurrence itself (actor-only selection) swallows gestures.
+     */
+    virtual bool StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
+    virtual bool InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale) override;
+    virtual bool EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
 
     virtual void Enter() override;
     virtual void Exit() override;
@@ -101,4 +110,11 @@ private:
     UMHCompositeEditSession* GetSession() const;
     bool ConfirmDiscard() const;
     EAppReturnType::Type ConfirmSwitch(const FString& TargetInvocationPath) const;
+    /** The selected component of the session's projection, if the selection is exactly that. */
+    USceneComponent* SelectedProjectionComponent() const;
+
+    /** CE-4a gesture state. */
+    bool bTracking = false;
+    int32 GestureTransaction = INDEX_NONE;
+    bool bGestureChanged = false;
 };

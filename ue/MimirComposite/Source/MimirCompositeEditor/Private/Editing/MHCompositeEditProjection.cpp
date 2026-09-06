@@ -331,6 +331,28 @@ void UMHCompositeEditProjection::PushEditingTint()
     }
 }
 
+bool UMHCompositeEditProjection::GetParentWorldForComponent(const USceneComponent* Component, FTransform& OutParentWorld) const
+{
+    const UMHCompositeEditSession* Owner = Session.Get();
+    const AMHCompositeActor* Root = Owner != nullptr ? Owner->GetRootPlacement() : nullptr;
+    if (Root == nullptr || !Plan.IsValid()) return false;
+    // The session node of a leaf picked by a random node is the random node.
+    FString NodePath = GetOriginForComponent(Component);
+    if (NodePath.IsEmpty()) return false;
+    int32 Options = INDEX_NONE;
+    if (NodePath.FindLastChar(TEXT('/'), Options) && NodePath.Mid(Options + 1).StartsWith(TEXT("options["))) NodePath = NodePath.Left(Options);
+    const FMatrix Basis = Root->GetActorTransform().ToMatrixWithScale();
+    for (const UE::MimirComposite::FMHResolvedCompositeNode& Node : Plan->Nodes)
+    {
+        if (Node.NodePath != NodePath) continue;
+        OutParentWorld = Plan->Nodes.IsValidIndex(Node.ParentResolvedNodeIndex)
+            ? FTransform(Plan->Nodes[Node.ParentResolvedNodeIndex].WorldMatrix * Basis)
+            : FTransform(Basis);
+        return true;
+    }
+    return false;
+}
+
 USceneComponent* UMHCompositeEditProjection::FindComponentForOrigin(const FString& Origin) const
 {
     USceneComponent* Component = ComponentsByOrigin.FindRef(Origin).Get();

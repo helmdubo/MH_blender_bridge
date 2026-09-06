@@ -64,6 +64,8 @@ public:
     USceneComponent* FindComponentForNodeId(const FGuid& NodeId) const;
     /** CE-3b: the component at a plan origin (a Composite Outliner row's node path); null when the origin is not projected. */
     USceneComponent* FindComponentForOrigin(const FString& Origin) const;
+    /** CE-4a: world transform of the session node's parent (the occurrence for top-level nodes) — the frame a local transform is authored in. */
+    bool GetParentWorldForComponent(const USceneComponent* Component, FTransform& OutParentWorld) const;
     /**
      * CE-3b: marks the projection's primitives as "being edited" for the
      * renderer (`PushLevelInstanceEditingStateToProxy`), so the mode's

@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Editing/MHCompositeEditDocument.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editor.h"
@@ -433,6 +434,83 @@ bool UMHCompositeEditorMode::HandleHitProxy(HHitProxy* HitProxy)
     return false;
 }
 
+USceneComponent* UMHCompositeEditorMode::SelectedProjectionComponent() const
+{
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    const AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
+    if (GEditor == nullptr || ProjectionActor == nullptr) return nullptr;
+    USceneComponent* Found = nullptr;
+    for (FSelectionIterator It(*GEditor->GetSelectedComponents()); It; ++It)
+    {
+        USceneComponent* Component = Cast<USceneComponent>(*It);
+        if (Component == nullptr || Component->GetOwner() != ProjectionActor) continue;
+        if (Found != nullptr) return nullptr;
+        Found = Component;
+    }
+    return Found;
+}
+
+bool UMHCompositeEditorMode::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
+{
+    static_cast<void>(InViewportClient);
+    static_cast<void>(InViewport);
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    const AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
+    if (GEditor == nullptr || ProjectionActor == nullptr || !ProjectionActor->IsSelected()) return false;
+    bTracking = true;
+    bGestureChanged = false;
+    // A node gesture transacts; the frame (actor-only selection) only swallows.
+    if (SelectedProjectionComponent() != nullptr)
+    {
+        GestureTransaction = GEditor->BeginTransaction(LOCTEXT("MoveNodeTransaction", "Move Composite Node"));
+    }
+    return true;
+}
+
+bool UMHCompositeEditorMode::InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale)
+{
+    static_cast<void>(InViewportClient);
+    static_cast<void>(InViewport);
+    if (!bTracking) return false;
+    UMHCompositeEditSession* Session = GetSession();
+    UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    USceneComponent* Component = SelectedProjectionComponent();
+    if (Projection == nullptr || Component == nullptr) return true;
+    if (InDrag.IsNearlyZero() && InRot.IsNearlyZero() && InScale.IsNearlyZero()) return true;
+    const FGuid NodeId = Projection->GetNodeIdForComponent(Component);
+    FTransform ParentWorld;
+    if (!NodeId.IsValid() || !Projection->GetParentWorldForComponent(Component, ParentWorld)) return true;
+    // The engine's delta semantics for a selected component: translation
+    // added in world space, rotation about the gizmo pivot (the component),
+    // scale added componentwise.
+    FTransform World = Component->GetComponentTransform();
+    World.SetLocation(World.GetLocation() + InDrag);
+    if (!InRot.IsNearlyZero()) World.SetRotation((InRot.Quaternion() * World.GetRotation()).GetNormalized());
+    if (!InScale.IsNearlyZero()) World.SetScale3D(World.GetScale3D() + InScale);
+    FString Error;
+    if (Session->SetNodeTransform(NodeId, World.GetRelativeTransform(ParentWorld), Error)) bGestureChanged = true;
+    return true;
+}
+
+bool UMHCompositeEditorMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
+{
+    static_cast<void>(InViewportClient);
+    static_cast<void>(InViewport);
+    if (!bTracking) return false;
+    bTracking = false;
+    if (GestureTransaction != INDEX_NONE && GEditor != nullptr)
+    {
+        // A click without a drag leaves no undo step.
+        if (bGestureChanged) GEditor->EndTransaction();
+        else GEditor->CancelTransaction(GestureTransaction);
+    }
+    GestureTransaction = INDEX_NONE;
+    bGestureChanged = false;
+    return true;
+}
+
 bool UMHCompositeEditorMode::HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
 {
     static_cast<void>(InViewportClient);
@@ -443,6 +521,10 @@ bool UMHCompositeEditorMode::HandleClick(FEditorViewportClient* InViewportClient
 void UMHCompositeEditorMode::Enter()
 {
     UEdMode::Enter();
+    // BPP policy (contract §2 "Undo"): the history restarts at the session
+    // boundary — inside, every gesture is one step; nothing before the entry
+    // can be undone into the session.
+    if (GEditor != nullptr) GEditor->ResetTransaction(LOCTEXT("EnterResetTransaction", "Composite Edit Contents started"));
     UpdateEngineShowFlags(true);
     FEditorDelegates::PreBeginPIE.AddUObject(this, &UMHCompositeEditorMode::OnPreBeginPIE);
     // CE-3d: entering frames the occurrence — the projection actor is the
@@ -462,6 +544,11 @@ void UMHCompositeEditorMode::Exit()
 {
     FEditorDelegates::PreBeginPIE.RemoveAll(this);
     UpdateEngineShowFlags(false);
+    if (GestureTransaction != INDEX_NONE && GEditor != nullptr) GEditor->CancelTransaction(GestureTransaction);
+    GestureTransaction = INDEX_NONE;
+    bTracking = false;
+    // The session's steps cannot outlive it (the draft is gone).
+    if (GEditor != nullptr) GEditor->ResetTransaction(LOCTEXT("ExitResetTransaction", "Composite Edit Contents ended"));
     UEdMode::Exit();
     // Left by something other than the session's own end (another mode, a
     // level change): the draft cannot stay open without its mode.

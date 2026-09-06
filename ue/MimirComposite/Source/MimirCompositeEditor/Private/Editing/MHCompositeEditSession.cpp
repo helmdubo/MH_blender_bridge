@@ -34,6 +34,15 @@ void UMHCompositeEditSession::Open(
     }
     // RF_Transactional: every Modify() of the draft joins the open transaction.
     Draft = NewObject<UMHCompositeEditDocument>(this, NAME_None, RF_Transactional);
+    // CE-4a: Undo/Redo restore the draft; the projection is derived and follows.
+    Draft->OnRestored.BindWeakLambda(this, [this]()
+    {
+        if (Projection != nullptr && Projection->IsOpen())
+        {
+            FString RefreshError;
+            Projection->Refresh(RefreshError);
+        }
+    });
     Draft->Load(Original, InEditedAsset != nullptr ? TConstArrayView<FMHPlacementProfile>(InEditedAsset->InlinedPlacementProfiles) : TConstArrayView<FMHPlacementProfile>());
     State = EMHCompositeEditSessionState::EditingClean;
     DirtySerial = 0;
