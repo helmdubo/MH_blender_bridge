@@ -1406,16 +1406,32 @@ bool MHApplyCompositeV5(
     return MHApplyCompositeV5(Asset, Document, TConstArrayView<FMHPlacementProfile>(), OutError);
 }
 
+void MHFlattenCompositeDocument(
+    const FMHCompositeDocument& Document,
+    TArray<FMHCompositeAssetNode>& OutNodes)
+{
+    OutNodes.Reset();
+    FlattenNodes(Document.Nodes, INDEX_NONE, OutNodes);
+}
+
 bool MHExtractCompositeV5(
     const UMHCompositeAsset& Asset,
     FMHCompositeDocument& OutDocument,
     FString& OutError)
 {
+    return MHUnflattenCompositeNodes(Asset.Nodes, OutDocument, OutError);
+}
+
+bool MHUnflattenCompositeNodes(
+    const TConstArrayView<FMHCompositeAssetNode> Nodes,
+    FMHCompositeDocument& OutDocument,
+    FString& OutError)
+{
     OutDocument = FMHCompositeDocument();
     OutError.Reset();
-    for (int32 Index = 0; Index < Asset.Nodes.Num(); ++Index)
+    for (int32 Index = 0; Index < Nodes.Num(); ++Index)
     {
-        const FMHCompositeAssetNode& Stored = Asset.Nodes[Index];
+        const FMHCompositeAssetNode& Stored = Nodes[Index];
         if (Stored.ParentIndex >= Index || Stored.ParentIndex < INDEX_NONE)
         {
             return CompositeGrammarError(OutError, TEXT("asset node parent index is invalid"));

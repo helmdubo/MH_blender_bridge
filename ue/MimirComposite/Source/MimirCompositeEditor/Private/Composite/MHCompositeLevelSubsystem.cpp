@@ -12,6 +12,7 @@
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Editing/MHCompositeEditSession.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -912,7 +913,15 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
     {
         EditingTopLevelComponents.Add(Component);
     }
+    OpenEditSession(Actor, Asset, FString());
     return true;
+}
+
+void UMHCompositeLevelSubsystem::OpenEditSession(AMHCompositeActor* Root, UMHCompositeAsset* Asset, const FString& InvocationNodePath)
+{
+    // CE-1: one owner of the session state; the subsystem keeps the strong reference.
+    EditSession = NewObject<UMHCompositeEditSession>(this);
+    EditSession->Open(Root, Asset, InvocationNodePath, EditingDocument, EditSessionEpoch);
 }
 
 bool UMHCompositeLevelSubsystem::CommitEditComposite(
@@ -1546,7 +1555,23 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
         Root->SetEditScope(InvocationNodePath);
         Root->SetPlacementEditMode(true);
     }
+    // InvocationNodePath may alias a node of the plan SetPlacementEditMode just
+    // replaced; the stored copy is the safe one from here on.
+    OpenEditSession(Root, Child, EditingInvocationPath);
     return true;
+}
+
+const FMHCompositeDocument& UMHCompositeLevelSubsystem::GetEditingDraft() const
+{
+    // CE-1: the session's draft is the one current document; the field is
+    // only its typed view (the legacy actor edits are mirrored in first).
+    if (EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr)
+    {
+        FString Error;
+        EditSession->SyncDraftFromLegacyEdit(Error);
+        EditSession->GetDraft()->Extract(EditingDocument, Error);
+    }
+    return EditingDocument;
 }
 
 FMHCompositeEditContext UMHCompositeLevelSubsystem::GetEditContext() const
@@ -1579,6 +1604,11 @@ void UMHCompositeLevelSubsystem::ResetEditSession()
 {
     // The session is over: whatever was captured for it is stale from here on.
     ++EditSessionEpoch;
+    if (EditSession != nullptr)
+    {
+        EditSession->Close();
+        EditSession = nullptr;
+    }
     EditingActor.Reset();
     EditingAsset.Reset();
     EditingInvocationPath.Reset();
