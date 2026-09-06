@@ -125,7 +125,9 @@ bool FMHEditProjectionOccurrenceTest::RunTest(const FString& Parameters)
 
 // CE-2b: every projection component resolves to the session node it stands
 // for — a leaf to its node, a leaf picked by a random node to that random
-// node, a group handle to the group.
+// node, a group handle to the group. The random node always has a handle;
+// its picked leaf exists only when the pick (fixture names carry a per-run
+// suffix, so the pick varies between runs) lands on the mesh option.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditProjectionMappingTest,
     "Mimir.V5.Composite.EditMode.Projection.ComponentsMapToDraftNodes",
@@ -157,11 +159,13 @@ bool FMHEditProjectionMappingTest::RunTest(const FString& Parameters)
     bool bPassed = TestTrue(TEXT("plain leaf is a mesh component"), Plain != nullptr && Plain->IsA<UStaticMeshComponent>());
     bPassed &= TestTrue(TEXT("group is a handle"), Group != nullptr && !Group->IsA<UStaticMeshComponent>());
     bPassed &= TestTrue(TEXT("grouped leaf is a mesh component"), Grouped != nullptr && Grouped->IsA<UStaticMeshComponent>());
-    bPassed &= TestTrue(TEXT("the random node is represented once: its handle or its picked leaf"), (Random != nullptr) != (Picked != nullptr));
+    bPassed &= TestTrue(TEXT("the random node has a handle"), Random != nullptr && !Random->IsA<UStaticMeshComponent>());
+    bPassed &= TestTrue(TEXT("a picked mesh option is a mesh component"), Picked == nullptr || Picked->IsA<UStaticMeshComponent>());
     bPassed &= TestTrue(TEXT("plain -> node 0"), Projection->GetNodeIdForComponent(Plain) == Draft->GetNodeId(0));
     bPassed &= TestTrue(TEXT("group -> node 1"), Projection->GetNodeIdForComponent(Group) == Draft->GetNodeId(1));
     bPassed &= TestTrue(TEXT("grouped -> node 2"), Projection->GetNodeIdForComponent(Grouped) == Draft->GetNodeId(2));
-    bPassed &= TestTrue(TEXT("random (handle or pick) -> node 3"), Projection->GetNodeIdForComponent(Random != nullptr ? Random : Picked) == Draft->GetNodeId(3));
+    bPassed &= TestTrue(TEXT("random handle -> node 3"), Projection->GetNodeIdForComponent(Random) == Draft->GetNodeId(3));
+    bPassed &= TestTrue(TEXT("picked leaf -> node 3"), Picked == nullptr || Projection->GetNodeIdForComponent(Picked) == Draft->GetNodeId(3));
     bPassed &= TestTrue(TEXT("node 0 -> plain"), Projection->FindComponentForNodeId(Draft->GetNodeId(0)) == Plain);
     bPassed &= TestTrue(TEXT("a foreign component maps to nothing"), !Projection->GetNodeIdForComponent(F.A->GetRootComponent()).IsValid());
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
