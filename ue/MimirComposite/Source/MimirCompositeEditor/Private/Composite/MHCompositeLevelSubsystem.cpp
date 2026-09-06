@@ -1030,13 +1030,20 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
         EditingDocument = FMHCompositeDocument();
         return false;
     }
-    // Draft only: the root keeps its preview, no handles yet (R6-D1), the
-    // source is untouched until R6-D2 publishes.
+    // The root enters a Placement Edit session scoped to the invocation: the
+    // child definition's nodes get handles under the invocation's effective
+    // world (R6-D1); the source is untouched until R6-D2 publishes.
     EditingActor = Root;
     EditingAsset = Child;
     EditingInvocationPath = InvocationNodePath;
     EditingParentWorld = Invocation->WorldMatrix * Root->GetActorTransform().ToMatrixWithScale();
     EditingTopLevelComponents.Reset();
+    {
+        const FScopedTransaction Transaction(INVTEXT("Edit MH Composite Contents"));
+        Root->Modify();
+        Root->SetEditScope(InvocationNodePath);
+        Root->SetPlacementEditMode(true);
+    }
     return true;
 }
 
