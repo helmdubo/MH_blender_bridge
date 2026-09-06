@@ -119,6 +119,52 @@ bool UMHCompositeEditDocument::SetNodeTransform(const FGuid& Id, const FTransfor
     return true;
 }
 
+FGuid UMHCompositeEditDocument::AddNode(const FGuid& ParentId, const EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError)
+{
+    static_cast<void>(ParentId); static_cast<void>(Kind); static_cast<void>(Resource); static_cast<void>(Name); static_cast<void>(LocalTransform);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return FGuid();
+}
+
+bool UMHCompositeEditDocument::DeleteNode(const FGuid& Id, FString& OutError)
+{
+    static_cast<void>(Id);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
+FGuid UMHCompositeEditDocument::DuplicateNode(const FGuid& Id, FString& OutError)
+{
+    static_cast<void>(Id);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return FGuid();
+}
+
+bool UMHCompositeEditDocument::ReparentNode(const FGuid& Id, const FGuid& NewParentId, const int32 SiblingIndex, FString& OutError)
+{
+    static_cast<void>(Id); static_cast<void>(NewParentId); static_cast<void>(SiblingIndex);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
+FGuid UMHCompositeEditDocument::GetParentId(const FGuid& Id) const
+{
+    const int32 Index = FindNodeIndex(Id);
+    return Index != INDEX_NONE ? GetNodeId(Nodes[Index].ParentIndex) : FGuid();
+}
+
+TArray<FGuid> UMHCompositeEditDocument::GetChildIds(const FGuid& ParentId) const
+{
+    TArray<FGuid> Result;
+    const int32 Parent = ParentId.IsValid() ? FindNodeIndex(ParentId) : INDEX_NONE;
+    if (ParentId.IsValid() && Parent == INDEX_NONE) return Result;
+    for (int32 Index = 0; Index < Nodes.Num(); ++Index)
+    {
+        if (Nodes[Index].ParentIndex == Parent) Result.Add(NodeIds[Index]);
+    }
+    return Result;
+}
+
 void UMHCompositeEditDocument::PostEditUndo()
 {
     Super::PostEditUndo();

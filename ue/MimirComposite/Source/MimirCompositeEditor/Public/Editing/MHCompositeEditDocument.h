@@ -49,6 +49,26 @@ public:
     /** Authoring command: the node's authored local transform. Modify()s the draft first. */
     bool SetNodeTransform(const FGuid& Id, const FTransform& LocalTransform, FString& OutError);
 
+    /**
+     * CE-4b1 structural commands. Every command validates first (grammar of
+     * the kind, tree shape), then Modify()s the draft and keeps the pre-order
+     * node array, parent indices and session ids consistent — Undo restores
+     * order, ids and metadata. Random nodes need options and are not added
+     * here (CE-4b3).
+     */
+    /** Appends a node as the last child of ParentId (invalid = a new root); returns its id, invalid on refusal. */
+    FGuid AddNode(const FGuid& ParentId, EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError);
+    /** Removes the node with its subtree. */
+    bool DeleteNode(const FGuid& Id, FString& OutError);
+    /** Copies the node's subtree right after it under the same parent, with fresh ids; returns the copy's id. */
+    FGuid DuplicateNode(const FGuid& Id, FString& OutError);
+    /** Moves the node's subtree under NewParentId (invalid = root) at SiblingIndex (INDEX_NONE = last); the local transform is kept as is. */
+    bool ReparentNode(const FGuid& Id, const FGuid& NewParentId, int32 SiblingIndex, FString& OutError);
+    /** Parent id of a node; invalid for roots and unknown ids. */
+    FGuid GetParentId(const FGuid& Id) const;
+    /** Child ids of a node in order; the roots for an invalid id. */
+    TArray<FGuid> GetChildIds(const FGuid& ParentId) const;
+
     virtual void PostEditUndo() override;
     /** CE-4a: fired after Undo/Redo replaced the reflected state (the session refreshes its projection). */
     FSimpleDelegate OnRestored;

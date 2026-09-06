@@ -116,6 +116,34 @@ bool UMHCompositeEditSession::SetNodeTransform(const FGuid& NodeId, const FTrans
     return true;
 }
 
+FGuid UMHCompositeEditSession::AddNode(const FGuid& ParentId, const EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError)
+{
+    static_cast<void>(ParentId); static_cast<void>(Kind); static_cast<void>(Resource); static_cast<void>(Name); static_cast<void>(LocalTransform);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return FGuid();
+}
+
+bool UMHCompositeEditSession::DeleteNode(const FGuid& NodeId, FString& OutError)
+{
+    static_cast<void>(NodeId);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
+FGuid UMHCompositeEditSession::DuplicateNode(const FGuid& NodeId, FString& OutError)
+{
+    static_cast<void>(NodeId);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return FGuid();
+}
+
+bool UMHCompositeEditSession::ReparentNode(const FGuid& NodeId, const FGuid& NewParentId, const int32 SiblingIndex, const bool bKeepWorld, FString& OutError)
+{
+    static_cast<void>(NodeId); static_cast<void>(NewParentId); static_cast<void>(SiblingIndex); static_cast<void>(bKeepWorld);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
 bool UMHCompositeEditSession::SyncDraftFromLegacyEdit(FString& OutError)
 {
     if (!IsOpen() || Draft == nullptr)
