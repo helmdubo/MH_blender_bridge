@@ -8,7 +8,7 @@
 
 class UMHCompositeEditSession;
 class USceneComponent;
-struct HHitProxy;
+class HHitProxy;
 
 /** CE-3a: the mode's commands (Escape = Cancel, like Level Instance Edit). */
 class MIMIRCOMPOSITEEDITOR_API FMHCompositeEditCommands final : public TCommands<FMHCompositeEditCommands>
