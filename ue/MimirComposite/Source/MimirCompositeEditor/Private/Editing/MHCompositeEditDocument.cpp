@@ -124,6 +124,7 @@ void UMHCompositeEditDocument::PostEditUndo()
     Super::PostEditUndo();
     // The reflected state was replaced behind the cache's back.
     MarkChanged();
+    OnRestored.ExecuteIfBound();
 }
 
 void UMHCompositeEditDocument::MarkChanged()

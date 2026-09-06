@@ -1695,6 +1695,13 @@ bool UMHCompositeLevelSubsystem::CancelEditComposite(FString& OutError)
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
         return false;
     }
+    // CE-4a: under the CE backend nothing of the placement is in the record
+    // and the mode's Exit resets the undo history (BPP policy) — no transaction.
+    if (!Actor->IsPlacementEditMode())
+    {
+        ResetEditSession();
+        return true;
+    }
     const FScopedTransaction Transaction(INVTEXT("Cancel MH Composite Edit"));
     Actor->Modify();
     // A root session extracted handles into the placement: rebuild restores

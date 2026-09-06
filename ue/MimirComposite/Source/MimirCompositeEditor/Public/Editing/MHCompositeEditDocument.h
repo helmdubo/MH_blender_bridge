@@ -50,6 +50,8 @@ public:
     bool SetNodeTransform(const FGuid& Id, const FTransform& LocalTransform, FString& OutError);
 
     virtual void PostEditUndo() override;
+    /** CE-4a: fired after Undo/Redo replaced the reflected state (the session refreshes its projection). */
+    FSimpleDelegate OnRestored;
 
 private:
     void MarkChanged();
