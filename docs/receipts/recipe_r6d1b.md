@@ -31,7 +31,7 @@
   материализация с хэндлами) — асserts «не перестраивает / не двигает
   revision» заменены на «входит в edit-mode под scope, план на месте».
 
-## 2. Тесты (red `__RED__`)
+## 2. Тесты (red `c870e13`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -42,13 +42,13 @@
 
 | Gate | Результат |
 |---|---|
-| RED (`__RED__`) | `R6D1B_RED_TEST.log`: __ |
-| GREEN non-unity/no-PCH build | `R6D1B_GREEN_BUILD.log`: __ |
-| `Mimir.V5.Composite.EditContext` | `R6D1B_GREEN_TEST.log`: __ |
-| полный NullRHI suite | `R6D1B_GREEN_FULL.log`: __ |
-| force-unity | `R6D1B_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R6D1B_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| RED (`c870e13`) | `R6D1B_RED_TEST.log`: Fail ×2 (оба теста EditContext) |
+| GREEN non-unity/no-PCH build | `R6D1B_GREEN_BUILD2.log`: Succeeded |
+| `Mimir.V5.Composite.EditContext` | `R6D1B_GREEN_TEST4.log`: 2/0 |
+| полный NullRHI suite | `R6D1B_GREEN_FULL.log`: `Success=223 Fail=0` (222 + 1) |
+| force-unity | `R6D1B_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `R6D1B_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
@@ -59,7 +59,11 @@ Editor: `Public|Private/Composite/MHCompositeActor.{h,cpp}`,
 
 ## 5. Вопросы
 
-Открытых нет. Вне среза (замер R8): drag сейчас идёт через полную
+Открытых нет. Первый зелёный прогон `R6D1B_GREEN_TEST2` завершился без
+результатов (редактор вышел молча, без crash-папки); повтор того же бинарника
+(`R6D1B_GREEN_TEST3/4`) — 2/0 стабильно, полный suite — 223/0. Воспроизвести не
+удалось; если повторится в поле — смотреть `Saved/Crashes` и `-ForceLogFlush`.
+Вне среза (замер R8): drag сейчас идёт через полную
 материализацию сессии (`RemoveOwner`+`Add`), не через reseed-diff пула —
 корректно, но не минимально. Multiselect родитель+потомок не возникает:
 хэндлы — только узлы верхнего уровня вызываемого определения; более
