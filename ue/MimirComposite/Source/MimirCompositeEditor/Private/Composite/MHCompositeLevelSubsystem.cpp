@@ -1180,6 +1180,66 @@ FString* FindReferenceSlot(FMHCompositeDocument& Document, const FString& Select
     return Node != nullptr ? &Node->Resource : nullptr;
 }
 
+/**
+ * R6-U2: the resolved subtree of the definition invoked at InvocationPath, as
+ * concrete mesh/actor nodes relative to the invocation. Random draws, groups,
+ * nested composites and placement draws are all already applied by the plan.
+ */
+bool BakeScopeDocument(
+    const FMHResolvedCompositePlan& Plan,
+    const FString& InvocationPath,
+    const FString& Definition,
+    FMHCompositeDocument& OutDocument,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutDocument = FMHCompositeDocument();
+    const FMHResolvedCompositeNode* Invocation = Plan.Nodes.FindByPredicate(
+        [&InvocationPath](const FMHResolvedCompositeNode& Node) { return Node.NodePath == InvocationPath; });
+    if (Invocation == nullptr)
+    {
+        OutError = FString::Printf(TEXT("MH_E_COMPOSITE_GRAMMAR: %s is not a node of the resolved plan"), *InvocationPath);
+        return false;
+    }
+    const FMatrix InvocationInverse = Invocation->WorldMatrix.Inverse();
+    const FString Prefix = InvocationPath + TEXT(">") + Definition + TEXT(":");
+    bool bBoundaryInside = false;
+    for (const FMHResolvedCompositeLeaf& Leaf : Plan.Leaves)
+    {
+        if (!Leaf.Origin.StartsWith(Prefix)) continue;
+        if (Leaf.Kind != EMHRandomSemanticKind::Mesh && Leaf.Kind != EMHRandomSemanticKind::Actor) continue;
+        const FMatrix Local = Leaf.WorldMatrix * InvocationInverse;
+        if (!MHIsRepresentableTransformMatrix(Local))
+        {
+            OutError = FString::Printf(TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: baked leaf %s cannot round-trip through FTransform"), *Leaf.Origin);
+            return false;
+        }
+        const FTransform LocalTransform(Local);
+        FMHCompositeNode& Node = OutDocument.Nodes.AddDefaulted_GetRef();
+        Node.Kind = Leaf.Kind == EMHRandomSemanticKind::Mesh ? EMHCompositeNodeKind::Mesh : EMHCompositeNodeKind::Actor;
+        Node.Resource = Leaf.Resource;
+        Node.Name = Leaf.DisplayName;
+        Node.Transform.TranslationCm = LocalTransform.GetTranslation();
+        Node.Transform.RotationQuat = LocalTransform.GetRotation();
+        Node.Transform.Scale = LocalTransform.GetScale3D();
+        bBoundaryInside |= Leaf.AppearanceBoundaryPath.StartsWith(Prefix);
+    }
+    if (OutDocument.Nodes.IsEmpty())
+    {
+        OutError = FString::Printf(TEXT("MH_E_COMPOSITE_GRAMMAR: nothing to bake under %s: no mesh or actor leaves"), *InvocationPath);
+        return false;
+    }
+    // Appearance streams are keyed by boundary path: a boundary declared
+    // inside the baked definition follows the copy's name, the root's does not.
+    if (bBoundaryInside)
+    {
+        OutWarnings.Add(FString::Printf(
+            TEXT("appearance boundaries declared inside composite:%s re-key under the baked copy's name (appearance streams are keyed by boundary path)"),
+            *Definition));
+    }
+    return true;
+}
+
 bool NodesHaveRandomization(const TArray<FMHCompositeNode>& Nodes)
 {
     for (const FMHCompositeNode& Node : Nodes)
@@ -1199,8 +1259,9 @@ bool UE::MimirComposite::MHCompositeDocumentHasRandomization(const FMHCompositeD
     return NodesHaveRandomization(Document.Nodes);
 }
 
-bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScope Scope, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const
+bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const
 {
+
     // R6-U (docs/16 §2.7): innermost first — the edited definition, then (for
     // this placement) every definition of the invocation chain up to the root.
     OutPlan = FMHCompositeSaveUniquePlan();
@@ -1233,7 +1294,8 @@ bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScop
         bool bRandom = false;
         if (Index == 0)
         {
-            bRandom = MHCompositeDocumentHasRandomization(EditingDocument);
+            // A baked copy carries the resolved result: nothing draws in it.
+            bRandom = Variant == EMHCompositeUniqueVariant::Procedural && MHCompositeDocumentHasRandomization(EditingDocument);
         }
         else
         {
@@ -1258,6 +1320,7 @@ bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScop
 
 bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     const EMHCompositeUniqueScope Scope,
+    const EMHCompositeUniqueVariant Variant,
     const TArray<FMHCompositeAdoptTarget>& Targets,
     TArray<FString>& OutWarnings,
     FString& OutError)
@@ -1265,7 +1328,7 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     OutWarnings.Reset();
     OutError.Reset();
     FMHCompositeSaveUniquePlan Plan;
-    if (!DescribeSaveUnique(Scope, Plan, OutError)) return false;
+    if (!DescribeSaveUnique(Scope, Variant, Plan, OutError)) return false;
     OutWarnings.Append(Plan.Warnings);
     AMHCompositeActor* Root = EditingActor.Get();
     UMHCompositeAsset* Edited = EditingAsset.Get();
@@ -1344,6 +1407,16 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
             ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited nested definition has no admitted resolved plan")
             : Root->GetLastPlacementError();
         return false;
+    }
+    if (Variant == EMHCompositeUniqueVariant::BakeCurrentResult)
+    {
+        // R6-U2: the copy is the resolved subtree of this placement's session plan.
+        const FMHResolvedCompositePlan* ResolvedPlan = Root->GetResolvedPlan();
+        if (ResolvedPlan == nullptr || !BakeScopeDocument(*ResolvedPlan, EditingInvocationPath, Edited->LogicalName, EditedDocument, OutWarnings, OutError))
+        {
+            if (OutError.IsEmpty()) OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the edited placement has no resolved plan to bake");
+            return false;
+        }
     }
     TArray<uint8> CanonicalPreflight;
     if (!MHWriteCanonicalCompositeV5(EditedDocument, CanonicalPreflight, OutError)) return false;

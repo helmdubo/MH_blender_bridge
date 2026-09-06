@@ -83,6 +83,16 @@ enum class EMHCompositeUniqueScope : uint8
     ForThisPlacement
 };
 
+/** R6-U: how the edited definition is copied. */
+UENUM()
+enum class EMHCompositeUniqueVariant : uint8
+{
+    /** The draft document as authored: random draws inside re-roll under the new name (warned). */
+    Procedural,
+    /** R6-U2: the resolved subtree under this placement as concrete mesh/actor nodes; nothing re-rolls. */
+    BakeCurrentResult
+};
+
 /** R6-U: what Save Unique would do for a scope, before any name is chosen. */
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositeSaveUniquePlan
 {
@@ -137,7 +147,7 @@ public:
     bool CommitEditComposite(TArray<FString>& OutWarnings, FString& OutError);
     bool CancelEditComposite(FString& OutError);
     /** R6-U: the plan for Scope — copies innermost first, the overwritten shared definition, re-roll warnings. Needs an active Edit Contents session. */
-    bool DescribeSaveUnique(EMHCompositeUniqueScope Scope, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const;
+    bool DescribeSaveUnique(EMHCompositeUniqueScope Scope, EMHCompositeUniqueVariant Variant, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const;
     /**
      * R6-U (procedural variant): saves the nested draft as unique definitions.
      * Targets align with the plan's Copies. Validated before anything is
@@ -147,6 +157,7 @@ public:
      */
     bool SaveEditAsUnique(
         EMHCompositeUniqueScope Scope,
+        EMHCompositeUniqueVariant Variant,
         const TArray<UE::MimirComposite::FMHCompositeAdoptTarget>& Targets,
         TArray<FString>& OutWarnings,
         FString& OutError);
