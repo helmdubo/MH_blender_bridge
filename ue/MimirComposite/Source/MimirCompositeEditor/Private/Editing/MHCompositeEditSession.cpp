@@ -1,5 +1,6 @@
 #include "Editing/MHCompositeEditSession.h"
 
+#include "Editing/MHCompositeEditProjection.h"
 #include "Engine/World.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeEditSession)
@@ -41,7 +42,24 @@ void UMHCompositeEditSession::Open(
 
 void UMHCompositeEditSession::Close()
 {
+    CloseProjection();
     State = EMHCompositeEditSessionState::Closed;
+}
+
+bool UMHCompositeEditSession::OpenProjection(FString& OutError)
+{
+    // CE-2b red stub.
+    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the edit projection arrives with CE-2b");
+    return false;
+}
+
+void UMHCompositeEditSession::CloseProjection()
+{
+    if (Projection != nullptr)
+    {
+        Projection->Close();
+        Projection = nullptr;
+    }
 }
 
 EMHCompositeEditSessionState UMHCompositeEditSession::GetState() const

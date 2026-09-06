@@ -9,6 +9,8 @@
 #include "UObject/Object.h"
 #include "MHCompositeEditSession.generated.h"
 
+class UMHCompositeEditProjection;
+
 /** CE-1 (spec §9): where a session is in its life. */
 UENUM()
 enum class EMHCompositeEditSessionState : uint8
@@ -62,6 +64,11 @@ public:
     const TArray<uint8>& GetOriginalBytes() const { return OriginalBytes; }
     UMHCompositeEditDocument* GetDraft() const { return Draft; }
 
+    /** CE-2b: the edit projection of the selected occurrence; null for root sessions or the legacy backend. */
+    UMHCompositeEditProjection* GetProjection() const { return Projection; }
+    bool OpenProjection(FString& OutError);
+    void CloseProjection();
+
     /** Authoring command on the draft; refused when the session is closed. */
     bool SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError);
 
@@ -75,6 +82,8 @@ public:
 private:
     UPROPERTY()
     TObjectPtr<UMHCompositeEditDocument> Draft;
+    UPROPERTY()
+    TObjectPtr<UMHCompositeEditProjection> Projection;
     UPROPERTY()
     FGuid SessionId;
     UPROPERTY()
