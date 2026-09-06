@@ -396,6 +396,7 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
 {
     TArray<FString> Warnings;
     FString Error;
+    bool bNested = false;
     UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
     if (Subsystem == nullptr)
     {
@@ -403,19 +404,33 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
     }
     else
     {
+        const FMHCompositeEditContext EditContext = Subsystem->GetEditContext();
+        bNested = !EditContext.InvocationPath.IsEmpty();
         const FString LogicalName = Subsystem->GetEditingCompositeLogicalName();
         FString SourceFile = Subsystem->GetEditingCompositeSourceRelativePath();
         if (SourceFile.IsEmpty())
         {
             SourceFile = (LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName) + TEXT(".composite");
         }
-        const FText Confirmation = FText::Format(
-            LOCTEXT(
-                "CommitCompositeIrreversiblePrompt",
-                "This will overwrite {0}.composite. Unreal Editor Undo cannot restore the previous source file; revert with a new edit or VCS. Continue?"),
-            FText::FromString(LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName));
+        const FText Name = FText::FromString(LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName);
+        // R6-D2: a shared definition is overwritten for every placement that
+        // invokes it; decision (a) 2026-09-06 — no revision guard against Blender.
+        const FText Confirmation = bNested
+            ? FText::Format(
+                LOCTEXT(
+                    "ApplySharedDefinitionPrompt",
+                    "This will overwrite the shared definition {0}.composite and refresh {1} placement(s) that invoke it. Unreal Editor Undo cannot restore the previous source file; revert with a new edit, a Blender export or VCS. Continue?"),
+                Name,
+                FText::AsNumber(EditContext.ConsumerPlacements))
+            : FText::Format(
+                LOCTEXT(
+                    "CommitCompositeIrreversiblePrompt",
+                    "This will overwrite {0}.composite. Unreal Editor Undo cannot restore the previous source file; revert with a new edit or VCS. Continue?"),
+                Name);
         const FText Audit = FText::Format(
-            LOCTEXT("CommitCompositeOverwriteAudit", "{0} overwritten from edited transforms"),
+            bNested
+                ? LOCTEXT("ApplySharedDefinitionOverwriteAudit", "{0} overwritten from the edited shared definition")
+                : LOCTEXT("CommitCompositeOverwriteAudit", "{0} overwritten from edited transforms"),
             FText::FromString(SourceFile));
         const EMHSourceOverwriteExecution Execution = MHExecuteSourceOverwrite(
             SourceFile,
@@ -435,8 +450,8 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
         }
     }
     NotifyOperation(
-        LOCTEXT("CommitCompositePage", "Commit MH Composite Edit"),
-        LOCTEXT("CommitCompositeOk", "Composite edit published and instances rebuilt"),
+        bNested ? LOCTEXT("ApplySharedDefinitionPage", "Apply MH Shared Definition") : LOCTEXT("CommitCompositePage", "Commit MH Composite Edit"),
+        bNested ? LOCTEXT("ApplySharedDefinitionOk", "Shared definition published; its placements were refreshed") : LOCTEXT("CommitCompositeOk", "Composite edit published and instances rebuilt"),
         Warnings,
         Error);
 }
@@ -1452,6 +1467,17 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
 
     if (bSelectedActiveEditActor)
     {
+        // R6-D2: a nested session publishes the shared definition it edits.
+        if (!Subsystem->GetEditContext().InvocationPath.IsEmpty())
+        {
+            AddLevelAction(Section, TEXT("MHCommitCompositeEdit"), LOCTEXT("ApplySharedDefinition", "Apply Shared Definition"),
+                LOCTEXT("ApplySharedDefinitionTip", "Publish the edited nested definition to its .composite source, then refresh every placement that invokes it."),
+                FToolMenuExecuteAction::CreateStatic(&ExecuteCommitEditComposite));
+            AddLevelAction(Section, TEXT("MHCancelCompositeEdit"), LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
+                LOCTEXT("CancelEditContentsTip", "Discard the edited nested definition and restore the placement from the unchanged source."),
+                FToolMenuExecuteAction::CreateStatic(&ExecuteCancelEditComposite));
+            return;
+        }
         AddLevelAction(Section, TEXT("MHCommitCompositeEdit"), LOCTEXT("CommitCompositeEdit", "Apply Edited Transforms to Source"),
             LOCTEXT("CommitCompositeEditTip", "Publish the edited top-level transforms to the .composite source, then rebuild every loaded instance."),
             FToolMenuExecuteAction::CreateStatic(&ExecuteCommitEditComposite));
@@ -1508,6 +1534,11 @@ bool MHPromptCompositeAdoptTarget(
     const FText& AcceptLabel)
 {
     return PromptCompositeAdoptTarget(OutTarget, SuggestedName, WindowTitle, AcceptLabel);
+}
+
+void MHExecuteCommitEditCompositeInteractive()
+{
+    ExecuteCommitEditComposite(FToolMenuContext());
 }
 
 void MHRegisterS6ToolMenus()

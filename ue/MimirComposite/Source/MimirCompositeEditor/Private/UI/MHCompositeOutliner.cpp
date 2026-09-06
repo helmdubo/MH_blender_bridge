@@ -23,6 +23,7 @@
 #include "Styling/AppStyle.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UI/MHCompositeOutlinerModel.h"
+#include "UI/MHSourceToolMenus.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Layout/SBorder.h"
@@ -331,6 +332,15 @@ private:
         const bool bSessionActive = EditSubsystem != nullptr && EditSubsystem->IsEditingComposite();
         if (bSessionActive)
         {
+            // R6-D2: publish the shared definition from the Outliner as well.
+            if (!EditSubsystem->GetEditContext().InvocationPath.IsEmpty() && EditSubsystem->IsEditingComposite(CurrentActor.Get()))
+            {
+                Menu.AddMenuEntry(
+                    LOCTEXT("ApplySharedDefinition", "Apply Shared Definition"),
+                    LOCTEXT("ApplySharedDefinitionTip", "Publish the edited nested definition to its .composite source and refresh every placement that invokes it."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::ApplySharedDefinition)));
+            }
             Menu.AddMenuEntry(
                 LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
                 LOCTEXT("CancelEditContentsTip", "Close the active edit session and discard its draft. The source is not changed."),
@@ -343,7 +353,7 @@ private:
             // under this placement; the source stays untouched until published.
             Menu.AddMenuEntry(
                 LOCTEXT("EditContents", "Edit Contents..."),
-                LOCTEXT("EditContentsTip", "Open the nested composite definition as a draft in the context of this placement. Node editing arrives with the next update; Cancel closes the session."),
+                LOCTEXT("EditContentsTip", "Open the nested composite definition for editing in the context of this placement: its nodes get handles here, Apply Shared Definition publishes, Cancel Edit Contents discards."),
                 FSlateIcon(),
                 FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::EditContents, Item->NodePath)));
         }
@@ -419,6 +429,12 @@ private:
             FMessageLog("Mimir").Error(FText::FromString(Error));
             FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
         }
+        RefreshModel();
+    }
+
+    void ApplySharedDefinition()
+    {
+        MHExecuteCommitEditCompositeInteractive();
         RefreshModel();
     }
 
@@ -719,7 +735,7 @@ private:
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Draft only: node editing arrives with the next update; right-click > Cancel Edit Contents to leave"),
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Drag the handles to edit its nodes; right-click > Apply Shared Definition publishes, Cancel Edit Contents discards"),
                         *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
