@@ -43,10 +43,12 @@
 3. `IsSelectionAllowed` → клик по чужому актору не выделяет; `ProcessEditDelete` → Delete на компоненте проекции идёт в модель.
 4. `ILegacyEdModeViewportInterface::StartTracking/InputDelta/EndTracking` приходят при drag gizmo компонента проекции.
 
-## 4. Red-fixture CE-0 (`T/MHCompositeEditFixture.h`)
+## 4. Fixture CE-0 (`T/MHCompositeEditFixture.h`, done)
 
 root размещён дважды; в каждом root child вызван дважды; child = mesh +
 inline group{mesh} + random{mesh, empty}; разные parent transforms; foreign
 ISM того же меша. Характеризационные red'ы: точный inline-узел (сейчас —
 верхний предок), Undo внутри сессии (сейчас закрывает), queued Apply A →
 Cancel A → Begin B (закрыт срезом CE-pre, `QueuedApplyIgnoresLaterSession`).
+Реализовано: `FCompositeEditFixture` и `Mimir.V5.Composite.EditMode.Characterization.*`
+(4 теста, квитанция `docs/receipts/composite_edit_ce0.md`).
