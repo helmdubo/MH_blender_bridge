@@ -7,6 +7,8 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHInstancePool.h"
+#include "UI/MHEditSessionKeys.h"
+#include "UI/MHSourceOverwritePolicy.h"
 #include "Components/BillboardComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -816,6 +818,81 @@ bool FMHEditContextScopeHandlesGrabbableTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("a nested leaf resolves to its top-level ancestor"), F.B->FindSessionHandleForNodePath(F.Root->LogicalName + TEXT(":nodes[1]>") + F.Child->LogicalName + TEXT(":nodes[0]")) == TopLevel[1]);
     bPassed &= TestNull(TEXT("root session has no frame"), F.B->GetEditScopeFrame());
     bPassed &= TestTrue(TEXT("cancel root session"), Subsystem->CancelEditComposite(Error));
+    return bPassed;
+}
+
+// R6-UX2a (owner field feedback 2026-09-06): the session answers the keyboard
+// — Esc discards, Enter applies (behind the usual confirmation) — so the
+// context menu is not the only way out.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextSessionKeysTest,
+    "Mimir.V5.Composite.EditContext.EscapeCancelsEnterApplies",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextSessionKeysTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    bool bPassed = TestEqual(TEXT("Esc in a session cancels"), MHEditSessionKeyAction(EKeys::Escape, true), EMHEditSessionKeyAction::Cancel);
+    bPassed &= TestEqual(TEXT("Enter in a session applies"), MHEditSessionKeyAction(EKeys::Enter, true), EMHEditSessionKeyAction::Apply);
+    bPassed &= TestEqual(TEXT("other keys are not session keys"), MHEditSessionKeyAction(EKeys::A, true), EMHEditSessionKeyAction::None);
+    bPassed &= TestEqual(TEXT("without a session nothing is intercepted"), MHEditSessionKeyAction(EKeys::Escape, false), EMHEditSessionKeyAction::None);
+
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FString InvocationPath = InvocationNode->NodePath;
+    TArray<uint8> ChildBefore;
+    if (!TestTrue(TEXT("child source bytes"), CanonicalBytes(*F.Child, ChildBefore))) return false;
+    FVector MeshCBeforeA;
+    bPassed &= TestTrue(TEXT("mesh C renders in A"), LeafWorldLocation(*F.A, F.MeshC, MeshCBeforeA));
+
+    bPassed &= TestFalse(TEXT("no session: keys pass through"), MHHandleEditSessionKey(EKeys::Escape, false));
+
+    // Esc: the draft is discarded, the preview comes back.
+    FString Error;
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
+    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
+    Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(100, 0, 0));
+    F.A->Tick(0.0f);
+    bPassed &= TestTrue(TEXT("Esc is handled"), MHHandleEditSessionKey(EKeys::Escape, false));
+    bPassed &= TestFalse(TEXT("Esc ended the session"), Subsystem->IsEditingComposite());
+    bPassed &= TestFalse(TEXT("Esc left edit mode"), F.A->IsPlacementEditMode());
+    FVector MeshCAfterEsc;
+    bPassed &= TestTrue(TEXT("Esc restored the leaf"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterEsc) && MeshCAfterEsc.Equals(MeshCBeforeA, 1e-2));
+    TArray<uint8> ChildAfterEsc;
+    bPassed &= TestTrue(TEXT("Esc never touches the source"), CanonicalBytes(*F.Child, ChildAfterEsc) && ChildAfterEsc == ChildBefore);
+
+    // Enter: the confirmation is asked, then the shared definition is published.
+    if (!TestTrue(TEXT("nested context again: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
+    if (!TestEqual(TEXT("one handle again"), F.A->GetEditScopeHandles().Num(), 1) || !IsValid(F.A->GetEditScopeHandles()[0])) return false;
+    F.A->GetEditScopeHandles()[0]->SetWorldLocation(F.A->GetEditScopeHandles()[0]->GetComponentLocation() + FVector(100, 0, 0));
+    int32 Confirmations = 0;
+    FMHSourceOverwritePolicyTestHooks Hooks;
+    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return true; };
+    Hooks.Notify = [](const FText&) {};
+    Hooks.MessageLog = [](const FText&) {};
+    MHSetSourceOverwritePolicyTestHooks(Hooks);
+    UMHCompositeAsset* PublishedAsset = nullptr;
+    Subsystem->SetCommitPublisherForTests(
+        [&PublishedAsset](UMHCompositeAsset& Asset, FString&)
+        {
+            PublishedAsset = &Asset;
+            MHNotifyCompositeAssetChanged(Asset);
+            return true;
+        });
+    const bool bEnterHandled = MHHandleEditSessionKey(EKeys::Enter, false);
+    Subsystem->SetCommitPublisherForTests({});
+    MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
+    bPassed &= TestTrue(TEXT("Enter is handled"), bEnterHandled);
+    bPassed &= TestEqual(TEXT("Enter asks the overwrite confirmation once"), Confirmations, 1);
+    bPassed &= TestTrue(TEXT("Enter published the shared child"), PublishedAsset == F.Child);
+    bPassed &= TestFalse(TEXT("Enter ended the session"), Subsystem->IsEditingComposite());
+    FVector MeshCAfterEnter;
+    bPassed &= TestTrue(TEXT("A renders the published node"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterEnter) && MeshCAfterEnter.Equals(MeshCBeforeA + FVector(100, 0, 0), 1e-2));
     return bPassed;
 }
 
