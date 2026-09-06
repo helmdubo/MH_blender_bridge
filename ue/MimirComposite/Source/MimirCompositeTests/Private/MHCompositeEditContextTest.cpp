@@ -3,11 +3,13 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHInstancePool.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "CoreMinimal.h"
 #include "Editor.h"
+#include "Editor/Transactor.h"
 #include "Engine/World.h"
 #include "Misc/AutomationTest.h"
 
@@ -106,6 +108,24 @@ bool CanonicalBytes(const UMHCompositeAsset& Asset, TArray<uint8>& OutBytes)
     return MHExtractCompositeV5(Asset, Document, Error) && MHWriteCanonicalCompositeV5(Document, OutBytes, Error);
 }
 
+/** World location of the first pooled leaf of Resource in Actor's resident plan. */
+bool LeafWorldLocation(const AMHCompositeActor& Actor, const FString& Resource, FVector& OutLocation)
+{
+    const FMHResolvedCompositePlan* Plan = Actor.GetResolvedPlan();
+    const TArray<FMHCompositeLeafMaterialization>& Rows = Actor.GetLeafMaterializations();
+    if (Plan == nullptr) return false;
+    for (int32 Index = 0; Index < Plan->Leaves.Num() && Index < Rows.Num(); ++Index)
+    {
+        if (Plan->Leaves[Index].Resource != Resource) continue;
+        UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Rows[Index].Component.Get());
+        FTransform T;
+        if (Bucket == nullptr || !Bucket->GetInstanceTransform(Rows[Index].InstanceIndex, T, true)) return false;
+        OutLocation = T.GetLocation();
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 // R6-D0 (docs/16 §2.7): a nested composite invocation opens an edit context —
@@ -202,22 +222,7 @@ bool FMHEditContextNestedHandlesTest::RunTest(const FString& Parameters)
     UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(F.World);
     if (!TestNotNull(TEXT("pool"), Pool)) return false;
 
-    const auto LeafWorld = [](const AMHCompositeActor& Actor, const FString& Resource, FVector& OutLocation) -> bool
-    {
-        const FMHResolvedCompositePlan* Plan = Actor.GetResolvedPlan();
-        const TArray<FMHCompositeLeafMaterialization>& Rows = Actor.GetLeafMaterializations();
-        if (Plan == nullptr) return false;
-        for (int32 Index = 0; Index < Plan->Leaves.Num() && Index < Rows.Num(); ++Index)
-        {
-            if (Plan->Leaves[Index].Resource != Resource) continue;
-            UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Rows[Index].Component.Get());
-            FTransform T;
-            if (Bucket == nullptr || !Bucket->GetInstanceTransform(Rows[Index].InstanceIndex, T, true)) return false;
-            OutLocation = T.GetLocation();
-            return true;
-        }
-        return false;
-    };
+    const auto LeafWorld = &LeafWorldLocation;
     FVector MeshCBeforeA, MeshCBeforeB;
     bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorld(*F.A, F.MeshC, MeshCBeforeA));
     bPassed &= TestTrue(TEXT("mesh C renders in B"), LeafWorld(*F.B, F.MeshC, MeshCBeforeB));
@@ -263,5 +268,128 @@ bool FMHEditContextNestedHandlesTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+
+// R6-D2 (docs/16 §2.7): Apply Shared Definition publishes the nested draft as
+// the child definition's source and refreshes every placement invoking it.
+// Decision (a), 2026-09-06: no revision guard — the file is overwritten as-is.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextApplySharedDefinitionTest,
+    "Mimir.V5.Composite.EditContext.ApplySharedDefinitionUpdatesConsumers",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextApplySharedDefinitionTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FMHResolvedCompositeNode InvocationCopy = *InvocationNode;
+    TArray<uint8> ChildBefore, RootBefore;
+    if (!TestTrue(TEXT("child source bytes"), CanonicalBytes(*F.Child, ChildBefore))) return false;
+    if (!TestTrue(TEXT("root source bytes"), CanonicalBytes(*F.Root, RootBefore))) return false;
+    FVector MeshCBeforeA, MeshCBeforeB;
+    bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorldLocation(*F.A, F.MeshC, MeshCBeforeA));
+    bPassed &= TestTrue(TEXT("mesh C renders in B"), LeafWorldLocation(*F.B, F.MeshC, MeshCBeforeB));
+    const FMatrix ParentWorld = InvocationCopy.WorldMatrix * F.A->GetActorTransform().ToMatrixWithScale();
+
+    FString Error;
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationCopy.NodePath, Error))) return false;
+    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
+    const FVector HandleBefore = Handles[0]->GetComponentLocation();
+    Handles[0]->SetWorldLocation(HandleBefore + FVector(100, 0, 0));
+    const FVector ExpectedLocal = FTransform(FTransform(HandleBefore + FVector(100, 0, 0)).ToMatrixWithScale() * ParentWorld.Inverse()).GetLocation();
+
+    // The publish seam stands in for MHPublishCompositeV5: the asset arrives
+    // applied, UE Undo is already cleared, and consumers are notified as the
+    // real publisher does after writing the source.
+    UMHCompositeAsset* PublishedAsset = nullptr;
+    bool bUndoClearedBeforePublish = false;
+    Subsystem->SetCommitPublisherForTests(
+        [&PublishedAsset, &bUndoClearedBeforePublish](UMHCompositeAsset& Asset, FString&)
+        {
+            PublishedAsset = &Asset;
+            bUndoClearedBeforePublish = GEditor != nullptr && !GEditor->IsTransactionActive() &&
+                GEditor->Trans != nullptr && !GEditor->Trans->CanUndo();
+            MHNotifyCompositeAssetChanged(Asset);
+            return true;
+        });
+    TArray<FString> Warnings;
+    const bool bCommitted = Subsystem->CommitEditComposite(Warnings, Error);
+    Subsystem->SetCommitPublisherForTests({});
+    bPassed &= TestTrue(TEXT("apply shared definition: ") + Error, bCommitted);
+    bPassed &= TestTrue(TEXT("the shared child definition is what gets published"), PublishedAsset == F.Child);
+    bPassed &= TestTrue(TEXT("UE Undo is cleared before the source boundary"), bUndoClearedBeforePublish);
+    bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
+    bPassed &= TestFalse(TEXT("root left edit mode"), F.A->IsPlacementEditMode());
+    bPassed &= TestEqual(TEXT("scope handles retired"), F.A->GetEditScopeHandles().Num(), 0);
+
+    FMHCompositeDocument ChildDocument;
+    bPassed &= TestTrue(TEXT("child definition carries the edited node"),
+        MHExtractCompositeV5(*F.Child, ChildDocument, Error) && ChildDocument.Nodes.Num() == 1 &&
+        ChildDocument.Nodes[0].Transform.TranslationCm.Equals(ExpectedLocal, 1e-2));
+    TArray<uint8> ChildAfter, RootAfter;
+    bPassed &= TestTrue(TEXT("child bytes changed"), CanonicalBytes(*F.Child, ChildAfter) && ChildAfter != ChildBefore);
+    bPassed &= TestTrue(TEXT("root definition untouched"), CanonicalBytes(*F.Root, RootAfter) && RootAfter == RootBefore);
+    // Both placements invoke the child with the same rotation (yaw 90°, no
+    // actor rotation): the +100 X world edit in A is +100 X in B as well.
+    FVector MeshCAfterA, MeshCAfterB;
+    bPassed &= TestTrue(TEXT("A renders the published node"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterA) && MeshCAfterA.Equals(MeshCBeforeA + FVector(100, 0, 0), 1e-2));
+    bPassed &= TestTrue(TEXT("B follows the shared definition"), LeafWorldLocation(*F.B, F.MeshC, MeshCAfterB) && MeshCAfterB.Equals(MeshCBeforeB + FVector(100, 0, 0), 1e-2));
+    return bPassed;
+}
+
+// R6-D2: a refused publish keeps the shared definition and every placement as
+// they were; the session is closed either way.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextApplySharedDefinitionFailureTest,
+    "Mimir.V5.Composite.EditContext.ApplySharedDefinitionFailureKeepsDefinition",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextApplySharedDefinitionFailureTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FString InvocationPath = InvocationNode->NodePath;
+    TArray<uint8> ChildBefore;
+    if (!TestTrue(TEXT("child source bytes"), CanonicalBytes(*F.Child, ChildBefore))) return false;
+    FVector MeshCBeforeA, MeshCBeforeB;
+    bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorldLocation(*F.A, F.MeshC, MeshCBeforeA));
+    bPassed &= TestTrue(TEXT("mesh C renders in B"), LeafWorldLocation(*F.B, F.MeshC, MeshCBeforeB));
+
+    FString Error;
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
+    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
+    Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(100, 0, 0));
+
+    Subsystem->SetCommitPublisherForTests(
+        [](UMHCompositeAsset&, FString& OutError)
+        {
+            OutError = TEXT("MH_E_TEST_PUBLISH_REFUSED: source write refused by the test seam");
+            return false;
+        });
+    TArray<FString> Warnings;
+    const bool bCommitted = Subsystem->CommitEditComposite(Warnings, Error);
+    Subsystem->SetCommitPublisherForTests({});
+    bPassed &= TestFalse(TEXT("refused publish fails the apply"), bCommitted);
+    bPassed &= TestTrue(TEXT("the refusal is reported"), Error.Contains(TEXT("MH_E_TEST_PUBLISH_REFUSED")));
+    bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
+    bPassed &= TestFalse(TEXT("root left edit mode"), F.A->IsPlacementEditMode());
+    TArray<uint8> ChildAfter;
+    bPassed &= TestTrue(TEXT("child definition kept"), CanonicalBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
+    FVector MeshCAfterA, MeshCAfterB;
+    bPassed &= TestTrue(TEXT("A renders the kept node"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterA) && MeshCAfterA.Equals(MeshCBeforeA, 1e-2));
+    bPassed &= TestTrue(TEXT("B renders the kept node"), LeafWorldLocation(*F.B, F.MeshC, MeshCAfterB) && MeshCAfterB.Equals(MeshCBeforeB, 1e-2));
+    return bPassed;
+}
 
 } // namespace UE::MimirComposite::Tests
