@@ -896,4 +896,61 @@ bool FMHEditContextSessionKeysTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+// CE-pre (spec CE §9, auditor 2026-09-06): an Apply queued for one session must
+// never publish a later one — the callback carries the session epoch.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextStaleApplyTest,
+    "Mimir.V5.Composite.EditContext.QueuedApplyIgnoresLaterSession",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextStaleApplyTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FString InvocationPath = InvocationNode->NodePath;
+    TArray<uint8> ChildBefore;
+    if (!TestTrue(TEXT("child source bytes"), CanonicalBytes(*F.Child, ChildBefore))) return false;
+
+    int32 Confirmations = 0;
+    FMHSourceOverwritePolicyTestHooks Hooks;
+    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return true; };
+    Hooks.Notify = [](const FText&) {};
+    Hooks.MessageLog = [](const FText&) {};
+    MHSetSourceOverwritePolicyTestHooks(Hooks);
+    int32 Publishes = 0;
+    Subsystem->SetCommitPublisherForTests([&Publishes](UMHCompositeAsset& Asset, FString&) { ++Publishes; MHNotifyCompositeAssetChanged(Asset); return true; });
+
+    // Session A queues an Apply, then ends; session B begins on another placement.
+    FString Error;
+    bool bPassed = TestTrue(TEXT("session A: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error));
+    const uint32 EpochA = Subsystem->GetEditSessionEpoch();
+    bPassed &= TestTrue(TEXT("cancel A"), Subsystem->CancelEditComposite(Error));
+    const FMHResolvedCompositeNode* InvocationB = FEditContextFixture::Invocation(*F.B);
+    if (!TestNotNull(TEXT("B invocation"), InvocationB)) return false;
+    bPassed &= TestTrue(TEXT("session B: ") + Error, Subsystem->BeginEditNestedComposite(F.B, InvocationB->NodePath, Error));
+    bPassed &= TestTrue(TEXT("a new session has a new epoch"), Subsystem->GetEditSessionEpoch() != EpochA);
+
+    // The stale callback fires: nothing may happen to B.
+    bPassed &= TestFalse(TEXT("stale Apply is a no-op"), MHRunDeferredEditSessionApply(EpochA));
+    bPassed &= TestTrue(TEXT("B is still being edited"), Subsystem->IsEditingComposite() && Subsystem->IsEditingComposite(F.B));
+    bPassed &= TestEqual(TEXT("no confirmation was asked"), Confirmations, 0);
+    bPassed &= TestEqual(TEXT("nothing was published"), Publishes, 0);
+
+    // The current epoch still applies B.
+    bPassed &= TestTrue(TEXT("current Apply runs"), MHRunDeferredEditSessionApply(Subsystem->GetEditSessionEpoch()));
+    bPassed &= TestEqual(TEXT("B was confirmed once"), Confirmations, 1);
+    bPassed &= TestEqual(TEXT("B was published once"), Publishes, 1);
+    bPassed &= TestFalse(TEXT("B session ended"), Subsystem->IsEditingComposite());
+    Subsystem->SetCommitPublisherForTests({});
+    MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
+    TArray<uint8> ChildAfter;
+    bPassed &= TestTrue(TEXT("no external change from the stale callback"), CanonicalBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests

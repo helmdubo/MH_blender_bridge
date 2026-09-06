@@ -33,6 +33,7 @@
 | `docs/reference_notes/dagor_phmat_registry.md` | заметки по реестру phmat Dagor (evidence/research) |
 | `docs/reference_notes/evidence/` | сырые артефакты и логи проб (evidence/research), не норматив |
 | `docs/reference_notes/dagor_composite_build_break_20260903.md` | исследование RS-1: как daEditor строит композит из выбранного и разбирает его на один слой (evidence/research) |
+| `docs/reference_notes/MH_Composite_Edit_Mode_Spec_19b7515.md` | внешний аудит 2026-09-06: спецификация MH Composite Edit Mode по образцу Packed Level Actor Edit (evidence/research); принятые из неё решения — `docs/contracts/composite_edit_ce0.md` |
 
 ## История
 
