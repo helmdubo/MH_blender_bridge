@@ -3,6 +3,10 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Editing/MHCompositeEditDocument.h"
+#include "Editing/MHCompositeEditProjection.h"
+#include "Editing/MHCompositeEditSession.h"
+#include "Editing/MHCompositeEditorMode.h"
 #include "Editor.h"
 #include "Logging/MessageLog.h"
 #include "Editor/EditorEngine.h"
@@ -300,6 +304,17 @@ private:
         SelectedItem = Item;
         RebuildDetails();
         if (!Item.IsValid() || SelectInfo == ESelectInfo::Direct || GEditor == nullptr) return;
+        // CE-3b: under the CE backend a row grabs its projection component
+        // through the mode (the gizmo sits on the node); rows the projection
+        // does not carry leave the selection alone.
+        if (UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive())
+        {
+            if (const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get()))
+            {
+                if (const UMHCompositeEditProjection* Projection = Session->GetProjection()) Mode->SelectComponent(Projection->FindComponentForOrigin(Item->NodePath));
+                return;
+            }
+        }
         // R6-UX1: in a session a row of the edited subtree grabs its handle —
         // the gizmo moves the node, never the actor. Rows outside the subtree
         // leave the selection alone until the session ends.
@@ -337,6 +352,14 @@ private:
         CurrentActor->SelectPlacementLeaf(Component);
     }
 
+    /** CE-3b: the open CE-backend session of this placement, if any. */
+    static const UMHCompositeEditSession* SessionOf(const AMHCompositeActor* Actor)
+    {
+        const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+        const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
+        return Session != nullptr && Session->IsOpen() && Actor != nullptr && Session->GetRootPlacement() == Actor ? Session : nullptr;
+    }
+
     void SelectHandle(USceneComponent* Handle)
     {
         USelection* Components = GEditor != nullptr ? GEditor->GetSelectedComponents() : nullptr;
@@ -361,6 +384,17 @@ private:
             if (Item->IsCompositeReference() && !Item->bNestedChildrenLoaded) Model.ExpandItem(Item);
             RevealItem(Item);
             if (TreeView.IsValid()) TreeView->SetItemExpansion(Item, true);
+        }
+        // CE-3b: the CE backend grabs the draft's first node.
+        if (UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive())
+        {
+            if (const UMHCompositeEditSession* Session = SessionOf(Root))
+            {
+                const UMHCompositeEditProjection* Projection = Session->GetProjection();
+                const UMHCompositeEditDocument* Draft = Session->GetDraft();
+                if (Projection != nullptr && Draft != nullptr && Draft->Num() > 0) Mode->SelectComponent(Projection->FindComponentForNodeId(Draft->GetNodeId(0)));
+                return;
+            }
         }
         const TArray<TObjectPtr<USceneComponent>>& Handles = Root->GetEditScopeHandles();
         if (!Handles.IsEmpty() && IsValid(Handles[0])) SelectHandle(Handles[0]);
@@ -810,9 +844,13 @@ private:
                     const FString Context = EditContext.InvocationPath.IsEmpty()
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
+                    // CE-3b: under the mode Save and Cancel live in the viewport overlay.
+                    const TCHAR* Hint = UMHCompositeEditorMode::IsActive()
+                        ? TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport, Esc cancels; right-click for Save As Unique Copy")
+                        : TEXT("Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Save As Unique Copy, Cancel Edit Contents");
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Save As Unique Copy, Cancel Edit Contents"),
-                        *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  %s"),
+                        *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"), Hint)));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
                 else if (Model.GetOverlayStatus().IsEmpty())

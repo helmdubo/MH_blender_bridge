@@ -10,6 +10,8 @@
 
 class UMHCompositeAsset;
 class UMHCompositeEditSession;
+class FPrimitiveSceneProxy;
+class UPrimitiveComponent;
 class USceneComponent;
 
 /**
@@ -60,6 +62,16 @@ public:
     FGuid GetNodeIdForComponent(const USceneComponent* Component) const;
     /** First component of a session node (its leaf, or its handle). */
     USceneComponent* FindComponentForNodeId(const FGuid& NodeId) const;
+    /** CE-3b: the component at a plan origin (a Composite Outliner row's node path); null when the origin is not projected. */
+    USceneComponent* FindComponentForOrigin(const FString& Origin) const;
+    /**
+     * CE-3b: marks the projection's primitives as "being edited" for the
+     * renderer (`PushLevelInstanceEditingStateToProxy`), so the mode's
+     * `EditingLevelInstance` show flag dims everything else. Idempotent per
+     * scene proxy: call after Refresh and from the mode's tick, a re-created
+     * proxy (mesh/material/visibility change) is pushed again.
+     */
+    void PushEditingTint();
     const UE::MimirComposite::FMHResolvedCompositePlan* GetPlan() const { return Plan.Get(); }
     const UE::MimirComposite::FMHPoolSuppressionLease& GetLease() const { return Lease; }
 
@@ -75,6 +87,8 @@ private:
     TWeakObjectPtr<UMHCompositeEditSession> Session;
     TWeakObjectPtr<AMHCompositeEditProjectionActor> ProjectionActor;
     TMap<FString, TWeakObjectPtr<USceneComponent>> ComponentsByOrigin;
+    /** Scene proxies that already carry the editing state (CE-3b). */
+    TMap<TWeakObjectPtr<const UPrimitiveComponent>, const FPrimitiveSceneProxy*> TintedProxies;
     TSharedPtr<UE::MimirComposite::FMHResolvedCompositePlan> Plan;
     UE::MimirComposite::FMHPoolSuppressionLease Lease;
     FString OccurrencePrefix;

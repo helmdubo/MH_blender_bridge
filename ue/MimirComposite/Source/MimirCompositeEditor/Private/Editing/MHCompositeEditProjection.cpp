@@ -7,6 +7,7 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editing/MHCompositeEditSession.h"
@@ -230,6 +231,7 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
     {
         if (USceneComponent* Component = Pair.Value.Get()) Components.Add(Component);
     }
+    PushEditingTint();
     Plan = NextPlan;
     return true;
 }
@@ -280,6 +282,32 @@ FGuid UMHCompositeEditProjection::GetNodeIdForComponent(const USceneComponent* C
     if (Selector.FindLastChar(TEXT('/'), Options) && Selector.Mid(Options + 1).StartsWith(TEXT("options["))) Selector = Selector.Left(Options);
     const int32 Index = Draft->FindNodeIndexBySelector(Selector);
     return Index != INDEX_NONE ? Draft->GetNodeId(Index) : FGuid();
+}
+
+void UMHCompositeEditProjection::PushEditingTint()
+{
+    // The engine's own path for actors of an edited Level Instance: the actor
+    // flag behind it is private to the level streaming classes, so the state
+    // goes straight to each proxy and follows proxy re-creation.
+    for (auto It = TintedProxies.CreateIterator(); It; ++It)
+    {
+        if (!It.Key().IsValid()) It.RemoveCurrent();
+    }
+    for (const TObjectPtr<USceneComponent>& Component : Components)
+    {
+        UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component.Get());
+        if (Primitive == nullptr || Primitive->GetSceneProxy() == nullptr) continue;
+        const FPrimitiveSceneProxy* Proxy = Primitive->GetSceneProxy();
+        if (TintedProxies.FindRef(Primitive) == Proxy) continue;
+        Primitive->PushLevelInstanceEditingStateToProxy(true);
+        TintedProxies.Add(Primitive, Proxy);
+    }
+}
+
+USceneComponent* UMHCompositeEditProjection::FindComponentForOrigin(const FString& Origin) const
+{
+    USceneComponent* Component = ComponentsByOrigin.FindRef(Origin).Get();
+    return IsValid(Component) ? Component : nullptr;
 }
 
 USceneComponent* UMHCompositeEditProjection::FindComponentForNodeId(const FGuid& NodeId) const
