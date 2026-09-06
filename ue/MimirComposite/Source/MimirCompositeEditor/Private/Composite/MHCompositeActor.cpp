@@ -315,6 +315,12 @@ bool AMHCompositeActor::SelectPlacementLeafByNodePath(const FString& NodePath)
     return true;
 }
 
+void AMHCompositeActor::SetEditScope(const FString& InvocationNodePath)
+{
+    // R6-D1 red stub: the scope is stored, no handles are created.
+    EditScopeInvocationPath = InvocationNodePath;
+}
+
 void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)
 {
     if (bPlacementEditMode == bEnabled) return;

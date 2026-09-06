@@ -102,7 +102,18 @@ public:
     /** Transient authoring session; no edit state is persisted. */
     void SetPlacementEditMode(bool bEnabled);
     bool IsPlacementEditMode() const { return bPlacementEditMode; }
+    /** The edited definition's document: the root's, or the nested definition's under the edit scope (R6-D1). */
     bool GetEditedCompositeDocument(UE::MimirComposite::FMHCompositeDocument& OutDocument) const;
+    /**
+     * R6-D1 (docs/16 §2.7): scope of the next Placement Edit session — the
+     * definition invoked at InvocationNodePath of the resident plan (empty =
+     * the root definition). Its nodes get handles under the invocation's
+     * effective world transform; handle edits write the nested draft.
+     */
+    void SetEditScope(const FString& InvocationNodePath);
+    const FString& GetEditScopeInvocationPath() const { return EditScopeInvocationPath; }
+    /** Handles of the scoped definition's nodes while a nested session is active (empty for a root session). */
+    const TArray<TObjectPtr<USceneComponent>>& GetEditScopeHandles() const { return EditScopeHandles; }
 
     /** Rebuild from managed applied assets, never from the source filesystem. */
     void RebuildComposite();
@@ -257,6 +268,11 @@ private:
 
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> LeafPlacementComponents;
+
+    /** R6-D1: handles of the nested definition's nodes under the edit scope. */
+    UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
+    TArray<TObjectPtr<USceneComponent>> EditScopeHandles;
+    FString EditScopeInvocationPath;
 
     /** Derived navigation rows; own components are retained by DerivedComponents, pooled ones by the pool. */
     mutable TArray<UE::MimirComposite::FMHCompositeLeafMaterialization> LeafMaterializations;
