@@ -295,15 +295,13 @@ private:
             UInstancedStaticMeshComponent* Bucket = Row != nullptr
                 ? Cast<UInstancedStaticMeshComponent>(Row->Component.Get()) : nullptr;
             const int32 InstanceIndex = Row != nullptr ? Row->InstanceIndex : INDEX_NONE;
-            UTypedElementSelectionSet* SelectionSet =
-                GLevelEditorModeTools().GetEditorSelectionSet();
-            if (Bucket == nullptr || InstanceIndex == INDEX_NONE || SelectionSet == nullptr) return;
-            const FTypedElementHandle Handle =
-                UEngineElementsLibrary::AcquireEditorSMInstanceElementHandle(Bucket, InstanceIndex);
-            if (!Handle) return;
+            if (Bucket == nullptr || InstanceIndex == INDEX_NONE) return;
+            // R6-D1a: a pooled instance is never the selection element (the
+            // stock gizmo would edit the ISM behind the model). Select the
+            // composite and record the leaf; the pool highlights it (R5b-2a).
             CurrentActor->SelectPlacementLeafByNodePath(Item->NodePath);
-            const TArray<FTypedElementHandle> Selection{Handle};
-            SelectionSet->SetSelection(Selection, FTypedElementSelectionOptions());
+            GEditor->SelectNone(false, true, false);
+            GEditor->SelectActor(CurrentActor.Get(), true, true, true);
             GEditor->RedrawLevelEditingViewports();
             return;
         }

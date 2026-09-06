@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Elements/SMInstance/SMInstanceManager.h"
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/Actor.h"
 #include "Random/MHRandomStream.h"
@@ -92,14 +93,33 @@ struct MIMIRCOMPOSITEEDITOR_API FMHInstancePoolMetrics
 
 } // namespace UE::MimirComposite
 
-/** Transient service actor holding the ISM buckets of one ULevel (16 §2.8, first implementation). */
+/**
+ * Transient service actor holding the ISM buckets of one ULevel (16 §2.8,
+ * first implementation). As the instance manager of its buckets it refuses
+ * every direct instance edit (R6-D1a): a pooled instance renders a
+ * placement's plan; edits go through the composite's model.
+ */
 UCLASS(NotBlueprintable, NotPlaceable, Transient)
-class MIMIRCOMPOSITEEDITOR_API AMHInstancePoolActor final : public AActor
+class MIMIRCOMPOSITEEDITOR_API AMHInstancePoolActor final : public AActor, public ISMInstanceManagerProvider, public ISMInstanceManager
 {
     GENERATED_BODY()
 
 public:
     AMHInstancePoolActor();
+
+    // ISMInstanceManagerProvider
+    virtual ISMInstanceManager* GetSMInstanceManager(const FSMInstanceId& InstanceId) override;
+    // ISMInstanceManager: read-only, fail-closed
+    virtual bool CanEditSMInstance(const FSMInstanceId& InstanceId) const override;
+    virtual bool CanMoveSMInstance(const FSMInstanceId& InstanceId, const ETypedElementWorldType WorldType) const override;
+    virtual bool GetSMInstanceTransform(const FSMInstanceId& InstanceId, FTransform& OutInstanceTransform, bool bWorldSpace = false) const override;
+    virtual bool SetSMInstanceTransform(const FSMInstanceId& InstanceId, const FTransform& InstanceTransform, bool bWorldSpace = false, bool bMarkRenderStateDirty = false, bool bTeleport = false) override;
+    virtual void NotifySMInstanceMovementStarted(const FSMInstanceId& InstanceId) override {}
+    virtual void NotifySMInstanceMovementOngoing(const FSMInstanceId& InstanceId) override {}
+    virtual void NotifySMInstanceMovementEnded(const FSMInstanceId& InstanceId) override {}
+    virtual void NotifySMInstanceSelectionChanged(const FSMInstanceId& InstanceId, const bool bIsSelected) override;
+    virtual bool DeleteSMInstances(TArrayView<const FSMInstanceId> InstanceIds) override;
+    virtual bool DuplicateSMInstances(TArrayView<const FSMInstanceId> InstanceIds, TArray<FSMInstanceId>& OutNewInstanceIds) override;
 };
 
 /**
