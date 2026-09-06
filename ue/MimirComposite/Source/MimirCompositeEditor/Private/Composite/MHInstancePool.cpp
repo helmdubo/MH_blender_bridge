@@ -361,6 +361,8 @@ FMHInstanceHandle UMHInstancePoolSubsystem::Add(
     Slot.NodePath = NodePath;
     Slot.bFree = false;
     Slot.bHidden = false;
+    Slot.bOwnerHidden = false;
+    Slot.SuppressionCount = 0;
     Slot.WorldMatrix = WorldMatrix;
     for (int32 Channel = 0; Channel < MH_APPEARANCE_CHANNELS; ++Channel) Slot.Appearance[Channel] = AppearanceChannels[Channel];
     AddInstanceToComponent(Bucket, SlotId);
@@ -417,6 +419,8 @@ bool UMHInstancePoolSubsystem::Remove(const FMHInstanceHandle& Handle)
     if (!Slot->bHidden) RemoveInstanceFromComponent(*Bucket, Handle.SlotId);
     Slot->bFree = true;
     Slot->bHidden = false;
+    Slot->bOwnerHidden = false;
+    Slot->SuppressionCount = 0;
     Slot->Owner.Reset();
     Slot->NodePath.Reset();
     Slot->InstanceIndex = INDEX_NONE;
@@ -485,10 +489,9 @@ void UMHInstancePoolSubsystem::HideOwner(const AActor& Owner)
         for (int32 SlotId = 0; SlotId < Bucket.Slots.Num(); ++SlotId)
         {
             FSlot& Slot = Bucket.Slots[SlotId];
-            if (Slot.bFree || Slot.bHidden || Slot.Owner.Get() != &Owner) continue;
-            RemoveInstanceFromComponent(Bucket, SlotId);
-            Slot.bHidden = true;
-            MarkDirty(Bucket, true);
+            if (Slot.bFree || Slot.bOwnerHidden || Slot.Owner.Get() != &Owner) continue;
+            Slot.bOwnerHidden = true;
+            ApplySlotVisibility(Bucket, SlotId);
         }
     }
     EndBulk();
@@ -502,31 +505,70 @@ void UMHInstancePoolSubsystem::ShowOwner(const AActor& Owner)
         for (int32 SlotId = 0; SlotId < Bucket.Slots.Num(); ++SlotId)
         {
             FSlot& Slot = Bucket.Slots[SlotId];
-            if (Slot.bFree || !Slot.bHidden || Slot.Owner.Get() != &Owner) continue;
-            Slot.bHidden = false;
-            AddInstanceToComponent(Bucket, SlotId);
-            MarkDirty(Bucket, true);
+            if (Slot.bFree || !Slot.bOwnerHidden || Slot.Owner.Get() != &Owner) continue;
+            Slot.bOwnerHidden = false;
+            ApplySlotVisibility(Bucket, SlotId);
         }
     }
     EndBulk();
 }
 
+void UMHInstancePoolSubsystem::ApplySlotVisibility(FBucket& Bucket, const int32 SlotId)
+{
+    FSlot& Slot = Bucket.Slots[SlotId];
+    const bool bShouldHide = Slot.bOwnerHidden || Slot.SuppressionCount > 0;
+    if (bShouldHide == Slot.bHidden) return;
+    if (bShouldHide) RemoveInstanceFromComponent(Bucket, SlotId);
+    Slot.bHidden = bShouldHide;
+    if (!bShouldHide) AddInstanceToComponent(Bucket, SlotId);
+    MarkDirty(Bucket, true);
+}
+
 FMHPoolSuppressionLease UMHInstancePoolSubsystem::AcquireSuppression(const TConstArrayView<FMHInstanceHandle> Handles)
 {
-    // CE-2a red stub.
-    static_cast<void>(Handles);
-    return FMHPoolSuppressionLease();
+    // CE-2a (spec §6.1): one count per slot; the lease remembers the handles
+    // it raised so the release lowers exactly those (still alive) again.
+    FMHPoolSuppressionLease Lease;
+    BeginBulk();
+    for (const FMHInstanceHandle& Handle : Handles)
+    {
+        FSlot* Slot = nullptr;
+        FBucket* Bucket = ResolveHandle(Handle, Slot);
+        if (Bucket == nullptr) continue;
+        ++Slot->SuppressionCount;
+        ApplySlotVisibility(*Bucket, Handle.SlotId);
+        Lease.Handles.Add(Handle);
+    }
+    EndBulk();
+    if (!Lease.Handles.IsEmpty())
+    {
+        Lease.LeaseId = FGuid::NewGuid();
+        ActiveLeases.Add(Lease.LeaseId);
+    }
+    return Lease;
 }
 
 void UMHInstancePoolSubsystem::ReleaseSuppression(const FMHPoolSuppressionLease& Lease)
 {
-    static_cast<void>(Lease);
+    // Unknown or already released: nothing to lower. A dead handle (removed
+    // or reused slot) fails the generation check and is skipped.
+    if (!Lease.IsSet() || ActiveLeases.Remove(Lease.LeaseId) == 0) return;
+    BeginBulk();
+    for (const FMHInstanceHandle& Handle : Lease.Handles)
+    {
+        FSlot* Slot = nullptr;
+        FBucket* Bucket = ResolveHandle(Handle, Slot);
+        if (Bucket == nullptr || Slot->SuppressionCount <= 0) continue;
+        --Slot->SuppressionCount;
+        ApplySlotVisibility(*Bucket, Handle.SlotId);
+    }
+    EndBulk();
 }
 
 bool UMHInstancePoolSubsystem::IsSuppressed(const FMHInstanceHandle& Handle) const
 {
-    static_cast<void>(Handle);
-    return false;
+    const FSlot* Slot = nullptr;
+    return ResolveHandle(Handle, Slot) != nullptr && Slot->SuppressionCount > 0;
 }
 
 void UMHInstancePoolSubsystem::RemoveOwner(const AActor& Owner)

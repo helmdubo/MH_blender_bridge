@@ -265,6 +265,10 @@ private:
     void MarkDirty(FBucket& Bucket, bool bPhysics);
     void Flush(FBucket& Bucket);
     bool MigrateBucket(FBucket& Bucket);
+    /** CE-2a: recomputes bHidden from the owner axis and the suppression count, moving the ISM instance accordingly. */
+    void ApplySlotVisibility(FBucket& Bucket, int32 SlotId);
+    /** Leases still in force (a lease releases once). */
+    TSet<FGuid> ActiveLeases;
     /** Editor selection mirror: an owner's instances follow its actor selection. */
     void OnEditorSelectionChanged(UObject* Object);
     void OnEditorObjectSelected(UObject* Object);
