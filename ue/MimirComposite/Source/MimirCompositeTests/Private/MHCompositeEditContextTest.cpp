@@ -7,6 +7,8 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHInstancePool.h"
+#include "Components/BillboardComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "CoreMinimal.h"
 #include "Editor.h"
@@ -751,6 +753,69 @@ bool FMHEditContextBakeCurrentResultTest::RunTest(const FString& Parameters)
             LeavesAfter.ContainsByPredicate([&Before](const FVector& After) { return After.Equals(Before, 1e-2); }));
     }
     bPassed &= TestTrue(TEXT("the shared placements are untouched"), F.A->GetCompositeAsset() == F.Root && F.B->GetCompositeAsset() == F.Root);
+    return bPassed;
+}
+
+// R6-UX1 (owner field feedback 2026-09-06): a nested session must be
+// grabbable and visible — scope handles are viewport-clickable sprites, any
+// row of the edited subtree resolves to its handle, and a wireframe frame
+// marks the edited subtree in the scene.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextScopeHandlesGrabbableTest,
+    "Mimir.V5.Composite.EditContext.ScopeHandlesAreGrabbableAndFramed",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextScopeHandlesGrabbableTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FString InvocationPath = InvocationNode->NodePath;
+    FVector MeshCWorld;
+    bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorldLocation(*F.A, F.MeshC, MeshCWorld));
+
+    // Outside a session nothing is grabbable and nothing is framed.
+    bPassed &= TestNull(TEXT("no session: no handle for a node path"), F.A->FindSessionHandleForNodePath(InvocationPath));
+    bPassed &= TestNull(TEXT("no session: no frame"), F.A->GetEditScopeFrame());
+
+    FString Error;
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
+    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
+    bPassed &= TestTrue(TEXT("a scope handle is a viewport-clickable sprite"), Handles[0]->IsA<UBillboardComponent>());
+    const FString ChildNodePath = InvocationPath + TEXT(">") + F.Child->LogicalName + TEXT(":nodes[0]");
+    bPassed &= TestTrue(TEXT("the child node row resolves to its handle"), F.A->FindSessionHandleForNodePath(ChildNodePath) == Handles[0]);
+    bPassed &= TestTrue(TEXT("a descendant path resolves to the same handle"), F.A->FindSessionHandleForNodePath(ChildNodePath + TEXT("/children[0]")) == Handles[0]);
+    bPassed &= TestNull(TEXT("a row outside the scope has no handle"), F.A->FindSessionHandleForNodePath(F.Root->LogicalName + TEXT(":nodes[0]")));
+    bPassed &= TestNull(TEXT("the invocation itself is not a handle"), F.A->FindSessionHandleForNodePath(InvocationPath));
+
+    const FBox ScopeBounds = F.A->GetEditScopeBounds();
+    bPassed &= TestTrue(TEXT("scope bounds are valid"), ScopeBounds.IsValid != 0);
+    bPassed &= TestTrue(TEXT("scope bounds contain the edited mesh"), ScopeBounds.IsInsideOrOn(MeshCWorld));
+    const UBoxComponent* Frame = F.A->GetEditScopeFrame();
+    bPassed &= TestNotNull(TEXT("the edited subtree is framed"), Frame);
+    if (Frame != nullptr)
+    {
+        bPassed &= TestTrue(TEXT("the frame is the actor's own component"), Frame->GetOwner() == F.A);
+        bPassed &= TestFalse(TEXT("the frame cannot be grabbed"), Frame->bSelectable);
+        bPassed &= TestTrue(TEXT("the frame spans the scope"), Frame->GetScaledBoxExtent().Equals(ScopeBounds.GetExtent(), 1e-2) && Frame->GetComponentLocation().Equals(ScopeBounds.GetCenter(), 1e-2));
+    }
+    bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
+    bPassed &= TestNull(TEXT("cancel retires the frame"), F.A->GetEditScopeFrame());
+    bPassed &= TestEqual(TEXT("cancel retires the handles"), F.A->GetEditScopeHandles().Num(), 0);
+
+    // A root session resolves rows to the top-level handles.
+    if (!TestTrue(TEXT("root session: ") + Error, Subsystem->BeginEditComposite(F.B, Error))) return false;
+    const TArray<TObjectPtr<USceneComponent>>& TopLevel = F.B->GetTopLevelPlacementComponents();
+    if (!TestEqual(TEXT("two top-level handles"), TopLevel.Num(), 2)) return false;
+    bPassed &= TestTrue(TEXT("root row resolves to its top-level handle"), F.B->FindSessionHandleForNodePath(F.Root->LogicalName + TEXT(":nodes[0]")) == TopLevel[0]);
+    bPassed &= TestTrue(TEXT("a nested leaf resolves to its top-level ancestor"), F.B->FindSessionHandleForNodePath(F.Root->LogicalName + TEXT(":nodes[1]>") + F.Child->LogicalName + TEXT(":nodes[0]")) == TopLevel[1]);
+    bPassed &= TestNull(TEXT("root session has no frame"), F.B->GetEditScopeFrame());
+    bPassed &= TestTrue(TEXT("cancel root session"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }
 

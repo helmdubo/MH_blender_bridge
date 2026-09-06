@@ -4,6 +4,7 @@
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -116,6 +117,17 @@ public:
     const FString& GetEditScopeInvocationPath() const { return EditScopeInvocationPath; }
     /** Handles of the scoped definition's nodes while a nested session is active (empty for a root session). */
     const TArray<TObjectPtr<USceneComponent>>& GetEditScopeHandles() const { return EditScopeHandles; }
+    /**
+     * R6-UX1: the session handle that moves the node at NodePath — the scope
+     * handle of its top-level ancestor inside the edited definition, or the
+     * top-level placement handle in a root session. Null outside a session
+     * or for paths outside the edited subtree.
+     */
+    USceneComponent* FindSessionHandleForNodePath(const FString& NodePath) const;
+    /** World bounds of everything the edited definition materializes here (handles and leaves); invalid without a scope. */
+    FBox GetEditScopeBounds() const;
+    /** Wireframe frame around the edited subtree while a nested session is active. */
+    UBoxComponent* GetEditScopeFrame() const { return EditScopeFrame; }
 
     /** Rebuild from managed applied assets, never from the source filesystem. */
     void RebuildComposite();
@@ -274,12 +286,18 @@ private:
     /** R6-D1: handles of the nested definition's nodes under the edit scope. */
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> EditScopeHandles;
+    /** Resident-plan node path per scope handle (parallel to EditScopeHandles). */
+    TArray<FString> EditScopeHandlePaths;
+    /** R6-UX1: the frame marking the edited subtree in the scene. */
+    UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
+    TObjectPtr<UBoxComponent> EditScopeFrame;
     FString EditScopeInvocationPath;
     /** Logical name of the scoped definition and the invocation's world in actor space (resident plan). */
     FString EditScopeComposite;
     FMatrix EditScopeParentLocal = FMatrix::Identity;
     /** Creates/positions the scope handles from the resident plan; destroys them when no scope is active. */
     void SyncEditScopeHandles();
+    void SyncEditScopeFrame();
     void DestroyEditScopeHandles();
 
     /** Derived navigation rows; own components are retained by DerivedComponents, pooled ones by the pool. */
