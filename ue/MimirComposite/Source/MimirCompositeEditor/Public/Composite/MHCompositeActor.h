@@ -273,6 +273,12 @@ private:
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> EditScopeHandles;
     FString EditScopeInvocationPath;
+    /** Logical name of the scoped definition and the invocation's world in actor space (resident plan). */
+    FString EditScopeComposite;
+    FMatrix EditScopeParentLocal = FMatrix::Identity;
+    /** Creates/positions the scope handles from the resident plan; destroys them when no scope is active. */
+    void SyncEditScopeHandles();
+    void DestroyEditScopeHandles();
 
     /** Derived navigation rows; own components are retained by DerivedComponents, pooled ones by the pool. */
     mutable TArray<UE::MimirComposite::FMHCompositeLeafMaterialization> LeafMaterializations;
