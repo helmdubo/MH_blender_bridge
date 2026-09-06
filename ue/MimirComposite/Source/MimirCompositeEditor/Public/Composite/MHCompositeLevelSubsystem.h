@@ -166,6 +166,12 @@ public:
     /** The draft document of the active session (the root's or the nested definition's). */
     const UE::MimirComposite::FMHCompositeDocument& GetEditingDraft() const { return EditingDocument; }
     bool IsEditingComposite() const { return EditingActor.IsValid(); }
+    /**
+     * CE-pre: identity of the current session. Advances on every Begin and on
+     * every session end, so a callback captured for one session never acts on
+     * a later one (spec CE §9: deferred callbacks carry the epoch).
+     */
+    uint32 GetEditSessionEpoch() const { return EditSessionEpoch; }
     bool IsEditingComposite(const AMHCompositeActor* Actor) const
     {
         return EditingActor.IsValid() && EditingActor.Get() == Actor;
@@ -210,6 +216,7 @@ public:
 
 private:
     TWeakObjectPtr<AMHCompositeActor> EditingActor;
+    uint32 EditSessionEpoch = 0;
     UE::MimirComposite::FMHCompositeDocument EditingDocument;
     TArray<TWeakObjectPtr<USceneComponent>> EditingTopLevelComponents;
     /** R6-D0: the definition under edit (the root's asset or a nested child's), its invocation and effective parent. */

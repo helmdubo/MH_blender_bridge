@@ -24,6 +24,13 @@ MIMIRCOMPOSITEEDITOR_API EMHEditSessionKeyAction MHEditSessionKeyAction(const FK
  */
 MIMIRCOMPOSITEEDITOR_API bool MHHandleEditSessionKey(const FKey& Key, bool bDeferApply = true);
 
+/**
+ * Runs a deferred Apply captured for the session that had CapturedEpoch. Returns
+ * false without touching anything when that session is gone or another one
+ * has begun since (CE §9: stale queued Apply is a no-op).
+ */
+MIMIRCOMPOSITEEDITOR_API bool MHRunDeferredEditSessionApply(uint32 CapturedEpoch);
+
 /** Registers/unregisters the Slate input pre-processor that routes viewport Esc/Enter to the session. */
 void MHRegisterEditSessionKeys();
 void MHUnregisterEditSessionKeys();

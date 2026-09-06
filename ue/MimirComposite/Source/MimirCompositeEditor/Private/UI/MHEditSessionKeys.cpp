@@ -82,6 +82,14 @@ bool MHHandleEditSessionKey(const FKey& Key, const bool bDeferApply)
     }
 }
 
+bool MHRunDeferredEditSessionApply(const uint32 CapturedEpoch)
+{
+    // CE-pre red stub: applies whatever session is active now.
+    static_cast<void>(CapturedEpoch);
+    MHExecuteCommitEditCompositeInteractive();
+    return true;
+}
+
 void MHRegisterEditSessionKeys()
 {
     if (GProcessor.IsValid() || !FSlateApplication::IsInitialized()) return;
