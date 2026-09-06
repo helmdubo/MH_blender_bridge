@@ -27,13 +27,6 @@ struct FModeV2Scope
     }
 };
 
-bool AssetBytes(const UMHCompositeAsset& Asset, TArray<uint8>& OutBytes)
-{
-    FMHCompositeDocument Document;
-    FString Error;
-    return MHExtractCompositeV5(Asset, Document, Error) && MHWriteCanonicalCompositeV5(Document, OutBytes, Error);
-}
-
 } // namespace
 
 // CE-3a (spec CE-ADR-2, CE-3): the Composite Edit Mode follows the CE-backend
@@ -90,7 +83,7 @@ bool FMHEditModeSaveCancelTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("second"), Second)) return false;
     const FString SecondPath = Second->NodePath;
     TArray<uint8> ChildBefore;
-    if (!TestTrue(TEXT("child bytes"), AssetBytes(*F.Child, ChildBefore))) return false;
+    if (!TestTrue(TEXT("child bytes"), FCompositeEditFixture::AssetBytes(*F.Child, ChildBefore))) return false;
     FString Error;
 
     // Clean: Cancel leaves at once.
@@ -118,7 +111,7 @@ bool FMHEditModeSaveCancelTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("it asked again"), Asked, 2);
     bPassed &= TestFalse(TEXT("session gone after discard"), Subsystem->IsEditingComposite());
     TArray<uint8> ChildAfterDiscard;
-    bPassed &= TestTrue(TEXT("discard never touches the source"), AssetBytes(*F.Child, ChildAfterDiscard) && ChildAfterDiscard == ChildBefore);
+    bPassed &= TestTrue(TEXT("discard never touches the source"), FCompositeEditFixture::AssetBytes(*F.Child, ChildAfterDiscard) && ChildAfterDiscard == ChildBefore);
 
     // Save: the usual overwrite confirmation, then the shared definition is published.
     if (!TestTrue(TEXT("session 3: ") + Error, Subsystem->BeginEditNestedComposite(F.A, SecondPath, Error))) return false;
