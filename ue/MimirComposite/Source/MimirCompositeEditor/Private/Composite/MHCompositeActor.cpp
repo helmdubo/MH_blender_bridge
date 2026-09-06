@@ -14,7 +14,9 @@
 #include "Engine/World.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/CollisionProfile.h"
+#include "Components/BillboardComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/Texture2D.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
 #include "LevelEditor.h"
@@ -330,14 +332,97 @@ void AMHCompositeActor::SetEditScope(const FString& InvocationNodePath)
 
 USceneComponent* AMHCompositeActor::FindSessionHandleForNodePath(const FString& NodePath) const
 {
-    // R6-UX1 red stub.
-    static_cast<void>(NodePath);
-    return nullptr;
+    // R6-UX1: the handle that moves the node at NodePath — the scope handle of
+    // its top-level ancestor inside the edited definition, or the top-level
+    // placement handle in a root session.
+    if (!bPlacementEditMode || NodePath.IsEmpty()) return nullptr;
+    if (!EditScopeInvocationPath.IsEmpty())
+    {
+        for (int32 Index = 0; Index < EditScopeHandlePaths.Num() && Index < EditScopeHandles.Num(); ++Index)
+        {
+            const FString& Path = EditScopeHandlePaths[Index];
+            if (NodePath == Path || NodePath.StartsWith(Path + TEXT("/")) || NodePath.StartsWith(Path + TEXT(">")))
+            {
+                return IsValid(EditScopeHandles[Index]) ? EditScopeHandles[Index].Get() : nullptr;
+            }
+        }
+        return nullptr;
+    }
+    const UMHCompositeAsset* Asset = GetCompositeAsset();
+    if (Asset == nullptr) return nullptr;
+    // Root session: "<root prefix>:nodes[i]..." -> top-level handle i; the
+    // prefix is the call-context namespace when the placement carries one.
+    const FString Prefix = (CallContext.StreamNamespace.IsEmpty() ? Asset->LogicalName : CallContext.StreamNamespace) + TEXT(":nodes[");
+    if (!NodePath.StartsWith(Prefix)) return nullptr;
+    int32 Close = INDEX_NONE;
+    if (!NodePath.FindChar(TEXT(']'), Close) || Close <= Prefix.Len()) return nullptr;
+    const int32 Index = FCString::Atoi(*NodePath.Mid(Prefix.Len(), Close - Prefix.Len()));
+    return TopLevelPlacementComponents.IsValidIndex(Index) && IsValid(TopLevelPlacementComponents[Index])
+        ? TopLevelPlacementComponents[Index].Get() : nullptr;
 }
 
 FBox AMHCompositeActor::GetEditScopeBounds() const
 {
-    return FBox(ForceInit);
+    FBox Bounds(ForceInit);
+    if (EditScopeInvocationPath.IsEmpty() || EditScopeComposite.IsEmpty()) return Bounds;
+    for (const TObjectPtr<USceneComponent>& Handle : EditScopeHandles)
+    {
+        if (IsValid(Handle)) Bounds += Handle->GetComponentLocation();
+    }
+    const FString Prefix = EditScopeInvocationPath + TEXT(">") + EditScopeComposite + TEXT(":");
+    for (const UE::MimirComposite::FMHCompositeLeafMaterialization& Row : GetLeafMaterializations())
+    {
+        if (!Row.NodePath.StartsWith(Prefix)) continue;
+        const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Row.Component.Get());
+        if (!IsValid(Primitive)) continue;
+        if (Row.InstanceIndex != INDEX_NONE)
+        {
+            const UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Primitive);
+            FTransform InstanceWorld;
+            if (Bucket == nullptr || Bucket->GetStaticMesh() == nullptr ||
+                !Bucket->GetInstanceTransform(Row.InstanceIndex, InstanceWorld, true)) continue;
+            Bounds += Bucket->GetStaticMesh()->GetBoundingBox().TransformBy(InstanceWorld);
+        }
+        else
+        {
+            Bounds += Primitive->Bounds.GetBox();
+        }
+    }
+    return Bounds;
+}
+
+void AMHCompositeActor::SyncEditScopeFrame()
+{
+    // R6-UX1: a wireframe box marks the edited subtree in the scene; it is
+    // never grabbable and never rendered in game.
+    const FBox Bounds = GetEditScopeBounds();
+    if (!Bounds.IsValid)
+    {
+        if (IsValid(EditScopeFrame)) EditScopeFrame->DestroyComponent();
+        EditScopeFrame = nullptr;
+        return;
+    }
+    if (!IsValid(EditScopeFrame))
+    {
+        UBoxComponent* Frame = NewObject<UBoxComponent>(this, UBoxComponent::StaticClass(),
+            MakeUniqueObjectName(this, UBoxComponent::StaticClass(), TEXT("MH_ScopeFrame")),
+            RF_Transient | RF_DuplicateTransient | RF_TextExportTransient);
+        AddInstanceComponent(Frame);
+        Frame->ComponentTags.Add(TEXT("MHScope.Frame"));
+        Frame->SetupAttachment(GetRootComponent());
+        Frame->SetAbsolute(true, true, true);
+        Frame->bSelectable = false;
+        Frame->bDrawOnlyIfSelected = false;
+        Frame->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Frame->SetCanEverAffectNavigation(false);
+        Frame->SetHiddenInGame(true);
+        Frame->ShapeColor = FColor(255, 170, 40);
+        Frame->SetLineThickness(3.0f);
+        Frame->RegisterComponent();
+        EditScopeFrame = Frame;
+    }
+    EditScopeFrame->SetWorldTransform(FTransform(Bounds.GetCenter()), false, nullptr, ETeleportType::TeleportPhysics);
+    EditScopeFrame->SetBoxExtent(Bounds.GetExtent(), false);
 }
 
 void AMHCompositeActor::DestroyEditScopeHandles()
@@ -347,6 +432,9 @@ void AMHCompositeActor::DestroyEditScopeHandles()
         if (IsValid(Handle)) Handle->DestroyComponent();
     }
     EditScopeHandles.Reset();
+    EditScopeHandlePaths.Reset();
+    if (IsValid(EditScopeFrame)) EditScopeFrame->DestroyComponent();
+    EditScopeFrame = nullptr;
 }
 
 void AMHCompositeActor::SyncEditScopeHandles()
@@ -383,20 +471,32 @@ void AMHCompositeActor::SyncEditScopeHandles()
         if (!IsValid(Handle))
         {
             // Not an "MH." tag: the placement compiler's retirement never
-            // touches scope handles; the session owns their lifetime.
-            Handle = NewObject<USceneComponent>(this, USceneComponent::StaticClass(),
-                MakeUniqueObjectName(this, USceneComponent::StaticClass(), TEXT("MH_ScopeNode")),
+            // touches scope handles; the session owns their lifetime. A sprite
+            // (R6-UX1): clickable in the viewport, so the gizmo can grab the
+            // node without the Outliner.
+            UBillboardComponent* Sprite = NewObject<UBillboardComponent>(this, UBillboardComponent::StaticClass(),
+                MakeUniqueObjectName(this, UBillboardComponent::StaticClass(), TEXT("MH_ScopeNode")),
                 RF_Transient | RF_DuplicateTransient | RF_TextExportTransient);
-            AddInstanceComponent(Handle);
-            Handle->ComponentTags.Add(FName(*FString::Printf(TEXT("MHScope.Handle:%d"), Index)));
-            Handle->SetupAttachment(GetRootComponent());
-            Handle->SetAbsolute(true, true, true);
-            Handle->RegisterComponent();
+            AddInstanceComponent(Sprite);
+            Sprite->ComponentTags.Add(FName(*FString::Printf(TEXT("MHScope.Handle:%d"), Index)));
+            Sprite->SetupAttachment(GetRootComponent());
+            Sprite->SetAbsolute(true, true, true);
+            Sprite->SetHiddenInGame(true);
+            Sprite->bIsScreenSizeScaled = true;
+            if (UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EditorResources/S_TargetPoint.S_TargetPoint")))
+            {
+                Sprite->SetSprite(Texture);
+            }
+            Sprite->RegisterComponent();
+            Handle = Sprite;
             if (EditScopeHandles.IsValidIndex(Index)) EditScopeHandles[Index] = Handle;
             else EditScopeHandles.Add(Handle);
         }
         Handle->SetWorldTransform(FTransform(ScopeNodes[Index]->WorldMatrix * Basis), false, nullptr, ETeleportType::TeleportPhysics);
     }
+    EditScopeHandlePaths.Reset();
+    for (const FMHResolvedCompositeNode* Node : ScopeNodes) EditScopeHandlePaths.Add(Node->NodePath);
+    SyncEditScopeFrame();
 }
 
 void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)

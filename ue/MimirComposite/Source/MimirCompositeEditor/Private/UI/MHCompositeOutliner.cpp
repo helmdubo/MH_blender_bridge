@@ -239,10 +239,18 @@ private:
             [
                 SNew(STextBlock)
                 .Text(Item.IsValid() ? FText::FromString(Item->Label) : FText::GetEmpty())
-                .ColorAndOpacity_Lambda([Item]()
+                .ColorAndOpacity_Lambda([Item, WeakSelf = TWeakPtr<SMHCompositeOutliner>(SharedThis(this))]()
                 {
                     if (!Item.IsValid()) return FSlateColor::UseForeground();
                     if (Item->bMissingEndpoint) return FSlateColor(FLinearColor(1.0f, 0.18f, 0.12f));
+                    // R6-UX1: the edited subtree stands out; the rest waits for the session to end.
+                    const TSharedPtr<SMHCompositeOutliner> Self = WeakSelf.Pin();
+                    if (Self.IsValid() && !Self->RowScopePath.IsEmpty())
+                    {
+                        if (Item->NodePath == Self->RowScopePath) return FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f));
+                        if (!Item->NodePath.StartsWith(Self->RowScopePath + TEXT(">")) &&
+                            !Item->NodePath.StartsWith(Self->RowScopePath + TEXT("/"))) return FSlateColor::UseSubduedForeground();
+                    }
                     if (Item->bSelectedOption) return FSlateColor(FLinearColor(0.2f, 0.9f, 0.35f));
                     return FSlateColor::UseForeground();
                 })
@@ -285,6 +293,18 @@ private:
         SelectedItem = Item;
         RebuildDetails();
         if (!Item.IsValid() || SelectInfo == ESelectInfo::Direct || GEditor == nullptr) return;
+        // R6-UX1: in a session a row of the edited subtree grabs its handle —
+        // the gizmo moves the node, never the actor. Rows outside the subtree
+        // leave the selection alone until the session ends.
+        if (CurrentActor.IsValid() && CurrentActor->IsPlacementEditMode())
+        {
+            if (USceneComponent* Handle = CurrentActor->FindSessionHandleForNodePath(Item->NodePath))
+            {
+                CurrentActor->SelectPlacementLeafByNodePath(Item->NodePath);
+                SelectHandle(Handle);
+            }
+            return;
+        }
         USceneComponent* Component = Item->PlacementComponent.Get();
         if (!IsValid(Component)) return;
         if (Item->PlacementInstanceIndex != INDEX_NONE)
@@ -306,15 +326,37 @@ private:
             GEditor->RedrawLevelEditingViewports();
             return;
         }
-        USelection* Components = GEditor->GetSelectedComponents();
-        if (Components == nullptr) return;
+        SelectHandle(Component);
+        CurrentActor->SelectPlacementLeaf(Component);
+    }
+
+    void SelectHandle(USceneComponent* Handle)
+    {
+        USelection* Components = GEditor != nullptr ? GEditor->GetSelectedComponents() : nullptr;
+        if (Components == nullptr || !IsValid(Handle)) return;
+        AActor* Owner = Handle->GetOwner();
+        if (Owner != nullptr && !Owner->IsSelected()) GEditor->SelectActor(Owner, true, true, true);
         Components->BeginBatchSelectOperation();
         Components->DeselectAll();
-        GEditor->SelectComponent(Component, true, false, true);
+        GEditor->SelectComponent(Handle, true, false, true);
         Components->EndBatchSelectOperation(true);
         GEditor->NoteSelectionChange();
         GEditor->RedrawLevelEditingViewports();
-        CurrentActor->SelectPlacementLeaf(Component);
+    }
+
+    /** R6-UX1: the edited sub-composite stays in view — expanded, revealed, and its first handle grabbed. */
+    void FocusEditScope(const FString& InvocationPath)
+    {
+        AMHCompositeActor* Root = CurrentActor.Get();
+        if (Root == nullptr || GEditor == nullptr) return;
+        if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindByNodePath(InvocationPath))
+        {
+            if (Item->IsCompositeReference() && !Item->bNestedChildrenLoaded) Model.ExpandItem(Item);
+            RevealItem(Item);
+            if (TreeView.IsValid()) TreeView->SetItemExpansion(Item, true);
+        }
+        const TArray<TObjectPtr<USceneComponent>>& Handles = Root->GetEditScopeHandles();
+        if (!Handles.IsEmpty() && IsValid(Handles[0])) SelectHandle(Handles[0]);
     }
 
     TSharedPtr<SWidget> OpenContextMenu()
@@ -433,12 +475,14 @@ private:
         AMHCompositeActor* Root = CurrentActor.Get();
         if (Subsystem == nullptr || Root == nullptr) return;
         FString Error;
-        if (!Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error))
+        const bool bStarted = Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error);
+        if (!bStarted)
         {
             FMessageLog("Mimir").Error(FText::FromString(Error));
             FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
         }
         RefreshModel();
+        if (bStarted) FocusEditScope(InvocationPath);
     }
 
     void CancelEditContents()
@@ -726,6 +770,18 @@ private:
     void RefreshModel()
     {
         const FString PreviousPath = SelectedItem.IsValid() ? SelectedItem->NodePath : FString();
+        // R6-UX1: a refresh never collapses what the user opened.
+        TArray<FString> ExpandedPaths;
+        if (TreeView.IsValid())
+        {
+            TSet<TSharedPtr<FMHCompositeOutlinerItem>> Expanded;
+            TreeView->GetExpandedItems(Expanded);
+            for (const TSharedPtr<FMHCompositeOutlinerItem>& Item : Expanded)
+            {
+                if (Item.IsValid()) ExpandedPaths.Add(Item->NodePath);
+            }
+        }
+        RowScopePath.Reset();
         SelectedItem.Reset();
         RootItems.Reset();
         const bool bBuilt = CurrentActor.IsValid() && Model.BuildFromActor(*CurrentActor);
@@ -759,11 +815,12 @@ private:
                 if (!EditContext.EditedLogicalName.IsEmpty() && EditContext.RootPlacement.Get() == CurrentActor.Get())
                 {
                     // R6-D0: what is edited, where it sits, and what saving touches.
+                    RowScopePath = EditContext.InvocationPath;
                     const FString Context = EditContext.InvocationPath.IsEmpty()
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Drag the handles to edit its nodes; right-click > Apply Shared Definition publishes, Make Unique saves a copy, Cancel Edit Contents discards"),
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Click a node row or its sprite in the viewport to grab its handle; right-click > Apply Shared Definition publishes, Make Unique saves a copy, Cancel Edit Contents discards"),
                         *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
@@ -779,6 +836,19 @@ private:
                 }
             }
             if (!PreviousPath.IsEmpty()) SelectedItem = Model.FindByNodePath(PreviousPath);
+            if (TreeView.IsValid())
+            {
+                // Parents first: a nested row exists only once its composite row is expanded.
+                ExpandedPaths.Sort([](const FString& A, const FString& B) { return A.Len() < B.Len(); });
+                for (const FString& Path : ExpandedPaths)
+                {
+                    if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindByNodePath(Path))
+                    {
+                        if (Item->IsCompositeReference() && !Item->bNestedChildrenLoaded) Model.ExpandItem(Item);
+                        TreeView->SetItemExpansion(Item, true);
+                    }
+                }
+            }
         }
         if (TreeView.IsValid())
         {
@@ -795,6 +865,8 @@ private:
     TWeakObjectPtr<AMHCompositeActor> CurrentActor;
     TArray<TSharedPtr<FMHCompositeOutlinerItem>> RootItems;
     TSharedPtr<FMHCompositeOutlinerItem> SelectedItem;
+    /** R6-UX1: invocation path of the session edited on CurrentActor (rows outside it are dimmed). */
+    FString RowScopePath;
     TSharedPtr<STreeView<TSharedPtr<FMHCompositeOutlinerItem>>> TreeView;
     TSharedPtr<SVerticalBox> DetailsBox;
     TSharedPtr<STextBlock> HeaderText;

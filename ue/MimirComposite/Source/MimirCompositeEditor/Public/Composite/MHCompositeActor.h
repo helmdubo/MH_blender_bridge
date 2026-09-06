@@ -297,6 +297,7 @@ private:
     FMatrix EditScopeParentLocal = FMatrix::Identity;
     /** Creates/positions the scope handles from the resident plan; destroys them when no scope is active. */
     void SyncEditScopeHandles();
+    void SyncEditScopeFrame();
     void DestroyEditScopeHandles();
 
     /** Derived navigation rows; own components are retained by DerivedComponents, pooled ones by the pool. */
