@@ -19,8 +19,10 @@ namespace UE::MimirComposite { struct FMHEndpointInterfaceDelta; }
 /**
  * Persisted call context of a placement (R4-pre-3, 16 §2.10). Empty for a
  * placement authored as a root; filled by Break for a child composite so the
- * child keeps the streams it had inside its parent. Never computed from the
- * scene, only written by Break (or cleared by the user).
+ * child keeps the streams it had inside its parent, and by Make Unique for
+ * This Placement (R6-U1) so the placement keeps its root-level streams under
+ * the unique root. Never computed from the scene; only those two writers (or
+ * cleared by the user).
  */
 USTRUCT()
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositeCallContext
