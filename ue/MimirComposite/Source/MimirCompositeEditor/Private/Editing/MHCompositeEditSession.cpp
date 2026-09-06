@@ -48,9 +48,13 @@ void UMHCompositeEditSession::Close()
 
 bool UMHCompositeEditSession::OpenProjection(FString& OutError)
 {
-    // CE-2b red stub.
-    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the edit projection arrives with CE-2b");
-    return false;
+    if (!IsOpen())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the composite edit session is closed");
+        return false;
+    }
+    if (Projection == nullptr) Projection = NewObject<UMHCompositeEditProjection>(this);
+    return Projection->Open(*this, OutError);
 }
 
 void UMHCompositeEditSession::CloseProjection()
@@ -92,7 +96,15 @@ bool UMHCompositeEditSession::SetNodeTransform(const FGuid& NodeId, const FTrans
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the composite edit session is closed");
         return false;
     }
-    return Draft->SetNodeTransform(NodeId, LocalTransform, OutError);
+    if (!Draft->SetNodeTransform(NodeId, LocalTransform, OutError)) return false;
+    // The projection follows the draft; a refresh failure is a preview
+    // problem, not an authoring one, so the command still counts.
+    if (Projection != nullptr && Projection->IsOpen())
+    {
+        FString RefreshError;
+        Projection->Refresh(RefreshError);
+    }
+    return true;
 }
 
 bool UMHCompositeEditSession::SyncDraftFromLegacyEdit(FString& OutError)
