@@ -234,6 +234,25 @@ bool UMHCompositeEditorMode::RequestCancel()
     return true;
 }
 
+bool UMHCompositeEditorMode::SelectComponent(USceneComponent* Component)
+{
+    static_cast<void>(Component);
+    return false;
+}
+
+bool UMHCompositeEditorMode::HandleHitProxy(HHitProxy* HitProxy)
+{
+    static_cast<void>(HitProxy);
+    return false;
+}
+
+bool UMHCompositeEditorMode::HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
+{
+    static_cast<void>(InViewportClient);
+    static_cast<void>(Click);
+    return HandleHitProxy(HitProxy);
+}
+
 void UMHCompositeEditorMode::Enter()
 {
     UEdMode::Enter();

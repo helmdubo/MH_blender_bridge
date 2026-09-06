@@ -2,10 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Framework/Commands/Commands.h"
+#include "Tools/LegacyEdModeInterfaces.h"
 #include "Tools/UEdMode.h"
 #include "MHCompositeEditorMode.generated.h"
 
 class UMHCompositeEditSession;
+class USceneComponent;
+struct HHitProxy;
 
 /** CE-3a: the mode's commands (Escape = Cancel, like Level Instance Edit). */
 class MIMIRCOMPOSITEEDITOR_API FMHCompositeEditCommands final : public TCommands<FMHCompositeEditCommands>
@@ -28,9 +31,15 @@ public:
  * Cancel (after SelectNone, like the engine's mode), dims everything but the
  * projection through the `EditingLevelInstance` show flag, and leaves the
  * session before PIE.
+ *
+ * CE-3b: a Composite Outliner row or a viewport click grabs a node of the
+ * projection (`SelectComponent`, `HandleHitProxy`): the projection actor is
+ * selected exclusively, then the node's component — the gizmo sits on the
+ * node. Clicks on anything else are swallowed (locked context); gizmo axes
+ * and empty space keep their meaning.
  */
 UCLASS(Transient)
-class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditorMode : public UEdMode
+class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditorMode : public UEdMode, public ILegacyEdModeViewportInterface
 {
     GENERATED_BODY()
 
@@ -52,6 +61,11 @@ public:
     void RequestSave();
     /** Cancel: discard the draft and leave; asks first when the draft is dirty. Returns false when the user stays. */
     bool RequestCancel();
+    /** CE-3b: grab a node — the projection actor exclusively, then its component. False for anything outside the projection. */
+    bool SelectComponent(USceneComponent* Component);
+    /** CE-3b: a viewport click. True = handled (a projection node grabbed, or a locked target swallowed). */
+    bool HandleHitProxy(HHitProxy* HitProxy);
+    virtual bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click) override;
 
     virtual void Enter() override;
     virtual void Exit() override;

@@ -60,6 +60,8 @@ public:
     FGuid GetNodeIdForComponent(const USceneComponent* Component) const;
     /** First component of a session node (its leaf, or its handle). */
     USceneComponent* FindComponentForNodeId(const FGuid& NodeId) const;
+    /** CE-3b: the component at a plan origin (a Composite Outliner row's node path); null when the origin is not projected. */
+    USceneComponent* FindComponentForOrigin(const FString& Origin) const;
     const UE::MimirComposite::FMHResolvedCompositePlan* GetPlan() const { return Plan.Get(); }
     const UE::MimirComposite::FMHPoolSuppressionLease& GetLease() const { return Lease; }
 

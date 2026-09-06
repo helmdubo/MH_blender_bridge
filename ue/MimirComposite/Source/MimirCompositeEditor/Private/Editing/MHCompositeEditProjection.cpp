@@ -282,6 +282,12 @@ FGuid UMHCompositeEditProjection::GetNodeIdForComponent(const USceneComponent* C
     return Index != INDEX_NONE ? Draft->GetNodeId(Index) : FGuid();
 }
 
+USceneComponent* UMHCompositeEditProjection::FindComponentForOrigin(const FString& Origin) const
+{
+    static_cast<void>(Origin);
+    return nullptr;
+}
+
 USceneComponent* UMHCompositeEditProjection::FindComponentForNodeId(const FGuid& NodeId) const
 {
     for (const TObjectPtr<USceneComponent>& Component : Components)
