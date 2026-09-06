@@ -511,6 +511,24 @@ void UMHInstancePoolSubsystem::ShowOwner(const AActor& Owner)
     EndBulk();
 }
 
+FMHPoolSuppressionLease UMHInstancePoolSubsystem::AcquireSuppression(const TConstArrayView<FMHInstanceHandle> Handles)
+{
+    // CE-2a red stub.
+    static_cast<void>(Handles);
+    return FMHPoolSuppressionLease();
+}
+
+void UMHInstancePoolSubsystem::ReleaseSuppression(const FMHPoolSuppressionLease& Lease)
+{
+    static_cast<void>(Lease);
+}
+
+bool UMHInstancePoolSubsystem::IsSuppressed(const FMHInstanceHandle& Handle) const
+{
+    static_cast<void>(Handle);
+    return false;
+}
+
 void UMHInstancePoolSubsystem::RemoveOwner(const AActor& Owner)
 {
     BeginBulk();

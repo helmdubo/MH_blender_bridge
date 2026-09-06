@@ -35,6 +35,8 @@ struct FCompositeEditFixture
     UMHCompositeAsset* Root = nullptr;
     UMHCompositeAsset* Child = nullptr;
     UInstancedStaticMeshComponent* ForeignBucket = nullptr;
+    UStaticMesh* MeshAssetA = nullptr;
+    UStaticMesh* MeshAssetC = nullptr;
     FString MeshA, MeshC;
 
     explicit FCompositeEditFixture(FAutomationTestBase& Test) : Recipe(Test) {}
@@ -52,8 +54,8 @@ struct FCompositeEditFixture
     {
         MeshA = Recipe.Name(TEXT("ce_mesh_a"));
         MeshC = Recipe.Name(TEXT("ce_mesh_c"));
-        UStaticMesh* MeshAssetA = Recipe.Mesh(MeshA);
-        UStaticMesh* MeshAssetC = Recipe.Mesh(MeshC);
+        MeshAssetA = Recipe.Mesh(MeshA);
+        MeshAssetC = Recipe.Mesh(MeshC);
         FMHCompositeDocument ChildDocument;
         {
             FMHCompositeNode& Leaf = ChildDocument.Nodes.AddDefaulted_GetRef();
@@ -119,7 +121,6 @@ struct FCompositeEditFixture
             ForeignBucket->AddInstance(FTransform(FVector(0.0, -4000.0, 0.0)), true);
             ForeignBucket->AddInstance(FTransform(FVector(50.0, -4000.0, 0.0)), true);
         }
-        static_cast<void>(MeshAssetA);
         return Test.TestNotNull(TEXT("A"), A) && Test.TestNotNull(TEXT("B"), B) && Test.TestNotNull(TEXT("foreign bucket"), ForeignBucket) &&
             Test.TestTrue(TEXT("A previews: ") + A->GetLastPlacementError(), A->GetResolvedPlan() != nullptr) &&
             Test.TestTrue(TEXT("B previews: ") + B->GetLastPlacementError(), B->GetResolvedPlan() != nullptr);

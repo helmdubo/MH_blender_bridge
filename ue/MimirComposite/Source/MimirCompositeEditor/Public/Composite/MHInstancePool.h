@@ -80,6 +80,19 @@ struct MIMIRCOMPOSITEEDITOR_API FMHInstanceHandle
     bool operator==(const FMHInstanceHandle& Other) const = default;
 };
 
+/**
+ * CE-2a (docs/contracts/composite_edit_ce0.md, spec §6.1): a temporary
+ * suppression of pooled instances held by an edit session. Released by value;
+ * handles that died meanwhile (removed or reused slot) are ignored.
+ */
+struct MIMIRCOMPOSITEEDITOR_API FMHPoolSuppressionLease
+{
+    FGuid LeaseId;
+    TArray<FMHInstanceHandle> Handles;
+
+    bool IsSet() const { return LeaseId.IsValid(); }
+};
+
 /** Observable counters for tests and MH_PERF reports. */
 struct MIMIRCOMPOSITEEDITOR_API FMHInstancePoolMetrics
 {
@@ -174,6 +187,18 @@ public:
     void SetOwnerEditorVisibility(const AActor& Owner, bool bVisible) { bVisible ? ShowOwner(Owner) : HideOwner(Owner); }
 
     /**
+     * CE-2a (spec §6.1): temporary suppression of instances by an edit session,
+     * orthogonal to owner visibility. An instance renders when its owner is
+     * visible AND its suppression count is zero; Hide/Show of the owner and
+     * bucket migration keep the count. Releasing a lease whose handle died
+     * (removed or reused slot, other generation) or an unknown lease touches
+     * nothing; a lease releases once.
+     */
+    UE::MimirComposite::FMHPoolSuppressionLease AcquireSuppression(TConstArrayView<UE::MimirComposite::FMHInstanceHandle> Handles);
+    void ReleaseSuppression(const UE::MimirComposite::FMHPoolSuppressionLease& Lease);
+    bool IsSuppressed(const UE::MimirComposite::FMHInstanceHandle& Handle) const;
+
+    /**
      * Reimport reconcile for every bucket rendering Mesh (16 §4, R5b-0):
      * payload/bounds -> render + bounds refresh; bucket descriptor -> the
      * bucket migrates to a new ISM configured from the mesh's current
@@ -211,7 +236,10 @@ private:
         /** Instance index inside the ISM, INDEX_NONE while hidden or free. */
         int32 InstanceIndex = INDEX_NONE;
         bool bFree = true;
+        /** Effective: not in the ISM. Owner-hidden or suppressed (or both). */
         bool bHidden = false;
+        bool bOwnerHidden = false;
+        int32 SuppressionCount = 0;
         FMatrix WorldMatrix = FMatrix::Identity;
         float Appearance[UE::MimirComposite::MH_APPEARANCE_CHANNELS] = {};
     };
