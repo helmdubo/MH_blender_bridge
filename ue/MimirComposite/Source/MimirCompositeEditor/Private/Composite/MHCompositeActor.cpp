@@ -328,6 +328,18 @@ void AMHCompositeActor::SetEditScope(const FString& InvocationNodePath)
     EditScopeParentLocal = Invocation->WorldMatrix;
 }
 
+USceneComponent* AMHCompositeActor::FindSessionHandleForNodePath(const FString& NodePath) const
+{
+    // R6-UX1 red stub.
+    static_cast<void>(NodePath);
+    return nullptr;
+}
+
+FBox AMHCompositeActor::GetEditScopeBounds() const
+{
+    return FBox(ForceInit);
+}
+
 void AMHCompositeActor::DestroyEditScopeHandles()
 {
     for (TObjectPtr<USceneComponent>& Handle : EditScopeHandles)
