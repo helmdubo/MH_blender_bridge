@@ -110,6 +110,8 @@ namespace UE::MimirComposite
 MIMIRCOMPOSITEEDITOR_API bool MHCompositeDocumentHasRandomization(const FMHCompositeDocument& Document);
 }
 
+class UMHCompositeEditSession;
+
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHCompositeLevelSubsystem final : public UEditorSubsystem
 {
@@ -163,8 +165,10 @@ public:
         FString& OutError);
     /** Context of the active session; empty EditedLogicalName when none. */
     FMHCompositeEditContext GetEditContext() const;
-    /** The draft document of the active session (the root's or the nested definition's). */
-    const UE::MimirComposite::FMHCompositeDocument& GetEditingDraft() const { return EditingDocument; }
+    /** The draft document of the active session (the root's or the nested definition's), read from the session's draft. */
+    const UE::MimirComposite::FMHCompositeDocument& GetEditingDraft() const;
+    /** CE-1: the single owner of the active session; null when none. */
+    UMHCompositeEditSession* GetEditSession() const { return EditSession; }
     bool IsEditingComposite() const { return EditingActor.IsValid(); }
     /**
      * CE-pre: identity of the current session. Advances on every Begin and on
@@ -217,7 +221,10 @@ public:
 private:
     TWeakObjectPtr<AMHCompositeActor> EditingActor;
     uint32 EditSessionEpoch = 0;
-    UE::MimirComposite::FMHCompositeDocument EditingDocument;
+    /** CE-1: the session object; strong reflected reference. */
+    UPROPERTY(Transient)
+    TObjectPtr<UMHCompositeEditSession> EditSession;
+    mutable UE::MimirComposite::FMHCompositeDocument EditingDocument;
     TArray<TWeakObjectPtr<USceneComponent>> EditingTopLevelComponents;
     /** R6-D0: the definition under edit (the root's asset or a nested child's), its invocation and effective parent. */
     TWeakObjectPtr<UMHCompositeAsset> EditingAsset;

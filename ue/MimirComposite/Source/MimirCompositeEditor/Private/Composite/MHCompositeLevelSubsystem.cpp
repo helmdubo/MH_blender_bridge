@@ -12,6 +12,7 @@
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Editing/MHCompositeEditSession.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -1547,6 +1548,12 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
         Root->SetPlacementEditMode(true);
     }
     return true;
+}
+
+const FMHCompositeDocument& UMHCompositeLevelSubsystem::GetEditingDraft() const
+{
+    // CE-1 red: still the initial snapshot.
+    return EditingDocument;
 }
 
 FMHCompositeEditContext UMHCompositeLevelSubsystem::GetEditContext() const
