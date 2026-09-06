@@ -146,6 +146,61 @@ AMHInstancePoolActor::AMHInstancePoolActor()
 #endif
 }
 
+ISMInstanceManager* AMHInstancePoolActor::GetSMInstanceManager(const FSMInstanceId& InstanceId)
+{
+    static_cast<void>(InstanceId);
+    return this;
+}
+
+bool AMHInstancePoolActor::CanEditSMInstance(const FSMInstanceId& InstanceId) const
+{
+    static_cast<void>(InstanceId);
+    return false;
+}
+
+bool AMHInstancePoolActor::CanMoveSMInstance(const FSMInstanceId& InstanceId, const ETypedElementWorldType WorldType) const
+{
+    static_cast<void>(InstanceId);
+    static_cast<void>(WorldType);
+    return false;
+}
+
+bool AMHInstancePoolActor::GetSMInstanceTransform(const FSMInstanceId& InstanceId, FTransform& OutInstanceTransform, const bool bWorldSpace) const
+{
+    return InstanceId.ISMComponent != nullptr && InstanceId.ISMComponent->GetInstanceTransform(InstanceId.InstanceIndex, OutInstanceTransform, bWorldSpace);
+}
+
+bool AMHInstancePoolActor::SetSMInstanceTransform(const FSMInstanceId& InstanceId, const FTransform& InstanceTransform, const bool bWorldSpace, const bool bMarkRenderStateDirty, const bool bTeleport)
+{
+    static_cast<void>(InstanceId);
+    static_cast<void>(InstanceTransform);
+    static_cast<void>(bWorldSpace);
+    static_cast<void>(bMarkRenderStateDirty);
+    static_cast<void>(bTeleport);
+    return false;
+}
+
+void AMHInstancePoolActor::NotifySMInstanceSelectionChanged(const FSMInstanceId& InstanceId, const bool bIsSelected)
+{
+    // Selection highlight is the owner's (R5b-2a); the stock per-instance
+    // selection bit would outlive the owner's selection.
+    static_cast<void>(InstanceId);
+    static_cast<void>(bIsSelected);
+}
+
+bool AMHInstancePoolActor::DeleteSMInstances(TArrayView<const FSMInstanceId> InstanceIds)
+{
+    static_cast<void>(InstanceIds);
+    return false;
+}
+
+bool AMHInstancePoolActor::DuplicateSMInstances(TArrayView<const FSMInstanceId> InstanceIds, TArray<FSMInstanceId>& OutNewInstanceIds)
+{
+    static_cast<void>(InstanceIds);
+    OutNewInstanceIds.Reset();
+    return false;
+}
+
 bool UMHInstancePoolSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
     const UWorld* World = Cast<UWorld>(Outer);
