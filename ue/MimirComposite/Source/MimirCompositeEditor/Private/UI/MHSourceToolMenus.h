@@ -19,3 +19,7 @@ void MHRegisterS6ToolMenus();
 
 /** R6-D2: publishes the active edit session (root transforms or Apply Shared Definition) behind the source-overwrite confirmation. */
 void MHExecuteCommitEditCompositeInteractive();
+
+enum class EMHCompositeUniqueScope : uint8;
+/** R6-U1: saves the active Edit Contents draft as unique definitions for Scope; one name is prompted per copy. */
+void MHExecuteSaveUniqueInteractive(EMHCompositeUniqueScope Scope);

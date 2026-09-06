@@ -340,6 +340,17 @@ private:
                     LOCTEXT("ApplySharedDefinitionTip", "Publish the edited nested definition to its .composite source and refresh every placement that invokes it."),
                     FSlateIcon(),
                     FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::ApplySharedDefinition)));
+                // R6-U1: explicit uniqueness scopes for the edited draft.
+                Menu.AddMenuEntry(
+                    LOCTEXT("MakeUniqueInDefinition", "Make Child Unique in This Definition"),
+                    LOCTEXT("MakeUniqueInDefinitionTip", "Save the edited definition as a new unique composite and point the definition that invokes it at the copy; every placement of that definition follows."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::InParentDefinition)));
+                Menu.AddMenuEntry(
+                    LOCTEXT("MakeUniqueForPlacement", "Make Unique for This Placement"),
+                    LOCTEXT("MakeUniqueForPlacementTip", "Save the edited definition and every definition up to this placement's root as new unique composites; only this placement switches to the new root."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement)));
             }
             Menu.AddMenuEntry(
                 LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
@@ -435,6 +446,12 @@ private:
     void ApplySharedDefinition()
     {
         MHExecuteCommitEditCompositeInteractive();
+        RefreshModel();
+    }
+
+    void MakeUnique(const EMHCompositeUniqueScope Scope)
+    {
+        MHExecuteSaveUniqueInteractive(Scope);
         RefreshModel();
     }
 
@@ -735,7 +752,7 @@ private:
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Drag the handles to edit its nodes; right-click > Apply Shared Definition publishes, Cancel Edit Contents discards"),
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Drag the handles to edit its nodes; right-click > Apply Shared Definition publishes, Make Unique saves a copy, Cancel Edit Contents discards"),
                         *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }

@@ -567,11 +567,70 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     }
     const FTransform Pivot(FQuat::Identity, MHSelectionBounds(Actors).GetCenter());
 
+    UMHCompositeAsset* Asset = nullptr;
+    if (!CreateManagedComposite(Document, AdoptTarget, Asset, OutWarnings, OutError)) return false;
+
+    const FScopedTransaction Transaction(INVTEXT("Build MH Composite"));
+    AMHCompositeActor* CompositeActor = Cast<AMHCompositeActor>(GEditor->AddActor(
+        TargetLevel,
+        AMHCompositeActor::StaticClass(),
+        Pivot,
+        true,
+        RF_Transactional,
+        false));
+    if (CompositeActor == nullptr)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Build could not create AMHCompositeActor");
+        return false;
+    }
+    CompositeActor->SetCompositeAsset(Asset);
+    CompositeActor->SetActorLabel(AdoptTarget.LogicalName);
+    // Selection must release the source actors while they are still valid.
+    // Deselecting after EditorDestroyActor asks the Level Editor to operate on
+    // pending-kill actors and leaves stale hit proxies for nested composites.
+    GEditor->SelectNone(false, true, false);
+    for (AActor* Actor : Actors)
+    {
+        Actor->Modify();
+        Actor->GetWorld()->EditorDestroyActor(Actor, true);
+    }
+    GEditor->SelectActor(CompositeActor, true, true, true);
+    GEditor->RedrawAllViewports();
+    OutActor = CompositeActor;
+    return true;
+}
+
+bool UMHCompositeLevelSubsystem::CreateManagedComposite(
+    const FMHCompositeDocument& Document,
+    const FMHCompositeAdoptTarget& Target,
+    UMHCompositeAsset*& OutAsset,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    // One managed composite from a document: validated against the fresh
+    // source projection, published to Source Root under the adopt target and
+    // imported back. Shared by Build and Save Unique (R6-U).
+    OutAsset = nullptr;
+#if WITH_DEV_AUTOMATION_TESTS
+    if (DefinitionCreatorForTests)
+    {
+        OutAsset = DefinitionCreatorForTests(Document, Target, OutError);
+        if (OutAsset == nullptr && OutError.IsEmpty()) OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the test definition creator returned no asset");
+        return OutAsset != nullptr;
+    }
+#endif
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (Settings == nullptr || SourceRoot.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
     FString SourcePath;
     FString SourceRelativePath;
     if (!MHValidateCompositeAdoptTarget(
             SourceRoot,
-            AdoptTarget,
+            Target,
             SourcePath,
             SourceRelativePath,
             OutError))
@@ -588,7 +647,7 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     }
     FMHResourceKey Key;
     Key.Kind = EMHResourceKind::Composite;
-    Key.LogicalName = AdoptTarget.LogicalName;
+    Key.LogicalName = Target.LogicalName;
     if (Services.Resolver->Resolve(Key).Status != EMHResolveStatus::Unresolved)
     {
         OutError = FString::Printf(
@@ -660,7 +719,7 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
     FMHCompositeOperationResult Published = MHPublishCompositeV5(
         *Asset,
         SourceRoot,
-        &AdoptTarget);
+        &Target);
     OutWarnings.Append(Published.Warnings);
     if (!Published.Succeeded())
     {
@@ -687,34 +746,7 @@ bool UMHCompositeLevelSubsystem::BuildComposite(
         OutError = TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: Build import returned a different composite UObject");
         return false;
     }
-
-    const FScopedTransaction Transaction(INVTEXT("Build MH Composite"));
-    AMHCompositeActor* CompositeActor = Cast<AMHCompositeActor>(GEditor->AddActor(
-        TargetLevel,
-        AMHCompositeActor::StaticClass(),
-        Pivot,
-        true,
-        RF_Transactional,
-        false));
-    if (CompositeActor == nullptr)
-    {
-        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Build could not create AMHCompositeActor");
-        return false;
-    }
-    CompositeActor->SetCompositeAsset(Asset);
-    CompositeActor->SetActorLabel(Key.LogicalName);
-    // Selection must release the source actors while they are still valid.
-    // Deselecting after EditorDestroyActor asks the Level Editor to operate on
-    // pending-kill actors and leaves stale hit proxies for nested composites.
-    GEditor->SelectNone(false, true, false);
-    for (AActor* Actor : Actors)
-    {
-        Actor->Modify();
-        Actor->GetWorld()->EditorDestroyActor(Actor, true);
-    }
-    GEditor->SelectActor(CompositeActor, true, true, true);
-    GEditor->RedrawAllViewports();
-    OutActor = CompositeActor;
+    OutAsset = Asset;
     return true;
 }
 
@@ -1015,37 +1047,48 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
 
     // Source boundary, as for a root Commit: once the file is written, UE
     // Undo must not resurrect a pre-publish snapshot.
-    const FString PreviousSourceRelativePath = Child->SourceRelativePath;
     Root->SetPlacementEditMode(false);
     ResetEditSession();
     GEditor->ResetTransaction(INVTEXT("MH Composite shared definition publish cannot be undone"));
 
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    const bool bPublished = PublishDefinition(*Child, Edited, SourceRoot, OutWarnings, OutError);
+    Root->RebuildComposite();
+    return bPublished;
+}
+
+bool UMHCompositeLevelSubsystem::PublishDefinition(
+    UMHCompositeAsset& Asset,
+    const FMHCompositeDocument& Document,
+    const FString& SourceRoot,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    // Apply + publish through the test seam; a failure restores the definition
+    // (authoritative source or the pre-publish document) and notifies consumers.
+    FMHCompositeDocument Previous;
+    if (!MHExtractCompositeV5(Asset, Previous, OutError)) return false;
+    const FString PreviousSourceRelativePath = Asset.SourceRelativePath;
     FMHCompositeOperationResult Published;
-    if (MHApplyCompositeV5(*Child, Edited, Published.Error))
+    if (MHApplyCompositeV5(Asset, Document, Published.Error))
     {
 #if WITH_DEV_AUTOMATION_TESTS
         if (CommitPublisherForTests)
         {
-            if (CommitPublisherForTests(*Child, Published.Error)) Published.Asset = Child;
+            if (CommitPublisherForTests(Asset, Published.Error)) Published.Asset = &Asset;
         }
         else
 #endif
         {
-            Published = MHPublishCompositeV5(*Child, SourceRoot, nullptr);
+            Published = MHPublishCompositeV5(Asset, SourceRoot, nullptr);
         }
     }
     OutWarnings.Append(Published.Warnings);
-    if (!Published.Succeeded())
-    {
-        OutError = MoveTemp(Published.Error);
-        RestoreDefinition(*Child, Previous, PreviousSourceRelativePath, SourceRoot, OutWarnings, OutError);
-        Root->RebuildComposite();
-        return false;
-    }
-    Root->RebuildComposite();
-    return true;
+    if (Published.Succeeded()) return true;
+    OutError = MoveTemp(Published.Error);
+    RestoreDefinition(Asset, Previous, PreviousSourceRelativePath, SourceRoot, OutWarnings, OutError);
+    return false;
 }
 
 void UMHCompositeLevelSubsystem::RestoreDefinition(
@@ -1084,19 +1127,133 @@ void UMHCompositeLevelSubsystem::RestoreDefinition(
     MHNotifyCompositeAssetChanged(Asset);
 }
 
+namespace
+{
+/** One definition of an invocation chain and the slot (node/option selector) inside it that invokes the next one. */
+struct FMHUniqueChainLink
+{
+    FString Definition;
+    FString Selector;
+};
+
+/** "root:nodes[1]>child:nodes[0]/children[2]" -> [{root, nodes[1]}, {child, nodes[0]/children[2]}]. */
+bool ParseInvocationChain(const FString& InvocationPath, TArray<FMHUniqueChainLink>& OutChain, FString& OutError)
+{
+    OutChain.Reset();
+    TArray<FString> Segments;
+    InvocationPath.ParseIntoArray(Segments, TEXT(">"), true);
+    for (const FString& Segment : Segments)
+    {
+        FMHUniqueChainLink& Link = OutChain.AddDefaulted_GetRef();
+        if (!Segment.Split(TEXT(":"), &Link.Definition, &Link.Selector) || Link.Definition.IsEmpty() || Link.Selector.IsEmpty())
+        {
+            OutError = FString::Printf(TEXT("MH_E_COMPOSITE_GRAMMAR: %s is not a nested composite invocation path"), *InvocationPath);
+            return false;
+        }
+    }
+    if (OutChain.IsEmpty()) OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: empty composite invocation path");
+    return !OutChain.IsEmpty();
+}
+
+/** The Resource slot the selector names in Document ("nodes[1]", "nodes[1]/children[0]", ".../options[2]"), or nullptr. */
+FString* FindReferenceSlot(FMHCompositeDocument& Document, const FString& Selector)
+{
+    TArray<FString> Parts;
+    Selector.ParseIntoArray(Parts, TEXT("/"), true);
+    TArray<FMHCompositeNode>* Nodes = &Document.Nodes;
+    FMHCompositeNode* Node = nullptr;
+    for (int32 PartIndex = 0; PartIndex < Parts.Num(); ++PartIndex)
+    {
+        const FString& Part = Parts[PartIndex];
+        int32 Open = INDEX_NONE;
+        if (!Part.FindChar(TEXT('['), Open) || !Part.EndsWith(TEXT("]"))) return nullptr;
+        const FString Label = Part.Left(Open);
+        const int32 Index = FCString::Atoi(*Part.Mid(Open + 1, Part.Len() - Open - 2));
+        if (Label == TEXT("options"))
+        {
+            return Node != nullptr && PartIndex == Parts.Num() - 1 && Node->Options.IsValidIndex(Index) ? &Node->Options[Index].Resource : nullptr;
+        }
+        if ((Label != TEXT("nodes") && Label != TEXT("children")) || !Nodes->IsValidIndex(Index)) return nullptr;
+        Node = &(*Nodes)[Index];
+        Nodes = &Node->Children;
+    }
+    return Node != nullptr ? &Node->Resource : nullptr;
+}
+
+bool NodesHaveRandomization(const TArray<FMHCompositeNode>& Nodes)
+{
+    for (const FMHCompositeNode& Node : Nodes)
+    {
+        if (Node.Kind == EMHCompositeNodeKind::Random || !Node.Options.IsEmpty() || Node.bHasInlinePlacement ||
+            !Node.Profile.IsEmpty() || NodesHaveRandomization(Node.Children))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
 bool UE::MimirComposite::MHCompositeDocumentHasRandomization(const FMHCompositeDocument& Document)
 {
-    // R6-U red stub.
-    static_cast<void>(Document);
-    return false;
+    return NodesHaveRandomization(Document.Nodes);
 }
 
 bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScope Scope, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const
 {
-    static_cast<void>(Scope);
+    // R6-U (docs/16 §2.7): innermost first — the edited definition, then (for
+    // this placement) every definition of the invocation chain up to the root.
     OutPlan = FMHCompositeSaveUniquePlan();
-    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Save Unique arrives with R6-U1");
-    return false;
+    OutError.Reset();
+    const AMHCompositeActor* Root = EditingActor.Get();
+    const UMHCompositeAsset* Edited = EditingAsset.Get();
+    if (Root == nullptr || Edited == nullptr || EditingInvocationPath.IsEmpty())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Save Unique needs an active Edit Contents session");
+        return false;
+    }
+    TArray<FMHUniqueChainLink> Chain;
+    if (!ParseInvocationChain(EditingInvocationPath, Chain, OutError)) return false;
+    OutPlan.Copies.Add(Edited->LogicalName);
+    if (Scope == EMHCompositeUniqueScope::ForThisPlacement)
+    {
+        for (int32 Index = Chain.Num() - 1; Index >= 0; --Index) OutPlan.Copies.Add(Chain[Index].Definition);
+    }
+    else
+    {
+        OutPlan.OverwrittenDefinition = Chain.Last().Definition;
+    }
+    // Streams are keyed by node path (16 §2.10): a copy under a new name
+    // re-rolls the draws inside it. The root copy keeps its streams through
+    // the placement's call context; the copies below it do not.
+    for (int32 Index = 0; Index < OutPlan.Copies.Num(); ++Index)
+    {
+        const bool bRootCopy = Scope == EMHCompositeUniqueScope::ForThisPlacement && Index == OutPlan.Copies.Num() - 1;
+        if (bRootCopy) continue;
+        bool bRandom = false;
+        if (Index == 0)
+        {
+            bRandom = MHCompositeDocumentHasRandomization(EditingDocument);
+        }
+        else
+        {
+            FMHResourceKey Key;
+            Key.Kind = EMHResourceKind::Composite;
+            Key.LogicalName = OutPlan.Copies[Index];
+            FString ResolveError;
+            const UMHCompositeAsset* Asset = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, ResolveError));
+            FMHCompositeDocument Document;
+            FString ExtractError;
+            bRandom = Asset != nullptr && MHExtractCompositeV5(*Asset, Document, ExtractError) && MHCompositeDocumentHasRandomization(Document);
+        }
+        if (bRandom)
+        {
+            OutPlan.Warnings.Add(FString::Printf(
+                TEXT("random draws inside composite:%s re-roll under the unique copy's name (streams are keyed by node path, 16 §2.10); bake the current result to keep them"),
+                *OutPlan.Copies[Index]));
+        }
+    }
+    return true;
 }
 
 bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
@@ -1105,11 +1262,158 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     TArray<FString>& OutWarnings,
     FString& OutError)
 {
-    static_cast<void>(Scope);
-    static_cast<void>(Targets);
     OutWarnings.Reset();
-    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Save Unique arrives with R6-U1");
-    return false;
+    OutError.Reset();
+    FMHCompositeSaveUniquePlan Plan;
+    if (!DescribeSaveUnique(Scope, Plan, OutError)) return false;
+    OutWarnings.Append(Plan.Warnings);
+    AMHCompositeActor* Root = EditingActor.Get();
+    UMHCompositeAsset* Edited = EditingAsset.Get();
+    if (Root == nullptr || Edited == nullptr || !Root->IsPlacementEditMode() || Root->GetEditScopeInvocationPath() != EditingInvocationPath)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid nested composite edit session is active");
+        return false;
+    }
+    // Targets: one canonical, fresh name per copy — checked before any write.
+    if (Targets.Num() != Plan.Copies.Num())
+    {
+        OutError = FString::Printf(TEXT("MH_E_COMPOSITE_GRAMMAR: Save Unique expects %d target name(s), got %d"), Plan.Copies.Num(), Targets.Num());
+        return false;
+    }
+    for (int32 Index = 0; Index < Targets.Num(); ++Index)
+    {
+        const FString& Name = Targets[Index].LogicalName;
+        if (!MHIsCanonicalCompositeToken(Name))
+        {
+            OutError = FString::Printf(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: %s is not a canonical composite name"), *Name);
+            return false;
+        }
+        bool bTaken = Plan.Copies.Contains(Name) || Plan.OverwrittenDefinition == Name;
+        for (int32 Other = 0; Other < Index && !bTaken; ++Other) bTaken = Targets[Other].LogicalName == Name;
+        if (bTaken)
+        {
+            OutError = FString::Printf(TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME: composite:%s is already a definition of this chain or another target"), *Name);
+            return false;
+        }
+    }
+    TArray<FMHUniqueChainLink> Chain;
+    if (!ParseInvocationChain(EditingInvocationPath, Chain, OutError)) return false;
+    // Chain definitions and their slots, innermost first, resolved before the boundary.
+    struct FChainDocument
+    {
+        UMHCompositeAsset* Asset = nullptr;
+        FMHCompositeDocument Document;
+        FString Selector;
+    };
+    const int32 RewiredLinks = Scope == EMHCompositeUniqueScope::InParentDefinition ? 1 : Chain.Num();
+    TArray<FChainDocument> ChainDocuments;
+    ChainDocuments.Reserve(RewiredLinks);
+    for (int32 Step = 0; Step < RewiredLinks; ++Step)
+    {
+        const FMHUniqueChainLink& Link = Chain[Chain.Num() - 1 - Step];
+        FMHResourceKey Key;
+        Key.Kind = EMHResourceKind::Composite;
+        Key.LogicalName = Link.Definition;
+        FString ResolveError;
+        UMHCompositeAsset* Asset = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(Key, ResolveError));
+        if (Asset == nullptr)
+        {
+            OutError = ResolveError.IsEmpty()
+                ? TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: composite:") + Link.Definition + TEXT(" has no managed asset")
+                : ResolveError;
+            return false;
+        }
+        FChainDocument& Entry = ChainDocuments.AddDefaulted_GetRef();
+        Entry.Asset = Asset;
+        Entry.Selector = Link.Selector;
+        if (!MHExtractCompositeV5(*Asset, Entry.Document, OutError)) return false;
+        const FString& Expected = Step == 0 ? Edited->LogicalName : Chain[Chain.Num() - Step].Definition;
+        const FString* Slot = FindReferenceSlot(Entry.Document, Link.Selector);
+        if (Slot == nullptr || *Slot != Expected)
+        {
+            OutError = FString::Printf(TEXT("MH_E_COMPOSITE_GRAMMAR: composite:%s does not invoke composite:%s at %s"), *Link.Definition, *Expected, *Link.Selector);
+            return false;
+        }
+    }
+    // The edited draft, flushed and admitted.
+    Root->Tick(0.0f);
+    FMHCompositeDocument EditedDocument;
+    if (!Root->GetEditedCompositeDocument(EditedDocument))
+    {
+        OutError = Root->GetLastPlacementError().IsEmpty()
+            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited nested definition has no admitted resolved plan")
+            : Root->GetLastPlacementError();
+        return false;
+    }
+    TArray<uint8> CanonicalPreflight;
+    if (!MHWriteCanonicalCompositeV5(EditedDocument, CanonicalPreflight, OutError)) return false;
+    const UMHCompositeAsset* OriginalRoot = Root->GetCompositeAsset();
+    const FString OriginalRootName = OriginalRoot != nullptr ? OriginalRoot->LogicalName : FString();
+
+    // Source boundary: new definitions are published and, for the parent
+    // scope, the shared parent is overwritten; UE Undo cannot cross it.
+    Root->SetPlacementEditMode(false);
+    ResetEditSession();
+    GEditor->ResetTransaction(INVTEXT("MH Composite Save Unique cannot be undone"));
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    TArray<UMHCompositeAsset*> Created;
+    FMHCompositeDocument NextDocument = EditedDocument;
+    for (int32 Index = 0; Index < Targets.Num(); ++Index)
+    {
+        UMHCompositeAsset* Copy = nullptr;
+        if (CreateManagedComposite(NextDocument, Targets[Index], Copy, OutWarnings, OutError))
+        {
+            Created.Add(Copy);
+            if (Index + 1 == Targets.Num()) break;
+            // The next definition up the chain, invoking the copy just made.
+            NextDocument = ChainDocuments[Index].Document;
+            if (FString* Slot = FindReferenceSlot(NextDocument, ChainDocuments[Index].Selector))
+            {
+                *Slot = Copy->LogicalName;
+                continue;
+            }
+            OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: the invocation slot vanished while copying composite:") + ChainDocuments[Index].Asset->LogicalName;
+        }
+        for (const UMHCompositeAsset* Orphan : Created)
+        {
+            OutWarnings.Add(FString::Printf(TEXT("composite:%s was created and is not invoked by anything yet"), *Orphan->LogicalName));
+        }
+        Root->RebuildComposite();
+        return false;
+    }
+    if (Scope == EMHCompositeUniqueScope::InParentDefinition)
+    {
+        // The shared parent points at the copy; its publish refreshes every
+        // placement invoking it (R6-D2 path).
+        FMHCompositeDocument ParentDocument = ChainDocuments[0].Document;
+        bool bPublished = false;
+        if (FString* Slot = FindReferenceSlot(ParentDocument, ChainDocuments[0].Selector))
+        {
+            *Slot = Created[0]->LogicalName;
+            bPublished = PublishDefinition(*ChainDocuments[0].Asset, ParentDocument, SourceRoot, OutWarnings, OutError);
+        }
+        else
+        {
+            OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: the invocation slot vanished while rewiring composite:") + ChainDocuments[0].Asset->LogicalName;
+        }
+        if (!bPublished) OutWarnings.Add(FString::Printf(TEXT("composite:%s was created and is not invoked by anything"), *Created[0]->LogicalName));
+        Root->RebuildComposite();
+        return bPublished;
+    }
+    // Only this placement moves to the unique root. Its root-level streams
+    // stay keyed by the original root's path through the call context
+    // (16 §2.10; the second explicit writer after Break).
+    if (Root->GetCallContext().IsEmpty() && !OriginalRootName.IsEmpty())
+    {
+        FMHCompositeCallContext Context;
+        Context.StreamNamespace = OriginalRootName;
+        Context.AppearanceBoundary = OriginalRootName;
+        Root->SetCallContext(Context);
+    }
+    Root->SetCompositeAsset(Created.Last());
+    return true;
 }
 
 bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Root, const FString& InvocationNodePath, FString& OutError)

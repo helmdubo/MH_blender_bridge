@@ -206,6 +206,20 @@ private:
     FString EditingInvocationPath;
     FMatrix EditingParentWorld = FMatrix::Identity;
     void ResetEditSession();
+    /** One managed composite from a document: validated, published to Source Root under Target, imported (Build, R6-U). */
+    bool CreateManagedComposite(
+        const UE::MimirComposite::FMHCompositeDocument& Document,
+        const UE::MimirComposite::FMHCompositeAdoptTarget& Target,
+        UMHCompositeAsset*& OutAsset,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
+    /** Applies and publishes Document as Asset's source (seam-aware); a failure restores the definition. */
+    bool PublishDefinition(
+        UMHCompositeAsset& Asset,
+        const UE::MimirComposite::FMHCompositeDocument& Document,
+        const FString& SourceRoot,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
     /** R6-D2: Apply Shared Definition — the nested draft becomes the child's source; consumers follow. */
     bool CommitNestedEditComposite(TArray<FString>& OutWarnings, FString& OutError);
     /** After a failed publish: the authoritative source if present, else the pre-publish document; consumers are notified. */
