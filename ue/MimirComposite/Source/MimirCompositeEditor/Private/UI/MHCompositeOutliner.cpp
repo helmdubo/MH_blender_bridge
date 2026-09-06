@@ -23,6 +23,7 @@
 #include "Styling/AppStyle.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UI/MHCompositeOutlinerModel.h"
+#include "UI/MHEditSessionKeys.h"
 #include "UI/MHSourceToolMenus.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Images/SImage.h"
@@ -109,6 +110,12 @@ class SMHCompositeOutliner final : public SCompoundWidget
 public:
     SLATE_BEGIN_ARGS(SMHCompositeOutliner) {}
     SLATE_END_ARGS()
+
+    // R6-UX2a: Esc/Enter inside the panel act on the session like in the viewport.
+    virtual FReply OnKeyDown(const FGeometry&, const FKeyEvent& KeyEvent) override
+    {
+        return !KeyEvent.IsRepeat() && MHHandleEditSessionKey(KeyEvent.GetKey()) ? FReply::Handled() : FReply::Unhandled();
+    }
 
     void Construct(const FArguments&)
     {
@@ -406,7 +413,7 @@ private:
                     FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::BakeCurrentResult)));
             }
             Menu.AddMenuEntry(
-                LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
+                LOCTEXT("CancelEditContents", "Cancel Edit Contents (Esc)"),
                 LOCTEXT("CancelEditContentsTip", "Close the active edit session and discard its draft. The source is not changed."),
                 FSlateIcon(),
                 FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::CancelEditContents)));
@@ -820,7 +827,7 @@ private:
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Click a node row or its sprite in the viewport to grab its handle; right-click > Apply Shared Definition publishes, Make Unique saves a copy, Cancel Edit Contents discards"),
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Make Unique, Cancel Edit Contents"),
                         *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
