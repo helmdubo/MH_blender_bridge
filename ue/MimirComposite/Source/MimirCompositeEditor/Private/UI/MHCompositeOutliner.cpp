@@ -351,6 +351,17 @@ private:
                     LOCTEXT("MakeUniqueForPlacementTip", "Save the edited definition and every definition up to this placement's root as new unique composites; only this placement switches to the new root."),
                     FSlateIcon(),
                     FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural)));
+                // R6-U2: the same scopes with the resolved result baked into the copy.
+                Menu.AddMenuEntry(
+                    LOCTEXT("BakeUniqueInDefinition", "Make Child Unique in This Definition (Bake Current Result)"),
+                    LOCTEXT("BakeUniqueInDefinitionTip", "Save the resolved result of the edited definition under this placement as a new composite of plain mesh/actor nodes (no random draws), and point the definition that invokes it at the copy."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::BakeCurrentResult)));
+                Menu.AddMenuEntry(
+                    LOCTEXT("BakeUniqueForPlacement", "Make Unique for This Placement (Bake Current Result)"),
+                    LOCTEXT("BakeUniqueForPlacementTip", "Save the resolved result of the edited definition as a new composite of plain mesh/actor nodes (no random draws), copy the chain up to the root, and switch only this placement to the new root."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::BakeCurrentResult)));
             }
             Menu.AddMenuEntry(
                 LOCTEXT("CancelEditContents", "Cancel Edit Contents"),
