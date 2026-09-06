@@ -41,7 +41,7 @@
   перезаписи вызывающего определения; предупреждения о re-roll — в
   Message Log.
 
-## 2. Тесты (red `__RED__`)
+## 2. Тесты (red `eb132b5`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -53,13 +53,13 @@
 
 | Gate | Результат |
 |---|---|
-| RED (`__RED__`) | `R6U1_RED_TEST.log`: __ |
-| GREEN non-unity/no-PCH build | `R6U1_GREEN_BUILD.log`: __ |
-| `Mimir.V5.Composite.EditContext` | `R6U1_GREEN_TEST.log`: __ |
-| полный NullRHI suite | `R6U1_GREEN_FULL.log`: __ |
-| force-unity | `R6U1_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R6U1_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| RED (`eb132b5`) | `R6U1_RED_TEST2.log`: Fail ×3 (три новых теста; D0/D1b/D2 — Success) |
+| GREEN non-unity/no-PCH build | `R6U1_GREEN_BUILD.log`: Succeeded |
+| `Mimir.V5.Composite.EditContext` | `R6U1_GREEN_TEST.log`: 7/0 |
+| полный NullRHI suite | `R6U1_GREEN_FULL.log`: `Success=228 Fail=0 (225 + 3)` |
+| force-unity | `R6U1_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `R6U1_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
