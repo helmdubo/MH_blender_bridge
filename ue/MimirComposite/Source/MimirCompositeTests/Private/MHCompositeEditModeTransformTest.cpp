@@ -90,7 +90,10 @@ bool FMHEditModeGestureTest::RunTest(const FString& Parameters)
 
     // One gesture, three deltas, one undo step.
     bPassed &= TestTrue(TEXT("grab the node"), Mode->SelectComponent(Plain));
-    bPassed &= TestTrue(TEXT("gesture"), Gesture(*Mode, FVector(0.0, 0.0, 10.0), FRotator::ZeroRotator, FVector::ZeroVector, 3));
+    // Without a gesture of ours there is no step of ours: UndoTransaction
+    // would roll back a foreign record (a previous test's cancel) into a
+    // destroyed world.
+    if (!TestTrue(TEXT("gesture"), Gesture(*Mode, FVector(0.0, 0.0, 10.0), FRotator::ZeroRotator, FVector::ZeroVector, 3)) || !Session->IsDirty()) return false;
     Plain = Projection->FindComponentForOrigin(PlainOrigin);
     bPassed &= TestTrue(TEXT("the projection followed the gesture"), Plain != nullptr && Plain->GetComponentLocation().Equals(PlainBefore + FVector(0.0, 0.0, 30.0), 1e-2));
     bPassed &= TestTrue(TEXT("the draft carries the gesture"), DraftTranslation(*Draft, 0).Equals(Node0Before + FVector(0.0, 0.0, 30.0), 1e-2));
