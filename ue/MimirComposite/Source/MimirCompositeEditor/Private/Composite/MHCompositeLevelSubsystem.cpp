@@ -1555,7 +1555,9 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
         Root->SetEditScope(InvocationNodePath);
         Root->SetPlacementEditMode(true);
     }
-    OpenEditSession(Root, Child, InvocationNodePath);
+    // InvocationNodePath may alias a node of the plan SetPlacementEditMode just
+    // replaced; the stored copy is the safe one from here on.
+    OpenEditSession(Root, Child, EditingInvocationPath);
     return true;
 }
 
