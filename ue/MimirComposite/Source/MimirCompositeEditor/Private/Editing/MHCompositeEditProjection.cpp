@@ -42,12 +42,13 @@ bool UMHCompositeEditProjection::Open(UMHCompositeEditSession& InSession, FStrin
     AMHCompositeActor* Root = InSession.GetRootPlacement();
     const UMHCompositeAsset* Edited = InSession.GetEditedAsset();
     UWorld* World = Root != nullptr ? Root->GetWorld() : nullptr;
-    if (Root == nullptr || Edited == nullptr || World == nullptr || Root->GetLevel() == nullptr || !InSession.IsNested())
+    if (Root == nullptr || Edited == nullptr || World == nullptr || Root->GetLevel() == nullptr)
     {
-        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: an edit projection needs a nested session on a placed root");
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: an edit projection needs an open session on a placed root");
         return false;
     }
-    OccurrencePrefix = InSession.GetInvocationPath() + TEXT(">");
+    // CE-3c: a root session's occurrence is the whole placement.
+    OccurrencePrefix = InSession.IsNested() ? InSession.GetInvocationPath() + TEXT(">") : FString();
     DefinitionPrefix = OccurrencePrefix + Edited->LogicalName + TEXT(":");
     // The same spawn shape as the engine's Level Instance editing actor:
     // transient, no actor package, not in the outliner, in the root's level.
@@ -84,9 +85,16 @@ void UMHCompositeEditProjection::AcquireLease()
     TArray<FMHInstanceHandle> Handles;
     for (const FMHCompositeLeafMaterialization& Row : Root->GetLeafMaterializations())
     {
-        if (Row.Handle.IsSet() && Row.NodePath.StartsWith(OccurrencePrefix)) Handles.Add(Row.Handle);
+        if (Row.Handle.IsSet() && UnderOccurrence(Row.NodePath)) Handles.Add(Row.Handle);
     }
     Lease = Pool->AcquireSuppression(Handles);
+}
+
+bool UMHCompositeEditProjection::UnderOccurrence(const FString& Path) const
+{
+    // A root session's occurrence is the whole placement (FString::StartsWith
+    // of an empty prefix is false, so the empty prefix is explicit).
+    return OccurrencePrefix.IsEmpty() || Path.StartsWith(OccurrencePrefix);
 }
 
 bool UMHCompositeEditProjection::BuildDraftGraph(FMHRandomSourceGraph& OutGraph, FString& OutError)
@@ -182,7 +190,7 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
     // Mesh leaves: the mesh itself with the placement's appearance channels.
     for (const FMHResolvedCompositeLeaf& Leaf : NextPlan->Leaves)
     {
-        if (!Leaf.Origin.StartsWith(OccurrencePrefix)) continue;
+        if (!UnderOccurrence(Leaf.Origin)) continue;
         Live.Add(Leaf.Origin);
         if (Leaf.Kind == EMHRandomSemanticKind::Mesh && Endpoints != nullptr && Settings != nullptr)
         {
@@ -216,6 +224,9 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
     {
         if (!Node.NodePath.StartsWith(DefinitionPrefix) || Live.Contains(Node.NodePath)) continue;
         if (Node.SemanticKind == EMHRandomSemanticKind::Mesh) continue;
+        // A nested reference is atomic (spec A04): its geometry is shown and
+        // maps to the reference node, nothing below its '>' gets a handle.
+        if (Node.NodePath.Mid(DefinitionPrefix.Len()).Contains(TEXT(">"))) continue;
         Live.Add(Node.NodePath);
         PlaceComponent(Node.NodePath, USceneComponent::StaticClass(), Node.WorldMatrix * Basis, nullptr);
     }

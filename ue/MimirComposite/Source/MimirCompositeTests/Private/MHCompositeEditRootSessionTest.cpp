@@ -60,8 +60,11 @@ bool FMHEditRootSessionTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
     if (!F.Build(*this)) return false;
-    const TArray<FVector> ABefore = FCompositeEditFixture::LeafWorldsUnder(*F.A, FString());
-    const TArray<FVector> BBefore = FCompositeEditFixture::LeafWorldsUnder(*F.B, FString());
+    // Every row of a placement starts with its root definition prefix.
+    const FString Prefix = F.Root->LogicalName + TEXT(":");
+    const TArray<FVector> ABefore = FCompositeEditFixture::LeafWorldsUnder(*F.A, Prefix);
+    const TArray<FVector> BBefore = FCompositeEditFixture::LeafWorldsUnder(*F.B, Prefix);
+    if (!TestTrue(TEXT("the placement has pooled leaves"), ABefore.Num() > 0)) return false;
     const TArray<FVector> ForeignBefore = F.ForeignWorlds();
     FString Error;
     if (!TestTrue(TEXT("root session: ") + Error, Subsystem->BeginEditComposite(F.A, Error))) return false;
@@ -75,7 +78,6 @@ bool FMHEditRootSessionTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("the mode follows the root session"), UMHCompositeEditorMode::IsActive());
     bPassed &= TestTrue(TEXT("projection actor"), Projection->GetProjectionActor() != nullptr);
 
-    const FString Prefix = F.Root->LogicalName + TEXT(":");
     USceneComponent* Own = Projection->FindComponentForOrigin(Prefix + TEXT("nodes[0]"));
     USceneComponent* First = Projection->FindComponentForOrigin(Prefix + TEXT("nodes[1]"));
     USceneComponent* NestedLeaf = Projection->FindComponentForOrigin(Prefix + TEXT("nodes[1]>") + F.Child->LogicalName + TEXT(":nodes[0]"));
@@ -89,7 +91,7 @@ bool FMHEditRootSessionTest::RunTest(const FString& Parameters)
 
     bPassed &= TestTrue(TEXT("one mesh component per pooled leaf of the placement, at the same world position"), FCompositeEditFixture::SameLocations(ABefore, RootProjectedWorlds(*Projection)));
     bPassed &= TestTrue(TEXT("every instance of this placement is suppressed"), Projection->GetLease().IsSet() && Projection->GetLease().Handles.Num() == ABefore.Num());
-    bPassed &= TestTrue(TEXT("the other placement keeps its view"), FCompositeEditFixture::SameLocations(BBefore, FCompositeEditFixture::LeafWorldsUnder(*F.B, FString())));
+    bPassed &= TestTrue(TEXT("the other placement keeps its view"), FCompositeEditFixture::SameLocations(BBefore, FCompositeEditFixture::LeafWorldsUnder(*F.B, Prefix)));
     bPassed &= TestTrue(TEXT("the foreign ISM keeps its view"), FCompositeEditFixture::SameLocations(ForeignBefore, F.ForeignWorlds()));
 
     // A local edit moves the projection only.
@@ -102,7 +104,7 @@ bool FMHEditRootSessionTest::RunTest(const FString& Parameters)
 
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     bPassed &= TestFalse(TEXT("mode gone"), UMHCompositeEditorMode::IsActive());
-    bPassed &= TestTrue(TEXT("the placement renders where it did"), FCompositeEditFixture::SameLocations(ABefore, FCompositeEditFixture::LeafWorldsUnder(*F.A, FString())));
+    bPassed &= TestTrue(TEXT("the placement renders where it did"), FCompositeEditFixture::SameLocations(ABefore, FCompositeEditFixture::LeafWorldsUnder(*F.A, Prefix)));
     bPassed &= TestFalse(TEXT("still no legacy edit mode"), F.A->IsPlacementEditMode());
     return bPassed;
 }

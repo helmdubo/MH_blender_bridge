@@ -77,6 +77,8 @@ public:
 
 private:
     bool BuildDraftGraph(UE::MimirComposite::FMHRandomSourceGraph& OutGraph, FString& OutError);
+    /** Plan path under the session's occurrence (all of the placement for a root session). */
+    bool UnderOccurrence(const FString& Path) const;
     USceneComponent* PlaceComponent(const FString& Origin, UClass* Class, const FMatrix& WorldMatrix, const TFunction<void(USceneComponent&)>& Configure);
     void AcquireLease();
 

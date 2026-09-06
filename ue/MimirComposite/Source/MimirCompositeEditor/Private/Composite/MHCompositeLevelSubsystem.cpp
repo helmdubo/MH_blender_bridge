@@ -900,6 +900,29 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: placement view does not match top-level composite nodes");
         return false;
     }
+    const UMHCompositeSettings* EditSettings = GetDefault<UMHCompositeSettings>();
+    if (EditSettings != nullptr && EditSettings->bCompositeEditModeV2)
+    {
+        // CE-3c: the CE backend for the root definition — the same session,
+        // draft and projection as a nested one (the whole placement is the
+        // occurrence); the placement never enters the legacy edit mode.
+        ++EditSessionEpoch;
+        EditingActor = Actor;
+        EditingAsset = Asset;
+        EditingInvocationPath.Reset();
+        EditingParentWorld = Actor->GetActorTransform().ToMatrixWithScale();
+        EditingTopLevelComponents.Reset();
+        OpenEditSession(Actor, Asset, FString());
+        FString ProjectionError;
+        if (!EditSession->OpenProjection(ProjectionError))
+        {
+            OutError = ProjectionError;
+            ResetEditSession();
+            return false;
+        }
+        UMHCompositeEditorMode::ActivateForSession();
+        return true;
+    }
 
     const FScopedTransaction Transaction(INVTEXT("Edit MH Composite"));
     Actor->Modify();
@@ -934,22 +957,32 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     AMHCompositeActor* Actor = EditingActor.Get();
     UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
     if (Actor != nullptr && !EditingInvocationPath.IsEmpty()) return CommitNestedEditComposite(OutWarnings, OutError);
-    if (Actor == nullptr || Asset == nullptr || EditingTopLevelComponents.Num() != EditingDocument.Nodes.Num())
+    // CE-3c: a root session under the CE backend commits the session draft;
+    // the legacy path reads the placement's handles.
+    const bool bSessionEdit = Actor != nullptr && !Actor->IsPlacementEditMode() && EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr;
+    if (Actor == nullptr || Asset == nullptr || (!bSessionEdit && EditingTopLevelComponents.Num() != EditingDocument.Nodes.Num()))
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid composite edit session is active");
         return false;
     }
 
-    // Flush a handle edit even if Commit precedes the next editor tick. Basis
-    // moves are already serviced synchronously by the root transform hook.
-    Actor->Tick(0.0f);
     FMHCompositeDocument Edited;
-    if (!Actor->GetEditedCompositeDocument(Edited))
+    if (bSessionEdit)
     {
-        OutError = Actor->GetLastPlacementError().IsEmpty()
-            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited placement has no admitted resolved plan")
-            : Actor->GetLastPlacementError();
-        return false;
+        if (!EditSession->GetDraft()->Extract(Edited, OutError)) return false;
+    }
+    else
+    {
+        // Flush a handle edit even if Commit precedes the next editor tick. Basis
+        // moves are already serviced synchronously by the root transform hook.
+        Actor->Tick(0.0f);
+        if (!Actor->GetEditedCompositeDocument(Edited))
+        {
+            OutError = Actor->GetLastPlacementError().IsEmpty()
+                ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited placement has no admitted resolved plan")
+                : Actor->GetLastPlacementError();
+            return false;
+        }
     }
     // Commit the already-admitted prospective document. Re-decomposing the
     // displayed world transforms here would add another numeric round trip
@@ -965,7 +998,7 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     }
 
     const FString PreviousSourceRelativePath = Asset->SourceRelativePath;
-    Actor->SetPlacementEditMode(false);
+    if (!bSessionEdit) Actor->SetPlacementEditMode(false);
     ResetEditSession();
     GEditor->ResetTransaction(INVTEXT("MH Composite source Commit cannot be undone"));
 
