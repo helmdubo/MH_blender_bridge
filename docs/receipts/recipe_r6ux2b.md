@@ -32,12 +32,12 @@ R6-U1/U2 без изменений (`Mimir.V5.Composite.EditContext` 10/0). Red-
 
 | Gate | Результат |
 |---|---|
-| non-unity/no-PCH build | `R6UX2B_BUILD.log`: __ |
-| `Mimir.V5.Composite.EditContext` | `R6UX2B_TEST.log`: __ |
-| полный NullRHI suite | `R6UX2B_FULL.log`: __ |
-| force-unity | `R6UX2B_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R6UX2B_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| non-unity/no-PCH build | `R6UX2B_BUILD.log`: Succeeded |
+| `Mimir.V5.Composite.EditContext` | `R6UX2B_TEST.log`: 10/0 |
+| полный NullRHI suite | `R6UX2B_FULL.log`: `Success=231 Fail=0` |
+| force-unity | `R6UX2B_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `R6UX2B_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
