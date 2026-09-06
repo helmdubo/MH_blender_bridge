@@ -7,6 +7,11 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Misc/AutomationTest.h"
+#include "Elements/Framework/EngineElementsLibrary.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
+#include "Elements/Interfaces/TypedElementWorldInterface.h"
+#include "Elements/SMInstance/SMInstanceElementData.h"
+#include "Elements/SMInstance/SMInstanceManager.h"
 #include "Misc/Guid.h"
 #include "UObject/Package.h"
 
@@ -476,6 +481,42 @@ bool FMHInstancePoolOwnerSelectionTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(TEXT("A's bounds exclude B's instance"), BoundsA.IsInsideOrOn(FVector(2000, 0, 0)));
     F.Pool->RemoveOwner(*F.OwnerA);
     bPassed &= TestFalse(TEXT("no instances, no bounds"), F.Pool->GetOwnerBounds(*F.OwnerA).IsValid != 0);
+    return bPassed;
+}
+
+// R6-D1a (audit 2026-09-05 §4/§5, owner field defect 2026-09-06): a pooled
+// instance is a rendering of the placement's plan, never an editable element.
+// The stock ISM instance gizmo/delete/duplicate must be refused by the pool
+// actor's instance manager; edits go through the composite's model (R6-D1b).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHInstancePoolRejectsDirectInstanceEditTest,
+    "Mimir.V5.Composite.Pool.InstancesRejectDirectEditing",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHInstancePoolRejectsDirectInstanceEditTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FPoolFixture F;
+    if (!F.Build(*this)) return false;
+    const FMHInstanceHandle H0 = F.Add(*F.OwnerA, TEXT("a:nodes[0]"), F.DescA, FVector(0, 0, 0));
+    UInstancedStaticMeshComponent* Component = nullptr;
+    int32 Index = INDEX_NONE;
+    if (!TestTrue(TEXT("instance"), F.Pool->GetInstance(H0, Component, Index) && Component != nullptr)) return false;
+    const FTypedElementHandle Handle = UEngineElementsLibrary::AcquireEditorSMInstanceElementHandle(Component, Index);
+    if (!TestTrue(TEXT("instance element"), Handle.IsSet())) return false;
+    const FSMInstanceManager Manager = SMInstanceElementDataUtil::GetSMInstanceFromHandle(Handle, true);
+    bool bPassed = TestTrue(TEXT("instance manager resolves"), static_cast<bool>(Manager));
+    if (!Manager) return false;
+    bPassed &= TestFalse(TEXT("pooled instance is not editable"), Manager.CanEditSMInstance());
+    bPassed &= TestFalse(TEXT("pooled instance is not movable in the editor"), Manager.CanMoveSMInstance(ETypedElementWorldType::Editor));
+    bPassed &= TestFalse(TEXT("pooled instance is not deletable"), Manager.CanDeleteSMInstance());
+    bPassed &= TestFalse(TEXT("pooled instance is not duplicable"), Manager.CanDuplicateSMInstance());
+    FTransform Before;
+    bPassed &= TestTrue(TEXT("transform still readable"), Manager.GetSMInstanceTransform(Before, true) && Before.GetLocation().Equals(FVector::ZeroVector, 1e-3));
+    bPassed &= TestFalse(TEXT("direct transform write is refused"), Manager.SetSMInstanceTransform(FTransform(FVector(500, 0, 0)), true, true, true));
+    FTransform After;
+    bPassed &= TestTrue(TEXT("instance did not move"), Component->GetInstanceTransform(Index, After, true) && After.GetLocation().Equals(FVector::ZeroVector, 1e-3));
+    bPassed &= TestTrue(TEXT("handle still valid"), F.Pool->IsValidHandle(H0));
     return bPassed;
 }
 
