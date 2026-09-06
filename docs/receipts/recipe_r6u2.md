@@ -27,7 +27,7 @@
   Child Unique in This Definition (Bake Current Result)» и «Make Unique for
   This Placement (Bake Current Result)» рядом с procedural-вариантами.
 
-## 2. Тесты (red `__RED__`)
+## 2. Тесты (red `8996d24`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -38,13 +38,13 @@
 
 | Gate | Результат |
 |---|---|
-| RED (`__RED__`) | `R6U2_RED_TEST.log`: __ |
-| GREEN non-unity/no-PCH build | `R6U2_GREEN_BUILD.log`: __ |
-| `Mimir.V5.Composite.EditContext` | `R6U2_GREEN_TEST.log`: __ |
-| полный NullRHI suite | `R6U2_GREEN_FULL.log`: __ |
-| force-unity | `R6U2_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R6U2_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| RED (`8996d24`) | `R6U2_RED_TEST.log`: Fail ×1 (новый тест; остальные 7 EditContext — Success) |
+| GREEN non-unity/no-PCH build | `R6U2_GREEN_BUILD2.log`: Succeeded |
+| `Mimir.V5.Composite.EditContext` | `R6U2_GREEN_TEST2.log`: 8/0 |
+| полный NullRHI suite | `R6U2_GREEN_FULL.log`: `Success=229 Fail=0 (228 + 1)` |
+| force-unity | `R6U2_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `R6U2_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
