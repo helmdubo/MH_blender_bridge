@@ -271,6 +271,16 @@ random call-context (`CallContext`, R4-pre-3, §2.10) при переимено�
 копировании рецептов сохраняется или явно запекается — совпадения `Seed`
 недостаточно.
 
+Разбивка (близнец, 2026-09-06): **R6-U1** — procedural variant обеих
+областей из сессии Edit Contents (R6-D0…D2): «Make Child Unique in This
+Definition» и «Make Unique for This Placement»; при последней размещение без
+`CallContext` получает `StreamNamespace`/`AppearanceBoundary` = имя исходного
+root (второй явный писатель `CallContext` после Break), так что потоки уровня
+root не перебрасываются; потоки внутри копий под новым именем перебрасываются —
+операция предупреждает об этом явно (частичное сохранение, не «совпадение
+Seed»). **R6-U2** — Bake Current Result: копия как запечённый резидентный
+результат, без random.
+
 **R6-O — persistent instance overrides (бывший `NodeOverrides`; опциональный,
 последний срез семьи, после R6-D/R6-U).** Слой per-instance переопределений
 локального трансформа узла — основа для физической симуляции и автосборки
@@ -389,7 +399,9 @@ FMHCompositeCallContext CallContext;               // с R4-pre-3: {Version, Str
 ```
 
 `CallContext` (R4-pre-3, решение owner 2026-09-04 по OPEN-R4P-1): пустой у
-размещения-корня; заполняется **только** Break'ом для ребёнка-композита —
+размещения-корня; заполняется Break'ом для ребёнка-композита (и, с R6-U1,
+«Make Unique for This Placement» — именем исходного root, если контекст был
+пуст) —
 `StreamNamespace` = NodePath узла родителя, ссылавшегося на рецепт ребёнка
 (`<root>:nodes[k]>child` или `…/options[j]>child`), `AppearanceBoundary` =
 boundary этого поддерева в родителе. Resolver получает его как

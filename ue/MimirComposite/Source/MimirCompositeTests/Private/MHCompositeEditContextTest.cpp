@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
@@ -389,6 +390,229 @@ bool FMHEditContextApplySharedDefinitionFailureTest::RunTest(const FString& Para
     FVector MeshCAfterA, MeshCAfterB;
     bPassed &= TestTrue(TEXT("A renders the kept node"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterA) && MeshCAfterA.Equals(MeshCBeforeA, 1e-2));
     bPassed &= TestTrue(TEXT("B renders the kept node"), LeafWorldLocation(*F.B, F.MeshC, MeshCAfterB) && MeshCAfterB.Equals(MeshCBeforeB, 1e-2));
+    return bPassed;
+}
+
+// R6-U1 (docs/16 §2.7): Save Unique, procedural variant. "Make Unique for This
+// Placement" copies the invocation chain up to this placement's root and
+// switches only this placement to the new root; its root-level streams stay
+// keyed by the original root through the placement's call context.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextMakeUniqueForPlacementTest,
+    "Mimir.V5.Composite.EditContext.MakeUniqueForPlacementSwitchesOnlyThisPlacement",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextMakeUniqueForPlacementTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FMHResolvedCompositeNode InvocationCopy = *InvocationNode;
+    TArray<uint8> ChildBefore, RootBefore;
+    if (!TestTrue(TEXT("child source bytes"), CanonicalBytes(*F.Child, ChildBefore))) return false;
+    if (!TestTrue(TEXT("root source bytes"), CanonicalBytes(*F.Root, RootBefore))) return false;
+    FVector MeshCBeforeA, MeshCBeforeB;
+    bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorldLocation(*F.A, F.MeshC, MeshCBeforeA));
+    bPassed &= TestTrue(TEXT("mesh C renders in B"), LeafWorldLocation(*F.B, F.MeshC, MeshCBeforeB));
+    const FMatrix ParentWorld = InvocationCopy.WorldMatrix * F.A->GetActorTransform().ToMatrixWithScale();
+
+    FString Error;
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationCopy.NodePath, Error))) return false;
+    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
+    const FVector HandleBefore = Handles[0]->GetComponentLocation();
+    Handles[0]->SetWorldLocation(HandleBefore + FVector(100, 0, 0));
+    const FVector ExpectedLocal = FTransform(FTransform(HandleBefore + FVector(100, 0, 0)).ToMatrixWithScale() * ParentWorld.Inverse()).GetLocation();
+
+    FMHCompositeSaveUniquePlan Plan;
+    bPassed &= TestTrue(TEXT("describe: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, Plan, Error));
+    bPassed &= TestTrue(TEXT("copies: the edited child, then the placement's root"),
+        Plan.Copies.Num() == 2 && Plan.Copies[0] == F.Child->LogicalName && Plan.Copies[1] == F.Root->LogicalName);
+    bPassed &= TestTrue(TEXT("no shared definition is overwritten for this scope"), Plan.OverwrittenDefinition.IsEmpty());
+    bPassed &= TestTrue(TEXT("no re-roll warning without randomization"), Plan.Warnings.IsEmpty());
+    if (Plan.Copies.Num() != 2) return false;
+
+    // The creation seam stands in for validate/publish/import (shared with Build).
+    TArray<FString> Created;
+    Subsystem->SetDefinitionCreatorForTests(
+        [&F, &Created](const FMHCompositeDocument& Document, const FMHCompositeAdoptTarget& Target, FString&) -> UMHCompositeAsset*
+        {
+            Created.Add(Target.LogicalName);
+            return F.Recipe.Composite(Target.LogicalName, Document, {});
+        });
+    TArray<FMHCompositeAdoptTarget> Targets;
+    for (const FString& Copy : Plan.Copies)
+    {
+        FMHCompositeAdoptTarget& Target = Targets.AddDefaulted_GetRef();
+        Target.LogicalName = Copy + TEXT("_u");
+    }
+    TArray<FString> Warnings;
+    const bool bSaved = Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, Targets, Warnings, Error);
+    Subsystem->SetDefinitionCreatorForTests({});
+    bPassed &= TestTrue(TEXT("save unique: ") + Error, bSaved);
+    bPassed &= TestTrue(TEXT("definitions are created innermost first"),
+        Created.Num() == 2 && Created[0] == Targets[0].LogicalName && Created[1] == Targets[1].LogicalName);
+    bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
+    bPassed &= TestFalse(TEXT("root left edit mode"), F.A->IsPlacementEditMode());
+    bPassed &= TestEqual(TEXT("scope handles retired"), F.A->GetEditScopeHandles().Num(), 0);
+
+    const UMHCompositeAsset* NewRoot = F.A->GetCompositeAsset();
+    bPassed &= TestTrue(TEXT("this placement now invokes the unique root"), NewRoot != nullptr && NewRoot->LogicalName == Targets[1].LogicalName);
+    FMHCompositeDocument NewRootDocument;
+    bPassed &= TestTrue(TEXT("the unique root invokes the unique child at the same slot"),
+        NewRoot != nullptr && MHExtractCompositeV5(*NewRoot, NewRootDocument, Error) && NewRootDocument.Nodes.Num() == 2 &&
+        NewRootDocument.Nodes[1].Kind == EMHCompositeNodeKind::Composite && NewRootDocument.Nodes[1].Resource == Targets[0].LogicalName);
+    const UMHCompositeAsset* NewChild = F.Recipe.Composites.FindRef(Targets[0].LogicalName);
+    FMHCompositeDocument NewChildDocument;
+    bPassed &= TestTrue(TEXT("the unique child carries the edited node"),
+        NewChild != nullptr && MHExtractCompositeV5(*NewChild, NewChildDocument, Error) && NewChildDocument.Nodes.Num() == 1 &&
+        NewChildDocument.Nodes[0].Transform.TranslationCm.Equals(ExpectedLocal, 1e-2));
+    bPassed &= TestEqual(TEXT("root-level streams stay keyed by the original root"), F.A->GetCallContext().StreamNamespace, F.Root->LogicalName);
+    TArray<uint8> ChildAfter, RootAfter;
+    bPassed &= TestTrue(TEXT("shared child untouched"), CanonicalBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
+    bPassed &= TestTrue(TEXT("shared root untouched"), CanonicalBytes(*F.Root, RootAfter) && RootAfter == RootBefore);
+    FVector MeshCAfterA, MeshCAfterB;
+    bPassed &= TestTrue(TEXT("A renders the unique node"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterA) && MeshCAfterA.Equals(MeshCBeforeA + FVector(100, 0, 0), 1e-2));
+    bPassed &= TestTrue(TEXT("B keeps the shared definition"), LeafWorldLocation(*F.B, F.MeshC, MeshCAfterB) && MeshCAfterB.Equals(MeshCBeforeB, 1e-2));
+    bPassed &= TestTrue(TEXT("B still invokes the shared root"), F.B->GetCompositeAsset() == F.Root);
+    return bPassed;
+}
+
+// R6-U1: "Make Child Unique in This Definition" copies the edited definition
+// and points the invoking (shared) definition at the copy: every placement of
+// that definition follows; the original child definition is untouched.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextMakeUniqueInDefinitionTest,
+    "Mimir.V5.Composite.EditContext.MakeUniqueInDefinitionRewiresSharedParent",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextMakeUniqueInDefinitionTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FString InvocationPath = InvocationNode->NodePath;
+    TArray<uint8> ChildBefore;
+    if (!TestTrue(TEXT("child source bytes"), CanonicalBytes(*F.Child, ChildBefore))) return false;
+    FVector MeshCBeforeA, MeshCBeforeB;
+    bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorldLocation(*F.A, F.MeshC, MeshCBeforeA));
+    bPassed &= TestTrue(TEXT("mesh C renders in B"), LeafWorldLocation(*F.B, F.MeshC, MeshCBeforeB));
+
+    FString Error;
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
+    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
+    Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(100, 0, 0));
+
+    FMHCompositeSaveUniquePlan Plan;
+    bPassed &= TestTrue(TEXT("describe: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::InParentDefinition, Plan, Error));
+    bPassed &= TestTrue(TEXT("only the edited child is copied"), Plan.Copies.Num() == 1 && Plan.Copies[0] == F.Child->LogicalName);
+    bPassed &= TestEqual(TEXT("the invoking definition is overwritten"), Plan.OverwrittenDefinition, F.Root->LogicalName);
+    if (Plan.Copies.Num() != 1) return false;
+
+    Subsystem->SetDefinitionCreatorForTests(
+        [&F](const FMHCompositeDocument& Document, const FMHCompositeAdoptTarget& Target, FString&) -> UMHCompositeAsset*
+        {
+            return F.Recipe.Composite(Target.LogicalName, Document, {});
+        });
+    UMHCompositeAsset* PublishedAsset = nullptr;
+    Subsystem->SetCommitPublisherForTests(
+        [&PublishedAsset](UMHCompositeAsset& Asset, FString&)
+        {
+            PublishedAsset = &Asset;
+            MHNotifyCompositeAssetChanged(Asset);
+            return true;
+        });
+    TArray<FMHCompositeAdoptTarget> Targets;
+    Targets.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName + TEXT("_u");
+    TArray<FString> Warnings;
+    const bool bSaved = Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, Targets, Warnings, Error);
+    Subsystem->SetDefinitionCreatorForTests({});
+    Subsystem->SetCommitPublisherForTests({});
+    bPassed &= TestTrue(TEXT("save unique: ") + Error, bSaved);
+    bPassed &= TestTrue(TEXT("the shared root is what gets published"), PublishedAsset == F.Root);
+    bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
+    FMHCompositeDocument RootDocument;
+    bPassed &= TestTrue(TEXT("the root now invokes the unique child"),
+        MHExtractCompositeV5(*F.Root, RootDocument, Error) && RootDocument.Nodes.Num() == 2 && RootDocument.Nodes[1].Resource == Targets[0].LogicalName);
+    TArray<uint8> ChildAfter;
+    bPassed &= TestTrue(TEXT("original child untouched"), CanonicalBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
+    bPassed &= TestTrue(TEXT("this placement keeps its root"), F.A->GetCompositeAsset() == F.Root);
+    bPassed &= TestTrue(TEXT("call context stays empty"), F.A->GetCallContext().IsEmpty());
+    FVector MeshCAfterA, MeshCAfterB;
+    bPassed &= TestTrue(TEXT("A renders the unique node"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterA) && MeshCAfterA.Equals(MeshCBeforeA + FVector(100, 0, 0), 1e-2));
+    bPassed &= TestTrue(TEXT("B follows the rewired root"), LeafWorldLocation(*F.B, F.MeshC, MeshCAfterB) && MeshCAfterB.Equals(MeshCBeforeB + FVector(100, 0, 0), 1e-2));
+    return bPassed;
+}
+
+// R6-U1: Save Unique validates its targets before anything is written, and the
+// re-roll warning names exactly the copies that carry randomization.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHEditContextSaveUniqueValidationTest,
+    "Mimir.V5.Composite.EditContext.SaveUniqueValidatesTargetsAndWarnsOnRandom",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEditContextSaveUniqueValidationTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    {
+        FMHCompositeDocument Plain;
+        Plain.Nodes.AddDefaulted_GetRef().Kind = EMHCompositeNodeKind::Mesh;
+        FMHCompositeDocument WithRandom = Plain;
+        FMHCompositeNode& Random = WithRandom.Nodes.AddDefaulted_GetRef();
+        Random.Kind = EMHCompositeNodeKind::Random;
+        Random.Options.AddDefaulted_GetRef().Kind = EMHCompositeOptionKind::Mesh;
+        FMHCompositeDocument WithProfile = Plain;
+        WithProfile.Nodes[0].Children.AddDefaulted_GetRef().Profile = TEXT("some_profile");
+        if (!TestFalse(TEXT("plain document has no randomization"), MHCompositeDocumentHasRandomization(Plain))) return false;
+        if (!TestTrue(TEXT("random node is randomization"), MHCompositeDocumentHasRandomization(WithRandom))) return false;
+        if (!TestTrue(TEXT("nested placement profile is randomization"), MHCompositeDocumentHasRandomization(WithProfile))) return false;
+    }
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FEditContextFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
+    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
+    const FString InvocationPath = InvocationNode->NodePath;
+    FString Error;
+    TArray<FString> Warnings;
+    FMHCompositeSaveUniquePlan Plan;
+    bool bPassed = TestFalse(TEXT("no session: describe refuses"), Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::ForThisPlacement, Plan, Error));
+    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
+
+    bool bCreatorCalled = false;
+    Subsystem->SetDefinitionCreatorForTests(
+        [&bCreatorCalled](const FMHCompositeDocument&, const FMHCompositeAdoptTarget&, FString&) -> UMHCompositeAsset*
+        {
+            bCreatorCalled = true;
+            return nullptr;
+        });
+    TArray<FMHCompositeAdoptTarget> TooFew;
+    bPassed &= TestFalse(TEXT("wrong target count refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, TooFew, Warnings, Error));
+    TArray<FMHCompositeAdoptTarget> BadName;
+    BadName.AddDefaulted_GetRef().LogicalName = TEXT("Not Canonical");
+    bPassed &= TestFalse(TEXT("non-canonical name refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, BadName, Warnings, Error));
+    bPassed &= TestTrue(TEXT("the refusal names the token rule"), Error.Contains(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME")));
+    TArray<FMHCompositeAdoptTarget> SameAsOriginal;
+    SameAsOriginal.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName;
+    bPassed &= TestFalse(TEXT("a name already on the chain is refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::InParentDefinition, SameAsOriginal, Warnings, Error));
+    TArray<FMHCompositeAdoptTarget> Duplicate;
+    Duplicate.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName + TEXT("_same");
+    Duplicate.AddDefaulted_GetRef().LogicalName = F.Child->LogicalName + TEXT("_same");
+    bPassed &= TestFalse(TEXT("duplicate target names are refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, Duplicate, Warnings, Error));
+    Subsystem->SetDefinitionCreatorForTests({});
+    bPassed &= TestFalse(TEXT("nothing was created"), bCreatorCalled);
+    bPassed &= TestTrue(TEXT("the session survives refused saves"), Subsystem->IsEditingComposite() && F.A->IsPlacementEditMode());
+    bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }
 

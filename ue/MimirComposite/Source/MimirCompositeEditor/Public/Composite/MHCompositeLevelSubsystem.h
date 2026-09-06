@@ -73,6 +73,33 @@ MIMIRCOMPOSITEEDITOR_API bool MHPreflightBuildComposite(
     FString& OutError);
 } // namespace UE::MimirComposite
 
+/** R6-U (docs/16 §2.7): where a unique copy of the edited definition takes effect. */
+UENUM()
+enum class EMHCompositeUniqueScope : uint8
+{
+    /** The invoking (shared) definition is rewired to the copy and published: every placement of that definition follows. */
+    InParentDefinition,
+    /** Every definition from the edited one up to this placement's root is copied; only this placement switches to the new root. */
+    ForThisPlacement
+};
+
+/** R6-U: what Save Unique would do for a scope, before any name is chosen. */
+struct MIMIRCOMPOSITEEDITOR_API FMHCompositeSaveUniquePlan
+{
+    /** Definitions that get a unique copy, innermost (the edited one) first. */
+    TArray<FString> Copies;
+    /** The shared definition rewired and overwritten in place (InParentDefinition), else empty. */
+    FString OverwrittenDefinition;
+    /** Copies whose random draws re-roll under the new name (streams are keyed by node path, 16 §2.10). */
+    TArray<FString> Warnings;
+};
+
+namespace UE::MimirComposite
+{
+/** True when any node of the document draws randomly: random options, an inline placement or a placement profile. */
+MIMIRCOMPOSITEEDITOR_API bool MHCompositeDocumentHasRandomization(const FMHCompositeDocument& Document);
+}
+
 UCLASS()
 class MIMIRCOMPOSITEEDITOR_API UMHCompositeLevelSubsystem final : public UEditorSubsystem
 {
@@ -109,6 +136,20 @@ public:
      */
     bool CommitEditComposite(TArray<FString>& OutWarnings, FString& OutError);
     bool CancelEditComposite(FString& OutError);
+    /** R6-U: the plan for Scope — copies innermost first, the overwritten shared definition, re-roll warnings. Needs an active Edit Contents session. */
+    bool DescribeSaveUnique(EMHCompositeUniqueScope Scope, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const;
+    /**
+     * R6-U (procedural variant): saves the nested draft as unique definitions.
+     * Targets align with the plan's Copies. Validated before anything is
+     * written; crosses the source boundary (UE Undo cleared) like Commit.
+     * ForThisPlacement keeps this placement's root-level streams by giving it
+     * the original root as call context when it has none.
+     */
+    bool SaveEditAsUnique(
+        EMHCompositeUniqueScope Scope,
+        const TArray<UE::MimirComposite::FMHCompositeAdoptTarget>& Targets,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
     /** Context of the active session; empty EditedLogicalName when none. */
     FMHCompositeEditContext GetEditContext() const;
     /** The draft document of the active session (the root's or the nested definition's). */
@@ -148,6 +189,12 @@ public:
     {
         CommitPublisherForTests = MoveTemp(Publisher);
     }
+    /** Stands in for managed-composite creation (validate, publish, import — shared with Build); must return a resolvable managed asset. */
+    void SetDefinitionCreatorForTests(
+        TFunction<UMHCompositeAsset*(const UE::MimirComposite::FMHCompositeDocument&, const UE::MimirComposite::FMHCompositeAdoptTarget&, FString&)> Creator)
+    {
+        DefinitionCreatorForTests = MoveTemp(Creator);
+    }
 #endif
 
 private:
@@ -171,5 +218,6 @@ private:
         FString& InOutError);
 #if WITH_DEV_AUTOMATION_TESTS
     TFunction<bool(UMHCompositeAsset&, FString&)> CommitPublisherForTests;
+    TFunction<UMHCompositeAsset*(const UE::MimirComposite::FMHCompositeDocument&, const UE::MimirComposite::FMHCompositeAdoptTarget&, FString&)> DefinitionCreatorForTests;
 #endif
 };

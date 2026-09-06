@@ -1084,6 +1084,34 @@ void UMHCompositeLevelSubsystem::RestoreDefinition(
     MHNotifyCompositeAssetChanged(Asset);
 }
 
+bool UE::MimirComposite::MHCompositeDocumentHasRandomization(const FMHCompositeDocument& Document)
+{
+    // R6-U red stub.
+    static_cast<void>(Document);
+    return false;
+}
+
+bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScope Scope, FMHCompositeSaveUniquePlan& OutPlan, FString& OutError) const
+{
+    static_cast<void>(Scope);
+    OutPlan = FMHCompositeSaveUniquePlan();
+    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Save Unique arrives with R6-U1");
+    return false;
+}
+
+bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
+    const EMHCompositeUniqueScope Scope,
+    const TArray<FMHCompositeAdoptTarget>& Targets,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    static_cast<void>(Scope);
+    static_cast<void>(Targets);
+    OutWarnings.Reset();
+    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Save Unique arrives with R6-U1");
+    return false;
+}
+
 bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Root, const FString& InvocationNodePath, FString& OutError)
 {
     OutError.Reset();
