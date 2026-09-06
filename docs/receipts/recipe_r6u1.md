@@ -1,6 +1,6 @@
 # R6-U1 (Recipe Model v2.1) — Save Unique, procedural variant
 
-Статус: **REVIEW** (близнец). Из сессии Edit Contents (R6-D0…D2) draft
+Статус: **MERGED** (близнец, #131). Из сессии Edit Contents (R6-D0…D2) draft
 вложенного определения сохраняется как новое уникальное определение с явно
 выбранной областью действия.
 
