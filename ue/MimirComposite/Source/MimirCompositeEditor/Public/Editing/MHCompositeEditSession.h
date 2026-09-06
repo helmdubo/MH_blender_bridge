@@ -71,6 +71,14 @@ public:
 
     /** Authoring command on the draft; refused when the session is closed. */
     bool SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError);
+    /** CE-4b1 structural commands on the draft (see UMHCompositeEditDocument); the projection follows each one. */
+    FGuid AddNode(const FGuid& ParentId, EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError);
+    bool DeleteNode(const FGuid& NodeId, FString& OutError);
+    FGuid DuplicateNode(const FGuid& NodeId, FString& OutError);
+    /** bKeepWorld: the node keeps where it renders — its local transform is re-authored under the new parent (from the projection). */
+    bool ReparentNode(const FGuid& NodeId, const FGuid& NewParentId, int32 SiblingIndex, bool bKeepWorld, FString& OutError);
+    /** The projection follows the draft after a command (a refresh failure is a preview problem, not an authoring one). */
+    void RefreshProjection();
 
     /**
      * CE-1 bridge until CE-4a moves the writes here: mirrors the legacy
