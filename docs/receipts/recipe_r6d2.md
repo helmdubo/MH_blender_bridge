@@ -29,7 +29,7 @@
   `MHPublishCompositeV5`, актив уже применён, seam обязан уведомить потребителей
   (`MHNotifyCompositeAssetChanged`) как настоящий publisher.
 
-## 2. Тесты (red `__RED__`)
+## 2. Тесты (red `576ad1f`)
 
 | Тест | Что проверяет |
 |---|---|
@@ -40,13 +40,13 @@
 
 | Gate | Результат |
 |---|---|
-| RED (`__RED__`) | `R6D2_RED_TEST.log`: __ |
-| GREEN non-unity/no-PCH build | `R6D2_GREEN_BUILD.log`: __ |
-| `Mimir.V5.Composite.EditContext` | `R6D2_GREEN_TEST.log`: __ |
-| полный NullRHI suite | `R6D2_GREEN_FULL.log`: __ |
-| force-unity | `R6D2_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `R6D2_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| RED (`576ad1f`) | `R6D2_RED_TEST.log`: Fail ×2 (оба новых теста; D0/D1b — Success) |
+| GREEN non-unity/no-PCH build | `R6D2_GREEN_BUILD.log`: Succeeded |
+| `Mimir.V5.Composite.EditContext` | `R6D2_GREEN_TEST.log`: 4/0 |
+| полный NullRHI suite | `R6D2_GREEN_FULL.log`: `Success=225 Fail=0` (223 + 2) |
+| force-unity | `R6D2_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `R6D2_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
