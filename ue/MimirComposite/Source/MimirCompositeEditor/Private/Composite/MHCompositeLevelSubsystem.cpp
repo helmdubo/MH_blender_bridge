@@ -1034,8 +1034,10 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
     // Blender export may overwrite it in turn.
     AMHCompositeActor* Root = EditingActor.Get();
     UMHCompositeAsset* Child = EditingAsset.Get();
-    if (Root == nullptr || Child == nullptr || !Root->IsPlacementEditMode() ||
-        Root->GetEditScopeInvocationPath() != EditingInvocationPath)
+    const bool bLegacyEdit = Root != nullptr && Root->IsPlacementEditMode();
+    const bool bSessionEdit = EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr;
+    if (Root == nullptr || Child == nullptr || (!bLegacyEdit && !bSessionEdit) ||
+        (bLegacyEdit && Root->GetEditScopeInvocationPath() != EditingInvocationPath))
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid nested composite edit session is active");
         return false;
@@ -1043,7 +1045,7 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
     // Flush a handle edit even if the publish precedes the next editor tick.
     Root->Tick(0.0f);
     FMHCompositeDocument Edited;
-    if (!Root->GetEditedCompositeDocument(Edited))
+    if (bLegacyEdit ? !Root->GetEditedCompositeDocument(Edited) : !EditSession->GetDraft()->Extract(Edited, OutError))
     {
         OutError = Root->GetLastPlacementError().IsEmpty()
             ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited nested definition has no admitted resolved plan")
@@ -1342,7 +1344,10 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     OutWarnings.Append(Plan.Warnings);
     AMHCompositeActor* Root = EditingActor.Get();
     UMHCompositeAsset* Edited = EditingAsset.Get();
-    if (Root == nullptr || Edited == nullptr || !Root->IsPlacementEditMode() || Root->GetEditScopeInvocationPath() != EditingInvocationPath)
+    const bool bLegacyEdit = Root != nullptr && Root->IsPlacementEditMode();
+    const bool bSessionEdit = EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr;
+    if (Root == nullptr || Edited == nullptr || (!bLegacyEdit && !bSessionEdit) ||
+        (bLegacyEdit && Root->GetEditScopeInvocationPath() != EditingInvocationPath))
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid nested composite edit session is active");
         return false;
@@ -1411,7 +1416,7 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     // The edited draft, flushed and admitted.
     Root->Tick(0.0f);
     FMHCompositeDocument EditedDocument;
-    if (!Root->GetEditedCompositeDocument(EditedDocument))
+    if (bLegacyEdit ? !Root->GetEditedCompositeDocument(EditedDocument) : !EditSession->GetDraft()->Extract(EditedDocument, OutError))
     {
         OutError = Root->GetLastPlacementError().IsEmpty()
             ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited nested definition has no admitted resolved plan")
@@ -1549,6 +1554,21 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
     EditingInvocationPath = InvocationNodePath;
     EditingParentWorld = Invocation->WorldMatrix * Root->GetActorTransform().ToMatrixWithScale();
     EditingTopLevelComponents.Reset();
+    const UMHCompositeSettings* EditSettings = GetDefault<UMHCompositeSettings>();
+    if (EditSettings != nullptr && EditSettings->bCompositeEditModeV2)
+    {
+        // CE-2b: the CE backend — session draft + edit projection; the root
+        // placement stays sealed and never enters the legacy edit mode.
+        OpenEditSession(Root, Child, EditingInvocationPath);
+        FString ProjectionError;
+        if (!EditSession->OpenProjection(ProjectionError))
+        {
+            OutError = ProjectionError;
+            ResetEditSession();
+            return false;
+        }
+        return true;
+    }
     {
         const FScopedTransaction Transaction(INVTEXT("Edit MH Composite Contents"));
         Root->Modify();

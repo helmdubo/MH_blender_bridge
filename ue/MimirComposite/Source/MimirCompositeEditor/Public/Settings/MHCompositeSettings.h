@@ -70,6 +70,15 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Source")
     bool bConfirmSourceOverwrite = true;
 
+    /**
+     * CE-2b (docs/contracts/composite_edit_ce0.md): the Composite Edit Mode
+     * backend — session draft + edit projection — instead of the legacy actor
+     * handles for nested Edit Contents. One backend at a time; off until the
+     * CE-6 cutover.
+     */
+    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Edit")
+    bool bCompositeEditModeV2 = false;
+
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     FString StaticMeshPrefix;
 
