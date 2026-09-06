@@ -24,3 +24,5 @@ enum class EMHCompositeUniqueScope : uint8;
 enum class EMHCompositeUniqueVariant : uint8;
 /** R6-U1/U2: saves the active Edit Contents draft as unique definitions for Scope (procedural or baked); one name is prompted per copy. */
 void MHExecuteSaveUniqueInteractive(EMHCompositeUniqueScope Scope, EMHCompositeUniqueVariant Variant);
+/** R6-UX2b: one entry point — a dialog chooses the scope and the bake, then the copies are named and saved. */
+void MHExecuteSaveUniqueCopyInteractive();

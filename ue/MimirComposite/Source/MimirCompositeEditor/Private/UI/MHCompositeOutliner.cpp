@@ -389,28 +389,12 @@ private:
                     LOCTEXT("ApplySharedDefinitionTip", "Publish the edited nested definition to its .composite source and refresh every placement that invokes it."),
                     FSlateIcon(),
                     FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::ApplySharedDefinition)));
-                // R6-U1: explicit uniqueness scopes for the edited draft.
+                // R6-UX2b: one entry; the dialog explains scope and bake.
                 Menu.AddMenuEntry(
-                    LOCTEXT("MakeUniqueInDefinition", "Make Child Unique in This Definition"),
-                    LOCTEXT("MakeUniqueInDefinitionTip", "Save the edited definition as a new unique composite and point the definition that invokes it at the copy; every placement of that definition follows."),
+                    LOCTEXT("SaveUniqueCopy", "Save As Unique Copy..."),
+                    LOCTEXT("SaveUniqueCopyTip", "Save the edited definition as a new unique composite: choose whether it takes effect in this definition or for this placement only, and whether to bake the current result."),
                     FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural)));
-                Menu.AddMenuEntry(
-                    LOCTEXT("MakeUniqueForPlacement", "Make Unique for This Placement"),
-                    LOCTEXT("MakeUniqueForPlacementTip", "Save the edited definition and every definition up to this placement's root as new unique composites; only this placement switches to the new root."),
-                    FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural)));
-                // R6-U2: the same scopes with the resolved result baked into the copy.
-                Menu.AddMenuEntry(
-                    LOCTEXT("BakeUniqueInDefinition", "Make Child Unique in This Definition (Bake Current Result)"),
-                    LOCTEXT("BakeUniqueInDefinitionTip", "Save the resolved result of the edited definition under this placement as a new composite of plain mesh/actor nodes (no random draws), and point the definition that invokes it at the copy."),
-                    FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::BakeCurrentResult)));
-                Menu.AddMenuEntry(
-                    LOCTEXT("BakeUniqueForPlacement", "Make Unique for This Placement (Bake Current Result)"),
-                    LOCTEXT("BakeUniqueForPlacementTip", "Save the resolved result of the edited definition as a new composite of plain mesh/actor nodes (no random draws), copy the chain up to the root, and switch only this placement to the new root."),
-                    FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::MakeUnique, EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::BakeCurrentResult)));
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::SaveAsUniqueCopy)));
             }
             Menu.AddMenuEntry(
                 LOCTEXT("CancelEditContents", "Cancel Edit Contents (Esc)"),
@@ -511,9 +495,9 @@ private:
         RefreshModel();
     }
 
-    void MakeUnique(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant)
+    void SaveAsUniqueCopy()
     {
-        MHExecuteSaveUniqueInteractive(Scope, Variant);
+        MHExecuteSaveUniqueCopyInteractive();
         RefreshModel();
     }
 
@@ -827,7 +811,7 @@ private:
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Make Unique, Cancel Edit Contents"),
+                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Save As Unique Copy, Cancel Edit Contents"),
                         *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
