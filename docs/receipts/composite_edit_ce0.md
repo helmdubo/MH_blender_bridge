@@ -36,10 +36,10 @@ Queued Apply A → Cancel A → Begin B закрыт срезом CE-pre
 |---|---|
 | non-unity/no-PCH build | `CE0_BUILD.log`: Succeeded |
 | `Mimir.V5.Composite.EditMode` | `CE0_TEST.log`: 4/0 |
-| полный NullRHI suite | `CE0_FULL.log`: __ |
-| force-unity | `CE0_FORCE_UNITY.log`: __ |
-| `BuildPlugin -StrictIncludes` | `CE0_STRICT.log`: __ |
-| `git diff --check`, `check_normative_docs.py` | __ |
+| полный NullRHI suite | `CE0_FULL.log`: `Success=236 Fail=0` (232 + 4) |
+| force-unity | `CE0_FORCE_UNITY.log`: Succeeded |
+| `BuildPlugin -StrictIncludes` | `CE0_STRICT.log`: ExitCode=0 (Success) |
+| `git diff --check`, `check_normative_docs.py` | чисто / OK |
 
 ## 4. Изменённые файлы
 
