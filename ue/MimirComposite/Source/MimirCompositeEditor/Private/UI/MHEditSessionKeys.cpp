@@ -70,7 +70,8 @@ bool MHHandleEditSessionKey(const FKey& Key, const bool bDeferApply)
         // path that delivered the key.
         if (bDeferApply && GEditor != nullptr)
         {
-            GEditor->GetTimerManager()->SetTimerForNextTick([]() { MHExecuteCommitEditCompositeInteractive(); });
+            const uint32 Epoch = Subsystem->GetEditSessionEpoch();
+            GEditor->GetTimerManager()->SetTimerForNextTick([Epoch]() { MHRunDeferredEditSessionApply(Epoch); });
         }
         else
         {
@@ -84,8 +85,10 @@ bool MHHandleEditSessionKey(const FKey& Key, const bool bDeferApply)
 
 bool MHRunDeferredEditSessionApply(const uint32 CapturedEpoch)
 {
-    // CE-pre red stub: applies whatever session is active now.
-    static_cast<void>(CapturedEpoch);
+    // CE §9: the callback belongs to the session it was queued for. A closed
+    // session or a newer one leaves the current state untouched.
+    const UMHCompositeLevelSubsystem* Subsystem = EditSessionSubsystem();
+    if (Subsystem == nullptr || !Subsystem->IsEditingComposite() || Subsystem->GetEditSessionEpoch() != CapturedEpoch) return false;
     MHExecuteCommitEditCompositeInteractive();
     return true;
 }

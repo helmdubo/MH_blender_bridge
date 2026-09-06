@@ -902,6 +902,7 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
     const FScopedTransaction Transaction(INVTEXT("Edit MH Composite"));
     Actor->Modify();
     Actor->SetPlacementEditMode(true);
+    ++EditSessionEpoch;
     EditingActor = Actor;
     EditingAsset = Asset;
     EditingInvocationPath.Reset();
@@ -1533,6 +1534,7 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
     // The root enters a Placement Edit session scoped to the invocation: the
     // child definition's nodes get handles under the invocation's effective
     // world (R6-D1); the source is untouched until R6-D2 publishes.
+    ++EditSessionEpoch;
     EditingActor = Root;
     EditingAsset = Child;
     EditingInvocationPath = InvocationNodePath;
@@ -1575,6 +1577,8 @@ FMHCompositeEditContext UMHCompositeLevelSubsystem::GetEditContext() const
 
 void UMHCompositeLevelSubsystem::ResetEditSession()
 {
+    // The session is over: whatever was captured for it is stale from here on.
+    ++EditSessionEpoch;
     EditingActor.Reset();
     EditingAsset.Reset();
     EditingInvocationPath.Reset();
