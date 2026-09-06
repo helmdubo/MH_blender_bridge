@@ -114,10 +114,13 @@ bool FMHEditSessionCommandUndoTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("session"), Session) || Session->GetDraft() == nullptr) return false;
     const FGuid GroupedId = Session->GetDraft()->GetNodeId(2);
     bool bPassed = TestTrue(TEXT("grouped id"), GroupedId.IsValid());
+    bool bCommanded = false;
     {
         const FScopedTransaction Transaction(INVTEXT("CE-1 test: session command"));
-        bPassed &= TestTrue(TEXT("command: ") + Error, Session->SetNodeTransform(GroupedId, FTransform(FVector(1.0, 2.0, 3.0)), Error));
+        bCommanded = Session->SetNodeTransform(GroupedId, FTransform(FVector(1.0, 2.0, 3.0)), Error);
+        bPassed &= TestTrue(TEXT("command: ") + Error, bCommanded);
     }
+    if (!bCommanded) return false;
     bPassed &= TestTrue(TEXT("dirty after the command"), Session->IsDirty());
     bPassed &= TestTrue(TEXT("undo runs"), GEditor->UndoTransaction());
     bPassed &= TestTrue(TEXT("the session survived Undo"), Subsystem->GetEditSession() == Session && Session->IsOpen());

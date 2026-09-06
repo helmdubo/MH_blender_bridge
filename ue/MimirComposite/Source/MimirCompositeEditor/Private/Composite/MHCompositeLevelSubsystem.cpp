@@ -913,7 +913,15 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
     {
         EditingTopLevelComponents.Add(Component);
     }
+    OpenEditSession(Actor, Asset, FString());
     return true;
+}
+
+void UMHCompositeLevelSubsystem::OpenEditSession(AMHCompositeActor* Root, UMHCompositeAsset* Asset, const FString& InvocationNodePath)
+{
+    // CE-1: one owner of the session state; the subsystem keeps the strong reference.
+    EditSession = NewObject<UMHCompositeEditSession>(this);
+    EditSession->Open(Root, Asset, InvocationNodePath, EditingDocument, EditSessionEpoch);
 }
 
 bool UMHCompositeLevelSubsystem::CommitEditComposite(
@@ -1547,12 +1555,20 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
         Root->SetEditScope(InvocationNodePath);
         Root->SetPlacementEditMode(true);
     }
+    OpenEditSession(Root, Child, InvocationNodePath);
     return true;
 }
 
 const FMHCompositeDocument& UMHCompositeLevelSubsystem::GetEditingDraft() const
 {
-    // CE-1 red: still the initial snapshot.
+    // CE-1: the session's draft is the one current document; the field is
+    // only its typed view (the legacy actor edits are mirrored in first).
+    if (EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr)
+    {
+        FString Error;
+        EditSession->SyncDraftFromLegacyEdit(Error);
+        EditSession->GetDraft()->Extract(EditingDocument, Error);
+    }
     return EditingDocument;
 }
 
@@ -1586,6 +1602,11 @@ void UMHCompositeLevelSubsystem::ResetEditSession()
 {
     // The session is over: whatever was captured for it is stale from here on.
     ++EditSessionEpoch;
+    if (EditSession != nullptr)
+    {
+        EditSession->Close();
+        EditSession = nullptr;
+    }
     EditingActor.Reset();
     EditingAsset.Reset();
     EditingInvocationPath.Reset();

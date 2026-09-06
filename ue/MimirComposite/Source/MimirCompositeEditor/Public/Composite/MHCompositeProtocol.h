@@ -78,6 +78,15 @@ MIMIRCOMPOSITEEDITOR_API bool MHExtractCompositeV5(
     FMHCompositeDocument& OutDocument,
     FString& OutError);
 
+/** The flat pre-order asset form <-> the typed document (shared by the managed asset and the CE-1 edit draft). */
+MIMIRCOMPOSITEEDITOR_API void MHFlattenCompositeDocument(
+    const FMHCompositeDocument& Document,
+    TArray<FMHCompositeAssetNode>& OutNodes);
+MIMIRCOMPOSITEEDITOR_API bool MHUnflattenCompositeNodes(
+    TConstArrayView<FMHCompositeAssetNode> Nodes,
+    FMHCompositeDocument& OutDocument,
+    FString& OutError);
+
 /** Parse/write one closed `.placement` v1 profile document. */
 MIMIRCOMPOSITEEDITOR_API bool MHParsePlacementProfileV1(
     TConstArrayView<uint8> Bytes,

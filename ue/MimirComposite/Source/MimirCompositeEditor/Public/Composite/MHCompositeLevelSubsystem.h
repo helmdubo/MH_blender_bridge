@@ -231,6 +231,8 @@ private:
     FString EditingInvocationPath;
     FMatrix EditingParentWorld = FMatrix::Identity;
     void ResetEditSession();
+    /** CE-1: creates the session object for the edit just begun (EditingDocument is its original). */
+    void OpenEditSession(AMHCompositeActor* Root, UMHCompositeAsset* Asset, const FString& InvocationNodePath);
     /** One managed composite from a document: validated, published to Source Root under Target, imported (Build, R6-U). */
     bool CreateManagedComposite(
         const UE::MimirComposite::FMHCompositeDocument& Document,

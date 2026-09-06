@@ -111,10 +111,14 @@ bool FMHEditDocumentUndoTest::RunTest(const FString& Parameters)
     const uint32 RevisionBefore = Draft->GetRevision();
     FString Error;
     bool bPassed = TestFalse(TEXT("unknown id is refused"), Draft->SetNodeTransform(FGuid::NewGuid(), FTransform::Identity, Error));
+    bool bMoved = false;
     {
         const FScopedTransaction Transaction(INVTEXT("CE-1 test: move grouped mesh"));
-        bPassed &= TestTrue(TEXT("move: ") + Error, Draft->SetNodeTransform(GroupedId, FTransform(FVector(0.0, 0.0, 105.0)), Error));
+        bMoved = Draft->SetNodeTransform(GroupedId, FTransform(FVector(0.0, 0.0, 105.0)), Error);
+        bPassed &= TestTrue(TEXT("move: ") + Error, bMoved);
     }
+    // An empty transaction would make Undo roll back an unrelated earlier one.
+    if (!bMoved) return false;
     bPassed &= TestTrue(TEXT("change serial and revision advanced"), Draft->GetChangeSerial() != SerialBefore && Draft->GetRevision() == RevisionBefore + 1);
     FMHCompositeDocument Moved;
     bPassed &= TestTrue(TEXT("extract moved"), Draft->Extract(Moved, Error) && Moved.Nodes[1].Children[0].Transform.TranslationCm.Equals(FVector(0.0, 0.0, 105.0), 1e-3));
