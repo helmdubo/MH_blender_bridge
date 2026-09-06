@@ -13,6 +13,7 @@
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Editing/MHCompositeEditSession.h"
+#include "Editing/MHCompositeEditorMode.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -1567,6 +1568,8 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
             ResetEditSession();
             return false;
         }
+        // CE-3a: the editor mode follows the session (overlay, locked context, Escape).
+        UMHCompositeEditorMode::ActivateForSession();
         return true;
     }
     {
@@ -1629,6 +1632,7 @@ void UMHCompositeLevelSubsystem::ResetEditSession()
         EditSession->Close();
         EditSession = nullptr;
     }
+    UMHCompositeEditorMode::DeactivateForSession();
     EditingActor.Reset();
     EditingAsset.Reset();
     EditingInvocationPath.Reset();
