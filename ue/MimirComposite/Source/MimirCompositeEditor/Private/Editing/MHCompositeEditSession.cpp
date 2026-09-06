@@ -116,32 +116,76 @@ bool UMHCompositeEditSession::SetNodeTransform(const FGuid& NodeId, const FTrans
     return true;
 }
 
+namespace
+{
+
+/** The draft is closed or gone: every structural command is refused the same way. */
+bool SessionClosed(const UMHCompositeEditSession& Session, const UMHCompositeEditDocument* Draft, FString& OutError)
+{
+    if (Session.IsOpen() && Draft != nullptr) return false;
+    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the composite edit session is closed");
+    return true;
+}
+
+} // namespace
+
+void UMHCompositeEditSession::RefreshProjection()
+{
+    // The projection follows the draft; a refresh failure is a preview
+    // problem, not an authoring one.
+    if (Projection != nullptr && Projection->IsOpen())
+    {
+        FString RefreshError;
+        Projection->Refresh(RefreshError);
+    }
+}
+
 FGuid UMHCompositeEditSession::AddNode(const FGuid& ParentId, const EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError)
 {
-    static_cast<void>(ParentId); static_cast<void>(Kind); static_cast<void>(Resource); static_cast<void>(Name); static_cast<void>(LocalTransform);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return FGuid();
+    if (SessionClosed(*this, Draft, OutError)) return FGuid();
+    const FGuid Id = Draft->AddNode(ParentId, Kind, Resource, Name, LocalTransform, OutError);
+    if (Id.IsValid()) RefreshProjection();
+    return Id;
 }
 
 bool UMHCompositeEditSession::DeleteNode(const FGuid& NodeId, FString& OutError)
 {
-    static_cast<void>(NodeId);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->DeleteNode(NodeId, OutError)) return false;
+    RefreshProjection();
+    return true;
 }
 
 FGuid UMHCompositeEditSession::DuplicateNode(const FGuid& NodeId, FString& OutError)
 {
-    static_cast<void>(NodeId);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return FGuid();
+    if (SessionClosed(*this, Draft, OutError)) return FGuid();
+    const FGuid Id = Draft->DuplicateNode(NodeId, OutError);
+    if (Id.IsValid()) RefreshProjection();
+    return Id;
 }
 
 bool UMHCompositeEditSession::ReparentNode(const FGuid& NodeId, const FGuid& NewParentId, const int32 SiblingIndex, const bool bKeepWorld, FString& OutError)
 {
-    static_cast<void>(NodeId); static_cast<void>(NewParentId); static_cast<void>(SiblingIndex); static_cast<void>(bKeepWorld);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    // Keep-world: the node's rendered world (its projection component) is
+    // re-authored under the new parent's world — the new parent's component,
+    // or the occurrence (the projection actor's pivot) for a new root.
+    TOptional<FTransform> KeptLocal;
+    if (bKeepWorld && Projection != nullptr && Projection->IsOpen())
+    {
+        const USceneComponent* Own = Projection->FindComponentForNodeId(NodeId);
+        const USceneComponent* Parent = NewParentId.IsValid() ? Projection->FindComponentForNodeId(NewParentId) : nullptr;
+        const AActor* Occurrence = Projection->GetProjectionActor();
+        if (Own != nullptr && (Parent != nullptr || (!NewParentId.IsValid() && Occurrence != nullptr)))
+        {
+            const FTransform ParentWorld = Parent != nullptr ? Parent->GetComponentTransform() : Occurrence->GetActorTransform();
+            KeptLocal = Own->GetComponentTransform().GetRelativeTransform(ParentWorld);
+        }
+    }
+    if (!Draft->ReparentNode(NodeId, NewParentId, SiblingIndex, OutError)) return false;
+    if (KeptLocal.IsSet()) Draft->SetNodeTransform(NodeId, KeptLocal.GetValue(), OutError);
+    RefreshProjection();
+    return true;
 }
 
 bool UMHCompositeEditSession::SyncDraftFromLegacyEdit(FString& OutError)

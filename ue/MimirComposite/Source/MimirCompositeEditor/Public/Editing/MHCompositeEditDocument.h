@@ -75,6 +75,12 @@ public:
 
 private:
     void MarkChanged();
+    /** Index after the last descendant of Index (pre-order). */
+    int32 SubtreeEnd(int32 Index) const;
+    /** Inserts a block (relative parents, INDEX_NONE = the block's root) at At under ParentIndex, shifting later parents. */
+    void InsertBlock(int32 At, int32 ParentIndex, TArray<FMHCompositeAssetNode> Block, TArray<FGuid> Ids);
+    /** Removes the subtree at Index into a block with relative parents, shifting later parents. */
+    void ExtractBlock(int32 Index, TArray<FMHCompositeAssetNode>& OutBlock, TArray<FGuid>& OutIds);
 
     UPROPERTY()
     TArray<FMHCompositeAssetNode> Nodes;

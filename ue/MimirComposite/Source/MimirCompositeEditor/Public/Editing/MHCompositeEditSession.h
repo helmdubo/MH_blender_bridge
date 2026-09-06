@@ -77,6 +77,8 @@ public:
     FGuid DuplicateNode(const FGuid& NodeId, FString& OutError);
     /** bKeepWorld: the node keeps where it renders — its local transform is re-authored under the new parent (from the projection). */
     bool ReparentNode(const FGuid& NodeId, const FGuid& NewParentId, int32 SiblingIndex, bool bKeepWorld, FString& OutError);
+    /** The projection follows the draft after a command (a refresh failure is a preview problem, not an authoring one). */
+    void RefreshProjection();
 
     /**
      * CE-1 bridge until CE-4a moves the writes here: mirrors the legacy
