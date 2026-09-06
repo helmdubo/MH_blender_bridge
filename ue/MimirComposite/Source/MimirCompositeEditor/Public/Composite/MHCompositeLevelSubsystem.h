@@ -100,6 +100,13 @@ public:
      * The source is untouched until an explicit publish; Cancel discards.
      */
     bool BeginEditNestedComposite(AMHCompositeActor* Root, const FString& InvocationNodePath, FString& OutError);
+    /**
+     * Publishes the active session: a root session writes the edited top-level
+     * transforms to the placement's source; a nested session (R6-D2, docs/16
+     * §2.7 "Apply Shared Definition") writes the edited nested definition to
+     * its own source and refreshes every placement that invokes it. Both
+     * cross the source boundary: UE Undo is cleared first.
+     */
     bool CommitEditComposite(TArray<FString>& OutWarnings, FString& OutError);
     bool CancelEditComposite(FString& OutError);
     /** Context of the active session; empty EditedLogicalName when none. */
@@ -131,6 +138,11 @@ public:
         FString& OutError);
 
 #if WITH_DEV_AUTOMATION_TESTS
+    /**
+     * Stands in for MHPublishCompositeV5 in Commit: the asset arrives already
+     * applied and UE Undo cleared. A publisher that reports success must
+     * notify consumers (MHNotifyCompositeAssetChanged) as the real one does.
+     */
     void SetCommitPublisherForTests(
         TFunction<bool(UMHCompositeAsset&, FString&)> Publisher)
     {
@@ -147,6 +159,16 @@ private:
     FString EditingInvocationPath;
     FMatrix EditingParentWorld = FMatrix::Identity;
     void ResetEditSession();
+    /** R6-D2: Apply Shared Definition — the nested draft becomes the child's source; consumers follow. */
+    bool CommitNestedEditComposite(TArray<FString>& OutWarnings, FString& OutError);
+    /** After a failed publish: the authoritative source if present, else the pre-publish document; consumers are notified. */
+    static void RestoreDefinition(
+        UMHCompositeAsset& Asset,
+        const UE::MimirComposite::FMHCompositeDocument& Previous,
+        const FString& SourceRelativePath,
+        const FString& SourceRoot,
+        TArray<FString>& OutWarnings,
+        FString& InOutError);
 #if WITH_DEV_AUTOMATION_TESTS
     TFunction<bool(UMHCompositeAsset&, FString&)> CommitPublisherForTests;
 #endif

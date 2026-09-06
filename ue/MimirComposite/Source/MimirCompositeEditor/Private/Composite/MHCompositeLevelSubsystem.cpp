@@ -890,13 +890,7 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     OutError.Reset();
     AMHCompositeActor* Actor = EditingActor.Get();
     UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
-    if (Actor != nullptr && !EditingInvocationPath.IsEmpty())
-    {
-        // R6-D0 opens the nested draft; publishing the shared definition and
-        // refreshing its consumers is R6-D2.
-        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: publishing a nested definition arrives with R6-D2; cancel the edit context");
-        return false;
-    }
+    if (Actor != nullptr && !EditingInvocationPath.IsEmpty()) return CommitNestedEditComposite(OutWarnings, OutError);
     if (Actor == nullptr || Asset == nullptr || EditingTopLevelComponents.Num() != EditingDocument.Nodes.Num())
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid composite edit session is active");
@@ -987,6 +981,107 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     }
     Actor->RebuildComposite();
     return true;
+}
+
+bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutWarnings, FString& OutError)
+{
+    // R6-D2 (docs/16 §2.7): Apply Shared Definition. The nested draft becomes
+    // the child definition's source; every placement invoking it follows via
+    // the resource-changed notification. Decision (a), 2026-09-06: no revision
+    // guard against Blender — the file is overwritten as-is, and a later
+    // Blender export may overwrite it in turn.
+    AMHCompositeActor* Root = EditingActor.Get();
+    UMHCompositeAsset* Child = EditingAsset.Get();
+    if (Root == nullptr || Child == nullptr || !Root->IsPlacementEditMode() ||
+        Root->GetEditScopeInvocationPath() != EditingInvocationPath)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid nested composite edit session is active");
+        return false;
+    }
+    // Flush a handle edit even if the publish precedes the next editor tick.
+    Root->Tick(0.0f);
+    FMHCompositeDocument Edited;
+    if (!Root->GetEditedCompositeDocument(Edited))
+    {
+        OutError = Root->GetLastPlacementError().IsEmpty()
+            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited nested definition has no admitted resolved plan")
+            : Root->GetLastPlacementError();
+        return false;
+    }
+    TArray<uint8> CanonicalPreflight;
+    if (!MHWriteCanonicalCompositeV5(Edited, CanonicalPreflight, OutError)) return false;
+    FMHCompositeDocument Previous;
+    if (!MHExtractCompositeV5(*Child, Previous, OutError)) return false;
+
+    // Source boundary, as for a root Commit: once the file is written, UE
+    // Undo must not resurrect a pre-publish snapshot.
+    const FString PreviousSourceRelativePath = Child->SourceRelativePath;
+    Root->SetPlacementEditMode(false);
+    ResetEditSession();
+    GEditor->ResetTransaction(INVTEXT("MH Composite shared definition publish cannot be undone"));
+
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    FMHCompositeOperationResult Published;
+    if (MHApplyCompositeV5(*Child, Edited, Published.Error))
+    {
+#if WITH_DEV_AUTOMATION_TESTS
+        if (CommitPublisherForTests)
+        {
+            if (CommitPublisherForTests(*Child, Published.Error)) Published.Asset = Child;
+        }
+        else
+#endif
+        {
+            Published = MHPublishCompositeV5(*Child, SourceRoot, nullptr);
+        }
+    }
+    OutWarnings.Append(Published.Warnings);
+    if (!Published.Succeeded())
+    {
+        OutError = MoveTemp(Published.Error);
+        RestoreDefinition(*Child, Previous, PreviousSourceRelativePath, SourceRoot, OutWarnings, OutError);
+        Root->RebuildComposite();
+        return false;
+    }
+    Root->RebuildComposite();
+    return true;
+}
+
+void UMHCompositeLevelSubsystem::RestoreDefinition(
+    UMHCompositeAsset& Asset,
+    const FMHCompositeDocument& Previous,
+    const FString& SourceRelativePath,
+    const FString& SourceRoot,
+    TArray<FString>& OutWarnings,
+    FString& InOutError)
+{
+    FString SourcePath = FPaths::ConvertRelativePathToFull(SourceRoot, SourceRelativePath);
+    FPaths::NormalizeFilename(SourcePath);
+    UMHSourceImporter* Importer = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHSourceImporter>() : nullptr;
+    if (Importer != nullptr && !SourceRelativePath.IsEmpty() && FPaths::FileExists(SourcePath))
+    {
+        FString ReconcileError;
+        TArray<FString> ReconcileWarnings;
+        UMHCompositeAsset* Reconciled = nullptr;
+        const bool bReconciled = Importer->ImportCompositeFile(
+            SourcePath, Asset.GetOutermost()->GetName(), Reconciled, ReconcileWarnings, ReconcileError) && Reconciled == &Asset;
+        OutWarnings.Append(ReconcileWarnings);
+        if (bReconciled)
+        {
+            MHNotifyCompositeAssetChanged(Asset);
+            return;
+        }
+        InOutError += TEXT("; managed asset reconciliation from authoritative source failed: ") +
+            (ReconcileError.IsEmpty() ? FString(TEXT("source import was unavailable")) : ReconcileError);
+    }
+    FString RestoreError;
+    if (!MHApplyCompositeV5(Asset, Previous, RestoreError))
+    {
+        InOutError += TEXT("; the pre-publish definition could not be restored: ") + RestoreError;
+        return;
+    }
+    MHNotifyCompositeAssetChanged(Asset);
 }
 
 bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Root, const FString& InvocationNodePath, FString& OutError)

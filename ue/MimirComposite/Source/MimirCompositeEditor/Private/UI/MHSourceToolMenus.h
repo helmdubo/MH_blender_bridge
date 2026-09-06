@@ -16,3 +16,6 @@ bool MHPromptCompositeAdoptTarget(
 
 /** Registers the S6 project, placement and managed-asset editor commands. */
 void MHRegisterS6ToolMenus();
+
+/** R6-D2: publishes the active edit session (root transforms or Apply Shared Definition) behind the source-overwrite confirmation. */
+void MHExecuteCommitEditCompositeInteractive();
