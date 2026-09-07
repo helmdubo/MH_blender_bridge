@@ -198,6 +198,7 @@ FBox MHSelectionBounds(const TArray<AActor*>& Actors)
 bool MHCollectBreakSpecs(
     const FMHResolvedCompositePlan& Plan,
     const FMHCompiledRecipe& Recipe,
+    const FMHCompositeCallContext& Context,
     const FTransform& PlacementTransform,
     const UMHCompositeSettings& Settings,
     const int32 Seed,
@@ -211,6 +212,8 @@ bool MHCollectBreakSpecs(
         return false;
     }
     const FMatrix PlacementWorld = PlacementTransform.ToMatrixWithScale();
+    const FString RootNamespace = Context.StreamNamespace.IsEmpty() ? Recipe.LogicalName : Context.StreamNamespace;
+    const FString RootPrefix = RootNamespace + TEXT(":");
     // Lookup only: top-layer selection still comes from Nodes, so nested
     // composite leaves never become separate actors during this Break.
     TMap<int32, const FMHResolvedCompositeLeaf*> MeshLeaves;
@@ -221,18 +224,21 @@ bool MHCollectBreakSpecs(
     }
     for (const FMHResolvedCompositeNode& Node : Plan.Nodes)
     {
-        // A '>' enters a nested composite. Break preserves that composite as
-        // one actor, so none of its internal resolved nodes belong to this layer.
-        if (Node.NodePath.Contains(TEXT(">"))) continue;
+        // A promoted placement retains its original invocation namespace, which
+        // may already contain '>'. Only crossings below this root are nested.
+        if (!Node.NodePath.StartsWith(RootPrefix)) continue;
+        const FString LocalPath = Node.NodePath.Mid(RootPrefix.Len());
+        if (LocalPath.Contains(TEXT(">"))) continue;
 
         EMHRandomSemanticKind Kind = Node.SemanticKind;
         FString Resource = Node.Resource;
         if (Kind == EMHRandomSemanticKind::Random)
         {
+            const FString RecipePath = Recipe.LogicalName + TEXT(":") + LocalPath;
             const FMHCompiledRecipeComponent* Component = Recipe.Components.FindByPredicate(
-                [&Node](const FMHCompiledRecipeComponent& Value)
+                [&RecipePath](const FMHCompiledRecipeComponent& Value)
                 {
-                    return Value.NodePath == Node.NodePath;
+                    return Value.NodePath == RecipePath;
                 });
             if (Component == nullptr || !Component->Options.IsValidIndex(Node.SelectedOptionIndex))
             {
@@ -342,7 +348,8 @@ bool MHCollectBreakSpecs(
                     break;
                 }
             }
-            if (Spec.CallContext.AppearanceBoundary.IsEmpty()) Spec.CallContext.AppearanceBoundary = Plan.Nodes.IsValidIndex(0) ? Plan.Nodes[0].NodePath.Left(Plan.Nodes[0].NodePath.Find(TEXT(":"))) : FString();
+            if (Spec.CallContext.AppearanceBoundary.IsEmpty())
+                Spec.CallContext.AppearanceBoundary = Context.AppearanceBoundary.IsEmpty() ? Recipe.LogicalName : Context.AppearanceBoundary;
         }
     }
     return true;
@@ -825,6 +832,7 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
         if (!MHCollectBreakSpecs(
                 *ResolvedPlan,
                 *Recipe,
+                Actor->GetCallContext(),
                 Actor->GetActorTransform(),
                 *Settings,
                 Actor->GetSeed(),

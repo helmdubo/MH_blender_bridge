@@ -10,6 +10,7 @@
 #include "Editor.h"
 #include "Editor/Transactor.h"
 #include "Engine/StaticMeshActor.h"
+#include "Engine/Level.h"
 #include "Engine/World.h"
 #include "Misc/AutomationTest.h"
 #include "UObject/UObjectIterator.h"
@@ -61,9 +62,16 @@ struct FBreakFixture
         FMHCompositeDocument ChildDocument;
         {
             FMHCompositeNode& Leaf = ChildDocument.Nodes.AddDefaulted_GetRef();
-            Leaf.Kind = EMHCompositeNodeKind::Mesh;
-            Leaf.Resource = MeshC;
+            Leaf.Kind = EMHCompositeNodeKind::Random;
             Leaf.Transform.TranslationCm = FVector(0.0, 50.0, 0.0);
+            FMHCompositeOption& Selected = Leaf.Options.AddDefaulted_GetRef();
+            Selected.Kind = EMHCompositeOptionKind::Mesh;
+            Selected.Resource = MeshC;
+            Selected.Weight = 1.0f;
+            FMHCompositeOption& Unselected = Leaf.Options.AddDefaulted_GetRef();
+            Unselected.Kind = EMHCompositeOptionKind::Mesh;
+            Unselected.Resource = MeshA;
+            Unselected.Weight = 0.0f;
         }
         Child = Recipe.Composite(Recipe.Name(TEXT("break_child_cmp")), ChildDocument, {});
         FMHCompositeDocument NestedDocument;
@@ -147,6 +155,65 @@ int32 CountISM(const AMHCompositeActor& Actor)
         if (Cast<UInstancedStaticMeshComponent>(Component) != nullptr) ++Count;
     }
     return Count;
+}
+
+struct FWorldMeshInstance
+{
+    const UStaticMesh* Mesh = nullptr;
+    FMatrix World = FMatrix::Identity;
+};
+
+// Inspect registered world geometry, including pool components whose source
+// placement has disappeared from Level::Actors. Actor-owned component counts
+// cannot detect orphan pool instances or duplicate instances in an existing bucket.
+TArray<FWorldMeshInstance> CollectWorldGeometry(UWorld& World, int32& OutISMInstances)
+{
+    TArray<FWorldMeshInstance> Result;
+    OutISMInstances = 0;
+    for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
+    {
+        if (It->GetWorld() != &World || !It->IsRegistered() || It->GetStaticMesh() == nullptr) continue;
+        if (const UInstancedStaticMeshComponent* ISM = Cast<UInstancedStaticMeshComponent>(*It))
+        {
+            OutISMInstances += ISM->GetInstanceCount();
+            for (int32 Index = 0; Index < ISM->GetInstanceCount(); ++Index)
+            {
+                FTransform Transform;
+                if (ISM->GetInstanceTransform(Index, Transform, true))
+                    Result.Add({ISM->GetStaticMesh(), Transform.ToMatrixWithScale()});
+            }
+        }
+        else Result.Add({It->GetStaticMesh(), It->GetComponentTransform().ToMatrixWithScale()});
+    }
+    return Result;
+}
+
+bool TestWorldGeometry(FAutomationTestBase& Test, UWorld& World,
+    const TArray<FWorldMeshInstance>& Expected, const int32 ExpectedISMInstances, const FString& Context)
+{
+    int32 ActualISMInstances = 0;
+    const TArray<FWorldMeshInstance> Actual = CollectWorldGeometry(World, ActualISMInstances);
+    bool bPassed = Test.TestEqual(Context + TEXT(": registered ISM instance count"), ActualISMInstances, ExpectedISMInstances);
+    bPassed &= Test.TestEqual(Context + TEXT(": total mesh instance count, including standalone actors"), Actual.Num(), Expected.Num());
+    TSet<int32> Matched;
+    for (const FWorldMeshInstance& ExpectedInstance : Expected)
+    {
+        int32 Match = INDEX_NONE;
+        for (int32 Index = 0; Index < Actual.Num(); ++Index)
+        {
+            if (!Matched.Contains(Index) && Actual[Index].Mesh == ExpectedInstance.Mesh &&
+                MHMatrixElementsWithinTrsTolerance(Actual[Index].World, ExpectedInstance.World))
+            {
+                Match = Index;
+                break;
+            }
+        }
+        bPassed &= Test.TestTrue(Context + TEXT(": mesh retains exactly one matching world transform: ") +
+            GetNameSafe(ExpectedInstance.Mesh), Match != INDEX_NONE);
+        if (Match != INDEX_NONE) Matched.Add(Match);
+    }
+    bPassed &= Test.TestEqual(Context + TEXT(": no unmatched or duplicate registered geometry"), Matched.Num(), Actual.Num());
+    return bPassed;
 }
 
 } // namespace
@@ -266,6 +333,48 @@ bool FMHBreakNoProofTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHBreakPromotedChildTest,
+    "Mimir.V5.Composite.Break.PromotedChildKeepsContext",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHBreakPromotedChildTest::RunTest(const FString& Parameters)
+{
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FBreakFixture Fixture(*this);
+    if (!Fixture.Build(*this)) return false;
+    int32 BeforeISMInstances = 0;
+    const TArray<FWorldMeshInstance> Before = CollectWorldGeometry(*Fixture.World, BeforeISMInstances);
+    TArray<AActor*> FirstLayer;
+    TArray<FString> Warnings;
+    FString Error;
+    if (!TestTrue(TEXT("first Break succeeds"), Subsystem->BreakComposites({Fixture.Actor}, FirstLayer, Warnings, Error))) return false;
+    AMHCompositeActor* Child = nullptr;
+    for (AActor* Spawned : FirstLayer)
+        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Spawned))
+            if (Composite->GetCompositeAsset() == Fixture.Child) Child = Composite;
+    if (!TestNotNull(TEXT("selected random child remains a composite after first layer"), Child)) return false;
+    bool bPassed = TestFalse(TEXT("promoted child retains its original invocation context"), Child->GetCallContext().IsEmpty());
+    bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, 2, TEXT("first layer"));
+    TArray<AActor*> SecondLayer;
+    const bool bBroken = Subsystem->BreakComposites({Child}, SecondLayer, Warnings, Error);
+    bPassed &= TestTrue(TEXT("Break of contextual child succeeds: ") + Error, bBroken);
+    bPassed &= TestEqual(TEXT("second Break exposes one selected mesh, not zero or all random options"), SecondLayer.Num(), 1);
+    if (SecondLayer.Num() == 1)
+    {
+        AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(SecondLayer[0]);
+        bPassed &= TestNotNull(TEXT("selected child random option becomes a StaticMeshActor"), MeshActor);
+        if (MeshActor != nullptr)
+            bPassed &= TestEqual(TEXT("child random selection remains mesh C"), GetNameSafe(MeshActor->GetStaticMeshComponent()->GetStaticMesh()), Fixture.MeshC);
+    }
+    bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, 1, TEXT("second layer preserves the entire scene"));
+    for (AActor* Spawned : FirstLayer)
+        if (Spawned != Child)
+            bPassed &= TestTrue(TEXT("second Break leaves first-layer siblings intact"), IsValid(Spawned) && !Spawned->IsActorBeingDestroyed());
+    return bPassed;
+}
+
 // Undo after Break restores the placement from its record (asset, seeds,
 // transform): the same number of derived components and buckets as before,
 // no duplicates; Redo breaks it again.
@@ -280,7 +389,28 @@ bool FMHBreakUndoRestoresPlacementTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FBreakFixture Fixture(*this);
     if (!Fixture.Build(*this)) return false;
+    // The neighbor shares the same pool buckets, so cleanup cannot remove a
+    // whole bucket as a shortcut for removing the broken placement's instances.
+    FActorSpawnParameters NeighborParameters;
+    NeighborParameters.ObjectFlags = RF_Transactional;
+    const FTransform NeighborTransform(FVector(-700.0, 400.0, 10.0));
+    AMHCompositeActor* Neighbor = Fixture.World->SpawnActor<AMHCompositeActor>(
+        AMHCompositeActor::StaticClass(), NeighborTransform, NeighborParameters);
+    if (!TestNotNull(TEXT("unrelated neighboring placement"), Neighbor)) return false;
+    Neighbor->SetAutoSeed(false);
+    Neighbor->SetAutoAppearanceSeed(false);
+    Neighbor->SetSeed(21);
+    Neighbor->SetAppearanceSeed(34);
+    Neighbor->SetCompositeAsset(Fixture.Root);
+    if (!TestNotNull(TEXT("neighbor previews"), Neighbor->GetResolvedPlan())) return false;
+    GEditor->SelectNone(false, true, false);
+    GEditor->SelectActor(Fixture.Actor, true, false, true);
+    GEditor->NoteSelectionChange();
     GEditor->Trans->Reset(INVTEXT("MH Break test start"));
+    int32 BeforeISMInstances = 0;
+    const TArray<FWorldMeshInstance> Before = CollectWorldGeometry(*Fixture.World, BeforeISMInstances);
+    bool bPassed = TestEqual(TEXT("fixture has eight real registered mesh instances"), Before.Num(), 8);
+    bPassed &= TestEqual(TEXT("all eight initial instances live in the pool"), BeforeISMInstances, 8);
     const TWeakObjectPtr<AMHCompositeActor> Original = Fixture.Actor;
     const int32 DerivedBefore = Fixture.Actor->GetDerivedComponents().Num();
     const int32 LeavesBefore = Fixture.Actor->GetLeafMaterializations().Num();
@@ -299,7 +429,8 @@ bool FMHBreakUndoRestoresPlacementTest::RunTest(const FString& Parameters)
     TArray<AActor*> Broken;
     TArray<FString> Warnings;
     FString Error;
-    bool bPassed = TestTrue(TEXT("Break succeeds: ") + Error, Subsystem->BreakComposites({Fixture.Actor}, Broken, Warnings, Error));
+    bPassed &= TestTrue(TEXT("Break succeeds: ") + Error, Subsystem->BreakComposites({Fixture.Actor}, Broken, Warnings, Error));
+    bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, 6, TEXT("Break preserves geometry"));
     bPassed &= TestTrue(TEXT("Break is one undoable transaction"), GEditor->Trans->CanUndo());
     bPassed &= TestTrue(TEXT("Undo of Break succeeds"), GEditor->UndoTransaction());
 
@@ -341,9 +472,70 @@ bool FMHBreakUndoRestoresPlacementTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("registered components under the actor equal the derived count"), RegisteredUnderActor, DerivedBefore);
     bPassed &= TestEqual(TEXT("no registered component escapes the actor bookkeeping"), UntrackedRegistered, 0);
     bPassed &= TestEqual(TEXT("registered ISM buckets in the world equal the count before Break"), CountWorldISM(), WorldISMBefore);
+    bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, BeforeISMInstances, TEXT("first Undo removes spawned child pool instances"));
 
-    bPassed &= TestTrue(TEXT("Redo of Break succeeds"), GEditor->RedoTransaction());
-    bPassed &= TestTrue(TEXT("Redo retires the composite again"), !IsValid(Original.Get()) || Original->IsActorBeingDestroyed());
+    for (int32 Cycle = 0; Cycle < 3; ++Cycle)
+    {
+        const FString Context = FString::Printf(TEXT("cycle %d"), Cycle + 1);
+        bPassed &= TestTrue(Context + TEXT(": Redo of Break succeeds"), GEditor->RedoTransaction());
+        bPassed &= TestTrue(Context + TEXT(": Redo retires the composite again"), !IsValid(Original.Get()) || Original->IsActorBeingDestroyed());
+        bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, 6, Context + TEXT(" Redo"));
+        for (AActor* Spawned : Broken)
+        {
+            bPassed &= TestTrue(Context + TEXT(": output actor is live after Redo"), IsValid(Spawned) && !Spawned->IsActorBeingDestroyed());
+            bPassed &= TestTrue(Context + TEXT(": output actor is present in the level actor list"), Fixture.World->PersistentLevel->Actors.Contains(Spawned));
+        }
+        bPassed &= TestTrue(Context + TEXT(": Undo succeeds"), GEditor->UndoTransaction());
+        bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, BeforeISMInstances, Context + TEXT(" Undo"));
+        bPassed &= TestTrue(Context + TEXT(": original actor is restored in the level actor list"),
+            Original.IsValid() && Fixture.World->PersistentLevel->Actors.Contains(Original.Get()));
+        for (AActor* Spawned : Broken)
+            bPassed &= TestFalse(Context + TEXT(": output actor is absent from the level actor list after Undo"), Fixture.World->PersistentLevel->Actors.Contains(Spawned));
+        bPassed &= TestTrue(Context + TEXT(": neighbor remains live"), IsValid(Neighbor) && !Neighbor->IsActorBeingDestroyed());
+        bPassed &= TestTrue(Context + TEXT(": neighbor transform unchanged"), Neighbor->GetActorTransform().Equals(NeighborTransform));
+    }
+    return bPassed;
+}
+
+// UE calls the annotated PostEditUndo overload when an actor carries component
+// instance data. Exercise the real transaction path, not a manual callback.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHBreakAnnotatedUndoTest,
+    "Mimir.V5.Composite.Break.AnnotatedUndoRestoresPlacement",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHBreakAnnotatedUndoTest::RunTest(const FString& Parameters)
+{
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
+    FBreakFixture Fixture(*this);
+    if (!Fixture.Build(*this)) return false;
+    UStaticMeshComponent* ConstructionComponent = NewObject<UStaticMeshComponent>(Fixture.Actor, NAME_None, RF_Transactional);
+    ConstructionComponent->CreationMethod = EComponentCreationMethod::SimpleConstructionScript;
+    ConstructionComponent->SetupAttachment(Fixture.Actor->GetRootComponent());
+    ConstructionComponent->RegisterComponent();
+    if (!TestTrue(TEXT("native actor transaction annotation contains component instance data"),
+        Fixture.Actor->FindOrCreateTransactionAnnotation().IsValid())) return false;
+    GEditor->Trans->Reset(INVTEXT("MH annotated Break test start"));
+    int32 BeforeISMInstances = 0;
+    const TArray<FWorldMeshInstance> Before = CollectWorldGeometry(*Fixture.World, BeforeISMInstances);
+    const uint32 RevisionBefore = Fixture.Actor->GetPreviewRevision();
+    const TWeakObjectPtr<AMHCompositeActor> Original = Fixture.Actor;
+    TArray<AActor*> Broken;
+    TArray<FString> Warnings;
+    FString Error;
+    if (!TestTrue(TEXT("Break with annotated source succeeds"), Subsystem->BreakComposites({Fixture.Actor}, Broken, Warnings, Error))) return false;
+    bool bPassed = TestTrue(TEXT("annotated Undo succeeds"), GEditor->UndoTransaction());
+    AMHCompositeActor* Restored = Original.Get();
+    if (!TestNotNull(TEXT("annotated Undo restores source actor"), Restored)) return false;
+    bPassed &= TestTrue(TEXT("annotated Undo restores source to level actor list"), Fixture.World->PersistentLevel->Actors.Contains(Restored));
+    bPassed &= TestNotNull(TEXT("annotated Undo rebuilds the source preview plan"), Restored->GetResolvedPlan());
+    bPassed &= TestTrue(TEXT("annotated Undo advances the source preview revision"), Restored->GetPreviewRevision() > RevisionBefore);
+    bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, BeforeISMInstances, TEXT("annotated Undo"));
+    bPassed &= TestTrue(TEXT("annotated Redo succeeds"), GEditor->RedoTransaction());
+    bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, 2, TEXT("annotated Redo"));
+    bPassed &= TestTrue(TEXT("second annotated Undo succeeds"), GEditor->UndoTransaction());
+    bPassed &= TestWorldGeometry(*this, *Fixture.World, Before, BeforeISMInstances, TEXT("second annotated Undo"));
     return bPassed;
 }
 

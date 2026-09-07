@@ -855,7 +855,9 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
     // wrapper. Never manufacture an editor preview in either handoff world.
     if (IsRunningCookCommandlet() ||
         (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
-    if (bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
+    // Undo of creation marks garbage without running Destroyed(). Such an
+    // actor must never recreate preview geometry in the shared level pool.
+    if (!IsValid(this) || bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
     CancelPendingPlacement();
     ++PlacementRebuildCount;
@@ -1489,9 +1491,29 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
 }
 
 #if WITH_EDITOR
+void AMHCompositeActor::PreEditUndo()
+{
+    // The pool is derived, nontransactional state. Release it while this actor
+    // is still live, before UE restores its record and garbage state.
+    ClearDerivedComponents();
+    Super::PreEditUndo();
+}
+
 void AMHCompositeActor::PostEditUndo()
 {
     Super::PostEditUndo();
+    RestorePlacementAfterUndo();
+}
+
+void AMHCompositeActor::PostEditUndo(TSharedPtr<ITransactionObjectAnnotation> TransactionAnnotation)
+{
+    // AActor's annotated overload does not dispatch our no-argument override.
+    Super::PostEditUndo(TransactionAnnotation);
+    RestorePlacementAfterUndo();
+}
+
+void AMHCompositeActor::RestorePlacementAfterUndo()
+{
     // R5-F: a live Placement Edit session would block its own restore (the
     // rebuild gate is closed while editing) and then tick against an empty
     // view. The session is transient state, not part of the record: end it.

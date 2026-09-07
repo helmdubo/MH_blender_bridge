@@ -1725,7 +1725,7 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
     if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())
     {
         AddLevelAction(Section, TEXT("MHBreakComposite"), LOCTEXT("BreakComposite", "Break Composite"),
-            LOCTEXT("BreakCompositeTip", "Materialize each selected instance's resolved plan as mesh and gameplay actors, dissolving nested composites and groups."),
+            LOCTEXT("BreakCompositeTip", "Remove one composite layer. Promote its meshes and actors into the level; keep nested composites intact. Undo restores the original composite."),
             FToolMenuExecuteAction::CreateLambda([CompositeActors](const FToolMenuContext&)
             {
                 ExecuteBreakComposite(CompositeActors);

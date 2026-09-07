@@ -222,7 +222,9 @@ public:
     virtual FBox GetComponentsBoundingBox(bool bNonColliding = false, bool bIncludeFromChildActors = false) const override;
 
 #if WITH_EDITOR
+    virtual void PreEditUndo() override;
     virtual void PostEditUndo() override;
+    virtual void PostEditUndo(TSharedPtr<ITransactionObjectAnnotation> TransactionAnnotation) override;
     virtual void PostEditImport() override;
     virtual void SetIsTemporarilyHiddenInEditor(bool bIsHidden) override;
     virtual bool CanEditChange(const FProperty* InProperty) const override;
@@ -237,6 +239,9 @@ private:
     void ReconcileRecipe(const UE::MimirComposite::FMHResourceKey& Key);
     TArray<TObjectPtr<UActorComponent>> CollectPreviousDerivedComponents() const;
     void ClearDerivedComponents();
+#if WITH_EDITOR
+    void RestorePlacementAfterUndo();
+#endif
     void RebuildPlacement(bool bSeedOnly, bool bRecipeChanged = false);
     void CancelPendingPlacement();
     /** Revalidates transient viewport selection against the newly committed plan/view. */

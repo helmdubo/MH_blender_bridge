@@ -582,6 +582,9 @@ bool UMHInstancePoolSubsystem::IsSuppressed(const FMHInstanceHandle& Handle) con
 
 void UMHInstancePoolSubsystem::RemoveOwner(const AActor& Owner)
 {
+    // Undo of actor creation marks the actor garbage before PostEditUndo.
+    // Weak Get() is null then, but index/serial identity still owns these slots.
+    const TWeakObjectPtr<const AActor> OwnerIdentity(&Owner);
     BeginBulk();
     for (int32 BucketId = 0; BucketId < Buckets.Num(); ++BucketId)
     {
@@ -589,7 +592,7 @@ void UMHInstancePoolSubsystem::RemoveOwner(const AActor& Owner)
         for (int32 SlotId = 0; SlotId < Bucket.Slots.Num(); ++SlotId)
         {
             const FSlot& Slot = Bucket.Slots[SlotId];
-            if (Slot.bFree || Slot.Owner.Get() != &Owner) continue;
+            if (Slot.bFree || !Slot.Owner.HasSameIndexAndSerialNumber(OwnerIdentity)) continue;
             FMHInstanceHandle Handle;
             Handle.BucketId = BucketId;
             Handle.SlotId = SlotId;

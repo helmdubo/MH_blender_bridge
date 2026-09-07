@@ -10,6 +10,7 @@
 
 | Срез | Статус | PR / примечание |
 |---|---|---|
+| Composite Break / Undo | READY FOR FIELD TEST (owner 2026-09-08) | `codex/composite-break-undo`, база `1b36160`; один слой относительно собственного invocation context, lifecycle пула при Undo/Redo; NullRHI 297/297, D3D12 89/89; `docs/contracts/composite_break_undo.md`, `docs/receipts/composite_break_undo.md` |
 | Composite thumbnails | READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-thumbnails`, база `7f89ac0`; native thumbnail scene, один выбранный random option, async readiness; NullRHI 295/295, RHI 68/68; `docs/contracts/composite_thumbnails.md`, `docs/receipts/composite_thumbnails.md` |
 | Composite atomic secondary selection | READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-atomic-selection`, база `d18e34b`; secondary подсветка одного объекта, containing occurrence остаётся Edit target; NullRHI 292/292, D3D12 64/64; `docs/contracts/composite_atomic_selection.md`, `docs/receipts/composite_atomic_selection.md` |
 | Composite native selection + Edit panel | FIELD ACCEPTED; ATOMIC SELECTION FOLLOW-UP (owner 2026-09-07) | `codex/composite-native-selection`, база `859dd0a`; native переключение и inline Outliner приняты в поле; визуальная атомарность уточнена следующим срезом; 292/292 NullRHI, 64/64 RHI; `docs/contracts/composite_native_selection.md` |
