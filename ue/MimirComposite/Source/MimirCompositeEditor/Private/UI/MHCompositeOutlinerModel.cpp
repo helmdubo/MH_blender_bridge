@@ -1,6 +1,11 @@
 #include "UI/MHCompositeOutlinerModel.h"
 
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
+#include "Editing/MHCompositeEditDocument.h"
+#include "Editing/MHCompositeEditProjection.h"
+#include "Editing/MHCompositeEditSession.h"
+#include "Editor.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -109,6 +114,13 @@ FMHCompositeOutlinerFreshness FMHCompositeOutlinerFreshness::Capture(
     Result.Seed = Actor.GetSeed();
     Result.AppearanceSeed = Actor.GetAppearanceSeed();
     Result.PreviewRevision = Actor.GetPreviewRevision();
+    // CE-4b2: a draft command on this placement is a reason to rebuild.
+    const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
+    if (Session != nullptr && Session->IsOpen() && Session->GetRootPlacement() == &Actor && Session->GetDraft() != nullptr)
+    {
+        Result.DraftSerial = Session->GetDraft()->GetChangeSerial();
+    }
     return Result;
 }
 
@@ -124,7 +136,7 @@ bool FMHCompositeOutlinerFreshness::Matches(
 {
     return IsComplete() && Other.IsComplete() &&
         Seed == Other.Seed && AppearanceSeed == Other.AppearanceSeed &&
-        PreviewRevision == Other.PreviewRevision;
+        PreviewRevision == Other.PreviewRevision && DraftSerial == Other.DraftSerial;
 }
 
 bool FMHCompositeOutlinerRefreshState::NeedsRebuild(
@@ -192,6 +204,10 @@ bool FMHCompositeOutlinerModel::Build(
 
 bool FMHCompositeOutlinerModel::BuildFromActor(AMHCompositeActor& Actor)
 {
+    // CE-4b2: a CE-backend session on this placement shows its draft.
+    const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
+    SetEditSession(Session != nullptr && Session->IsOpen() && Session->GetRootPlacement() == &Actor ? Session : nullptr);
     const UMHCompositeAsset* Asset = Actor.GetCompositeAsset();
     const FMHResolvedCompositePlan* Plan = Actor.GetResolvedPlan();
     if (Asset == nullptr || !Build(*Asset, Plan, Actor.GetLastPlacementError())) return false;
@@ -214,6 +230,9 @@ bool FMHCompositeOutlinerModel::BuildFromActor(AMHCompositeActor& Actor)
         if (IsValid(Handles[Index]))
             ComponentsByPath.FindOrAdd(Roots[Index]->NodePath, {Handles[Index], INDEX_NONE, INDEX_NONE});
     }
+    // CE-4b2: the sealed placement still has rows for the edited occurrence;
+    // in a session its projection components are the handles, not the buckets.
+    MergeProjectionOverlay();
     for (const TPair<FString, TSharedPtr<FMHCompositeOutlinerItem>>& Pair : ItemsByPath)
         BindComponentToItem(Pair.Value);
     return true;
@@ -255,6 +274,7 @@ bool FMHCompositeOutlinerModel::RefreshOverlay(
         ResolvedLeafPaths.Add(Leaf.Origin);
     for (const TPair<FString, TSharedPtr<FMHCompositeOutlinerItem>>& Pair : ItemsByPath)
         ApplyOverlayToItem(Pair.Value);
+    MergeProjectionOverlay();
     return true;
 }
 
@@ -411,8 +431,10 @@ bool FMHCompositeOutlinerModel::GetNavigation(
     return true;
 }
 
-bool FMHCompositeOutlinerModel::BuildAssetRows(
+bool FMHCompositeOutlinerModel::BuildNodeRows(
     const UMHCompositeAsset& Asset,
+    const TConstArrayView<FMHCompositeAssetNode> Nodes,
+    const UMHCompositeEditDocument* Draft,
     const FString& Prefix,
     const TSharedPtr<FMHCompositeOutlinerItem>& NestedParent,
     const TArray<FString>& CompositeAncestry,
@@ -421,9 +443,9 @@ bool FMHCompositeOutlinerModel::BuildAssetRows(
 {
     // Validate the persisted pre-order in full before admitting even one row.
     // A corrupt nested asset must not leave a partially navigable subtree.
-    for (int32 SourceIndex = 0; SourceIndex < Asset.Nodes.Num(); ++SourceIndex)
+    for (int32 SourceIndex = 0; SourceIndex < Nodes.Num(); ++SourceIndex)
     {
-        const int32 ParentIndex = Asset.Nodes[SourceIndex].ParentIndex;
+        const int32 ParentIndex = Nodes[SourceIndex].ParentIndex;
         if (ParentIndex < INDEX_NONE || ParentIndex >= SourceIndex)
         {
             OutError = FString::Printf(
@@ -432,12 +454,12 @@ bool FMHCompositeOutlinerModel::BuildAssetRows(
         }
     }
     TArray<TSharedPtr<FMHCompositeOutlinerItem>> BySourceIndex;
-    BySourceIndex.Reserve(Asset.Nodes.Num());
+    BySourceIndex.Reserve(Nodes.Num());
     TMap<int32, int32> NextChildOrdinal;
     int32 NextRootOrdinal = 0;
-    for (int32 SourceIndex = 0; SourceIndex < Asset.Nodes.Num(); ++SourceIndex)
+    for (int32 SourceIndex = 0; SourceIndex < Nodes.Num(); ++SourceIndex)
     {
-        const FMHCompositeAssetNode& Source = Asset.Nodes[SourceIndex];
+        const FMHCompositeAssetNode& Source = Nodes[SourceIndex];
         if (Source.ParentIndex != INDEX_NONE && !BySourceIndex.IsValidIndex(Source.ParentIndex))
         {
             OutError = FString::Printf(
@@ -479,6 +501,7 @@ bool FMHCompositeOutlinerModel::BuildAssetRows(
         Item->SourceNodeIndex = SourceIndex;
         Item->TopLevelNodeIndex = TopLevelIndex;
         Item->SourceAsset = const_cast<UMHCompositeAsset*>(&Asset);
+        Item->DraftNodeId = Draft != nullptr ? Draft->GetNodeId(SourceIndex) : FGuid();
         Item->CompositeAncestry = CompositeAncestry;
         Item->Parent = Parent.IsValid() ? Parent : NestedParent;
         BySourceIndex.Add(Item);
@@ -522,6 +545,70 @@ bool FMHCompositeOutlinerModel::BuildAssetRows(
         }
     }
     return true;
+}
+
+bool FMHCompositeOutlinerModel::BuildAssetRows(
+    const UMHCompositeAsset& Asset,
+    const FString& Prefix,
+    const TSharedPtr<FMHCompositeOutlinerItem>& NestedParent,
+    const TArray<FString>& CompositeAncestry,
+    TArray<TSharedPtr<FMHCompositeOutlinerItem>>& OutRoots,
+    FString& OutError)
+{
+    // CE-4b2: the edited occurrence shows the session draft, everything else the assets.
+    const UMHCompositeEditDocument* Draft = DraftFor(Asset, Prefix);
+    return BuildNodeRows(Asset, Draft != nullptr ? TConstArrayView<FMHCompositeAssetNode>(Draft->GetNodes()) : TConstArrayView<FMHCompositeAssetNode>(Asset.Nodes), Draft, Prefix, NestedParent, CompositeAncestry, OutRoots, OutError);
+}
+
+const UMHCompositeEditDocument* FMHCompositeOutlinerModel::DraftFor(const UMHCompositeAsset& Asset, const FString& Prefix) const
+{
+    const UMHCompositeEditSession* Session = EditSession.Get();
+    if (Session == nullptr || !Session->IsOpen() || Session->GetEditedAsset() != &Asset || Session->GetDraft() == nullptr) return nullptr;
+    const FString Occurrence = Session->IsNested() ? Session->GetInvocationPath() + TEXT(">") + Asset.LogicalName : Asset.LogicalName;
+    return Prefix == Occurrence ? Session->GetDraft() : nullptr;
+}
+
+void FMHCompositeOutlinerModel::SetEditSession(const UMHCompositeEditSession* Session)
+{
+    EditSession = Session;
+}
+
+void FMHCompositeOutlinerModel::MergeProjectionOverlay()
+{
+    const UMHCompositeEditSession* Session = EditSession.Get();
+    const UMHCompositeEditProjection* Projection = Session != nullptr && Session->IsOpen() ? Session->GetProjection() : nullptr;
+    const UMHCompositeAsset* Edited = Session != nullptr ? Session->GetEditedAsset() : nullptr;
+    const FMHResolvedCompositePlan* Plan = Projection != nullptr ? Projection->GetPlan() : nullptr;
+    if (Plan == nullptr || Edited == nullptr) return;
+    // The draft rows live under the occurrence; the projection's plan (the
+    // draft compiled through the recipe compiler) and its components are
+    // their overlay and their handles — a node added in the session has no
+    // placement row, only a projection one.
+    const FString DefinitionPrefix = (Session->IsNested() ? Session->GetInvocationPath() + TEXT(">") : FString()) + Edited->LogicalName + TEXT(":");
+    for (const FMHResolvedCompositeNode& Node : Plan->Nodes)
+    {
+        if (!Node.NodePath.StartsWith(DefinitionPrefix)) continue;
+        ResolvedLocalTrsByPath.Add(Node.NodePath, Node.LocalTrs);
+        if (Node.SemanticKind == EMHRandomSemanticKind::Random) SelectedOptionsByPath.Add(Node.NodePath, Node.SelectedOptionIndex);
+    }
+    for (const FMHResolvedCompositeLeaf& Leaf : Plan->Leaves)
+    {
+        if (Leaf.Origin.StartsWith(DefinitionPrefix)) ResolvedLeafPaths.Add(Leaf.Origin);
+    }
+    for (const TObjectPtr<USceneComponent>& Component : Projection->GetComponents())
+    {
+        if (!IsValid(Component)) continue;
+        const FString Origin = Projection->GetOriginForComponent(Component);
+        if (!Origin.StartsWith(DefinitionPrefix)) continue;
+        ComponentsByPath.Add(Origin, {Component, INDEX_NONE, INDEX_NONE});
+        MissingEndpointPaths.Remove(Origin);
+    }
+    for (const TPair<FString, TSharedPtr<FMHCompositeOutlinerItem>>& Pair : ItemsByPath)
+    {
+        if (!Pair.Key.StartsWith(DefinitionPrefix)) continue;
+        ApplyOverlayToItem(Pair.Value);
+        BindComponentToItem(Pair.Value);
+    }
 }
 
 UObject* FMHCompositeOutlinerModel::ResolveAsset(

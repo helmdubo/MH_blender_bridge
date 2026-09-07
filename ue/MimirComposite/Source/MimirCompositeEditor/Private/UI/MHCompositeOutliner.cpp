@@ -28,7 +28,10 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UI/MHCompositeOutlinerModel.h"
 #include "UI/MHEditSessionKeys.h"
+#include "UI/MHCompositeOutlinerEditActions.h"
 #include "UI/MHSourceToolMenus.h"
+#include "DragAndDrop/AssetDragDropOp.h"
+#include "ScopedTransaction.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Layout/SBorder.h"
@@ -232,6 +235,8 @@ private:
     {
         return SNew(STableRow<TSharedPtr<FMHCompositeOutlinerItem>>, OwnerTable)
         .ToolTipText(Item.IsValid() ? OutlinerTooltip(*Item) : FText::GetEmpty())
+        .OnCanAcceptDrop(this, &SMHCompositeOutliner::CanAcceptDrop)
+        .OnAcceptDrop(this, &SMHCompositeOutliner::AcceptDrop)
         [
             SNew(SHorizontalBox)
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2.0f, 0.0f, 5.0f, 0.0f)
@@ -352,6 +357,120 @@ private:
         CurrentActor->SelectPlacementLeaf(Component);
     }
 
+    // CE-4b2: draft rows take Content Browser assets — onto a group as its
+    // child, above/below any row as its sibling. Only managed meshes and
+    // composites become nodes; the rest is refused with the reason.
+    TOptional<EItemDropZone> CanAcceptDrop(const FDragDropEvent& Event, const EItemDropZone Zone, TSharedPtr<FMHCompositeOutlinerItem> Item)
+    {
+        const TSharedPtr<FAssetDragDropOp> Op = Event.GetOperationAs<FAssetDragDropOp>();
+        if (!Op.IsValid() || !Item.IsValid() || !Item->DraftNodeId.IsValid() || !UMHCompositeEditorMode::IsActive()) return TOptional<EItemDropZone>();
+        return Zone == EItemDropZone::OntoItem && Item->Kind != EMHRandomSemanticKind::Group ? EItemDropZone::BelowItem : Zone;
+    }
+
+    FReply AcceptDrop(const FDragDropEvent& Event, const EItemDropZone Zone, TSharedPtr<FMHCompositeOutlinerItem> Item)
+    {
+        const TSharedPtr<FAssetDragDropOp> Op = Event.GetOperationAs<FAssetDragDropOp>();
+        UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        UMHCompositeEditDocument* Draft = Session != nullptr ? Session->GetDraft() : nullptr;
+        if (!Op.IsValid() || Mode == nullptr || Draft == nullptr || !Item.IsValid() || !Item->DraftNodeId.IsValid()) return FReply::Unhandled();
+        const bool bInto = Zone == EItemDropZone::OntoItem && Item->Kind == EMHRandomSemanticKind::Group;
+        const FGuid ParentId = bInto ? Item->DraftNodeId : Draft->GetParentId(Item->DraftNodeId);
+        int32 SiblingIndex = INDEX_NONE;
+        if (!bInto)
+        {
+            const TArray<FGuid> Siblings = Draft->GetChildIds(ParentId);
+            SiblingIndex = Siblings.IndexOfByKey(Item->DraftNodeId) + (Zone == EItemDropZone::AboveItem ? 0 : 1);
+        }
+        TArray<FGuid> Added;
+        TArray<FString> Refused;
+        {
+            const FScopedTransaction Transaction(LOCTEXT("DropNodesTransaction", "Add Composite Nodes"));
+            for (const FAssetData& AssetData : Op->GetAssets())
+            {
+                FMHOutlinerAddRequest Request;
+                FString Error;
+                if (!MHDescribeOutlinerAssetAdd(AssetData.GetAsset(), nullptr, *Draft, Request, Error))
+                {
+                    Refused.Add(Error);
+                    continue;
+                }
+                AddDraftNode(ParentId, Request.Kind, Request.Resource, Request.Name, SiblingIndex, Added);
+                if (SiblingIndex != INDEX_NONE) ++SiblingIndex;
+            }
+        }
+        for (const FString& Error : Refused) FMessageLog("Mimir").Warning(FText::FromString(Error));
+        if (!Refused.IsEmpty()) FMessageLog("Mimir").Open(EMessageSeverity::Warning, true);
+        FinishDraftCommand(Added.IsEmpty() ? FGuid() : Added.Last());
+        return FReply::Handled();
+    }
+
+    /** One draft add: the session command, placed among its siblings when asked. */
+    void AddDraftNode(const FGuid& ParentId, const EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const int32 SiblingIndex, TArray<FGuid>& OutAdded)
+    {
+        UMHCompositeEditSession* Session = const_cast<UMHCompositeEditSession*>(SessionOf(CurrentActor.Get()));
+        if (Session == nullptr) return;
+        FString Error;
+        const FGuid Id = Session->AddNode(ParentId, Kind, Resource, Name, FTransform::Identity, Error);
+        if (!Id.IsValid())
+        {
+            FMessageLog("Mimir").Error(FText::FromString(Error));
+            FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
+            return;
+        }
+        if (SiblingIndex != INDEX_NONE) Session->ReparentNode(Id, ParentId, SiblingIndex, false, Error);
+        OutAdded.Add(Id);
+    }
+
+    /** After a draft command: rebuild the rows and grab the node the command produced. */
+    void FinishDraftCommand(const FGuid& SelectId)
+    {
+        RefreshModel();
+        UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+        if (Mode != nullptr && Projection != nullptr && SelectId.IsValid()) Mode->SelectComponent(Projection->FindComponentForNodeId(SelectId));
+    }
+
+    void AddEmptyNodeAt(const TSharedPtr<FMHCompositeOutlinerItem> Item)
+    {
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        const UMHCompositeEditDocument* Draft = Session != nullptr ? Session->GetDraft() : nullptr;
+        if (Draft == nullptr) return;
+        TArray<FGuid> Added;
+        {
+            const FScopedTransaction Transaction(LOCTEXT("AddEmptyNodeTransaction", "Add Empty Composite Node"));
+            AddDraftNode(MHOutlinerAddParentFor(Item.Get(), *Draft), EMHCompositeNodeKind::Group, FString(), TEXT("empty"), INDEX_NONE, Added);
+        }
+        FinishDraftCommand(Added.IsEmpty() ? FGuid() : Added.Last());
+    }
+
+    void DuplicateDraftNode(const TSharedPtr<FMHCompositeOutlinerItem> Item)
+    {
+        UMHCompositeEditSession* Session = const_cast<UMHCompositeEditSession*>(SessionOf(CurrentActor.Get()));
+        if (Session == nullptr || !Item.IsValid()) return;
+        FGuid Copy;
+        FString Error;
+        {
+            const FScopedTransaction Transaction(LOCTEXT("DuplicateNodeTransaction", "Duplicate Composite Node"));
+            Copy = Session->DuplicateNode(Item->DraftNodeId, Error);
+        }
+        if (!Copy.IsValid() && !Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
+        FinishDraftCommand(Copy);
+    }
+
+    void DeleteDraftNode(const TSharedPtr<FMHCompositeOutlinerItem> Item)
+    {
+        UMHCompositeEditSession* Session = const_cast<UMHCompositeEditSession*>(SessionOf(CurrentActor.Get()));
+        if (Session == nullptr || !Item.IsValid()) return;
+        FString Error;
+        {
+            const FScopedTransaction Transaction(LOCTEXT("DeleteNodeTransaction", "Delete Composite Node"));
+            if (!Session->DeleteNode(Item->DraftNodeId, Error) && !Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
+        }
+        FinishDraftCommand(FGuid());
+    }
+
     /** CE-3b: the open CE-backend session of this placement, if any. */
     static const UMHCompositeEditSession* SessionOf(const AMHCompositeActor* Actor)
     {
@@ -421,6 +540,27 @@ private:
                     LOCTEXT("SaveUniqueCopyTip", "Save the edited definition as a new unique composite: choose whether it takes effect in this definition or for this placement only, and whether to bake the current result."),
                     FSlateIcon(),
                     FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::SaveAsUniqueCopy)));
+            }
+            // CE-4b2: structural commands on the draft's rows (owner decision:
+            // the mode grows the composite — empty/composite/mesh/actor nodes;
+            // composite and mesh come from the Content Browser by drag & drop).
+            if (UMHCompositeEditorMode::IsActive() && Item->DraftNodeId.IsValid() && EditSubsystem->IsEditingComposite(CurrentActor.Get()))
+            {
+                Menu.AddMenuEntry(
+                    LOCTEXT("AddEmptyNode", "Add Empty Node"),
+                    LOCTEXT("AddEmptyNodeTip", "Add an empty group node: into this group, or next to this node. Drag a managed static mesh or composite from the Content Browser onto a row to add it as a node."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::AddEmptyNodeAt, Item)));
+                Menu.AddMenuEntry(
+                    LOCTEXT("DuplicateNode", "Duplicate Node"),
+                    LOCTEXT("DuplicateNodeTip", "Copy this node with its subtree right after it."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::DuplicateDraftNode, Item)));
+                Menu.AddMenuEntry(
+                    LOCTEXT("DeleteNode", "Delete Node"),
+                    LOCTEXT("DeleteNodeTip", "Remove this node with its subtree from the draft (Undo restores it)."),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::DeleteDraftNode, Item)));
             }
             // CE-3d: another definition of this placement from the open session
             // (Save / Discard / stay first when there are changes).

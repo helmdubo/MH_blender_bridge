@@ -6,6 +6,8 @@
 #include "Templates/SharedPointer.h"
 
 class AMHCompositeActor;
+class UMHCompositeEditDocument;
+class UMHCompositeEditSession;
 class UObject;
 class UInstancedStaticMeshComponent;
 class USceneComponent;
@@ -128,6 +130,13 @@ public:
         const FMHResolvedCompositePlan* Plan,
         const FString& PlanUnavailableReason = FString());
     bool BuildFromActor(AMHCompositeActor& Actor);
+    /**
+     * CE-4b2: the CE-backend session whose draft replaces the edited
+     * definition's rows (root, or the nested occurrence) and whose projection
+     * overlays and binds them. BuildFromActor sets it from the level
+     * subsystem; null shows the assets as they are.
+     */
+    void SetEditSession(const UMHCompositeEditSession* Session);
     bool RefreshOverlay(
         const FMHResolvedCompositePlan* Plan,
         const FString& PlanUnavailableReason = FString());
@@ -154,6 +163,20 @@ private:
         const TArray<FString>& CompositeAncestry,
         TArray<TSharedPtr<FMHCompositeOutlinerItem>>& OutRoots,
         FString& OutError);
+    /** Rows from a node array — the asset's own, or the session draft's (Draft set: rows carry session ids). */
+    bool BuildNodeRows(
+        const UMHCompositeAsset& Asset,
+        TConstArrayView<FMHCompositeAssetNode> Nodes,
+        const UMHCompositeEditDocument* Draft,
+        const FString& Prefix,
+        const TSharedPtr<FMHCompositeOutlinerItem>& NestedParent,
+        const TArray<FString>& CompositeAncestry,
+        TArray<TSharedPtr<FMHCompositeOutlinerItem>>& OutRoots,
+        FString& OutError);
+    /** The session draft that stands in for Asset at this row prefix, if the session edits exactly that occurrence. */
+    const UMHCompositeEditDocument* DraftFor(const UMHCompositeAsset& Asset, const FString& Prefix) const;
+    /** Overlay and component binding for the edited occurrence from the session's projection plan. */
+    void MergeProjectionOverlay();
     UObject* ResolveAsset(
         EMHRandomSemanticKind Kind,
         const FString& Resource,
@@ -179,6 +202,7 @@ private:
     TMap<FString, FPlacementRow> ComponentsByPath;
     TSet<FString> MissingEndpointPaths;
     TWeakObjectPtr<UMHCompositeAsset> RootAsset;
+    TWeakObjectPtr<const UMHCompositeEditSession> EditSession;
     FString OverlayStatus;
 };
 
