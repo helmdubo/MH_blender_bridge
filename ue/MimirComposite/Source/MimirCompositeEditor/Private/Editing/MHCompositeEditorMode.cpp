@@ -27,6 +27,7 @@
 #include "TimerManager.h"
 #include "Toolkits/BaseToolkit.h"
 #include "Toolkits/IToolkitHost.h"
+#include "UI/MHCompositeOutliner.h"
 #include "UI/MHSourceToolMenus.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
@@ -146,6 +147,7 @@ public:
     {
         FModeToolkit::Init(InitToolkitHost, InOwningMode);
         TWeakObjectPtr<UMHCompositeEditorMode> Mode = Cast<UMHCompositeEditorMode>(InOwningMode.Get());
+        InlineContent = UE::MimirComposite::MHCreateCompositeOutlinerWidget();
         SAssignNew(Overlay, SHorizontalBox)
         + SHorizontalBox::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(FMargin(0.0f, 0.0f, 0.0f, 15.0f))
         [
@@ -188,8 +190,10 @@ public:
 
     virtual FName GetToolkitFName() const override { return FName("MHCompositeEditorModeToolkit"); }
     virtual FText GetBaseToolkitName() const override { return LOCTEXT("ToolkitName", "MH Composite Edit"); }
+    virtual TSharedPtr<SWidget> GetInlineContent() const override { return InlineContent; }
 
 private:
+    TSharedPtr<SWidget> InlineContent;
     TSharedPtr<SWidget> Overlay;
 };
 

@@ -20,7 +20,7 @@ namespace UE::MimirComposite
 MIMIRCOMPOSITEEDITOR_API bool MHRegisterPoolInstanceSelection(UTypedElementSelectionSet& SelectionSet);
 MIMIRCOMPOSITEEDITOR_API bool MHIsPoolInstanceSelectionRegistered(const UTypedElementSelectionSet& SelectionSet);
 
-/** Consumes the same-frame viewport hit when UE opens its RMB context menu. */
+/** Finishes native selection when an already selected RMB target emits no change. Does not choose a new scope. */
 MIMIRCOMPOSITEEDITOR_API bool MHSelectCompositeContextHit(
     const FTypedElementHandle& ContextHit, AMHCompositeActor& ExpectedOwner);
 

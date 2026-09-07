@@ -97,8 +97,8 @@ bool FMHPoolInstanceSelectionResolvesOwnerTest::RunTest(const FString& Parameter
     bPassed &= TestTrue(TEXT("explicit context state can be established separately"),
         A->SelectPlacementLeafByNodePath(A->GetLeafMaterializations()[0].NodePath));
     bPassed &= TestTrue(TEXT("a second click still resolves to the owner, never the instance"), Resolve(*A, 0, ETypedElementSelectionMethod::Secondary, Instance) == HandleA);
-    bPassed &= TestTrue(TEXT("secondary typed-element selection is not a context-menu hit"),
-        A->GetSelectedPlacementLeafPath().IsEmpty());
+    bPassed &= TestTrue(TEXT("resolution alone does not commit logical selection"),
+        !A->GetSelectedPlacementLeafPath().IsEmpty());
     // Both placements share one bucket; the pool actor is never the answer.
     UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(A->GetLeafMaterializations()[0].Component.Get());
     bPassed &= TestTrue(TEXT("both placements render in one pool bucket"), Bucket != nullptr && Bucket == B->GetLeafMaterializations()[0].Component.Get());
@@ -142,10 +142,8 @@ bool FMHPoolInstanceSelectionResolvesOwnerTest::RunTest(const FString& Parameter
     return bPassed;
 }
 
-// A normal viewport selection keeps the native composite actor as the selected
-// root placement and highlights all of it. The separate context-hit seam keeps
-// the exact leaf and highlights its nearest enclosing resolved composite
-// occurrence. Repeated occurrences may share one pool bucket, and a selected
+// A logical leaf maps to its nearest enclosing resolved composite occurrence.
+// Native click/notification behavior is exercised in NativePrimarySecondaryCycle. Repeated occurrences may share one pool bucket, and a selected
 // composite option is an occurrence at owner/options[index].
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHPoolLeafSelectsNearestCompositeOccurrenceTest,
@@ -314,69 +312,30 @@ bool FMHPoolLeafSelectsNearestCompositeOccurrenceTest::RunTest(const FString& Pa
         Actor->GetSelectedPlacementOccurrencePath().IsEmpty());
     bPassed &= TestTrue(TEXT("left-click highlights the whole owning placement"), WholeOwnerHighlighted());
 
-    // UE has resolved the raw pooled instance to the owner actor. The context
-    // menu consumes that same-frame pair through the separate RMB seam.
-    bPassed &= TestTrue(TEXT("context hit targets the first occurrence"),
-        MHSelectCompositeContextHit(OwnerHandle, *Actor));
-    bPassed &= TestEqual(TEXT("context hit retains the exact leaf for Edit Contents"),
-        Actor->GetSelectedPlacementLeafPath(), FirstHit);
-    bPassed &= TestTrue(TEXT("context hit highlights only its enclosing occurrence"),
+    // Interaction is covered by NativePrimarySecondaryCycle, including the
+    // native clear/select notification sequence. Here exercise occurrence
+    // mapping independently, including repeated and random invocations.
+    bPassed &= TestTrue(TEXT("first leaf selects its enclosing occurrence"),
+        Actor->SelectPlacementLeafByNodePath(FirstHit));
+    bPassed &= TestTrue(TEXT("first occurrence highlighted as a unit"),
         OnlyOccurrenceHighlighted(ExplicitOccurrences[0]));
-
-    bPassed &= TestFalse(TEXT("a context hit is one-shot"),
-        MHSelectCompositeContextHit(OwnerHandle, *Actor));
-    bPassed &= TestTrue(TEXT("consuming an absent token leaves root selection semantics"),
-        Actor->GetSelectedPlacementLeafPath().IsEmpty() && WholeOwnerHighlighted());
-
-    FTypedElementHandle SecondaryRawHit;
-    const FString ContextHit = HitUnder(
-        ExplicitOccurrences[0], ETypedElementSelectionMethod::Secondary, SecondaryRawHit);
-    bPassed &= TestFalse(TEXT("secondary selection still resolves a pooled leaf"), ContextHit.IsEmpty());
-    bPassed &= TestTrue(TEXT("secondary selection returns to root placement semantics"),
-        Actor->GetSelectedPlacementLeafPath().IsEmpty() && WholeOwnerHighlighted());
-    bPassed &= TestFalse(TEXT("secondary selection does not publish a context token"),
-        MHSelectCompositeContextHit(OwnerHandle, *Actor));
-
-    FTypedElementHandle FromSecondaryRawHit;
-    const FString FromSecondaryHit = HitUnder(
-        ExplicitOccurrences[0], ETypedElementSelectionMethod::FromSecondary, FromSecondaryRawHit);
-    bPassed &= TestFalse(TEXT("from-secondary selection still resolves a pooled leaf"),
-        FromSecondaryHit.IsEmpty());
-    bPassed &= TestFalse(TEXT("from-secondary selection does not publish a context token"),
-        MHSelectCompositeContextHit(OwnerHandle, *Actor));
-
-    // A pending hit must match both the expected composite and the resolved
-    // actor handle, and any failed attempt consumes it.
-    FTypedElementHandle MismatchRawHit;
-    bPassed &= TestFalse(TEXT("primary hit primes an owner-mismatch check"),
-        HitUnder(ExplicitOccurrences[0], ETypedElementSelectionMethod::Primary,
-            MismatchRawHit).IsEmpty());
-    const FTypedElementHandle OtherHandle = UEngineElementsLibrary::AcquireEditorActorElementHandle(Other);
-    bPassed &= TestFalse(TEXT("wrong expected owner cannot consume A's context hit"),
-        MHSelectCompositeContextHit(OwnerHandle, *Other));
-    bPassed &= TestFalse(TEXT("owner mismatch consumed the pending hit"),
-        MHSelectCompositeContextHit(OwnerHandle, *Actor));
-
     FTypedElementHandle SecondRawHit;
     const FString SecondHit = HitUnder(
         ExplicitOccurrences[1], ETypedElementSelectionMethod::Primary, SecondRawHit);
     bPassed &= TestFalse(TEXT("second occurrence has a hittable pooled leaf"), SecondHit.IsEmpty());
-    bPassed &= TestTrue(TEXT("primary hit clears prior contextual occurrence state"),
-        Actor->GetSelectedPlacementLeafPath().IsEmpty() &&
-        Actor->GetSelectedPlacementOccurrencePath().IsEmpty());
-    bPassed &= TestTrue(TEXT("primary hit restores whole-placement highlighting"), WholeOwnerHighlighted());
-    bPassed &= TestFalse(TEXT("foreign resolved actor handle is rejected"),
-        MHSelectCompositeContextHit(OtherHandle, *Actor));
-
+    bPassed &= TestTrue(TEXT("second leaf maps to its distinct occurrence"),
+        Actor->SelectPlacementLeafByNodePath(SecondHit));
+    bPassed &= TestTrue(TEXT("second occurrence highlighted as a unit"),
+        OnlyOccurrenceHighlighted(ExplicitOccurrences[1]));
     FTypedElementHandle OptionRawHit;
     const FString OptionHit = HitUnder(
         RandomOccurrence, ETypedElementSelectionMethod::Primary, OptionRawHit);
     bPassed &= TestFalse(TEXT("selected composite option has a hittable descendant"), OptionHit.IsEmpty());
-    bPassed &= TestTrue(TEXT("context hit targets the selected composite option"),
-        MHSelectCompositeContextHit(OwnerHandle, *Actor));
-    bPassed &= TestEqual(TEXT("selected option keeps its exact clicked descendant"),
+    bPassed &= TestTrue(TEXT("selected option retains its clicked descendant"),
+        Actor->SelectPlacementLeafByNodePath(OptionHit));
+    bPassed &= TestEqual(TEXT("exact selected option leaf"),
         Actor->GetSelectedPlacementLeafPath(), OptionHit);
-    bPassed &= TestTrue(TEXT("selected composite option is highlighted as one occurrence"),
+    bPassed &= TestTrue(TEXT("selected composite option highlighted as one occurrence"),
         OnlyOccurrenceHighlighted(RandomOccurrence));
 
     // Once selection leaves the actor, a later direct actor selection has no

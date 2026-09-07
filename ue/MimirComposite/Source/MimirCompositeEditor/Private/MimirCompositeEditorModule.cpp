@@ -27,7 +27,6 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
-#include "UI/MHCompositeOutliner.h"
 #include "UI/MHEditSessionKeys.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "UI/MHCompositeActorDetails.h"
@@ -210,7 +209,6 @@ void FMimirCompositeEditorModule::StartupModule()
     MessageLogModule.RegisterLogListing("Mimir", INVTEXT("Mimir"), LogOptions);
 
     UE::MimirComposite::MHRegisterCompositeActorDetails();
-    UE::MimirComposite::MHRegisterCompositeOutliner();
     MHRegisterEditSessionKeys();
     UMHCompositeEditorMode::RegisterCommands();
     // The level editor registers its own SMInstance customization in
@@ -273,7 +271,6 @@ void FMimirCompositeEditorModule::ShutdownModule()
         {
             UnregisterMenusBeforeExit();
         }
-        UE::MimirComposite::MHUnregisterCompositeOutliner();
         bOwnsToolMenusRegistration = false;
     }
     if (ObjectModifiedHandle.IsValid())
@@ -294,7 +291,6 @@ void FMimirCompositeEditorModule::ShutdownModule()
 
 void FMimirCompositeEditorModule::UnregisterMenusBeforeExit()
 {
-    UE::MimirComposite::MHUnregisterCompositeOutliner();
     if (!bOwnsToolMenusRegistration)
     {
         return;

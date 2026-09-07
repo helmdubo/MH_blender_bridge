@@ -16,7 +16,6 @@
 #include "Elements/Framework/TypedElementSelectionSet.h"
 #include "Elements/SMInstance/SMInstanceElementData.h"
 #include "Framework/Application/SlateApplication.h"
-#include "Framework/Docking/TabManager.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformProcess.h"
@@ -37,7 +36,6 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SSpinBox.h"
-#include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
@@ -46,20 +44,14 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Views/STreeView.h"
-#include "WorkspaceMenuStructure.h"
-#include "WorkspaceMenuStructureModule.h"
 
 #define LOCTEXT_NAMESPACE "MHCompositeOutliner"
 
 namespace UE::MimirComposite
 {
 
-const FName MHCompositeOutlinerTabName(TEXT("MHCompositeOutliner"));
-
 namespace
 {
-
-bool GOutlinerRegistered = false;
 
 FString OutlinerKindText(const EMHRandomSemanticKind Kind)
 {
@@ -150,7 +142,7 @@ public:
                     + SVerticalBox::Slot().AutoHeight()
                     [
                         SAssignNew(StatusText, STextBlock)
-                        .Text(LOCTEXT("NoOverlay", "Source tree and resolved overlay are read-only"))
+                        .Text(LOCTEXT("NoOverlay", "Open a composite edit session to work with its nodes"))
                         .AutoWrapText(true)
                     ]
                 ]
@@ -1341,7 +1333,7 @@ private:
             if (HeaderText.IsValid()) HeaderText->SetText(LOCTEXT("NoCompositeSelected", "Select one MH Composite actor"));
             if (StatusText.IsValid())
             {
-                StatusText->SetText(LOCTEXT("NoOverlay", "Source tree and resolved overlay are read-only"));
+                StatusText->SetText(LOCTEXT("NoOverlay", "Open a composite edit session to work with its nodes"));
                 StatusText->SetColorAndOpacity(FSlateColor::UseSubduedForeground());
             }
         }
@@ -1442,46 +1434,7 @@ private:
     bool bSyncingTreeSelection = false;
 };
 
-TSharedRef<SDockTab> SpawnOutlinerTab(const FSpawnTabArgs&)
-{
-    return SNew(SDockTab)
-        .TabRole(ETabRole::NomadTab)
-        [
-            MHCreateCompositeOutlinerWidget()
-        ];
-}
-
 } // namespace
-
-void MHRegisterCompositeOutliner()
-{
-    if (GOutlinerRegistered || IsRunningCommandlet()) return;
-    FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
-        MHCompositeOutlinerTabName,
-        FOnSpawnTab::CreateStatic(&SpawnOutlinerTab))
-        .SetDisplayName(LOCTEXT("OutlinerTabName", "MH Composite Outliner"))
-        .SetTooltipText(LOCTEXT("OutlinerTabTooltip", "Inspect and navigate the selected MH Composite placement."))
-        .SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.DataAsset")))
-        .SetGroup(WorkspaceMenu::GetMenuStructure().GetLevelEditorCategory());
-    GOutlinerRegistered = true;
-}
-
-void MHUnregisterCompositeOutliner()
-{
-    if (!GOutlinerRegistered || !FSlateApplication::IsInitialized()) return;
-    if (TSharedPtr<SDockTab> LiveTab =
-            FGlobalTabmanager::Get()->FindExistingLiveTab(MHCompositeOutlinerTabName))
-    {
-        LiveTab->RequestCloseTab();
-    }
-    FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(MHCompositeOutlinerTabName);
-    GOutlinerRegistered = false;
-}
-
-void MHOpenCompositeOutliner()
-{
-    if (GOutlinerRegistered) FGlobalTabmanager::Get()->TryInvokeTab(MHCompositeOutlinerTabName);
-}
 
 TSharedRef<SWidget> MHCreateCompositeOutlinerWidget()
 {

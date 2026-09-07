@@ -1832,8 +1832,8 @@ void MHRegisterS6ToolMenus()
                         return;
                     }
                 }
-                // UE invokes this synchronously for RMB, after resolving the
-                // pooled hit to the owner. LMB never consumes the pending hit.
+                // Finish an already-selected RMB click if UE emitted no selection
+                // change. Its logical level was resolved before opening the menu.
                 if (Subsystem == nullptr || !Subsystem->IsEditingComposite())
                 {
                     const ULevelEditorContextMenuContext* Context = DynamicMenu->FindContext<ULevelEditorContextMenuContext>();
