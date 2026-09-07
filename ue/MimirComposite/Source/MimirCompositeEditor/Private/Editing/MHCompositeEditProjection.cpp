@@ -92,6 +92,12 @@ AMHCompositeEditProjectionActor::AMHCompositeEditProjectionActor()
     SetRootComponent(Root);
 }
 
+void UMHCompositeEditProjection::BeginDestroy()
+{
+    ClearEndpointLoadReadySubscription();
+    Super::BeginDestroy();
+}
+
 bool UMHCompositeEditProjection::Open(UMHCompositeEditSession& InSession, FString& OutError)
 {
     Close();
@@ -181,6 +187,54 @@ void UMHCompositeEditProjection::AcquireLease()
         if (Row.Handle.IsSet() && UnderOccurrence(Row.NodePath)) Handles.Add(Row.Handle);
     }
     Lease = Pool->AcquireSuppression(Handles);
+}
+
+void UMHCompositeEditProjection::OnEndpointLoadReady(const FMHResourceKey& Key)
+{
+    if (!ProjectionActor.IsValid() || !PendingEndpointKeys.Contains(Key)) return;
+    if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
+    {
+        const FMHEndpointPrototype& Prototype = Registry->Resolve(Key);
+        if (Prototype.State == EMHEndpointState::Ready)
+        {
+            if (UStaticMesh* Mesh = Cast<UStaticMesh>(Prototype.Object.Get()))
+                PendingReadyMeshes.AddUnique(Mesh);
+        }
+    }
+    PendingEndpointKeys.Remove(Key);
+    if (!PendingEndpointKeys.IsEmpty()) return;
+    if (UMHCompositeEditSession* Owner = Session.Get()) Owner->RefreshProjection();
+}
+
+void UMHCompositeEditProjection::SetPendingEndpointKeys(TSet<FMHResourceKey>&& Keys)
+{
+    // A successful refresh has installed hard component references for every
+    // Ready mesh it used; any retained partial-batch references are obsolete.
+    PendingReadyMeshes.Reset();
+    PendingEndpointKeys = MoveTemp(Keys);
+    UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get();
+    if (PendingEndpointKeys.IsEmpty() || Registry == nullptr)
+    {
+        ClearEndpointLoadReadySubscription();
+        return;
+    }
+    if (!EndpointLoadReadyHandle.IsValid())
+    {
+        EndpointLoadReadyHandle = Registry->OnEndpointLoadReady().AddUObject(
+            this, &UMHCompositeEditProjection::OnEndpointLoadReady);
+    }
+}
+
+void UMHCompositeEditProjection::ClearEndpointLoadReadySubscription()
+{
+    if (EndpointLoadReadyHandle.IsValid())
+    {
+        if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
+            Registry->OnEndpointLoadReady().Remove(EndpointLoadReadyHandle);
+        EndpointLoadReadyHandle.Reset();
+    }
+    PendingEndpointKeys.Reset();
+    PendingReadyMeshes.Reset();
 }
 
 bool UMHCompositeEditProjection::UnderOccurrence(const FString& Path) const
@@ -285,6 +339,7 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
     UMHEndpointPrototypeRegistry* Endpoints = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHEndpointPrototypeRegistry>() : nullptr;
     const FMatrix Basis = Root->GetActorTransform().ToMatrixWithScale();
     TSet<FString> Live;
+    TSet<FMHResourceKey> NextPendingEndpointKeys;
     TArray<TObjectPtr<USceneComponent>> NextComponents;
     // Mesh leaves: the mesh itself with the placement's appearance channels.
     for (const FMHResolvedCompositeLeaf& Leaf : NextPlan->Leaves)
@@ -299,6 +354,7 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
             bool bPlaceholder = false;
             FString ResolveError;
             UStaticMesh* Mesh = Endpoints->ResolveMeshForPreview(Key, *Settings, bPlaceholder, ResolveError);
+            if (bPlaceholder) NextPendingEndpointKeys.Add(Key);
             USceneComponent* Component = PlaceComponent(Leaf.Origin, UMHCompositeEditMeshComponent::StaticClass(), Leaf.WorldMatrix * Basis,
                 [](USceneComponent& New)
                 {
@@ -394,11 +450,13 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
     UpdateSelection(Owner->GetSelectedNodeIds());
     PushEditingTint();
     Plan = NextPlan;
+    SetPendingEndpointKeys(MoveTemp(NextPendingEndpointKeys));
     return true;
 }
 
 void UMHCompositeEditProjection::Close()
 {
+    ClearEndpointLoadReadySubscription();
     const UMHCompositeEditSession* Owner = Session.Get();
     const AMHCompositeActor* Root = Owner != nullptr ? Owner->GetRootPlacement() : nullptr;
     if (Lease.IsSet())

@@ -1351,7 +1351,12 @@ private:
             {
                 const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
                 const FMHCompositeEditContext EditContext = Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext();
-                if (!EditContext.EditedLogicalName.IsEmpty() && EditContext.RootPlacement.Get() == CurrentActor.Get())
+                if (CurrentActor->IsPreviewLoading())
+                {
+                    StatusText->SetText(LOCTEXT("OverlayLoading", "Loading selected meshes…"));
+                    StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
+                }
+                else if (!EditContext.EditedLogicalName.IsEmpty() && EditContext.RootPlacement.Get() == CurrentActor.Get())
                 {
                     // R6-D0: what is edited, where it sits, and what saving touches.
                     RowScopePath = EditContext.InvocationPath;

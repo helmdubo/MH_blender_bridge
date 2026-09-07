@@ -14,6 +14,7 @@
 class UActorComponent;
 class UMHCompositeAsset;
 class USceneComponent;
+class UStaticMesh;
 namespace UE::MimirComposite { struct FMHEndpointInterfaceDelta; }
 
 /** Persisted level instance of one managed composite; its component view is always derived. */
@@ -101,6 +102,8 @@ public:
     const UE::MimirComposite::FMHResolvedCompositePlan* GetResolvedPlan() const;
     const FString& GetLastPlacementError() const { return LastPlacementError; }
     EMHCompositeSeedEffect GetSeedAffectsResult() const { return SeedAffectsResult; }
+    /** True while a resolved candidate waits for all selected mesh endpoints. */
+    bool IsPreviewLoading() const { return PendingPlacementPlan.IsValid(); }
 
     /** Transient authoring session; no edit state is persisted. */
     void SetPlacementEditMode(bool bEnabled);
@@ -228,6 +231,10 @@ private:
     TArray<TObjectPtr<UActorComponent>> CollectPreviousDerivedComponents() const;
     void ClearDerivedComponents();
     void RebuildPlacement(bool bSeedOnly, bool bRecipeChanged = false);
+    void CancelPendingPlacement();
+    bool PendingEndpointsSettled(FString& OutError);
+    void CommitPendingPlacement();
+    void OnEndpointLoadReady(const UE::MimirComposite::FMHResourceKey& Key);
     void UpdatePlacementBasis(USceneComponent*, EUpdateTransformFlags, ETeleportType);
     void AttachRootTransformHook();
     void ReportPlacementError();
@@ -241,6 +248,14 @@ private:
     /** Soft path is the single persisted identity row for this level instance. */
     UPROPERTY(VisibleInstanceOnly, Category = "Mimir")
     TSoftObjectPtr<UMHCompositeAsset> CompositeAsset;
+
+#if WITH_EDITORONLY_DATA
+    /** Package-loading hints for the last committed selected view. Never used
+     * as recipe identity, freshness proof or authoritative layout. Older maps
+     * have an empty list and stream selected endpoints normally. */
+    UPROPERTY()
+    TArray<TObjectPtr<UStaticMesh>> SelectedMeshDependencies;
+#endif
 
     /**
      * Layout random input; explicit zero is valid. The serialized name stays
@@ -319,6 +334,17 @@ private:
      * re-resolves it.
      */
     TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> ResidentPlan;
+    /** Latest resolved candidate, unpublished until every selected mesh load settles. */
+    TSharedPtr<const UE::MimirComposite::FMHRandomSourceGraph> PendingPlacementGraph;
+    TSharedPtr<const UE::MimirComposite::FMHResolvedCompositePlan> PendingPlacementPlan;
+    TSet<UE::MimirComposite::FMHResourceKey> PendingSelectedMeshKeys;
+    /** Keeps admitted meshes alive between per-key completion and the batch commit. */
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<UStaticMesh>> PendingSelectedMeshes;
+    FDelegateHandle EndpointLoadReadyHandle;
+    uint64 PendingPlacementEpoch = 0;
+    bool bPendingSeedOnly = false;
+    bool bPendingRecipeChanged = false;
     uint32 PreviewRevision = 0;
     TOptional<UE::MimirComposite::FMHRandomSourceGraph> EditingGraph;
     TOptional<UE::MimirComposite::FMHCompositeDocument> EditingDocument;

@@ -1,5 +1,8 @@
 # R2c — точки выхода proof-плоскости
 
+Историческая квитанция. Срез загрузки 2026-09-07 отменяет описанное здесь
+планирование proof при обычном Save: `docs/contracts/composite_loading.md`.
+
 Статус: **READY FOR RE-REVIEW** после возврата PR #88. Background proof cache,
 non-cook save audit и синхронные proof-гейты preflight/snapshot/Break
 реализованы. OPEN-R2C-3/4 исправлены; все acceptance-тесты, полный NullRHI

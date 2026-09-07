@@ -466,10 +466,6 @@ void UMHProofCacheSubsystem::HandlePreSaveWorld(UWorld* World, FObjectPreSaveCon
             Warning += TEXT(": ") + Row.Diagnostic;
         }
         FMessageLog(TEXT("Mimir")).Warning(FText::FromString(Warning));
-        if (Row.State == EMHProofState::Unknown && Placement != nullptr)
-        {
-            RequestProof(*Placement);
-        }
     }
 }
 

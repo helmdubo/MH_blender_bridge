@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "Misc/Guid.h"
 #include "Random/MHRandomStream.h"
+#include "Source/MHSourceResolver.h"
 #include "UObject/Object.h"
 #include "MHCompositeEditProjection.generated.h"
 
@@ -81,6 +82,7 @@ class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditProjection : public UObject
     GENERATED_BODY()
 
 public:
+    virtual void BeginDestroy() override;
     bool Open(UMHCompositeEditSession& Session, FString& OutError);
     /** Re-resolves the draft and re-places the components; components keep their identity per plan origin. */
     bool Refresh(FString& OutError);
@@ -125,6 +127,9 @@ private:
     bool UnderOccurrence(const FString& Path) const;
     USceneComponent* PlaceComponent(const FString& Origin, UClass* Class, const FMatrix& WorldMatrix, const TFunction<void(USceneComponent&)>& Configure);
     void AcquireLease();
+    void OnEndpointLoadReady(const UE::MimirComposite::FMHResourceKey& Key);
+    void SetPendingEndpointKeys(TSet<UE::MimirComposite::FMHResourceKey>&& Keys);
+    void ClearEndpointLoadReadySubscription();
 
     UPROPERTY()
     TObjectPtr<UMHCompositeAsset> DraftAsset;
@@ -140,6 +145,12 @@ private:
     /** Scene proxies that already carry the editing state (CE-3b). */
     TMap<TWeakObjectPtr<const UPrimitiveComponent>, const FPrimitiveSceneProxy*> TintedProxies;
     TSharedPtr<UE::MimirComposite::FMHResolvedCompositePlan> Plan;
+    /** Selected draft mesh endpoints still loading for the current resolved plan. */
+    TSet<UE::MimirComposite::FMHResourceKey> PendingEndpointKeys;
+    /** Keeps earlier Ready endpoints resident until the complete batch refreshes. */
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<UStaticMesh>> PendingReadyMeshes;
+    FDelegateHandle EndpointLoadReadyHandle;
     UE::MimirComposite::FMHPoolSuppressionLease Lease;
     FString OccurrencePrefix;
     FString DefinitionPrefix;

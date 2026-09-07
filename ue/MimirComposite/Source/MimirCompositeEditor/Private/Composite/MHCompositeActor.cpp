@@ -208,7 +208,7 @@ void AMHCompositeActor::SetAutoAppearanceSeed(const bool bEnabled)
 const UE::MimirComposite::FMHResolvedCompositePlan* AMHCompositeActor::GetResolvedPlan() const
 {
     using namespace UE::MimirComposite;
-    if (!bPlanAvailable || !ResidentPlan.IsValid() ||
+    if (IsPreviewLoading() || !bPlanAvailable || !ResidentPlan.IsValid() ||
         ResidentPlan->Seed != Seed ||
         ResidentPlan->Appearance.AppearanceSeed != AppearanceSeed ||
         !LastPlacementError.IsEmpty()) return nullptr;
@@ -222,9 +222,10 @@ void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
     SetPlacementEditMode(false);
     if (CompositeAsset.Get() != Asset)
     {
-        AppliedGraph.Reset();
         ObservedRecipeGraph.Reset();
-        ResidentPlan.Reset();
+        // Keep the committed graph/plan with its visible rows until the new
+        // asset's selected mesh batch is ready. GetResolvedPlan hides it while
+        // the candidate is pending; commit replaces it atomically.
         bPlanAvailable = false;
     }
     CompositeAsset = Asset;
@@ -501,6 +502,9 @@ void AMHCompositeActor::SyncEditScopeHandles()
 
 void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)
 {
+    // A pending candidate has no published handles of its own. Keep the
+    // committed view visible and refuse entry until readiness commits it.
+    if (bEnabled && IsPreviewLoading()) return;
     if (bPlacementEditMode == bEnabled) return;
     TArray<FTransform> PendingHandleEdits;
     if (bEnabled)
@@ -633,6 +637,7 @@ TArray<TObjectPtr<UActorComponent>> AMHCompositeActor::CollectPreviousDerivedCom
 
 void AMHCompositeActor::ClearDerivedComponents()
 {
+    CancelPendingPlacement();
     // Pooled leaves are released with the owner (16 §2.8); Undo rebuilds them
     // from the actor's record afterwards (OPEN-R-1).
     if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld())) Pool->RemoveOwner(*this);
@@ -772,6 +777,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
         (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     if (bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
+    CancelPendingPlacement();
     ++PlacementRebuildCount;
     // Instrumentation for the S6.2 lifecycle guard: placement components may
     // only be created once this actor's own components are already registered.
@@ -780,6 +786,9 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
     AttachRootTransformHook();
     if (CompositeAsset.ToSoftObjectPath().IsNull())
     {
+#if WITH_EDITORONLY_DATA
+        SelectedMeshDependencies.Reset();
+#endif
         ClearDerivedComponents();
         return;
     }
@@ -889,8 +898,130 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
         return;
     }
     if (!CandidateGraph.IsValid() || !CandidatePlan.IsValid()) return;
-    const FMHRandomComposite* Root = CandidateGraph->Composites.Find(Name);
-    if (Root == nullptr) return;
+
+    PendingPlacementGraph = CandidateGraph;
+    PendingPlacementPlan = CandidatePlan;
+    bPendingSeedOnly = bSeedOnly;
+    bPendingRecipeChanged = bRecipeChanged;
+    ++PendingPlacementEpoch;
+    for (const FMHResolvedCompositeLeaf& Leaf : CandidatePlan->Leaves)
+    {
+        if (Leaf.Kind != EMHRandomSemanticKind::Mesh) continue;
+        FMHResourceKey Key;
+        Key.Kind = EMHResourceKind::StaticMesh;
+        Key.LogicalName = Leaf.Resource;
+        PendingSelectedMeshKeys.Add(MoveTemp(Key));
+    }
+    if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
+    {
+        EndpointLoadReadyHandle = Registry->OnEndpointLoadReady().AddUObject(
+            this, &AMHCompositeActor::OnEndpointLoadReady);
+    }
+    FString EndpointError;
+    if (!PendingEndpointsSettled(EndpointError))
+    {
+        // Refresh read-only editor surfaces into an explicit Loading state.
+        // PreviewRevision remains the revision of the last committed view.
+        BroadcastMHCompositeComponentsEdited();
+        return;
+    }
+    if (!EndpointError.IsEmpty())
+    {
+        LastPlacementError = MoveTemp(EndpointError);
+        bPlanAvailable = false;
+        CancelPendingPlacement();
+        ReportPlacementError();
+        return;
+    }
+    CommitPendingPlacement();
+}
+
+void AMHCompositeActor::CancelPendingPlacement()
+{
+    ++PendingPlacementEpoch;
+    if (EndpointLoadReadyHandle.IsValid())
+    {
+        if (UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get())
+            Registry->OnEndpointLoadReady().Remove(EndpointLoadReadyHandle);
+        EndpointLoadReadyHandle.Reset();
+    }
+    PendingPlacementGraph.Reset();
+    PendingPlacementPlan.Reset();
+    PendingSelectedMeshKeys.Reset();
+    PendingSelectedMeshes.Reset();
+    bPendingSeedOnly = false;
+    bPendingRecipeChanged = false;
+}
+
+bool AMHCompositeActor::PendingEndpointsSettled(FString& OutError)
+{
+    using namespace UE::MimirComposite;
+    OutError.Reset();
+    UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get();
+    if (Registry == nullptr)
+    {
+        OutError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: endpoint prototype registry unavailable");
+        return true;
+    }
+    bool bSettled = true;
+    FMHPlacementStageScope LoadStage(EMHPlacementStage::LoadEndpoints);
+    for (const FMHResourceKey& Key : PendingSelectedMeshKeys)
+    {
+        const FMHEndpointPrototype& Prototype = Registry->Resolve(Key);
+        if (Prototype.State == EMHEndpointState::Loading)
+        {
+            bSettled = false;
+            continue;
+        }
+        if (Prototype.State == EMHEndpointState::Ready)
+        {
+            UStaticMesh* Mesh = Cast<UStaticMesh>(Prototype.Object.Get());
+            if (Mesh != nullptr) PendingSelectedMeshes.AddUnique(Mesh);
+            continue;
+        }
+        if (!Prototype.AdmissionError.IsEmpty())
+        {
+            OutError = Prototype.AdmissionError;
+            return true;
+        }
+    }
+    return bSettled;
+}
+
+void AMHCompositeActor::OnEndpointLoadReady(const UE::MimirComposite::FMHResourceKey& Key)
+{
+    if (!PendingPlacementPlan.IsValid() || !PendingSelectedMeshKeys.Contains(Key) ||
+        bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
+    const uint64 ExpectedEpoch = PendingPlacementEpoch;
+    TGuardValue<bool> Guard(bRebuildInProgress, true);
+    FString EndpointError;
+    if (!PendingEndpointsSettled(EndpointError) || ExpectedEpoch != PendingPlacementEpoch) return;
+    if (!EndpointError.IsEmpty())
+    {
+        LastPlacementError = MoveTemp(EndpointError);
+        bPlanAvailable = false;
+        CancelPendingPlacement();
+        ReportPlacementError();
+        return;
+    }
+    CommitPendingPlacement();
+}
+
+void AMHCompositeActor::CommitPendingPlacement()
+{
+    using namespace UE::MimirComposite;
+    const TSharedPtr<const FMHRandomSourceGraph> CandidateGraph = PendingPlacementGraph;
+    const TSharedPtr<const FMHResolvedCompositePlan> CandidatePlan = PendingPlacementPlan;
+    const bool bSeedOnly = bPendingSeedOnly;
+    const bool bRecipeChanged = bPendingRecipeChanged;
+    if (!CandidateGraph.IsValid() || !CandidatePlan.IsValid()) return;
+    const FMHRandomComposite* Root = CandidateGraph->Composites.Find(CandidateGraph->RootComposite);
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    if (Root == nullptr || Settings == nullptr)
+    {
+        CancelPendingPlacement();
+        return;
+    }
     const bool bLayoutReseed = bSeedOnly && bPlanAvailable && ResidentPlan.IsValid() &&
         ResidentPlan->Seed != CandidatePlan->Seed;
     TSharedPtr<const FMHResolvedCompositePlan> PreviousPlan;
@@ -914,6 +1045,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
         {
             LastPlacementError = View.Error;
             bPlanAvailable = false;
+            CancelPendingPlacement();
             ReportPlacementError();
             return false;
         }
@@ -946,6 +1078,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
             {
                 LastPlacementError = View.Error;
                 bPlanAvailable = false;
+                CancelPendingPlacement();
                 ReportPlacementError();
                 return;
             }
@@ -982,8 +1115,24 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
     }
     AppliedGraph = CandidateGraph;
     ResidentPlan = CandidatePlan;
+#if WITH_EDITORONLY_DATA
+    // Only a changed successful commit dirties the dependency hints. In
+    // particular, a cold mesh finishing after Save must remain saveable;
+    // reopening a map with unchanged hints must not dirty it again.
+    TArray<TObjectPtr<UStaticMesh>> NewDependencies = PendingSelectedMeshes;
+    NewDependencies.Sort([](const UStaticMesh& A, const UStaticMesh& B)
+    {
+        return A.GetPathName() < B.GetPathName();
+    });
+    if (SelectedMeshDependencies != NewDependencies)
+    {
+        SelectedMeshDependencies = MoveTemp(NewDependencies);
+        MarkPackageDirty();
+    }
+#endif
     ++PreviewRevision;
     bPlanAvailable = true;
+    CancelPendingPlacement();
     SyncPoolVisibility();
     // The existing Level Editor component-edited event is also the read-only
     // semantic-overlay invalidation signal. A reseed can preserve every
@@ -1001,10 +1150,11 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
         Tick(0.0f);
         return;
     }
-    if (!ResidentPlan.IsValid() || !AppliedGraph.IsValid() ||
-        ResidentPlan->Seed != Seed ||
-        ResidentPlan->Appearance.AppearanceSeed != AppearanceSeed) return;
-    if (!bPlanAvailable && !bBasisRejected)
+    const bool bMovingRetainedView = IsPreviewLoading();
+    if (!ResidentPlan.IsValid() || !AppliedGraph.IsValid()) return;
+    if (!bMovingRetainedView &&
+        (ResidentPlan->Seed != Seed || ResidentPlan->Appearance.AppearanceSeed != AppearanceSeed)) return;
+    if (!bPlanAvailable && !bBasisRejected && !bMovingRetainedView)
     {
         // The cached plan may predate a rejected dependency update. Never let
         // moving the actor clear that failure using the older graph.
@@ -1033,7 +1183,7 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
             ReportPlacementError();
             bDesynchronized = Error.StartsWith(TEXT("MH_E_PLACEMENT_STATE_DESYNC"));
         }
-        else if (bBasisRejected)
+        else if (bBasisRejected && !bMovingRetainedView)
         {
             LastPlacementError.Reset();
             bPlanAvailable = true;
@@ -1052,6 +1202,11 @@ void AMHCompositeActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
     AttachRootTransformHook();
+    if (IsPreviewLoading())
+    {
+        UpdatePlacementBasis(nullptr, EUpdateTransformFlags::None, ETeleportType::None);
+        return;
+    }
     if (!ResidentPlan.IsValid() && LastPlacementError.IsEmpty()) RebuildComposite();
     else UpdatePlacementBasis(nullptr, EUpdateTransformFlags::None, ETeleportType::None);
 }
@@ -1145,6 +1300,7 @@ FBox AMHCompositeActor::GetComponentsBoundingBox(const bool bNonColliding, const
 void AMHCompositeActor::Destroyed()
 {
     if (CompositeRoot != nullptr) CompositeRoot->TransformUpdated.RemoveAll(this);
+    CancelPendingPlacement();
     ClearDerivedComponents();
     Super::Destroyed();
 }

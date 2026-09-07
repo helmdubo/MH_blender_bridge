@@ -15,6 +15,7 @@
 #include "PrimitiveSceneProxy.h"
 #include "RenderingThread.h"
 #include "ScopedTransaction.h"
+#include "StaticMeshCompiler.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -70,6 +71,9 @@ bool FMHNestedVisualGestureTest::RunTest(const FString& Parameters)
     {
         UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
         if (!TestNotNull(TEXT("renderable cube"), Cube)) return false;
+        // Earlier cold-load tests may have evicted the stock fixture. A
+        // scene-proxy assertion needs render data, not just a loaded UObject.
+        FStaticMeshCompilingManager::Get().FinishCompilation({Cube});
         for (USceneComponent* Component : Projection->GetComponents())
         {
             if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component)) Mesh->SetStaticMesh(Cube);

@@ -10,6 +10,7 @@
 
 | Срез | Статус | PR / примечание |
 |---|---|---|
+| Composite loading A/B + Save | READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-loading`, база `c6faeae`; готовность выбранных мешей без кубов/каскада rebuild, сохранённые dependency hints, обычный Save без отложенной proof-очереди; NullRHI 288/288, D3D12 59/59; `docs/contracts/composite_loading.md`, `docs/receipts/composite_loading.md` |
 | D0a | MERGED | #62 |
 | M0 | MERGED | #63 |
 | R0a | MERGED | #64 |

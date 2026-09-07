@@ -2,6 +2,10 @@
 
 # Контракт R2c — точки выхода proof-плоскости и background proof cache
 
+Поправка owner 2026-09-07: обычный Save больше не планирует `RequestProof`.
+Требования ниже о таком планировании и старые red-assertions — история R2c;
+текущий контракт — `docs/contracts/composite_loading.md`, пункт 4.
+
 Основание: KICKOFF §5 (R2c), `docs/16_recipe_model.md` §0 (три плоскости), §2.4
 (два уровня admission: source freshness — только proof), §2.6 (точки выхода),
 §4 (протокол обновлений), §9 OPEN-R-7 (duplicate claim — proof-плоскость),

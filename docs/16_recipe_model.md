@@ -127,9 +127,14 @@ uint64 MaterialBindingHash; TSoftClassPtr<AActor> ActorClass }`.
   GetAssets` с tag-фильтром, `GetAssetsByTags`, `FAssetData(&Object)`,
   чтение `GetAssetRegistryTags` живого объекта, `FinishCompilation`. Теги
   `MH.*` — проекция receipt для индекса (10 §7), не механизм резолва.
-- Загрузка выбранных endpoint'ов асинхронная (`FStreamableManager`); пока
-  `Loading` — `UMHCompositeSettings::PlaceholderMesh` (по умолчанию
-  `/Engine/BasicShapes/Cube`). Невыбранные варианты не загружаются.
+- Выбранные mesh dependencies сохраняются на placement как editor-only hard
+  references для загрузки вместе с картой. Это подсказки package loader,
+  не авторитетный план. Для новых зависимостей и старых карт загрузка
+  асинхронная (`FStreamableManager`): пока `Loading`, новый normal placement
+  не материализует листья, обновляемый сохраняет прежнюю геометрию.
+  Готовый план материализуется один раз, без повторного resolver на каждое
+  завершение. Loading readiness не является reimport. Невыбранные варианты
+  не запрашиваются. Контракт: `docs/contracts/composite_loading.md`.
 - Пять хэшей/ревизий интерфейса меша для пула (единое поле заменено срезом
   П4), считаются при `Ready` и при каждом `Revision++`:
   `PayloadRevision` — геометрия / render resource → render refresh;
@@ -209,8 +214,9 @@ FMHMaterializeResult MHMaterializeLayout(
 2. `PreSaveWorld` вне cook вызывает только `AuditWorld`: для каждого состояния,
    кроме `Fresh`, пишет в Message Log «Mimir» один из
    `MH_W_PROOF_UNKNOWN`, `MH_W_PROOF_PENDING`, `MH_W_PROOF_STALE`,
-   `MH_W_PROOF_MISSING`; для `Unknown` только планирует `RequestProof`.
-   Синхронный proof и отказ сохранения карты здесь запрещены.
+   `MH_W_PROOF_MISSING`. Сохранение не планирует `RequestProof`: тяжёлая
+   отложенная работа также задерживает редактор после Save. Синхронный proof
+   и отказ сохранения карты здесь запрещены.
 3. Build/cook preflight (`MHValidateRuntimeCompositeWorld`) и runtime snapshot
    (`MHBuildRuntimeCompositeInput`) вызывают `BuildProofNow` синхронно и
    блокируют выход при `Stale`/`Missing`. Экспорт, который потребляет
@@ -392,6 +398,7 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
 
 ```text
 TSoftObjectPtr<UMHCompositeAsset> CompositeAsset;
+TArray<TObjectPtr<UStaticMesh>> SelectedMeshDependencies; // editor-only loading hints, selected + deduplicated
 int32 Seed; bool bAutoSeed;
 int32 AppearanceSeed; bool bAutoAppearanceSeed;   // семантика как сейчас (10 §6.9)
 FMHNodeOverrideSet NodeOverrides;                  // с R6
@@ -418,6 +425,12 @@ boundary этого поддерева в родителе. Resolver получ�
 строка §7.2), `AppliedGraph`, `AppliedDefinition`, любая логика «подпись
 устарела → rebuild» и «карта обязана построить proof до первого кадра».
 
+`SelectedMeshDependencies` — исключение только для native package loading,
+принятое owner в `docs/contracts/composite_loading.md`: список реальных mesh
+UObjects предыдущего успешного commit, без closure-хэшей и проверок freshness.
+Старые hints не управляют планом; при новом commit заменяются. ISM components
+и instance transforms по-прежнему не сериализуются в editor placement.
+
 `BreakComposites` — операция preview-плоскости: она читает резидентный план и
 снимает ровно один слой рецепта. Вложенные композиты остаются
 `AMHCompositeActor` с layout- и appearance-сидами родителя; группы поднимают
@@ -442,7 +455,8 @@ Source Root; proof строится только в четырёх точках 
 | MI-параметры (scalar/vector/texture) изменились in place | ничего в пулах | — |
 | Material object identity / slot binding изменились | reconcile дескриптора затронутых бакетов | rebuild актора |
 | Physical material mapping изменился | reconcile collision/trace-интерфейса затронутых бакетов | — |
-| Меш появился (был `Invalid`/`Loading`) | прототип → `Ready`; перенос инстансов с заглушки | rebuild актора |
+| Mesh загрузился (`Loading`) | прототип → `Ready`; один commit подготовленного placement после готовности выбранных мешей | reimport notification, повторный resolver |
+| Missing mesh восстановлен (`Invalid`) | endpoint reconcile и восстановление диагностического представления | скрывать настоящую ошибку как Loading |
 | Смена `Seed`, `SeedAffectsResult == None` | сохранить значение; layout, appearance и хэндлы не трогать | — |
 | Смена `Seed`, `SeedAffectsResult == ChildSeedsOnly` | обновить только endpoint'ы, реально потребляющие layout-сид (вложенные рецепты с `bGenerated`) | — |
 | Смена `Seed`, `SeedAffectsResult == Transform` | пересчитать трансформы, `Update` хэндлов | — |
@@ -451,7 +465,7 @@ Source Root; proof строится только в четырёх точках 
 | Перемещение актора (вне драга) | `Update(WorldMatrix)` по хэндлам | `Materialize` |
 | **Драг гизмо** | каждый кадр: `Update` трансформов инстансов в `BeginBulk/EndBulk`, без collision/nav/snapping, без per-instance `MarkRenderStateDirty`; на `bFinished`: один physics/nav refresh, snapping, bounds | замораживать визуальное движение до отпускания |
 | Изменение `NodeOverrides` | Layout + diff по затронутым поддеревьям | — |
-| Загрузка карты | `PostRegisterAllComponents` → Layout с заглушками для `Loading`; ноль синхронных `LoadObject` мешей, ноль `FinishCompilation`, ноль proof | — |
+| Загрузка карты | package loader читает сохранённые выбранные mesh references; `PostRegisterAllComponents` → Layout, ожидание cold dependencies без кубов; ноль preview `LoadObject` мешей, ноль `FinishCompilation`, ноль proof | — |
 
 ## 5. Wire-формат, сиды, runtime-мост: где норматив
 

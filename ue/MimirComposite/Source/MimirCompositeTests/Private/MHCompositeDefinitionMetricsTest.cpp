@@ -279,8 +279,11 @@ bool DefinitionMetricsCommonAssertions(
         Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     bPassed &= Test.TestEqual(TEXT("each placement resolves its own plan"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, PlacementCount);
-    bPassed &= Test.TestEqual(TEXT("each placement loads its endpoints"),
-        Metrics.Get(EMHPlacementStage::LoadEndpoints).Calls, PlacementCount);
+    // Loading A separates readiness admission from the compiler's resident
+    // endpoint binding. Both CPU scopes remain measured; these warm fixtures
+    // execute each once, while still resolving/compiling each placement once.
+    bPassed &= Test.TestEqual(TEXT("each warm placement admits then binds endpoints"),
+        Metrics.Get(EMHPlacementStage::LoadEndpoints).Calls, PlacementCount * 2ull);
     bPassed &= Test.TestEqual(TEXT("each placement compiles its component delta"),
         Metrics.Get(EMHPlacementStage::CompilePlacement).Calls, PlacementCount);
     bPassed &= Test.TestEqual(TEXT("new actor-owned placement components are registered exactly once"),
