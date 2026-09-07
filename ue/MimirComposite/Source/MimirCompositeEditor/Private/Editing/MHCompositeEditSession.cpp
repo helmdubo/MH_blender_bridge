@@ -98,6 +98,14 @@ bool UMHCompositeEditSession::IsDirty() const
     return bDirtyCached;
 }
 
+void UMHCompositeEditSession::RebaseOriginal(const FMHCompositeDocument& Committed)
+{
+    Original = Committed;
+    OriginalBytes.Reset();
+    FString Error;
+    MHWriteCanonicalCompositeV5(Original, OriginalBytes, Error);
+}
+
 bool UMHCompositeEditSession::SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError)
 {
     if (!IsOpen() || Draft == nullptr)

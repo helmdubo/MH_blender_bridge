@@ -44,6 +44,8 @@ public:
         uint32 InEpoch);
     /** Terminal: the draft stays readable, every command is refused from here on. */
     void Close();
+    /** CE-5a: after a source-committed failure the committed document is the new original — dirty and Cancel measure against the file. */
+    void RebaseOriginal(const UE::MimirComposite::FMHCompositeDocument& Committed);
 
     const FGuid& GetSessionId() const { return SessionId; }
     uint32 GetEpoch() const { return Epoch; }

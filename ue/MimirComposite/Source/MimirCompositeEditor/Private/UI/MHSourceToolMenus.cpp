@@ -456,6 +456,13 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
                 {
                     Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
                 }
+                // CE-5a: say what the failure did to the source before the cause.
+                if (!Error.IsEmpty() && Subsystem->IsEditingComposite())
+                {
+                    Error = (Subsystem->GetLastPublishOutcome() == EMHCompositePublishOutcome::SourceCommitted
+                        ? TEXT("Source committed, import failed — the session stays open on the committed source: ")
+                        : TEXT("Nothing was written — the session and its draft stay, fix and Save again: ")) + Error;
+                }
                 return Error.IsEmpty();
             });
         if (Execution == EMHSourceOverwriteExecution::Cancelled)

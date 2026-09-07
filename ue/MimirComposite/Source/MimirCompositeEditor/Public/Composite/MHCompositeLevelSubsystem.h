@@ -20,6 +20,23 @@ enum class EMHCompositeEditSaveScope : uint8
 };
 
 /** Read-only description of the active composite edit session (docs/16 §2.7 R6-D0). */
+/**
+ * CE-5a (spec §10.2): what the last publish from a CE-backend session did to
+ * the world outside the editor. A failure before the file was written leaves
+ * nothing behind (the session and its draft stay, retry is possible); a
+ * failure after it is a committed source the session must not pretend to
+ * discard.
+ */
+UENUM()
+enum class EMHCompositePublishOutcome : uint8
+{
+    None,
+    Succeeded,
+    NoExternalChange,
+    SourceCommitted,
+    PartialBatch
+};
+
 USTRUCT()
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositeEditContext
 {
@@ -176,6 +193,8 @@ public:
      * a later one (spec CE §9: deferred callbacks carry the epoch).
      */
     uint32 GetEditSessionEpoch() const { return EditSessionEpoch; }
+    /** CE-5a: the outcome of the last Commit / Apply from a CE-backend session (None before any). */
+    EMHCompositePublishOutcome GetLastPublishOutcome() const { return LastPublishOutcome; }
     bool IsEditingComposite(const AMHCompositeActor* Actor) const
     {
         return EditingActor.IsValid() && EditingActor.Get() == Actor;
@@ -249,6 +268,9 @@ private:
         FString& OutError);
     /** R6-D2: Apply Shared Definition — the nested draft becomes the child's source; consumers follow. */
     bool CommitNestedEditComposite(TArray<FString>& OutWarnings, FString& OutError);
+    /** CE-5a: publish the session draft without closing the session first; classifies a failure by the source file's bytes. */
+    bool PublishFromSession(UMHCompositeAsset& Asset, const UE::MimirComposite::FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError);
+    EMHCompositePublishOutcome LastPublishOutcome = EMHCompositePublishOutcome::None;
     /** After a failed publish: the authoritative source if present, else the pre-publish document; consumers are notified. */
     static void RestoreDefinition(
         UMHCompositeAsset& Asset,
