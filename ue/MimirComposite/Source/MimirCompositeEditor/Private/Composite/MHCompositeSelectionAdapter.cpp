@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHInstancePool.h"
 #include "CoreGlobals.h"
+#include "Elements/Actor/ActorElementData.h"
 #include "Elements/Framework/EngineElementsLibrary.h"
 #include "Elements/Framework/TypedElementSelectionSet.h"
 #include "Elements/Interfaces/TypedElementHierarchyInterface.h"
@@ -21,6 +22,24 @@ namespace UE::MimirComposite
 {
 namespace
 {
+
+// UE resolves both LMB and RMB to an actor before opening the context menu.
+// Preserve the raw pooled hit only for that synchronous, same-frame handoff.
+struct FPendingCompositeContextHit
+{
+    TWeakObjectPtr<AMHCompositeActor> Owner;
+    FString LeafPath;
+    uint64 Frame = MAX_uint64;
+};
+
+FPendingCompositeContextHit PendingContextHit;
+
+bool IsCompositeEditOpen()
+{
+    const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    return Subsystem != nullptr && Subsystem->IsEditingComposite();
+}
 
 /**
  * NAME_SMInstance selection customization of the level editor's selection set.
@@ -58,6 +77,7 @@ public:
 
     virtual FTypedElementHandle GetSelectionElement(const TTypedElement<ITypedElementSelectionInterface>& InElementSelectionHandle, FTypedElementListConstRef InCurrentSelection, const ETypedElementSelectionMethod InSelectionMethod) override
     {
+        PendingContextHit = FPendingCompositeContextHit();
         const FSMInstanceManager SMInstance = SMInstanceElementDataUtil::GetSMInstanceFromHandle(InElementSelectionHandle, true);
         if (!SMInstance) return InElementSelectionHandle;
         UInstancedStaticMeshComponent* Component = SMInstance.GetISMComponent();
@@ -65,7 +85,8 @@ public:
         UTypedElementSelectionSet* Set = SelectionSet.Get();
 
         // Pooled instance: the logical owner is the pool's answer, never the
-        // service actor. The owner also learns which leaf was hit.
+        // service actor. Normal selection always selects the whole placement;
+        // only an immediately opened RMB menu consumes the raw leaf context.
         if (Cast<AMHInstancePoolActor>(Component->GetOwner()) != nullptr)
         {
             if (const UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(Component->GetWorld()))
@@ -74,7 +95,16 @@ public:
                 FString NodePath;
                 if (Pool->ReverseLookup(Component, SMInstance.GetISMInstanceIndex(), Owner, NodePath) && IsValid(Owner))
                 {
-                    if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Owner)) Composite->SelectPlacementLeafByNodePath(NodePath);
+                    if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Owner); Composite != nullptr && !GEdSelectionLock && !IsCompositeEditOpen())
+                    {
+                        Composite->ClearPlacementLeafSelection();
+                        if (InSelectionMethod == ETypedElementSelectionMethod::Primary)
+                        {
+                            PendingContextHit.Owner = Composite;
+                            PendingContextHit.LeafPath = NodePath;
+                            PendingContextHit.Frame = GFrameCounter;
+                        }
+                    }
                     const FTypedElementHandle OwnerHandle = UEngineElementsLibrary::AcquireEditorActorElementHandle(Owner);
                     return Set != nullptr ? Set->GetSelectionElement(OwnerHandle, InSelectionMethod) : OwnerHandle;
                 }
@@ -125,6 +155,17 @@ bool MHRegisterPoolInstanceSelection(UTypedElementSelectionSet& SelectionSet)
 bool MHIsPoolInstanceSelectionRegistered(const UTypedElementSelectionSet& SelectionSet)
 {
     return RegisteredSets().Contains(&SelectionSet);
+}
+
+bool MHSelectCompositeContextHit(const FTypedElementHandle& ContextHit, AMHCompositeActor& ExpectedOwner)
+{
+    const FPendingCompositeContextHit Hit = MoveTemp(PendingContextHit);
+    PendingContextHit = FPendingCompositeContextHit();
+    if (GEdSelectionLock || IsCompositeEditOpen()) return false;
+    ExpectedOwner.ClearPlacementLeafSelection();
+    if (Hit.Frame != GFrameCounter || Hit.Owner.Get() != &ExpectedOwner ||
+        ActorElementDataUtil::GetActorFromHandle(ContextHit, true) != &ExpectedOwner) return false;
+    return ExpectedOwner.SelectPlacementLeafByNodePath(Hit.LeafPath);
 }
 
 bool MHBeginEditPickedComposite(

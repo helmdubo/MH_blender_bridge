@@ -381,11 +381,13 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
   видимость актора в редакторе → `SetOwnerEditorVisibility`
   (`docs/receipts/recipe_r5b1.md`). **R5b-2** — selection-seam вьюпорта
   (клик по инстансу пула выделяет owner-композит).
-  Уточнение owner 2026-09-07: native owner selection сохраняется, но клик
-  по mesh дополнительно выбирает ближайшее содержащее composite occurrence;
+  Уточнение owner 2026-09-07: LMB выбирает весь native owner actor;
+  RMB с открытием контекстного меню дополнительно выбирает ближайшее
+  содержащее задетый mesh composite occurrence;
   подсветка ограничена его листьями. Edit Contents открывает его определение
   с выбранным authored node задетого меша. Контракт:
-  `docs/contracts/composite_drag_selection.md`.
+  `docs/contracts/composite_drag_selection.md`, уточнение кнопок —
+  `docs/contracts/composite_click_buttons.md`.
 
 ### 2.9 `Actor`-листья (R7, после capability-контракта)
 

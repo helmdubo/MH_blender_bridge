@@ -1832,6 +1832,17 @@ void MHRegisterS6ToolMenus()
                         return;
                     }
                 }
+                // UE invokes this synchronously for RMB, after resolving the
+                // pooled hit to the owner. LMB never consumes the pending hit.
+                if (Subsystem == nullptr || !Subsystem->IsEditingComposite())
+                {
+                    const ULevelEditorContextMenuContext* Context = DynamicMenu->FindContext<ULevelEditorContextMenuContext>();
+                    if (Context != nullptr && Context->ContextType == ELevelEditorMenuContext::Viewport && Actors.Num() == 1)
+                    {
+                        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Actors[0].Get()))
+                            UE::MimirComposite::MHSelectCompositeContextHit(Context->HitProxyElement, *Composite);
+                    }
+                }
                 FToolMenuSection& Section = DynamicMenu->AddSection(TEXT("MHCompositeOptions"));
                 Section.AddSubMenu(
                     TEXT("MHCompositeOptionsSubMenu"),

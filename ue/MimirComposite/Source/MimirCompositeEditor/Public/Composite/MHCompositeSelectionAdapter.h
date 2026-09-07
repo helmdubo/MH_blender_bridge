@@ -4,6 +4,7 @@
 
 class UTypedElementSelectionSet;
 class AMHCompositeActor;
+struct FTypedElementHandle;
 
 namespace UE::MimirComposite
 {
@@ -18,6 +19,10 @@ namespace UE::MimirComposite
  */
 MIMIRCOMPOSITEEDITOR_API bool MHRegisterPoolInstanceSelection(UTypedElementSelectionSet& SelectionSet);
 MIMIRCOMPOSITEEDITOR_API bool MHIsPoolInstanceSelectionRegistered(const UTypedElementSelectionSet& SelectionSet);
+
+/** Consumes the same-frame viewport hit when UE opens its RMB context menu. */
+MIMIRCOMPOSITEEDITOR_API bool MHSelectCompositeContextHit(
+    const FTypedElementHandle& ContextHit, AMHCompositeActor& ExpectedOwner);
 
 /** Opens the clicked leaf's nearest composite occurrence and selects its authored owner. */
 MIMIRCOMPOSITEEDITOR_API bool MHBeginEditPickedComposite(
