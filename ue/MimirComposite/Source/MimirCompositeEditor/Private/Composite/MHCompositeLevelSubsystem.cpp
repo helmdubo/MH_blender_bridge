@@ -1541,10 +1541,31 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     const FString OriginalRootName = OriginalRoot != nullptr ? OriginalRoot->LogicalName : FString();
 
     // Source boundary: new definitions are published and, for the parent
-    // scope, the shared parent is overwritten; UE Undo cannot cross it.
-    Root->SetPlacementEditMode(false);
-    ResetEditSession();
-    GEditor->ResetTransaction(INVTEXT("MH Composite Save Unique cannot be undone"));
+    // scope, the shared parent is overwritten; UE Undo cannot cross it. The
+    // legacy path crosses it here; a CE-backend session (CE-5b) only once
+    // the batch succeeded — a failure keeps the session and its draft.
+    if (!bSessionEdit)
+    {
+        Root->SetPlacementEditMode(false);
+        ResetEditSession();
+        GEditor->ResetTransaction(INVTEXT("MH Composite Save Unique cannot be undone"));
+    }
+    auto CloseSessionAfterSuccess = [this]()
+    {
+        LastPublishOutcome = EMHCompositePublishOutcome::Succeeded;
+        if (EditSession == nullptr) return;
+        ResetEditSession();
+        if (GEditor != nullptr) GEditor->ResetTransaction(INVTEXT("MH Composite Save Unique cannot be undone"));
+    };
+    auto KeepSessionAfterFailure = [this, &OutWarnings](const bool bPartial)
+    {
+        LastPublishOutcome = bPartial ? EMHCompositePublishOutcome::PartialBatch : EMHCompositePublishOutcome::NoExternalChange;
+        if (EditSession == nullptr) return;
+        OutWarnings.Add(bPartial
+            ? TEXT("MH_W_PARTIAL_BATCH: some unique copies were created before the failure (listed above); the session stays open — retry with new names or cancel")
+            : TEXT("MH_W_NO_EXTERNAL_CHANGE: nothing was created; the session and its draft stay — fix the cause and save again"));
+        EditSession->RefreshProjection();
+    };
 
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
@@ -1570,6 +1591,7 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
         {
             OutWarnings.Add(FString::Printf(TEXT("composite:%s was created and is not invoked by anything yet"), *Orphan->LogicalName));
         }
+        KeepSessionAfterFailure(!Created.IsEmpty());
         Root->RebuildComposite();
         return false;
     }
@@ -1589,6 +1611,8 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
             OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: the invocation slot vanished while rewiring composite:") + ChainDocuments[0].Asset->LogicalName;
         }
         if (!bPublished) OutWarnings.Add(FString::Printf(TEXT("composite:%s was created and is not invoked by anything"), *Created[0]->LogicalName));
+        if (bPublished) CloseSessionAfterSuccess();
+        else KeepSessionAfterFailure(true);
         Root->RebuildComposite();
         return bPublished;
     }
@@ -1602,6 +1626,7 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
         Context.AppearanceBoundary = OriginalRootName;
         Root->SetCallContext(Context);
     }
+    CloseSessionAfterSuccess();
     Root->SetCompositeAsset(Created.Last());
     return true;
 }
