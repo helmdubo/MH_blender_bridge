@@ -66,12 +66,24 @@ public:
     const TArray<uint8>& GetOriginalBytes() const { return OriginalBytes; }
     UMHCompositeEditDocument* GetDraft() const { return Draft; }
 
+    /** CE-I2 semantic selection: ordered session node identities, independent of component lifetime. */
+    const TArray<FGuid>& GetSelectedNodeIds() const { return SelectedNodeIds; }
+    FGuid GetActiveNodeId() const { return ActiveNodeId; }
+    void SetSelectedNodeIds(const TArray<FGuid>& NodeIds, const FGuid& ActiveNodeId = FGuid());
+    FSimpleMulticastDelegate OnSelectionChanged;
+    /** Successful authoring changes, including Undo/Redo restoration. */
+    FSimpleMulticastDelegate OnChanged;
+    /** Most recent projection refresh failure; cleared by the next successful refresh. */
+    const FString& GetPreviewError() const { return PreviewError; }
+
     /** CE-2b: the edit projection of the selected occurrence; null for root sessions or the legacy backend. */
     UMHCompositeEditProjection* GetProjection() const { return Projection; }
     bool OpenProjection(FString& OutError);
     void CloseProjection();
 
-    /** Authoring command on the draft; refused when the session is closed. */
+    /** Atomic authoring command on the draft; refused when any target is invalid or procedural. */
+    bool SetNodeTransforms(const TArray<FGuid>& NodeIds, const TArray<FTransform>& LocalTransforms, FString& OutError);
+    /** Single-target compatibility route. */
     bool SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError);
     /** CE-4b1 structural commands on the draft (see UMHCompositeEditDocument); the projection follows each one. */
     FGuid AddNode(const FGuid& ParentId, EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError);
@@ -95,6 +107,11 @@ public:
     bool SyncDraftFromLegacyEdit(FString& OutError);
 
 private:
+    /** Removes identities that no longer exist and preserves the active id when possible. */
+    void PruneSelection();
+    /** One derived refresh and one authoring notification per command. */
+    void FinishAuthoringCommand(bool bStructureChanged = false);
+
     UPROPERTY()
     TObjectPtr<UMHCompositeEditDocument> Draft;
     UPROPERTY()
@@ -119,6 +136,10 @@ private:
     TWeakObjectPtr<UWorld> EditorWorld;
     UE::MimirComposite::FMHCompositeDocument Original;
     TArray<uint8> OriginalBytes;
+    TArray<FGuid> SelectedNodeIds;
+    FGuid ActiveNodeId;
+    FString PreviewError;
     mutable uint64 DirtySerial = 0;
     mutable bool bDirtyCached = false;
+    mutable bool bDirtyCacheValid = false;
 };

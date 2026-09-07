@@ -6,6 +6,7 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
@@ -22,6 +23,62 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeEditProjection)
 
 using namespace UE::MimirComposite;
+
+namespace
+{
+
+void RetireProjectionComponent(USceneComponent* Component)
+{
+    if (!IsValid(Component)) return;
+    if (GEditor != nullptr && GEditor->GetSelectedComponents()->IsSelected(Component))
+    {
+        GEditor->SelectComponent(Component, false, false, true);
+    }
+    Component->DestroyComponent();
+}
+
+/** Maps a resolved visual path to the authoring path in the current definition. */
+FString AuthoringPathForVisual(const FString& Origin, const FString& DefinitionPrefix)
+{
+    if (!Origin.StartsWith(DefinitionPrefix, ESearchCase::CaseSensitive)) return FString();
+    FString Path = Origin;
+    const int32 DefinitionBoundary = Path.Find(TEXT(">"), ESearchCase::CaseSensitive, ESearchDir::FromStart, DefinitionPrefix.Len());
+    if (DefinitionBoundary != INDEX_NONE) Path = Path.Left(DefinitionBoundary);
+    const int32 OptionBoundary = Path.Find(TEXT("/options["), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+    if (OptionBoundary != INDEX_NONE) Path = Path.Left(OptionBoundary);
+    return Path;
+}
+
+} // namespace
+
+UMHCompositeEditMeshComponent::UMHCompositeEditMeshComponent()
+{
+#if WITH_EDITOR
+    SelectionOverrideDelegate.BindUObject(this, &UMHCompositeEditMeshComponent::IsEditIndividuallySelected);
+#endif
+}
+
+void UMHCompositeEditMeshComponent::SetEditSelected(const bool bSelected)
+{
+    if (bEditSelected == bSelected) return;
+    bEditSelected = bSelected;
+#if WITH_EDITOR
+    PushSelectionToProxy();
+#endif
+}
+
+bool UMHCompositeEditMeshComponent::ShouldRenderSelected() const
+{
+    // UPrimitiveComponent normally inherits its owner's selection.  All edit
+    // visuals share one selected projection actor, so that would outline every
+    // sibling.  Logical node selection is the sole rendering authority here.
+    return bEditSelected;
+}
+
+bool UMHCompositeEditMeshComponent::IsEditIndividuallySelected(const UPrimitiveComponent* Component) const
+{
+    return Component == this && bEditSelected;
+}
 
 AMHCompositeEditProjectionActor::AMHCompositeEditProjectionActor()
 {
@@ -81,6 +138,9 @@ bool UMHCompositeEditProjection::Open(UMHCompositeEditSession& InSession, FStrin
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the edit projection actor could not be spawned");
         return false;
     }
+    // SpawnActor(Location, Rotation) does not carry occurrence scale.  Keep the
+    // projection pivot on the complete occurrence frame used by its nodes.
+    Actor->SetActorTransform(Pivot, false, nullptr, ETeleportType::TeleportPhysics);
     Actor->SetActorLabel(TEXT("MH Edit: ") + Edited->LogicalName);
     ProjectionActor = Actor;
     if (!Refresh(OutError))
@@ -170,7 +230,7 @@ USceneComponent* UMHCompositeEditProjection::PlaceComponent(const FString& Origi
     USceneComponent* Component = ComponentsByOrigin.FindRef(Origin).Get();
     if (!IsValid(Component) || Component->GetClass() != Class)
     {
-        if (IsValid(Component)) Component->DestroyComponent();
+        RetireProjectionComponent(Component);
         Component = NewObject<USceneComponent>(Actor, Class, MakeUniqueObjectName(Actor, Class, TEXT("MH_EditNode")), RF_Transient);
         Actor->AddInstanceComponent(Component);
         Component->ComponentTags.Add(FName(*(TEXT("MHEdit.Origin:") + Origin)));
@@ -200,10 +260,15 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
     // Frozen seeds and call context of the placement: the draft is shown
     // exactly as this placement would show it after a save.
     if (!MHResolvePreviewGraph(Graph, Owner->GetFrozenSeed(), Owner->GetFrozenAppearanceSeed(), Owner->GetCallContext().ToResolveContext(), *NextPlan, OutError)) return false;
+    // Admission precedes every component mutation. In particular, a parent
+    // gesture may make an otherwise valid descendant matrix sheared or
+    // singular even when the directly edited node still decomposes cleanly.
+    if (!MHValidateResolvedPlacementTransforms(*NextPlan, Root->GetActorTransform(), OutError)) return false;
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
     UMHEndpointPrototypeRegistry* Endpoints = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHEndpointPrototypeRegistry>() : nullptr;
     const FMatrix Basis = Root->GetActorTransform().ToMatrixWithScale();
     TSet<FString> Live;
+    TArray<TObjectPtr<USceneComponent>> NextComponents;
     // Mesh leaves: the mesh itself with the placement's appearance channels.
     for (const FMHResolvedCompositeLeaf& Leaf : NextPlan->Leaves)
     {
@@ -217,7 +282,7 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
             bool bPlaceholder = false;
             FString ResolveError;
             UStaticMesh* Mesh = Endpoints->ResolveMeshForPreview(Key, *Settings, bPlaceholder, ResolveError);
-            USceneComponent* Component = PlaceComponent(Leaf.Origin, UStaticMeshComponent::StaticClass(), Leaf.WorldMatrix * Basis,
+            USceneComponent* Component = PlaceComponent(Leaf.Origin, UMHCompositeEditMeshComponent::StaticClass(), Leaf.WorldMatrix * Basis,
                 [](USceneComponent& New)
                 {
                     UStaticMeshComponent& MeshComponent = static_cast<UStaticMeshComponent&>(New);
@@ -225,6 +290,7 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
                     MeshComponent.SetCanEverAffectNavigation(false);
                     MeshComponent.SetHiddenInGame(true);
                 });
+            if (Component != nullptr) NextComponents.AddUnique(Component);
             if (UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(Component))
             {
                 if (MeshComponent->GetStaticMesh() != Mesh) MeshComponent->SetStaticMesh(Mesh);
@@ -233,7 +299,10 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
         }
         else
         {
-            PlaceComponent(Leaf.Origin, USceneComponent::StaticClass(), Leaf.WorldMatrix * Basis, nullptr);
+            if (USceneComponent* Component = PlaceComponent(Leaf.Origin, USceneComponent::StaticClass(), Leaf.WorldMatrix * Basis, nullptr))
+            {
+                NextComponents.AddUnique(Component);
+            }
         }
     }
     // Structural nodes (group, random, nested reference, actor, empty): a handle at the node.
@@ -245,20 +314,68 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
         // maps to the reference node, nothing below its '>' gets a handle.
         if (Node.NodePath.Mid(DefinitionPrefix.Len()).Contains(TEXT(">"))) continue;
         Live.Add(Node.NodePath);
-        PlaceComponent(Node.NodePath, USceneComponent::StaticClass(), Node.WorldMatrix * Basis, nullptr);
+        if (USceneComponent* Component = PlaceComponent(Node.NodePath, USceneComponent::StaticClass(), Node.WorldMatrix * Basis, nullptr))
+        {
+            NextComponents.AddUnique(Component);
+        }
     }
     // Retire components whose origin is gone.
     for (auto It = ComponentsByOrigin.CreateIterator(); It; ++It)
     {
         if (Live.Contains(It.Key())) continue;
-        if (USceneComponent* Stale = It.Value().Get()) Stale->DestroyComponent();
+        RetireProjectionComponent(It.Value().Get());
         It.RemoveCurrent();
     }
-    Components.Reset();
-    for (const TPair<FString, TWeakObjectPtr<USceneComponent>>& Pair : ComponentsByOrigin)
+    // Build the frame and visual-binding tables from this exact resolved plan
+    // and the current session ids.  Queries never reinterpret an origin using
+    // a later draft selector, which is essential when origins/components are
+    // reused after reorder or deletion.
+    TMap<FString, FGuid> IdByAuthoringPath;
+    TMap<FGuid, FMHCompositeEditNodeFrame> NextFrames;
+    TMap<FGuid, TWeakObjectPtr<USceneComponent>> NextFrameComponents;
+    TMap<TWeakObjectPtr<USceneComponent>, FGuid> NextBindings;
+    const UMHCompositeEditDocument* Draft = Owner->GetDraft();
+    if (Draft != nullptr)
     {
-        if (USceneComponent* Component = Pair.Value.Get()) Components.Add(Component);
+        for (int32 DraftIndex = 0; DraftIndex < Draft->Num(); ++DraftIndex)
+        {
+            const FGuid NodeId = Draft->GetNodeId(DraftIndex);
+            const FString NodePath = DefinitionPrefix + Draft->GetSelector(DraftIndex);
+            if (!NodeId.IsValid() || NodePath == DefinitionPrefix) continue;
+            IdByAuthoringPath.Add(NodePath, NodeId);
+            const FMHResolvedCompositeNode* Resolved = NextPlan->Nodes.FindByPredicate(
+                [&NodePath](const FMHResolvedCompositeNode& Candidate)
+                {
+                    return Candidate.NodePath == NodePath;
+                });
+            if (Resolved == nullptr) continue;
+            FMHCompositeEditNodeFrame& Frame = NextFrames.Add(NodeId);
+            Frame.NodeId = NodeId;
+            Frame.ParentNodeId = Draft->GetParentId(NodeId);
+            const FMHCompositeAssetNode& DraftNode = Draft->GetNodes()[DraftIndex];
+            Frame.AuthoredLocal = DraftNode.Transform;
+            Frame.WorldMatrix = Resolved->WorldMatrix * Basis;
+            Frame.ParentWorldMatrix = NextPlan->Nodes.IsValidIndex(Resolved->ParentResolvedNodeIndex)
+                ? NextPlan->Nodes[Resolved->ParentResolvedNodeIndex].WorldMatrix * Basis
+                : Basis;
+            Frame.bGeneratedTransform = !DraftNode.Profile.IsEmpty() || DraftNode.bHasInlinePlacement;
+        }
+        for (const TPair<FString, TWeakObjectPtr<USceneComponent>>& Pair : ComponentsByOrigin)
+        {
+            USceneComponent* Component = Pair.Value.Get();
+            if (!IsValid(Component)) continue;
+            const FGuid NodeId = IdByAuthoringPath.FindRef(AuthoringPathForVisual(Pair.Key, DefinitionPrefix));
+            if (!NodeId.IsValid() || !NextFrames.Contains(NodeId)) continue;
+            NextBindings.Add(Component, NodeId);
+            const FString* ExactPath = IdByAuthoringPath.FindKey(NodeId);
+            if (ExactPath != nullptr && Pair.Key == *ExactPath) NextFrameComponents.Add(NodeId, Component);
+        }
     }
+    Components = MoveTemp(NextComponents);
+    NodeIdByComponent = MoveTemp(NextBindings);
+    NodeFrames = MoveTemp(NextFrames);
+    FrameComponentByNodeId = MoveTemp(NextFrameComponents);
+    UpdateSelection(Owner->GetSelectedNodeIds());
     PushEditingTint();
     Plan = NextPlan;
     return true;
@@ -280,18 +397,21 @@ void UMHCompositeEditProjection::Close()
         // selection set would keep dangling element references.
         if (GEditor != nullptr)
         {
-            USelection* SelectedComponents = GEditor->GetSelectedComponents();
-            for (const TObjectPtr<USceneComponent>& Component : Components)
-            {
-                if (IsValid(Component) && SelectedComponents != nullptr && SelectedComponents->IsSelected(Component)) GEditor->SelectComponent(Component, false, false, true);
-            }
-            if (Actor->IsSelected()) GEditor->SelectActor(Actor, false, true, true);
+            TArray<UActorComponent*> Selected;
+            GEditor->GetSelectedComponents()->GetSelectedObjects(Selected);
+            // Clear the unified set atomically: a restored Undo snapshot can
+            // contain retired components whose owner is no longer selected.
+            if (Actor->IsSelected() || Selected.ContainsByPredicate([Actor](const UActorComponent* Component) { return Component->GetOwner() == Actor; }))
+                GEditor->SelectNone(true, true, false);
         }
         if (UWorld* World = Actor->GetWorld()) World->DestroyActor(Actor);
         else Actor->Destroy();
     }
     ProjectionActor.Reset();
     ComponentsByOrigin.Reset();
+    NodeIdByComponent.Reset();
+    NodeFrames.Reset();
+    FrameComponentByNodeId.Reset();
     Components.Reset();
     Plan.Reset();
 }
@@ -308,20 +428,12 @@ FString UMHCompositeEditProjection::GetOriginForComponent(const USceneComponent*
 
 FGuid UMHCompositeEditProjection::GetNodeIdForComponent(const USceneComponent* Component) const
 {
-    const UMHCompositeEditSession* Owner = Session.Get();
-    const UMHCompositeEditDocument* Draft = Owner != nullptr ? Owner->GetDraft() : nullptr;
-    const FString Origin = GetOriginForComponent(Component);
-    if (Draft == nullptr || !Origin.StartsWith(DefinitionPrefix)) return FGuid();
-    // Inside the edited definition: "nodes[1]/children[0]" or, for a leaf
-    // picked by a random node, ".../options[k]" (the random node owns it).
-    // Anything below a nested reference (">") belongs to that reference node.
-    FString Selector = Origin.Mid(DefinitionPrefix.Len());
-    int32 Nested = INDEX_NONE;
-    if (Selector.FindChar(TEXT('>'), Nested)) Selector = Selector.Left(Nested);
-    int32 Options = INDEX_NONE;
-    if (Selector.FindLastChar(TEXT('/'), Options) && Selector.Mid(Options + 1).StartsWith(TEXT("options["))) Selector = Selector.Left(Options);
-    const int32 Index = Draft->FindNodeIndexBySelector(Selector);
-    return Index != INDEX_NONE ? Draft->GetNodeId(Index) : FGuid();
+    if (Component == nullptr) return FGuid();
+    for (const TPair<TWeakObjectPtr<USceneComponent>, FGuid>& Pair : NodeIdByComponent)
+    {
+        if (Pair.Key.Get() == Component) return Pair.Value;
+    }
+    return FGuid();
 }
 
 void UMHCompositeEditProjection::PushEditingTint()
@@ -346,24 +458,10 @@ void UMHCompositeEditProjection::PushEditingTint()
 
 bool UMHCompositeEditProjection::GetParentWorldForComponent(const USceneComponent* Component, FTransform& OutParentWorld) const
 {
-    const UMHCompositeEditSession* Owner = Session.Get();
-    const AMHCompositeActor* Root = Owner != nullptr ? Owner->GetRootPlacement() : nullptr;
-    if (Root == nullptr || !Plan.IsValid()) return false;
-    // The session node of a leaf picked by a random node is the random node.
-    FString NodePath = GetOriginForComponent(Component);
-    if (NodePath.IsEmpty()) return false;
-    int32 Options = INDEX_NONE;
-    if (NodePath.FindLastChar(TEXT('/'), Options) && NodePath.Mid(Options + 1).StartsWith(TEXT("options["))) NodePath = NodePath.Left(Options);
-    const FMatrix Basis = Root->GetActorTransform().ToMatrixWithScale();
-    for (const UE::MimirComposite::FMHResolvedCompositeNode& Node : Plan->Nodes)
-    {
-        if (Node.NodePath != NodePath) continue;
-        OutParentWorld = Plan->Nodes.IsValidIndex(Node.ParentResolvedNodeIndex)
-            ? FTransform(Plan->Nodes[Node.ParentResolvedNodeIndex].WorldMatrix * Basis)
-            : FTransform(Basis);
-        return true;
-    }
-    return false;
+    FMHCompositeEditNodeFrame Frame;
+    if (!GetNodeFrame(GetNodeIdForComponent(Component), Frame)) return false;
+    OutParentWorld = FTransform(Frame.ParentWorldMatrix);
+    return true;
 }
 
 USceneComponent* UMHCompositeEditProjection::FindComponentForOrigin(const FString& Origin) const
@@ -374,9 +472,72 @@ USceneComponent* UMHCompositeEditProjection::FindComponentForOrigin(const FStrin
 
 USceneComponent* UMHCompositeEditProjection::FindComponentForNodeId(const FGuid& NodeId) const
 {
+    USceneComponent* Component = FrameComponentByNodeId.FindRef(NodeId).Get();
+    return IsValid(Component) ? Component : nullptr;
+}
+
+bool UMHCompositeEditProjection::GetNodeFrame(const FGuid& NodeId, FMHCompositeEditNodeFrame& OutFrame) const
+{
+    const FMHCompositeEditNodeFrame* Frame = NodeFrames.Find(NodeId);
+    if (Frame == nullptr) return false;
+    OutFrame = *Frame;
+    return true;
+}
+
+TArray<USceneComponent*> UMHCompositeEditProjection::GetComponentsForNodeId(const FGuid& NodeId, const bool bIncludeDescendants) const
+{
+    TArray<USceneComponent*> Result;
+    if (!NodeFrames.Contains(NodeId)) return Result;
+    auto IsRequestedNode = [this, &NodeId, bIncludeDescendants](FGuid Candidate)
+    {
+        if (Candidate == NodeId) return true;
+        if (!bIncludeDescendants) return false;
+        TSet<FGuid> Visited;
+        while (Candidate.IsValid() && !Visited.Contains(Candidate))
+        {
+            Visited.Add(Candidate);
+            const FMHCompositeEditNodeFrame* Frame = NodeFrames.Find(Candidate);
+            if (Frame == nullptr) return false;
+            Candidate = Frame->ParentNodeId;
+            if (Candidate == NodeId) return true;
+        }
+        return false;
+    };
     for (const TObjectPtr<USceneComponent>& Component : Components)
     {
-        if (IsValid(Component) && GetNodeIdForComponent(Component) == NodeId) return Component;
+        if (!IsValid(Component)) continue;
+        const FGuid BoundId = GetNodeIdForComponent(Component);
+        if (IsRequestedNode(BoundId)) Result.Add(Component);
     }
-    return nullptr;
+    return Result;
+}
+
+bool UMHCompositeEditProjection::GetNodeBounds(const FGuid& NodeId, FBox& OutBounds) const
+{
+    if (!NodeFrames.Contains(NodeId)) return false;
+    FBox Bounds(ForceInit);
+    for (USceneComponent* Component : GetComponentsForNodeId(NodeId, true))
+    {
+        const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component);
+        if (Primitive != nullptr && Primitive->IsRegistered()) Bounds += Primitive->Bounds.GetBox();
+    }
+    if (!Bounds.IsValid) return false;
+    OutBounds = Bounds;
+    return true;
+}
+
+void UMHCompositeEditProjection::UpdateSelection(const TArray<FGuid>& NodeIds)
+{
+    TSet<USceneComponent*> SelectedVisuals;
+    for (const FGuid& NodeId : NodeIds)
+    {
+        for (USceneComponent* Component : GetComponentsForNodeId(NodeId, true)) SelectedVisuals.Add(Component);
+    }
+    for (const TObjectPtr<USceneComponent>& Component : Components)
+    {
+        if (UMHCompositeEditMeshComponent* Mesh = Cast<UMHCompositeEditMeshComponent>(Component.Get()))
+        {
+            Mesh->SetEditSelected(SelectedVisuals.Contains(Mesh));
+        }
+    }
 }

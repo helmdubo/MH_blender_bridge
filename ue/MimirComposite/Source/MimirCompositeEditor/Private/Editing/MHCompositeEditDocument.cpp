@@ -1,5 +1,7 @@
 #include "Editing/MHCompositeEditDocument.h"
 
+#include "Composite/MHCompositeTransformAdmission.h"
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeEditDocument)
 
 using namespace UE::MimirComposite;
@@ -103,20 +105,102 @@ FString UMHCompositeEditDocument::GetSelector(const int32 Index) const
     return FString::Join(Segments, TEXT("/"));
 }
 
-bool UMHCompositeEditDocument::SetNodeTransform(const FGuid& Id, const FTransform& LocalTransform, FString& OutError)
+bool UMHCompositeEditDocument::ValidateAuthoredTransform(const FTransform& LocalTransform, FString& OutError)
 {
-    const int32 Index = FindNodeIndex(Id);
-    if (Index == INDEX_NONE)
+    OutError.Reset();
+    const FVector Translation = LocalTransform.GetTranslation();
+    const FVector Scale = LocalTransform.GetScale3D();
+    const FQuat Rotation = LocalTransform.GetRotation();
+    const FVector3f Translation32(Translation);
+    const FVector3f Scale32(Scale);
+    const FQuat4f Rotation32(Rotation);
+    const bool bFinite =
+        FMath::IsFinite(Translation.X) && FMath::IsFinite(Translation.Y) && FMath::IsFinite(Translation.Z) &&
+        FMath::IsFinite(Scale.X) && FMath::IsFinite(Scale.Y) && FMath::IsFinite(Scale.Z) &&
+        FMath::IsFinite(Rotation.X) && FMath::IsFinite(Rotation.Y) &&
+        FMath::IsFinite(Rotation.Z) && FMath::IsFinite(Rotation.W) &&
+        FMath::IsFinite(Translation32.X) && FMath::IsFinite(Translation32.Y) && FMath::IsFinite(Translation32.Z) &&
+        FMath::IsFinite(Scale32.X) && FMath::IsFinite(Scale32.Y) && FMath::IsFinite(Scale32.Z) &&
+        FMath::IsFinite(Rotation32.X) && FMath::IsFinite(Rotation32.Y) &&
+        FMath::IsFinite(Rotation32.Z) && FMath::IsFinite(Rotation32.W);
+    if (!bFinite)
     {
-        OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: unknown session node");
+        OutError = TEXT("MH_E_NAN_INF_VALUE: writer received non-finite transform");
         return false;
     }
-    // Modify() first: the reflected draft joins the open transaction as a whole.
+    if (Scale32.X == 0.0f || Scale32.Y == 0.0f || Scale32.Z == 0.0f)
+    {
+        OutError = TEXT("MH_E_INVALID_SCALE: composite scale components must be non-zero");
+        return false;
+    }
+    if (!Rotation.IsNormalized() || !Rotation32.IsNormalized())
+    {
+        OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: transform rotation_quat must be normalized");
+        return false;
+    }
+    if (!MHIsRepresentableTransformMatrix(LocalTransform.ToMatrixWithScale()))
+    {
+        OutError = TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: authored local transform cannot round-trip through FTransform within 8 float32 ULP");
+        return false;
+    }
+    return true;
+}
+
+bool UMHCompositeEditDocument::SetNodeTransforms(const TArray<FGuid>& Ids, const TArray<FTransform>& LocalTransforms, FString& OutError)
+{
+    OutError.Reset();
+    if (Ids.Num() != LocalTransforms.Num())
+    {
+        OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: transform target and value counts differ");
+        return false;
+    }
+    TArray<int32> Indices;
+    Indices.Reserve(Ids.Num());
+    TSet<FGuid> Seen;
+    bool bChanged = false;
+    for (int32 Target = 0; Target < Ids.Num(); ++Target)
+    {
+        const int32 Index = FindNodeIndex(Ids[Target]);
+        if (Index == INDEX_NONE)
+        {
+            OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: unknown session node");
+            return false;
+        }
+        if (Seen.Contains(Ids[Target]))
+        {
+            OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: duplicate transform target");
+            return false;
+        }
+        Seen.Add(Ids[Target]);
+        if (!Nodes[Index].Profile.IsEmpty() || Nodes[Index].bHasInlinePlacement)
+        {
+            OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: procedural profile/p2 transform cannot be changed by an ordinary transform command");
+            return false;
+        }
+        if (!ValidateAuthoredTransform(LocalTransforms[Target], OutError)) return false;
+        Indices.Add(Index);
+        bChanged |= !Nodes[Index].Transform.Equals(LocalTransforms[Target], 0.0);
+    }
+    if (!bChanged) return true;
+
+    // Every target has passed admission. The reflected draft joins the open
+    // transaction once and readers can never observe a partially applied batch.
     Modify();
-    Nodes[Index].Transform = LocalTransform;
+    for (int32 Target = 0; Target < Indices.Num(); ++Target)
+    {
+        if (!Nodes[Indices[Target]].Transform.Equals(LocalTransforms[Target], 0.0))
+        {
+            Nodes[Indices[Target]].Transform = LocalTransforms[Target];
+        }
+    }
     ++Revision;
     MarkChanged();
     return true;
+}
+
+bool UMHCompositeEditDocument::SetNodeTransform(const FGuid& Id, const FTransform& LocalTransform, FString& OutError)
+{
+    return SetNodeTransforms({Id}, {LocalTransform}, OutError);
 }
 
 namespace

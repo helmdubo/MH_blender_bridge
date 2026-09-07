@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Composite/MHInstancePool.h"
+#include "Components/StaticMeshComponent.h"
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Misc/Guid.h"
@@ -13,6 +14,38 @@ class UMHCompositeEditSession;
 class FPrimitiveSceneProxy;
 class UPrimitiveComponent;
 class USceneComponent;
+
+/**
+ * The single authoring frame for one session node.  Visual components are
+ * explicitly bound to this identity when a projection refresh succeeds; the
+ * frame therefore remains coherent even when an origin is reused after a
+ * structural edit.
+ */
+struct MIMIRCOMPOSITEEDITOR_API FMHCompositeEditNodeFrame
+{
+    FGuid NodeId;
+    FGuid ParentNodeId;
+    FTransform AuthoredLocal = FTransform::Identity;
+    FMatrix WorldMatrix = FMatrix::Identity;
+    FMatrix ParentWorldMatrix = FMatrix::Identity;
+    bool bGeneratedTransform = false;
+};
+
+/** Mesh visual whose outline follows logical edit selection only. */
+UCLASS(Transient, NotBlueprintable)
+class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditMeshComponent final : public UStaticMeshComponent
+{
+    GENERATED_BODY()
+
+public:
+    UMHCompositeEditMeshComponent();
+    void SetEditSelected(bool bSelected);
+    virtual bool ShouldRenderSelected() const override;
+
+private:
+    bool IsEditIndividuallySelected(const UPrimitiveComponent* Component) const;
+    bool bEditSelected = false;
+};
 
 /**
  * CE-2b (docs/contracts/composite_edit_ce0.md, spec §5.4–5.5): the one
@@ -60,8 +93,16 @@ public:
     FString GetOriginForComponent(const USceneComponent* Component) const;
     /** Session node the component belongs to: the leaf's node, or the random node that picked it. */
     FGuid GetNodeIdForComponent(const USceneComponent* Component) const;
-    /** First component of a session node (its leaf, or its handle). */
+    /** The deterministic component at the authored node's exact structural frame. */
     USceneComponent* FindComponentForNodeId(const FGuid& NodeId) const;
+    /** The authoring frame built from the exact current-definition node in the resolved plan. */
+    bool GetNodeFrame(const FGuid& NodeId, FMHCompositeEditNodeFrame& OutFrame) const;
+    /** Visuals bound to this node; optionally includes visuals of authored descendants. */
+    TArray<USceneComponent*> GetComponentsForNodeId(const FGuid& NodeId, bool bIncludeDescendants = false) const;
+    /** Bounds of all primitive visuals relevant to this logical node. */
+    bool GetNodeBounds(const FGuid& NodeId, FBox& OutBounds) const;
+    /** Updates mesh outlines from the logical selection (groups include their descendants). */
+    void UpdateSelection(const TArray<FGuid>& NodeIds);
     /** CE-3b: the component at a plan origin (a Composite Outliner row's node path); null when the origin is not projected. */
     USceneComponent* FindComponentForOrigin(const FString& Origin) const;
     /** CE-4a: world transform of the session node's parent (the occurrence for top-level nodes) — the frame a local transform is authored in. */
@@ -91,6 +132,10 @@ private:
     TWeakObjectPtr<UMHCompositeEditSession> Session;
     TWeakObjectPtr<AMHCompositeEditProjectionActor> ProjectionActor;
     TMap<FString, TWeakObjectPtr<USceneComponent>> ComponentsByOrigin;
+    /** Successful-refresh bindings. Never inferred from the current draft during a query. */
+    TMap<TWeakObjectPtr<USceneComponent>, FGuid> NodeIdByComponent;
+    TMap<FGuid, FMHCompositeEditNodeFrame> NodeFrames;
+    TMap<FGuid, TWeakObjectPtr<USceneComponent>> FrameComponentByNodeId;
     /** Scene proxies that already carry the editing state (CE-3b). */
     TMap<TWeakObjectPtr<const UPrimitiveComponent>, const FPrimitiveSceneProxy*> TintedProxies;
     TSharedPtr<UE::MimirComposite::FMHResolvedCompositePlan> Plan;
