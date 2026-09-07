@@ -116,17 +116,20 @@ bool FMHEditProceduralCommandsTest::RunTest(const FString& Parameters)
         const FScopedTransaction Transaction(INVTEXT("CE-4b3 test: add random"));
         Pick = Session->AddRandomNode(FGuid(), TEXT("pick2"), FTransform(FVector(0.0, 0.0, 120.0)), {MakeOption(EMHCompositeOptionKind::Mesh, F.MeshC, 1.0f), MakeOption(EMHCompositeOptionKind::Empty, FString(), 1.0f)}, Error);
     }
-    bPassed &= TestTrue(TEXT("add random: ") + Error, Pick.IsValid());
+    // No node of ours: nothing below (nor the Undo at the end) is about us.
+    if (!TestTrue(TEXT("add random: ") + Error, Pick.IsValid())) return false;
     bPassed &= TestEqual(TEXT("add random: five nodes"), Draft->Num(), 5);
     bPassed &= TestTrue(TEXT("add random: a random node with two options at the root"), NodeOf(*Draft, Pick) != nullptr && NodeOf(*Draft, Pick)->Kind == EMHCompositeNodeKind::Random && NodeOf(*Draft, Pick)->Options.Num() == 2 && NodeOf(*Draft, Pick)->ParentIndex == INDEX_NONE);
-    bPassed &= TestEqual(TEXT("add random: selector"), Draft->GetSelector(Draft->FindNodeIndex(Pick)), FString(TEXT("nodes[4]")));
-    bPassed &= TestNotNull(TEXT("add random: the node has a handle"), Projection->FindComponentForOrigin(Prefix + TEXT("nodes[4]")));
+    // Three roots before (plain, group, random): the new root is nodes[3].
+    const FString PickSelector = Draft->GetSelector(Draft->FindNodeIndex(Pick));
+    bPassed &= TestEqual(TEXT("add random: selector"), PickSelector, FString(TEXT("nodes[3]")));
+    bPassed &= TestNotNull(TEXT("add random: the node has a handle"), Projection->FindComponentForOrigin(Prefix + PickSelector));
     {
         const FScopedTransaction Transaction(INVTEXT("CE-4b3 test: options"));
         bPassed &= TestTrue(TEXT("options: ") + Error, Session->SetNodeOptions(Pick, {MakeOption(EMHCompositeOptionKind::Mesh, F.MeshA, 2.0f)}, Error));
     }
     bPassed &= TestTrue(TEXT("options: the draft carries one option"), NodeOf(*Draft, Pick)->Options.Num() == 1 && FMath::IsNearlyEqual(NodeOf(*Draft, Pick)->Options[0].Weight, 2.0f));
-    bPassed &= TestTrue(TEXT("options: the only option is picked and projected as mesh A"), ProjectedMesh(*Projection, Prefix + TEXT("nodes[4]/options[0]")) == F.MeshAssetA);
+    bPassed &= TestTrue(TEXT("options: the only option is picked and projected as mesh A"), ProjectedMesh(*Projection, Prefix + PickSelector + TEXT("/options[0]")) == F.MeshAssetA);
 
     // Undo everything.
     for (int32 Step = 0; Step < 4; ++Step) bPassed &= TestTrue(TEXT("undo"), GEditor->UndoTransaction());
