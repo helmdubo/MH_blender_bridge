@@ -64,6 +64,16 @@ public:
     FGuid DuplicateNode(const FGuid& Id, FString& OutError);
     /** Moves the node's subtree under NewParentId (invalid = root) at SiblingIndex (INDEX_NONE = last); the local transform is kept as is. */
     bool ReparentNode(const FGuid& Id, const FGuid& NewParentId, int32 SiblingIndex, FString& OutError);
+    /** CE-4b3 metadata and random commands (same rules: validate, Modify(), Undo restores). */
+    bool SetNodeName(const FGuid& Id, const FString& Name, FString& OutError);
+    /** Resource kinds only (mesh/actor/composite/gameobj), canonical [a-z0-9_]+. */
+    bool SetNodeResource(const FGuid& Id, const FString& Resource, FString& OutError);
+    /** A random node with validated options as the last child of ParentId (invalid = root). */
+    FGuid AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError);
+    /** Replaces a random node's options (validated as a whole). */
+    bool SetNodeOptions(const FGuid& Id, const TArray<FMHCompositeOption>& Options, FString& OutError);
+    /** The writer's rules for options: non-empty, finite non-negative weights with one positive, empty options without and other options with a canonical resource. */
+    static bool ValidateOptions(const TArray<FMHCompositeOption>& Options, FString& OutError);
     /** Parent id of a node; invalid for roots and unknown ids. */
     FGuid GetParentId(const FGuid& Id) const;
     /** Child ids of a node in order; the roots for an invalid id. */

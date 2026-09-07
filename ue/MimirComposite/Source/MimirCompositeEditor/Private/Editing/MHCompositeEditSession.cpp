@@ -188,6 +188,38 @@ bool UMHCompositeEditSession::ReparentNode(const FGuid& NodeId, const FGuid& New
     return true;
 }
 
+bool UMHCompositeEditSession::SetNodeName(const FGuid& NodeId, const FString& Name, FString& OutError)
+{
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->SetNodeName(NodeId, Name, OutError)) return false;
+    RefreshProjection();
+    return true;
+}
+
+bool UMHCompositeEditSession::SetNodeResource(const FGuid& NodeId, const FString& Resource, FString& OutError)
+{
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->SetNodeResource(NodeId, Resource, OutError)) return false;
+    RefreshProjection();
+    return true;
+}
+
+FGuid UMHCompositeEditSession::AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError)
+{
+    if (SessionClosed(*this, Draft, OutError)) return FGuid();
+    const FGuid Id = Draft->AddRandomNode(ParentId, Name, LocalTransform, Options, OutError);
+    if (Id.IsValid()) RefreshProjection();
+    return Id;
+}
+
+bool UMHCompositeEditSession::SetNodeOptions(const FGuid& NodeId, const TArray<FMHCompositeOption>& Options, FString& OutError)
+{
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->SetNodeOptions(NodeId, Options, OutError)) return false;
+    RefreshProjection();
+    return true;
+}
+
 bool UMHCompositeEditSession::SyncDraftFromLegacyEdit(FString& OutError)
 {
     if (!IsOpen() || Draft == nullptr)
