@@ -15,6 +15,7 @@
 #include "Engine/Level.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Selection.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 
@@ -274,6 +275,18 @@ void UMHCompositeEditProjection::Close()
     }
     if (AMHCompositeEditProjectionActor* Actor = ProjectionActor.Get())
     {
+        // CE-6a: leave the selection before the actor is garbage — the engine
+        // cannot deselect a pending-kill actor ("invalid flags") and the
+        // selection set would keep dangling element references.
+        if (GEditor != nullptr)
+        {
+            USelection* SelectedComponents = GEditor->GetSelectedComponents();
+            for (const TObjectPtr<USceneComponent>& Component : Components)
+            {
+                if (IsValid(Component) && SelectedComponents != nullptr && SelectedComponents->IsSelected(Component)) GEditor->SelectComponent(Component, false, false, true);
+            }
+            if (Actor->IsSelected()) GEditor->SelectActor(Actor, false, true, true);
+        }
         if (UWorld* World = Actor->GetWorld()) World->DestroyActor(Actor);
         else Actor->Destroy();
     }
