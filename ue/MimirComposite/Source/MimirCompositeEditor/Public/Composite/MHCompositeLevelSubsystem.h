@@ -20,7 +20,6 @@ enum class EMHCompositeEditSaveScope : uint8
 };
 
 /** Read-only description of the active composite edit session (docs/16 §2.7 R6-D0). */
-USTRUCT()
 /**
  * CE-5a (spec §10.2): what the last publish from a CE-backend session did to
  * the world outside the editor. A failure before the file was written leaves
@@ -38,6 +37,7 @@ enum class EMHCompositePublishOutcome : uint8
     PartialBatch
 };
 
+USTRUCT()
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositeEditContext
 {
     GENERATED_BODY()
