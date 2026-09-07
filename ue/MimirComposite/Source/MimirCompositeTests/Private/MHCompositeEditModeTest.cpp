@@ -148,6 +148,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeLegacyTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: the legacy backend is now the setting turned off.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

@@ -13,12 +13,37 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Random/MHRandomStream.h"
+#include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "UObject/Package.h"
 
 namespace UE::MimirComposite::Tests
 {
+
+/**
+ * CE-6b: the Composite Edit Mode is the default backend. A test that
+ * describes one backend in particular pins it for its own duration; the
+ * setting goes back to whatever the project has when the scope ends.
+ */
+struct FMHCompositeEditBackendScope
+{
+    explicit FMHCompositeEditBackendScope(const bool bEnableV2)
+    {
+        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+        bPrevious = Settings->bCompositeEditModeV2;
+        Settings->bCompositeEditModeV2 = bEnableV2;
+    }
+    ~FMHCompositeEditBackendScope()
+    {
+        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
+    }
+    FMHCompositeEditBackendScope(const FMHCompositeEditBackendScope&) = delete;
+    FMHCompositeEditBackendScope& operator=(const FMHCompositeEditBackendScope&) = delete;
+
+private:
+    bool bPrevious = false;
+};
 
 // ---------------------------------------------------------------------------
 // Golden fixture readers: the same JSON grammar as MHRandomStreamV5Test, plus

@@ -159,6 +159,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextNestedInvocationTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -227,6 +229,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextNestedHandlesTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -298,6 +302,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextApplySharedDefinitionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -370,6 +376,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextApplySharedDefinitionFailureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -422,6 +430,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextMakeUniqueForPlacementTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -510,6 +520,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextMakeUniqueInDefinitionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -580,6 +592,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextSaveUniqueValidationTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     {
         FMHCompositeDocument Plain;
         Plain.Nodes.AddDefaulted_GetRef().Kind = EMHCompositeNodeKind::Mesh;
@@ -644,6 +658,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextBakeCurrentResultTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -770,6 +786,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextScopeHandlesGrabbableTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -832,6 +850,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextSessionKeysTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     bool bPassed = TestEqual(TEXT("Esc in a session cancels"), MHEditSessionKeyAction(EKeys::Escape, true), EMHEditSessionKeyAction::Cancel);
     bPassed &= TestEqual(TEXT("Enter in a session applies"), MHEditSessionKeyAction(EKeys::Enter, true), EMHEditSessionKeyAction::Apply);
     bPassed &= TestEqual(TEXT("other keys are not session keys"), MHEditSessionKeyAction(EKeys::A, true), EMHEditSessionKeyAction::None);
@@ -906,6 +926,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextStaleApplyTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
