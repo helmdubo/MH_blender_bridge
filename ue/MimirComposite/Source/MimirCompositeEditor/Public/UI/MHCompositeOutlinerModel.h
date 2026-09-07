@@ -38,6 +38,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerItem final :
     int32 TopLevelNodeIndex = INDEX_NONE;
     int32 OptionIndex = INDEX_NONE;
     float Weight = 0.0f;
+    /** CE-4b2: the session node this row shows (rows built from the edit draft); invalid for asset rows. */
+    FGuid DraftNodeId;
 
     bool bHasResolvedOverlay = false;
     bool bSelectedOption = false;
@@ -83,6 +85,8 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerFreshness final
     int32 AppearanceSeed = 0;
     /** Preview build counter of the actor (R2b-2); zero means no preview yet. */
     uint32 PreviewRevision = 0;
+    /** CE-4b2: the change serial of the session draft edited on this placement; 0 without a session. */
+    uint64 DraftSerial = 0;
 
     static FMHCompositeOutlinerFreshness Capture(const AMHCompositeActor& Actor);
     bool IsComplete() const;
