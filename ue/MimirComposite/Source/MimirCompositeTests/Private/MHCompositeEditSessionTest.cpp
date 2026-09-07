@@ -19,6 +19,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditSessionOwnerTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -91,6 +93,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditSessionCommandUndoTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
+    // CE-6b: this test describes the legacy actor-handle path.
+    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);

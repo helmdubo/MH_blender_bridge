@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 
+#include "MHRecipeTestFixture.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -62,6 +63,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
 {
+    // CE-6b: the Edit guards here are the legacy actor-handle path's.
+    const FMHCompositeEditBackendScope Legacy(false);
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
     const FString SourceRoot = FPaths::Combine(
         FPaths::ProjectSavedDir(),
