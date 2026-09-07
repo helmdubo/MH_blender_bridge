@@ -1,9 +1,10 @@
 # CE-6b2 — Composite Edit cleanup, 2026-09-08
 
-Status: VERIFIED; ready for merge. Owner accepted the interaction and Break field fixes and
+Status: MERGED in PR #166 (`ad697569b579acee29db7da3dc92d2b033817348`). Owner accepted the interaction and Break field fixes and
 explicitly requested cleanup, commit, push and merge into main. Integration
 starts from `a67e271` on `codex/composite-break-undo`; the accumulated stack
-since main `0f46f95` is included in PR #166.
+since main `0f46f95` is included in PR #166. Cleanup commit: `6155b53`.
+PRs #159–#165 also became merged through the preserved commit ancestry.
 
 ## Changes
 
