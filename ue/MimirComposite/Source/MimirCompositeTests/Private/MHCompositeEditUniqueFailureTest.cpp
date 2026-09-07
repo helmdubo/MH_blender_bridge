@@ -1,5 +1,6 @@
 #include "MHCompositeEditFixture.h"
 
+#include "Composite/MHCompositeImporter.h"
 #include "Editing/MHCompositeEditDocument.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
