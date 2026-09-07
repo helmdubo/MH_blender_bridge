@@ -190,30 +190,34 @@ bool UMHCompositeEditSession::ReparentNode(const FGuid& NodeId, const FGuid& New
 
 bool UMHCompositeEditSession::SetNodeName(const FGuid& NodeId, const FString& Name, FString& OutError)
 {
-    static_cast<void>(NodeId); static_cast<void>(Name);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->SetNodeName(NodeId, Name, OutError)) return false;
+    RefreshProjection();
+    return true;
 }
 
 bool UMHCompositeEditSession::SetNodeResource(const FGuid& NodeId, const FString& Resource, FString& OutError)
 {
-    static_cast<void>(NodeId); static_cast<void>(Resource);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->SetNodeResource(NodeId, Resource, OutError)) return false;
+    RefreshProjection();
+    return true;
 }
 
 FGuid UMHCompositeEditSession::AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError)
 {
-    static_cast<void>(ParentId); static_cast<void>(Name); static_cast<void>(LocalTransform); static_cast<void>(Options);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return FGuid();
+    if (SessionClosed(*this, Draft, OutError)) return FGuid();
+    const FGuid Id = Draft->AddRandomNode(ParentId, Name, LocalTransform, Options, OutError);
+    if (Id.IsValid()) RefreshProjection();
+    return Id;
 }
 
 bool UMHCompositeEditSession::SetNodeOptions(const FGuid& NodeId, const TArray<FMHCompositeOption>& Options, FString& OutError)
 {
-    static_cast<void>(NodeId); static_cast<void>(Options);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->SetNodeOptions(NodeId, Options, OutError)) return false;
+    RefreshProjection();
+    return true;
 }
 
 bool UMHCompositeEditSession::SyncDraftFromLegacyEdit(FString& OutError)

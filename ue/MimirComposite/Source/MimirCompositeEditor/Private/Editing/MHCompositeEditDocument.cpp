@@ -286,37 +286,80 @@ bool UMHCompositeEditDocument::ReparentNode(const FGuid& Id, const FGuid& NewPar
 
 bool UMHCompositeEditDocument::SetNodeName(const FGuid& Id, const FString& Name, FString& OutError)
 {
-    static_cast<void>(Id); static_cast<void>(Name);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    const int32 Index = FindNodeIndex(Id);
+    if (Index == INDEX_NONE) return GrammarError(OutError, TEXT("unknown session node"));
+    Modify();
+    Nodes[Index].Name = Name;
+    ++Revision;
+    MarkChanged();
+    return true;
 }
 
 bool UMHCompositeEditDocument::SetNodeResource(const FGuid& Id, const FString& Resource, FString& OutError)
 {
-    static_cast<void>(Id); static_cast<void>(Resource);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
-}
-
-FGuid UMHCompositeEditDocument::AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError)
-{
-    static_cast<void>(ParentId); static_cast<void>(Name); static_cast<void>(LocalTransform); static_cast<void>(Options);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return FGuid();
-}
-
-bool UMHCompositeEditDocument::SetNodeOptions(const FGuid& Id, const TArray<FMHCompositeOption>& Options, FString& OutError)
-{
-    static_cast<void>(Id); static_cast<void>(Options);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    const int32 Index = FindNodeIndex(Id);
+    if (Index == INDEX_NONE) return GrammarError(OutError, TEXT("unknown session node"));
+    if (!KindTakesResource(Nodes[Index].Kind)) return GrammarError(OutError, TEXT("group/random node forbids resource"));
+    if (!IsCanonicalResource(Resource)) return GrammarError(OutError, TEXT("mesh/actor/composite/gameobj resource must be canonical [a-z0-9_]+"));
+    Modify();
+    Nodes[Index].Resource = Resource;
+    ++Revision;
+    MarkChanged();
+    return true;
 }
 
 bool UMHCompositeEditDocument::ValidateOptions(const TArray<FMHCompositeOption>& Options, FString& OutError)
 {
-    static_cast<void>(Options);
-    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
-    return false;
+    if (Options.IsEmpty()) return GrammarError(OutError, TEXT("random requires a non-empty options array"));
+    bool bPositive = false;
+    for (const FMHCompositeOption& Option : Options)
+    {
+        if (!FMath::IsFinite(Option.Weight) || Option.Weight < 0.0f) return GrammarError(OutError, TEXT("random option weight must be finite and non-negative"));
+        bPositive |= Option.Weight > 0.0f;
+        if (Option.Kind == EMHCompositeOptionKind::Empty)
+        {
+            if (!Option.Resource.IsEmpty()) return GrammarError(OutError, TEXT("empty option forbids resource"));
+        }
+        else if (!IsCanonicalResource(Option.Resource))
+        {
+            return GrammarError(OutError, TEXT("non-empty option requires canonical resource"));
+        }
+    }
+    if (!bPositive) return GrammarError(OutError, TEXT("random requires at least one positive option weight"));
+    return true;
+}
+
+FGuid UMHCompositeEditDocument::AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError)
+{
+    const int32 Parent = ParentId.IsValid() ? FindNodeIndex(ParentId) : INDEX_NONE;
+    if (ParentId.IsValid() && Parent == INDEX_NONE) { GrammarError(OutError, TEXT("unknown parent node")); return FGuid(); }
+    if (Parent != INDEX_NONE && !IsContainerKind(Nodes[Parent].Kind)) { GrammarError(OutError, TEXT("only a group can take children")); return FGuid(); }
+    if (!ValidateOptions(Options, OutError)) return FGuid();
+    Modify();
+    FMHCompositeAssetNode Node;
+    Node.ParentIndex = INDEX_NONE;
+    Node.Kind = EMHCompositeNodeKind::Random;
+    Node.Name = Name;
+    Node.Transform = LocalTransform;
+    Node.Options = Options;
+    const FGuid Id = FGuid::NewGuid();
+    InsertBlock(Parent == INDEX_NONE ? Nodes.Num() : SubtreeEnd(Parent), Parent, {Node}, {Id});
+    ++Revision;
+    MarkChanged();
+    return Id;
+}
+
+bool UMHCompositeEditDocument::SetNodeOptions(const FGuid& Id, const TArray<FMHCompositeOption>& Options, FString& OutError)
+{
+    const int32 Index = FindNodeIndex(Id);
+    if (Index == INDEX_NONE) return GrammarError(OutError, TEXT("unknown session node"));
+    if (Nodes[Index].Kind != EMHCompositeNodeKind::Random) return GrammarError(OutError, TEXT("options are allowed only on random nodes"));
+    if (!ValidateOptions(Options, OutError)) return false;
+    Modify();
+    Nodes[Index].Options = Options;
+    ++Revision;
+    MarkChanged();
+    return true;
 }
 
 FGuid UMHCompositeEditDocument::GetParentId(const FGuid& Id) const
