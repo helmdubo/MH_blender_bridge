@@ -10,6 +10,7 @@
 #include "UI/MHEditSessionKeys.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/CommandLine.h"
 #include "PrimitiveSceneProxy.h"
 #include "RenderingThread.h"
@@ -153,7 +154,7 @@ bool FMHNestedVisualGestureTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHMultiNodeGestureTest,
-    "Mimir.V5.Composite.EditMode.Interaction.MultiSelectionMovesDescendantsOnceAndEscRestoresGesture",
+    "Mimir.V5.Composite.EditMode.Interaction.MultiSelectionMovesDescendantsOnceAndEscCancelsSession",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHMultiNodeGestureTest::RunTest(const FString& Parameters)
@@ -180,6 +181,8 @@ bool FMHMultiNodeGestureTest::RunTest(const FString& Parameters)
     if (!TestTrue(TEXT("child frame"), Projection->GetNodeFrame(Child, BeforeFrame))) return false;
     TArray<uint8> Before;
     if (!TestTrue(TEXT("canonical before"), Draft->CanonicalBytes(Before, Error))) return false;
+    TArray<uint8> PublishedBefore;
+    if (!TestTrue(TEXT("published bytes before"), FCompositeEditFixture::AssetBytes(*F.Child, PublishedBefore))) return false;
     FVector Drag(10.0, 0.0, 0.0), Scale = FVector::ZeroVector;
     FRotator Rotation = FRotator::ZeroRotator;
     TestTrue(TEXT("start group gesture"), Mode->StartTracking(nullptr, nullptr));
@@ -197,23 +200,58 @@ bool FMHMultiNodeGestureTest::RunTest(const FString& Parameters)
 
     TestTrue(TEXT("start cancellable gesture"), Mode->StartTracking(nullptr, nullptr));
     TestTrue(TEXT("cancellable delta"), Mode->InputDelta(nullptr, nullptr, Drag, Rotation, Scale));
-    TestTrue(TEXT("Esc routed to gesture"), MHHandleEditSessionKey(EKeys::Escape, false));
-    TArray<uint8> Cancelled;
-    TestTrue(TEXT("Esc restores exact authoring bytes"), Draft->CanonicalBytes(Cancelled, Error) && Cancelled == Before);
+    TestTrue(TEXT("Esc cancels session during a selected-node gesture"), MHHandleEditSessionKey(EKeys::Escape, false));
+    TArray<uint8> PublishedAfter;
+    TestTrue(TEXT("Esc leaves published definition unchanged"), FCompositeEditFixture::AssetBytes(*F.Child, PublishedAfter) && PublishedAfter == PublishedBefore);
     TestFalse(TEXT("cancelled gesture leaves no undo"), GEditor->Trans->CanUndo());
-    TestTrue(TEXT("Esc keeps the edit session"), Session->IsOpen() && Subsystem->GetEditSession() == Session);
-    TestEqual(TEXT("gesture Esc retains selection"), Session->GetSelectedNodeIds().Num(), 3);
-    const uint32 CancelRevision = Draft->GetRevision();
-    TestTrue(TEXT("remaining physical drag is consumed"), Mode->InputDelta(nullptr, nullptr, Drag, Rotation, Scale));
-    TestEqual(TEXT("post-Esc delta cannot restart authoring"), Draft->GetRevision(), CancelRevision);
-    TestTrue(TEXT("release after cancelled gesture consumed"), Mode->EndTracking(nullptr, nullptr));
-    TestFalse(TEXT("gesture ended"), Mode->EndTracking(nullptr, nullptr));
-    TestTrue(TEXT("next Esc clears selection"), MHHandleEditSessionKey(EKeys::Escape, false));
-    TestTrue(TEXT("selection cleared"), Session->GetSelectedNodeIds().IsEmpty());
-    TestTrue(TEXT("clearing selection keeps session"), Session->IsOpen());
-    TestFalse(TEXT("empty selection has no widget"), Mode->ShouldDrawWidget());
-    TestTrue(TEXT("third Esc leaves clean session"), MHHandleEditSessionKey(EKeys::Escape, false));
     TestFalse(TEXT("session closed"), Subsystem->IsEditingComposite());
+    TestFalse(TEXT("mode left immediately"), UMHCompositeEditorMode::IsActive());
+    TestEqual(TEXT("no transient component remains selected"), GEditor->GetSelectedComponentCount(), 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHEscapeInputDispatchTest,
+    "Mimir.V5.Composite.EditMode.Interaction.ViewportEscapeExitsAfterInputDispatch",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHEscapeInputDispatchTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    const TSharedRef<FMHCompositeEditBackendScope> Backend = MakeShared<FMHCompositeEditBackendScope>(true);
+    const TSharedRef<FCompositeEditFixture> Fixture = MakeShared<FCompositeEditFixture>(*this);
+    if (!Fixture->Build(*this)) return false;
+    UMHCompositeLevelSubsystem* Subsystem = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
+    const FMHResolvedCompositeNode* Invocation = FCompositeEditFixture::Invocation(*Fixture->A, 1);
+    if (!TestNotNull(TEXT("invocation"), Invocation)) return false;
+    FString Error;
+    if (!TestTrue(TEXT("open nested"), Subsystem->BeginEditNestedComposite(Fixture->A, Invocation->NodePath, Error))) return false;
+    UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+    UMHCompositeEditSession* Session = Subsystem->GetEditSession();
+    if (!TestNotNull(TEXT("mode"), Mode) || !TestNotNull(TEXT("session"), Session)) return false;
+    Mode->SelectNodeIds({Session->GetDraft()->GetNodeId(0)});
+    TArray<uint8> Before;
+    if (!TestTrue(TEXT("published bytes"), FCompositeEditFixture::AssetBytes(*Fixture->Child, Before))) return false;
+    FVector Drag(25.0, 0.0, 0.0), Scale = FVector::ZeroVector;
+    FRotator Rotation = FRotator::ZeroRotator;
+    TestTrue(TEXT("start gesture"), Mode->StartTracking(nullptr, nullptr));
+    TestTrue(TEXT("move node"), Mode->InputDelta(nullptr, nullptr, Drag, Rotation, Scale));
+    TestTrue(TEXT("viewport Esc consumed"), Mode->InputKey(nullptr, nullptr, EKeys::Escape, IE_Pressed));
+    TestTrue(TEXT("mode teardown waits for input dispatch to finish"), Subsystem->IsEditingComposite());
+    const uint32 CancelledRevision = Session->GetDraft()->GetRevision();
+    TestTrue(TEXT("remaining drag before teardown is consumed"), Mode->InputDelta(nullptr, nullptr, Drag, Rotation, Scale));
+    TestEqual(TEXT("remaining drag writes nothing"), Session->GetDraft()->GetRevision(), CancelledRevision);
+    const double Started = FPlatformTime::Seconds();
+    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Backend, Fixture, Before, Started]()
+    {
+        UMHCompositeLevelSubsystem* Current = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
+        if (Current->IsEditingComposite() && FPlatformTime::Seconds() - Started < 1.0) return false;
+        TestFalse(TEXT("one viewport Esc closes the session on the next tick"), Current->IsEditingComposite());
+        TestFalse(TEXT("Composite Edit mode is inactive"), UMHCompositeEditorMode::IsActive());
+        TestFalse(TEXT("cancelled gesture leaves no undo"), GEditor->Trans->CanUndo());
+        TArray<uint8> After;
+        TestTrue(TEXT("source survives viewport Esc unchanged"), FCompositeEditFixture::AssetBytes(*Fixture->Child, After) && After == Before);
+        return true;
+    }));
     return true;
 }
 

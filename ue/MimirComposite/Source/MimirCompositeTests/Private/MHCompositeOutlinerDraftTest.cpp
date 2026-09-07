@@ -6,8 +6,10 @@
 #include "Editing/MHCompositeEditorMode.h"
 #include "ScopedTransaction.h"
 #include "Settings/MHCompositeSettings.h"
+#include "UI/MHCompositeOutliner.h"
 #include "UI/MHCompositeOutlinerEditActions.h"
 #include "UI/MHCompositeOutlinerModel.h"
+#include "Widgets/Text/STextBlock.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -36,6 +38,26 @@ bool BuildOpened(FMHCompositeOutlinerModel& Model, AMHCompositeActor& Actor, con
     if (InvocationPath.IsEmpty()) return true;
     const TSharedPtr<FMHCompositeOutlinerItem> Invocation = Model.FindByNodePath(InvocationPath);
     return Invocation.IsValid() && Model.ExpandItem(Invocation);
+}
+
+bool WidgetTreeContainsText(SWidget& Root, const FString& Expected)
+{
+    TArray<SWidget*> Stack{&Root};
+    while (!Stack.IsEmpty())
+    {
+        SWidget* Widget = Stack.Pop();
+        if (Widget->GetType() == FName(TEXT("STextBlock")) &&
+            static_cast<STextBlock*>(Widget)->GetText().ToString().Contains(Expected))
+        {
+            return true;
+        }
+        FChildren* Children = Widget->GetChildren();
+        for (int32 Index = 0; Index < Children->Num(); ++Index)
+        {
+            Stack.Add(&Children->GetChildAt(Index).Get());
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -158,6 +180,59 @@ bool FMHOutlinerAddDescribeTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(TEXT("a foreign object is refused"), MHDescribeOutlinerAssetAdd(GetTransientPackage(), GroupRow.Get(), *Draft, Request, Error));
     bPassed &= TestFalse(TEXT("nothing is refused"), MHDescribeOutlinerAssetAdd(nullptr, GroupRow.Get(), *Draft, Request, Error));
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHOutlinerPinsActiveSessionRootTest,
+    "Mimir.V5.Composite.EditMode.Structure.OutlinerPinsActiveSessionRoot",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHOutlinerPinsActiveSessionRootTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    const FOutlinerDraftV2Scope V2;
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FCompositeEditFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* Invocation = FCompositeEditFixture::Invocation(*F.A, 1);
+    if (!TestNotNull(TEXT("nested invocation"), Invocation)) return false;
+
+    GEditor->SelectNone(false, true, false);
+    GEditor->SelectActor(F.A, true, true, true);
+    TSharedRef<SWidget> Outliner = MHCreateCompositeOutlinerWidget();
+    bool bPassed = TestTrue(TEXT("selected placement initially owns the Outliner"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    FString Error;
+    if (!TestTrue(TEXT("begin nested edit: ") + Error,
+            Subsystem->BeginEditNestedComposite(F.A, Invocation->NodePath, Error))) return false;
+    UMHCompositeEditSession* Session = Subsystem->GetEditSession();
+    UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+    if (!TestNotNull(TEXT("session"), Session) || !TestNotNull(TEXT("projection"), Projection) ||
+        !TestNotNull(TEXT("mode"), Mode)) return false;
+
+    // Enter has no logical node selection, so the native editor selection is empty.
+    bPassed &= TestEqual(TEXT("enter selects no infrastructure actor"), GEditor->GetSelectedActorCount(), 0);
+    bPassed &= TestTrue(TEXT("empty native selection keeps the active session tree"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    const FGuid NodeId = Session->GetDraft()->GetNodeId(0);
+    Mode->SelectNodeIds({NodeId}, NodeId);
+    bPassed &= TestTrue(TEXT("a node selection selects the projection actor"),
+        Projection->GetProjectionActor()->IsSelected());
+    bPassed &= TestTrue(TEXT("projection actor/component selection keeps the active session tree"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
+    bPassed &= TestTrue(TEXT("closed session falls back to native empty selection"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("Select one MH Composite actor")));
+    GEditor->SelectActor(F.A, true, true, true);
+    bPassed &= TestTrue(TEXT("native placement selection owns the Outliner after cancel"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
     return bPassed;
 }
 

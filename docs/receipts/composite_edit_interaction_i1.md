@@ -1,8 +1,20 @@
 # CE-I1 — выбор и трансформы авторских узлов
 
-Статус: **REVIEW / READY FOR FIELD**. Ветка `codex/ce-interaction-nodes`, база `0f46f95`.
+Статус: **SUPERSEDED — FIRST FIELD CANDIDATE REJECTED / FIELD FIX PENDING**.
+Ветка `codex/ce-interaction-nodes`, база первого кандидата `0f46f95`.
 Исполнение разрешено owner 2026-09-07 после внешнего interaction-аудита.
-Контракт: `docs/contracts/composite_edit_interaction_i1.md`.
+Текущий контракт: `docs/contracts/composite_edit_interaction_i1.md`.
+
+Эта квитанция сохраняет доказательства первого кандидата, но больше не задаёт
+acceptance взаимодействия. Поле выявило невидимую projection-геометрию при
+Game View, пустой Composite Outliner после перехода native selection на
+projection-актор и phantom gizmo до выбора авторского узла. Новый override
+owner требует: Save без overwrite prompt; Cancel и один Esc немедленно
+отменяют всю сессию без dirty prompt, с откатом активного жеста; отсутствие
+camera/Game View takeover; пустой NodeId-выбор без native infrastructure
+selection; закрепление корня Outliner за live-сессией; временная проекция на
+`RF_Transient | RF_DuplicateTransient` без `bIsEditorOnlyActor`. Новый пакет
+должен заново пройти автоматические и полевые гейты.
 
 ## Изменения
 
@@ -123,12 +135,13 @@ Asset Viewer Dagor изучен на фиксированном commit; ссыл
 unique сохранены в `docs/reference_notes/dagor_assetviewer_composite_edit_20260907.md`.
 Его camera remap при смене координат ассета не переносится в UE world.
 
-## Полевая проверка
+## Полевая проверка отозванного кандидата
 
-Пакет: `E:\temp\MH_CEI1_field_20260907\MimirComposite_CE-I1_UE5.7.4_Win64.zip`.
+Отозванный пакет: `E:\temp\MH_CEI1_field_20260907\MimirComposite_CE-I1_UE5.7.4_Win64.zip`.
 В архиве — плагин с DLL/PDB, source и precompiled runtime products, инструкция
 `FIELD_CHECK.md` и `manifest.json` с revision и SHA-256 исходников/DLL.
-Рядом с архивом — `SHA256.txt`. Это кандидат для ревью, не owner acceptance.
+Рядом с архивом — `SHA256.txt`. Этот пакет не принят и не должен использоваться
+для повторной проверки; ниже сохранён его исходный checklist как история.
 
 Собранный плагин устанавливается после закрытия UE, заменой `Plugins/MimirComposite`.
 Предыдущую сборку можно сохранить вне каталога Plugins. В Project Settings →

@@ -131,7 +131,7 @@ bool FMHEditRootSaveTest::RunTest(const FString& Parameters)
     bool bPassed = TestTrue(TEXT("edit"), Session->SetNodeTransform(Session->GetDraft()->GetNodeId(0), FTransform(FVector(100.0, 0.0, 0.0)), Error));
     int32 Confirmations = 0;
     FMHSourceOverwritePolicyTestHooks Hooks;
-    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return true; };
+    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return false; };
     Hooks.Notify = [](const FText&) {};
     Hooks.MessageLog = [](const FText&) {};
     MHSetSourceOverwritePolicyTestHooks(Hooks);
@@ -139,7 +139,7 @@ bool FMHEditRootSaveTest::RunTest(const FString& Parameters)
     Subsystem->SetCommitPublisherForTests([&Published](UMHCompositeAsset& Asset, FString&) { Published = &Asset; MHNotifyCompositeAssetChanged(Asset); return true; });
     Mode->RequestSave();
     Subsystem->SetCommitPublisherForTests({});
-    bPassed &= TestEqual(TEXT("one overwrite confirmation"), Confirmations, 1);
+    bPassed &= TestEqual(TEXT("explicit root Save needs no confirmation"), Confirmations, 0);
     bPassed &= TestTrue(TEXT("the root definition was published"), Published == F.Root);
     bPassed &= TestFalse(TEXT("session gone"), Subsystem->IsEditingComposite());
     bPassed &= TestFalse(TEXT("mode gone"), UMHCompositeEditorMode::IsActive());

@@ -61,9 +61,8 @@ bool MHHandleEditSessionKey(const FKey& Key, const bool bDeferApply)
     {
     case EMHEditSessionKeyAction::Cancel:
     {
-        // CE-3b: under the mode Escape is the mode's Cancel (asks when the
-        // draft is dirty). The question is modal: never open it from inside
-        // the input path that delivered the key.
+        // Escape cancels the entire session. Defer teardown when called from
+        // an input callback so the current Slate/mode dispatch can finish.
         if (UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive())
         {
             if (bDeferApply && GEditor != nullptr)

@@ -176,7 +176,7 @@ bool FMHEditModeTintTest::RunTest(const FString& Parameters)
 }
 
 // CE-3b: under the mode the keys follow the Level Instance Edit contract —
-// Escape is the mode's Cancel (asks when dirty), Enter publishes nothing.
+// Escape cancels the entire session without a prompt; Enter publishes nothing.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditModeKeysTest,
     "Mimir.V5.Composite.EditMode.Selection.KeysFollowTheMode",
@@ -209,15 +209,12 @@ bool FMHEditModeKeysTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("Enter asked for no overwrite"), Confirmations, 0);
     bPassed &= TestTrue(TEXT("session still open after Enter"), Subsystem->IsEditingComposite() && UMHCompositeEditorMode::IsActive());
 
-    // Escape: the mode's Cancel — asks when dirty, staying keeps everything.
+    // Escape is unconditional Cancel, including a dirty selected node.
     int32 Asked = 0;
     UMHCompositeEditorMode::SetDiscardConfirmForTests([&Asked]() { ++Asked; return false; });
+    UMHCompositeEditorMode::GetActive()->SelectNodeIds({Session->GetDraft()->GetNodeId(0)});
     bPassed &= TestTrue(TEXT("Escape is the mode's Cancel"), MHHandleEditSessionKey(EKeys::Escape, false));
-    bPassed &= TestEqual(TEXT("Escape asked once"), Asked, 1);
-    bPassed &= TestTrue(TEXT("staying keeps the session and the mode"), Subsystem->IsEditingComposite() && UMHCompositeEditorMode::IsActive());
-    UMHCompositeEditorMode::SetDiscardConfirmForTests([&Asked]() { ++Asked; return true; });
-    bPassed &= TestTrue(TEXT("Escape again"), MHHandleEditSessionKey(EKeys::Escape, false));
-    bPassed &= TestEqual(TEXT("Escape asked again"), Asked, 2);
+    bPassed &= TestEqual(TEXT("Escape asks nothing"), Asked, 0);
     bPassed &= TestFalse(TEXT("discarding leaves"), Subsystem->IsEditingComposite() || UMHCompositeEditorMode::IsActive());
     return bPassed;
 }

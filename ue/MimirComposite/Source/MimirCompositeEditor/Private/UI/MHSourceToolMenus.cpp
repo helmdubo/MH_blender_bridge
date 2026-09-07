@@ -6,6 +6,7 @@
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Editing/MHCompositeEditorMode.h"
+#include "Editing/MHCompositeEditSession.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Diagnostics/MHSourceOperations.h"
 #include "DesktopPlatformModule.h"
@@ -446,11 +447,7 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
                 ? LOCTEXT("ApplySharedDefinitionOverwriteAudit", "{0} overwritten from the edited shared definition")
                 : LOCTEXT("CommitCompositeOverwriteAudit", "{0} overwritten from edited transforms"),
             FText::FromString(SourceFile));
-        const EMHSourceOverwriteExecution Execution = MHExecuteSourceOverwrite(
-            SourceFile,
-            Confirmation,
-            Audit,
-            [&Subsystem, &Warnings, &Error]()
+        const auto Publish = [&Subsystem, &Warnings, &Error]()
             {
                 if (!Subsystem->CommitEditComposite(Warnings, Error) && Error.IsEmpty())
                 {
@@ -464,8 +461,13 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
                         : TEXT("Nothing was written — the session and its draft stay, fix and Save again: ")) + Error;
                 }
                 return Error.IsEmpty();
-            });
-        if (Execution == EMHSourceOverwriteExecution::Cancelled)
+            };
+        // Save is the explicit publish action of the CE session. A second
+        // modal can be intercepted by automation and strand the user in Edit.
+        // Keep the configured overwrite policy for the legacy workflow.
+        const UMHCompositeEditSession* Session = Subsystem->GetEditSession();
+        const bool bExplicitSave = Session != nullptr && Session->IsOpen() && Session->GetProjection() != nullptr;
+        if (MHExecuteSourceOverwrite(SourceFile, Confirmation, Audit, Publish, bExplicitSave) == EMHSourceOverwriteExecution::Cancelled)
         {
             return;
         }

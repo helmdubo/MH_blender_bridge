@@ -64,11 +64,10 @@ bool FMHEditModeFollowsSessionTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
-// CE-3a: the two buttons. Cancel asks only when the draft is dirty and keeps
-// the session when the user stays; Save applies the shared definition.
+// Explicit Save and Cancel must not be vetoed by dialog auto-responders.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditModeSaveCancelTest,
-    "Mimir.V5.Composite.EditMode.Mode.CancelAsksWhenDirtyAndSaveApplies",
+    "Mimir.V5.Composite.EditMode.Mode.CancelDiscardsAndSaveAppliesWithoutPrompts",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHEditModeSaveCancelTest::RunTest(const FString& Parameters)
@@ -97,40 +96,39 @@ bool FMHEditModeSaveCancelTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(TEXT("session gone"), Subsystem->IsEditingComposite());
     bPassed &= TestFalse(TEXT("mode gone"), UMHCompositeEditorMode::IsActive());
 
-    // Dirty: Cancel asks; staying keeps everything; discarding leaves.
+    // Dirty: explicit Cancel discards immediately, even if a dialog handler would decline.
     if (!TestTrue(TEXT("session 2: ") + Error, Subsystem->BeginEditNestedComposite(F.A, SecondPath, Error))) return false;
     Mode = UMHCompositeEditorMode::GetActive();
     UMHCompositeEditSession* Session = Subsystem->GetEditSession();
     if (!TestNotNull(TEXT("mode 2"), Mode) || !TestNotNull(TEXT("session 2"), Session) || Session->GetDraft() == nullptr) return false;
     bPassed &= TestTrue(TEXT("edit"), Session->SetNodeTransform(Session->GetDraft()->GetNodeId(0), FTransform(FVector(100.0, 0.0, 40.0)), Error));
-    bPassed &= TestFalse(TEXT("dirty cancel with 'stay' keeps the session"), Mode->RequestCancel());
-    bPassed &= TestEqual(TEXT("it asked once"), Asked, 1);
-    bPassed &= TestTrue(TEXT("session still open"), Subsystem->IsEditingComposite() && UMHCompositeEditorMode::IsActive());
-    UMHCompositeEditorMode::SetDiscardConfirmForTests([&Asked]() { ++Asked; return true; });
-    bPassed &= TestTrue(TEXT("dirty cancel with 'discard' leaves"), Mode->RequestCancel());
-    bPassed &= TestEqual(TEXT("it asked again"), Asked, 2);
+    bPassed &= TestTrue(TEXT("dirty Cancel leaves without another decision"), Mode->RequestCancel());
+    bPassed &= TestEqual(TEXT("Cancel never invokes the dialog handler"), Asked, 0);
     bPassed &= TestFalse(TEXT("session gone after discard"), Subsystem->IsEditingComposite());
     TArray<uint8> ChildAfterDiscard;
     bPassed &= TestTrue(TEXT("discard never touches the source"), FCompositeEditFixture::AssetBytes(*F.Child, ChildAfterDiscard) && ChildAfterDiscard == ChildBefore);
 
-    // Save: the usual overwrite confirmation, then the shared definition is published.
+    // Save publishes the shared definition without another confirmation.
     if (!TestTrue(TEXT("session 3: ") + Error, Subsystem->BeginEditNestedComposite(F.A, SecondPath, Error))) return false;
     Mode = UMHCompositeEditorMode::GetActive();
     Session = Subsystem->GetEditSession();
     if (!TestNotNull(TEXT("mode 3"), Mode) || !TestNotNull(TEXT("session 3"), Session) || Session->GetDraft() == nullptr) return false;
     bPassed &= TestTrue(TEXT("edit 3"), Session->SetNodeTransform(Session->GetDraft()->GetNodeId(0), FTransform(FVector(100.0, 0.0, 40.0)), Error));
     int32 Confirmations = 0;
+    int32 Notifications = 0, AuditEntries = 0;
     FMHSourceOverwritePolicyTestHooks Hooks;
-    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return true; };
-    Hooks.Notify = [](const FText&) {};
-    Hooks.MessageLog = [](const FText&) {};
+    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return false; };
+    Hooks.Notify = [&Notifications](const FText&) { ++Notifications; };
+    Hooks.MessageLog = [&AuditEntries](const FText&) { ++AuditEntries; };
     MHSetSourceOverwritePolicyTestHooks(Hooks);
     UMHCompositeAsset* Published = nullptr;
     Subsystem->SetCommitPublisherForTests([&Published](UMHCompositeAsset& Asset, FString&) { Published = &Asset; MHNotifyCompositeAssetChanged(Asset); return true; });
     Mode->RequestSave();
     Subsystem->SetCommitPublisherForTests({});
     MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
-    bPassed &= TestEqual(TEXT("save asked the overwrite confirmation once"), Confirmations, 1);
+    bPassed &= TestEqual(TEXT("explicit Save does not ask overwrite confirmation"), Confirmations, 0);
+    bPassed &= TestEqual(TEXT("successful Save retains overwrite notification"), Notifications, 1);
+    bPassed &= TestEqual(TEXT("successful Save retains overwrite audit"), AuditEntries, 1);
     bPassed &= TestTrue(TEXT("save published the shared child"), Published == F.Child);
     bPassed &= TestFalse(TEXT("session gone after save"), Subsystem->IsEditingComposite());
     bPassed &= TestFalse(TEXT("mode gone after save"), UMHCompositeEditorMode::IsActive());

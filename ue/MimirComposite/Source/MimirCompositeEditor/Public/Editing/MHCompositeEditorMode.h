@@ -47,14 +47,14 @@ public:
     static void RegisterCommands();
     static void UnregisterCommands();
 
-    /** Save: Apply Shared Definition (with the usual overwrite confirmation) and leave. */
+    /** Save: publish the definition without another confirmation and leave. */
     void RequestSave();
-    /** Cancel: discard the draft and leave; asks first when the draft is dirty. Returns false when the user stays. */
+    /** Cancel: discard the draft and leave immediately, including an active gesture. */
     bool RequestCancel();
     /** Select the authored owner of any projection visual; all of its visuals follow. */
     bool SelectComponent(USceneComponent* Component);
     void SelectNodeIds(const TArray<FGuid>& NodeIds, const FGuid& ActiveNodeId = FGuid());
-    /** Esc cancels a gesture, then clears nodes, then offers to leave the session. */
+    /** Esc cancels the entire session, regardless of gesture or selection. */
     bool HandleEscape();
     /** CE-3b: a viewport click. True = handled (a projection node grabbed, or a locked target swallowed). */
     bool HandleHitProxy(HHitProxy* HitProxy);
@@ -131,7 +131,6 @@ private:
     void OnPreBeginPIE(bool bSimulate);
     void UpdateEngineShowFlags(bool bEditing);
     UMHCompositeEditSession* GetSession() const;
-    bool ConfirmDiscard() const;
     EAppReturnType::Type ConfirmSwitch(const FString& TargetInvocationPath) const;
     void MirrorSelection();
     void CancelGesture();

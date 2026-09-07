@@ -47,7 +47,7 @@ FMHCompositeEditCommands::FMHCompositeEditCommands()
 
 void FMHCompositeEditCommands::RegisterCommands()
 {
-    UI_COMMAND(CancelEdit, "Cancel", "Discard the composite draft and leave Edit Contents (asks first when there are changes).", EUserInterfaceActionType::Button, FInputChord(EKeys::Escape));
+    UI_COMMAND(CancelEdit, "Cancel", "Discard the composite draft and leave Edit Contents immediately.", EUserInterfaceActionType::Button, FInputChord(EKeys::Escape));
     UI_COMMAND(SaveEdit, "Save", "Apply the shared definition and leave Edit Contents.", EUserInterfaceActionType::Button, FInputChord());
 }
 
@@ -360,16 +360,6 @@ UMHCompositeEditSession* UMHCompositeEditorMode::GetSession() const
     return Session != nullptr && Session->IsOpen() ? Session : nullptr;
 }
 
-bool UMHCompositeEditorMode::ConfirmDiscard() const
-{
-#if WITH_DEV_AUTOMATION_TESTS
-    if (GDiscardConfirmForTests) return GDiscardConfirmForTests();
-#endif
-    return FMessageDialog::Open(EAppMsgType::YesNo,
-        LOCTEXT("DiscardPrompt", "Discard unsaved composite changes?"),
-        LOCTEXT("DiscardTitle", "Cancel Edit Contents")) == EAppReturnType::Yes;
-}
-
 void UMHCompositeEditorMode::RequestSave()
 {
     if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetActiveModalWindow().IsValid()) return;
@@ -379,17 +369,18 @@ void UMHCompositeEditorMode::RequestSave()
 
 bool UMHCompositeEditorMode::RequestCancel()
 {
-    if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetActiveModalWindow().IsValid()) return false;
+    CancelGesture();
     UMHCompositeEditSession* Session = GetSession();
     if (Session == nullptr)
     {
         DeactivateForSession();
         return true;
     }
-    if (Session->IsDirty() && !ConfirmDiscard()) return false;
     FString Error;
-    if (UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem()) Subsystem->CancelEditComposite(Error);
-    return true;
+    UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    const bool bCancelled = Subsystem != nullptr && Subsystem->CancelEditComposite(Error);
+    if (!Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
+    return bCancelled;
 }
 
 void UMHCompositeEditorMode::SelectNodeIds(const TArray<FGuid>& NodeIds, const FGuid& ActiveNodeId)
@@ -416,6 +407,16 @@ void UMHCompositeEditorMode::MirrorSelection()
     AActor* Actor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
     if (Actor == nullptr) return;
     TGuardValue<bool> Guard(bMirroringSelection, true);
+    if (Session->GetSelectedNodeIds().IsEmpty())
+    {
+        // Selecting only the infrastructure actor lets the default mode draw
+        // a widget at world zero even though no authored node can be moved.
+        GEditor->SelectNone(false, true, false);
+        Projection->UpdateSelection({});
+        GEditor->NoteSelectionChange();
+        GEditor->RedrawLevelEditingViewports();
+        return;
+    }
     if (!Actor->IsSelected() || GEditor->GetSelectedActorCount() != 1)
     {
         GEditor->SelectNone(false, true, false);
@@ -676,30 +677,26 @@ void UMHCompositeEditorMode::CancelGesture()
 
 bool UMHCompositeEditorMode::HandleEscape()
 {
-    if (bCancelledTracking) return true;
-    if (bTracking) { CancelGesture(); return true; }
-    const UMHCompositeEditSession* Session = GetSession();
-    if (Session != nullptr && !Session->GetSelectedNodeIds().IsEmpty()) { SelectNodeIds({}); return true; }
     return RequestCancel();
 }
 
 bool UMHCompositeEditorMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event)
 {
     if (Key != EKeys::Escape || Event != IE_Pressed) return false;
-    if (bCancelledTracking) return true;
-    if (bTracking)
-    {
-        CancelGesture();
-        // Consume remaining deltas until physical release. UE's protected
-        // AbortTracking only cancels its own transaction, not a mode gesture.
-        return true;
-    }
-    const UMHCompositeEditSession* Session = GetSession();
-    if (Session != nullptr && !Session->GetSelectedNodeIds().IsEmpty()) { SelectNodeIds({}); return true; }
+    // Stop authoring now; defer mode teardown until UE finishes dispatching
+    // this key through its active mode collection.
+    CancelGesture();
     if (GEditor != nullptr)
     {
         TWeakObjectPtr<UMHCompositeEditorMode> WeakThis(this);
-        GEditor->GetTimerManager()->SetTimerForNextTick([WeakThis]() { if (WeakThis.IsValid() && GetActive() == WeakThis.Get()) WeakThis->RequestCancel(); });
+        const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+        const uint32 Epoch = Subsystem != nullptr ? Subsystem->GetEditSessionEpoch() : 0;
+        GEditor->GetTimerManager()->SetTimerForNextTick([WeakThis, Epoch]()
+        {
+            const UMHCompositeLevelSubsystem* Current = LevelSubsystem();
+            if (WeakThis.IsValid() && GetActive() == WeakThis.Get() && Current != nullptr && Current->GetEditSessionEpoch() == Epoch)
+                WeakThis->RequestCancel();
+        });
     }
     return true;
 }

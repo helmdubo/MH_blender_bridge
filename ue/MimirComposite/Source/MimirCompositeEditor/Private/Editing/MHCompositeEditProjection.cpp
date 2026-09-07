@@ -82,11 +82,10 @@ bool UMHCompositeEditMeshComponent::IsEditIndividuallySelected(const UPrimitiveC
 
 AMHCompositeEditProjectionActor::AMHCompositeEditProjectionActor()
 {
-    // Editor-only and transient: never saved with the map, never duplicated
-    // into PIE, never cooked (spec §5.5, contract §2 "Временный контейнер").
-    bIsEditorOnlyActor = true;
+    // The actor must remain renderable in the editor's Game View. Lifetime is
+    // kept editor-local by the transient/duplicate-transient spawn flags,
+    // rather than render visibility flags.
     bListedInSceneOutliner = false;
-    SetActorHiddenInGame(true);
     PrimaryActorTick.bCanEverTick = false;
     USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("MH_EditProjectionRoot"));
     Root->SetMobility(EComponentMobility::Movable);
@@ -114,7 +113,7 @@ bool UMHCompositeEditProjection::Open(UMHCompositeEditSession& InSession, FStrin
     Params.OverrideLevel = Root->GetLevel();
     Params.bHideFromSceneOutliner = true;
     Params.bCreateActorPackage = false;
-    Params.ObjectFlags = RF_Transient;
+    Params.ObjectFlags = RF_Transient | RF_DuplicateTransient;
     Params.bNoFail = true;
     // CE-3d: the actor's pivot is the occurrence's transform (the gizmo of
     // the framed occurrence sits there, not at the placement's origin);
@@ -124,9 +123,26 @@ bool UMHCompositeEditProjection::Open(UMHCompositeEditSession& InSession, FStrin
     {
         if (const UE::MimirComposite::FMHResolvedCompositePlan* RootPlan = Root->GetResolvedPlan())
         {
+            FString PivotNodePath = InSession.GetInvocationPath();
+            // A selected Composite option is an invocation occurrence but not
+            // a separate resolved node. Its Random owner supplies the world
+            // frame; the option path remains the occurrence prefix below.
+            const int32 OptionBoundary = PivotNodePath.Find(
+                TEXT("/options["), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+            const FString OptionSelector = OptionBoundary != INDEX_NONE
+                ? PivotNodePath.Mid(OptionBoundary)
+                : FString();
+            const FString OptionIndexText = OptionSelector.Len() >= 11 && OptionSelector.EndsWith(TEXT("]"))
+                ? OptionSelector.Mid(9, OptionSelector.Len() - 10)
+                : FString();
+            const int32 OptionIndex = OptionIndexText.IsNumeric() ? FCString::Atoi(*OptionIndexText) : INDEX_NONE;
+            if (OptionIndex >= 0 && FString::FromInt(OptionIndex) == OptionIndexText)
+            {
+                PivotNodePath.LeftInline(OptionBoundary, EAllowShrinking::No);
+            }
             for (const UE::MimirComposite::FMHResolvedCompositeNode& Node : RootPlan->Nodes)
             {
-                if (Node.NodePath != InSession.GetInvocationPath()) continue;
+                if (Node.NodePath != PivotNodePath) continue;
                 Pivot = FTransform(Node.WorldMatrix * Root->GetActorTransform().ToMatrixWithScale());
                 break;
             }
@@ -231,7 +247,8 @@ USceneComponent* UMHCompositeEditProjection::PlaceComponent(const FString& Origi
     if (!IsValid(Component) || Component->GetClass() != Class)
     {
         RetireProjectionComponent(Component);
-        Component = NewObject<USceneComponent>(Actor, Class, MakeUniqueObjectName(Actor, Class, TEXT("MH_EditNode")), RF_Transient);
+        Component = NewObject<USceneComponent>(Actor, Class, MakeUniqueObjectName(Actor, Class, TEXT("MH_EditNode")),
+            RF_Transient | RF_DuplicateTransient);
         Actor->AddInstanceComponent(Component);
         Component->ComponentTags.Add(FName(*(TEXT("MHEdit.Origin:") + Origin)));
         Component->SetupAttachment(Actor->GetRootComponent());
@@ -288,7 +305,6 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
                     UStaticMeshComponent& MeshComponent = static_cast<UStaticMeshComponent&>(New);
                     MeshComponent.SetCollisionEnabled(ECollisionEnabled::NoCollision);
                     MeshComponent.SetCanEverAffectNavigation(false);
-                    MeshComponent.SetHiddenInGame(true);
                 });
             if (Component != nullptr) NextComponents.AddUnique(Component);
             if (UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(Component))

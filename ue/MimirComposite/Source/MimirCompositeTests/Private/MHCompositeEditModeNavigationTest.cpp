@@ -126,7 +126,7 @@ bool FMHEditModeSwitchTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("dirty switch with 'save' publishes and opens the target"), Mode->RequestSwitch(SecondPath));
     Subsystem->SetCommitPublisherForTests({});
     bPassed &= TestEqual(TEXT("it asked a third time"), Asked, 3);
-    bPassed &= TestEqual(TEXT("one overwrite confirmation"), Confirmations, 1);
+    bPassed &= TestEqual(TEXT("Save decision needs no second overwrite confirmation"), Confirmations, 0);
     bPassed &= TestTrue(TEXT("the root was published"), Published == F.Root);
     bPassed &= TestEqual(TEXT("the second invocation is edited"), SessionPath(*Subsystem), SecondPath);
     FMHCompositeDocument RootDocument;
@@ -135,9 +135,8 @@ bool FMHEditModeSwitchTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
-// CE-3d: entering a definition frames it — the projection actor is the
-// exclusive selection (outline around the whole occurrence, no component
-// yet) and its pivot is the occurrence's transform, not the placement's.
+// The projection retains the occurrence frame, but native selection stays
+// empty until the user selects an authoring node (no default-mode gizmo).
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditModeEnterSelectionTest,
     "Mimir.V5.Composite.EditMode.Navigation.EnterSelectsTheOccurrenceAndPivotsThere",
@@ -160,8 +159,8 @@ bool FMHEditModeEnterSelectionTest::RunTest(const FString& Parameters)
     UMHCompositeEditSession* Session = Subsystem->GetEditSession();
     AActor* ProjectionActor = Session != nullptr && Session->GetProjection() != nullptr ? Session->GetProjection()->GetProjectionActor() : nullptr;
     if (!TestNotNull(TEXT("projection actor"), ProjectionActor) || GEditor == nullptr) return false;
-    bool bPassed = TestTrue(TEXT("the projection actor is selected on enter"), ProjectionActor->IsSelected());
-    bPassed &= TestEqual(TEXT("exclusively"), GEditor->GetSelectedActorCount(), 1);
+    bool bPassed = TestFalse(TEXT("the projection frame is not a native transform target on enter"), ProjectionActor->IsSelected());
+    bPassed &= TestEqual(TEXT("no native actor target yet"), GEditor->GetSelectedActorCount(), 0);
     bPassed &= TestEqual(TEXT("no component yet"), GEditor->GetSelectedComponentCount(), 0);
     bPassed &= TestTrue(TEXT("the pivot is the occurrence's transform"), ProjectionActor->GetActorLocation().Equals(OccurrenceLocation, 1e-2));
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
@@ -170,7 +169,7 @@ bool FMHEditModeEnterSelectionTest::RunTest(const FString& Parameters)
     Session = Subsystem->GetEditSession();
     ProjectionActor = Session != nullptr && Session->GetProjection() != nullptr ? Session->GetProjection()->GetProjectionActor() : nullptr;
     if (!TestNotNull(TEXT("root projection actor"), ProjectionActor)) return false;
-    bPassed &= TestTrue(TEXT("root: the projection actor is selected on enter"), ProjectionActor->IsSelected());
+    bPassed &= TestFalse(TEXT("root: the projection frame is not selected on enter"), ProjectionActor->IsSelected());
     bPassed &= TestTrue(TEXT("root: the pivot is the placement's transform"), ProjectionActor->GetActorLocation().Equals(F.A->GetActorLocation(), 1e-2));
     bPassed &= TestTrue(TEXT("cancel root"), Subsystem->CancelEditComposite(Error));
     return bPassed;

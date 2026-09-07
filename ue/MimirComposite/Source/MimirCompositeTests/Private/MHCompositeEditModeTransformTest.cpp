@@ -170,7 +170,7 @@ bool FMHEditModeGestureEdgesTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("mode"), Mode) || !TestNotNull(TEXT("projection actor"), ProjectionActor)) return false;
 
     // The frame is infrastructure only: no logical selection means no widget/gesture.
-    bool bPassed = TestTrue(TEXT("the frame is selected on enter"), ProjectionActor->IsSelected() && GEditor->GetSelectedComponentCount() == 0);
+    bool bPassed = TestTrue(TEXT("empty node selection selects no native infrastructure"), !ProjectionActor->IsSelected() && GEditor->GetSelectedActorCount() == 0 && GEditor->GetSelectedComponentCount() == 0);
     bPassed &= TestFalse(TEXT("the empty frame has no transform widget"), Mode->ShouldDrawWidget());
     bPassed &= TestFalse(TEXT("the empty frame starts no authoring gesture"), Mode->StartTracking(nullptr, nullptr));
     bPassed &= TestFalse(TEXT("it changed nothing"), Session->IsDirty());

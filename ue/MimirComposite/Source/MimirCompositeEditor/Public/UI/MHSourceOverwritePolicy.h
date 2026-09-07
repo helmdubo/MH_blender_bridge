@@ -14,12 +14,14 @@ enum class EMHSourceOverwriteExecution : uint8
 /**
  * Runs an editor source overwrite behind the configured confirmation policy.
  * Attempted means that Operation ran; its bool result controls success audit.
+ * An explicit CE Save skips the extra prompt while retaining the success audit.
  */
 MIMIRCOMPOSITEEDITOR_API EMHSourceOverwriteExecution MHExecuteSourceOverwrite(
     const FString& SourceFile,
     const FText& Confirmation,
     const FText& SuccessAudit,
-    TFunctionRef<bool()> Operation);
+    TFunctionRef<bool()> Operation,
+    bool bExplicitSave = false);
 
 #if WITH_DEV_AUTOMATION_TESTS
 struct FMHSourceOverwritePolicyTestHooks

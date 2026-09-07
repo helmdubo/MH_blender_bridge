@@ -51,8 +51,9 @@ private:
  * CE-2b (docs/contracts/composite_edit_ce0.md, spec §5.4–5.5): the one
  * transient actor that carries the edit projection of a session — a
  * component per resolved node of the edited definition under the selected
- * occurrence. Never saved, never in PIE or cook, hidden from the World
- * Outliner (the Composite Outliner is the tree). Owner decision 2026-09-06:
+ * occurrence. Spawned transient and duplicate-transient, so it is never saved,
+ * cooked, or copied into PIE; it remains visible in editor Game View and is
+ * hidden from the World Outliner (the Composite Outliner is the tree). Owner decision 2026-09-06:
  * components of one projection actor, not an actor per node.
  */
 UCLASS(Transient, NotPlaceable, NotBlueprintable)

@@ -1685,14 +1685,66 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
     // everything the child definition materializes here.
     const FMHResolvedCompositeNode* Invocation = Plan->Nodes.FindByPredicate(
         [&InvocationNodePath](const FMHResolvedCompositeNode& Node) { return Node.NodePath == InvocationNodePath; });
-    if (Invocation == nullptr || Invocation->SemanticKind != EMHRandomSemanticKind::Composite)
+    FString InvocationResource;
+    if (Invocation != nullptr && Invocation->SemanticKind == EMHRandomSemanticKind::Composite)
+    {
+        InvocationResource = Invocation->Resource;
+    }
+    else
+    {
+        // A random owner remains Random in the resolved plan. Its selected
+        // composite option is addressed by owner-path/options[index], while
+        // the owner supplies the occurrence transform.
+        const FMHResolvedCompositeNode* Owner = Plan->Nodes.FindByPredicate(
+            [&InvocationNodePath](const FMHResolvedCompositeNode& Node)
+            {
+                return Node.SemanticKind == EMHRandomSemanticKind::Random && Node.SelectedOptionIndex >= 0 &&
+                    InvocationNodePath == FString::Printf(TEXT("%s/options[%d]"), *Node.NodePath, Node.SelectedOptionIndex);
+            });
+        if (Owner != nullptr)
+        {
+            // Recipes contain their own definition's paths, not the expanded
+            // occurrence paths of the placement plan. Resolve the definition
+            // after the last '>' before looking up its local Random component.
+            const UMHCompositeAsset* OwnerAsset = Root->GetCompositeAsset();
+            FString LocalPath = Owner->NodePath;
+            int32 Boundary = INDEX_NONE;
+            if (LocalPath.FindLastChar(TEXT('>'), Boundary))
+            {
+                LocalPath.RightChopInline(Boundary + 1, EAllowShrinking::No);
+                FString DefinitionName, NodeSelector;
+                if (LocalPath.Split(TEXT(":"), &DefinitionName, &NodeSelector))
+                {
+                    const FMHResourceKey DefinitionKey{EMHResourceKind::Composite, DefinitionName};
+                    FString DefinitionError;
+                    OwnerAsset = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(DefinitionKey, DefinitionError));
+                }
+            }
+            const UMHCompiledRecipeRegistry* Registry = UMHCompiledRecipeRegistry::Get();
+            const FMHCompiledRecipe* Recipe = Registry != nullptr && OwnerAsset != nullptr ? Registry->Find(*OwnerAsset) : nullptr;
+            // A root placement can retain a different stream namespace after
+            // Break/Make Unique. The recipe still uses its own logical name.
+            int32 Colon = INDEX_NONE;
+            if (Recipe != nullptr && LocalPath.FindLastChar(TEXT(':'), Colon)) LocalPath = Recipe->LogicalName + LocalPath.Mid(Colon);
+            const FMHCompiledRecipeComponent* Component = Recipe != nullptr
+                ? Recipe->Components.FindByPredicate([&LocalPath](const FMHCompiledRecipeComponent& Value) { return Value.NodePath == LocalPath; })
+                : nullptr;
+            if (Component != nullptr && Component->Options.IsValidIndex(Owner->SelectedOptionIndex) &&
+                Component->Options[Owner->SelectedOptionIndex].Kind == EMHRandomSemanticKind::Composite)
+            {
+                Invocation = Owner;
+                InvocationResource = Component->Options[Owner->SelectedOptionIndex].Resource;
+            }
+        }
+    }
+    if (Invocation == nullptr || InvocationResource.IsEmpty())
     {
         OutError = FString::Printf(TEXT("MH_E_COMPOSITE_GRAMMAR: %s is not a nested composite invocation of this placement"), *InvocationNodePath);
         return false;
     }
     FMHResourceKey ChildKey;
     ChildKey.Kind = EMHResourceKind::Composite;
-    ChildKey.LogicalName = Invocation->Resource;
+    ChildKey.LogicalName = InvocationResource;
     FString AdmissionError;
     UMHCompositeAsset* Child = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(ChildKey, AdmissionError));
     if (Child == nullptr)

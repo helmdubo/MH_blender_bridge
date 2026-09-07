@@ -1270,8 +1270,26 @@ private:
                 }
             }
         }
-        AMHCompositeActor* NextActor =
-            MHResolveCompositeOutlinerActor(SelectedActors, SelectedInstances);
+        // Composite Edit Mode owns native selection with its transient
+        // projection (or nothing before the first node is chosen). Keep the
+        // source placement as the Outliner authority for the lifetime of that
+        // projection-backed session; after Close, ordinary editor selection
+        // becomes authoritative again.
+        AMHCompositeActor* NextActor = nullptr;
+        const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+            ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+        const UMHCompositeEditSession* EditSession = Subsystem != nullptr
+            ? Subsystem->GetEditSession() : nullptr;
+        if (EditSession != nullptr && EditSession->IsOpen() &&
+            EditSession->GetProjection() != nullptr && EditSession->GetProjection()->IsOpen() &&
+            IsValid(EditSession->GetRootPlacement()))
+        {
+            NextActor = EditSession->GetRootPlacement();
+        }
+        else
+        {
+            NextActor = MHResolveCompositeOutlinerActor(SelectedActors, SelectedInstances);
+        }
         const FMHCompositeOutlinerFreshness NextFreshness = NextActor != nullptr
             ? FMHCompositeOutlinerFreshness::Capture(*NextActor)
             : FMHCompositeOutlinerFreshness();
@@ -1342,7 +1360,7 @@ private:
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     // CE-3b: under the mode Save and Cancel live in the viewport overlay.
                     const TCHAR* Hint = UMHCompositeEditorMode::IsActive()
-                        ? TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport; Esc cancels a gesture, clears selection, then exits; right-click for Save As Unique Copy")
+                        ? TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport; Esc cancels the whole session immediately; right-click for Save As Unique Copy")
                         : TEXT("Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Save As Unique Copy, Cancel Edit Contents");
                     StatusText->SetText(FText::FromString(FString::Printf(
                         TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  %s"),
@@ -1418,7 +1436,7 @@ TSharedRef<SDockTab> SpawnOutlinerTab(const FSpawnTabArgs&)
     return SNew(SDockTab)
         .TabRole(ETabRole::NomadTab)
         [
-            SNew(SMHCompositeOutliner)
+            MHCreateCompositeOutlinerWidget()
         ];
 }
 
@@ -1452,6 +1470,11 @@ void MHUnregisterCompositeOutliner()
 void MHOpenCompositeOutliner()
 {
     if (GOutlinerRegistered) FGlobalTabmanager::Get()->TryInvokeTab(MHCompositeOutlinerTabName);
+}
+
+TSharedRef<SWidget> MHCreateCompositeOutlinerWidget()
+{
+    return SNew(SMHCompositeOutliner);
 }
 
 } // namespace UE::MimirComposite

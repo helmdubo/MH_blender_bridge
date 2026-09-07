@@ -90,8 +90,8 @@ bool FMHEditProjectionOccurrenceTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("no legacy scope handles"), F.A->GetEditScopeHandles().Num(), 0);
     const AMHCompositeEditProjectionActor* Actor = Projection->GetProjectionActor();
     if (!TestNotNull(TEXT("projection actor"), Actor)) return false;
-    bPassed &= TestTrue(TEXT("projection actor is transient and editor-only, in the root's level"),
-        Actor->HasAnyFlags(RF_Transient) && Actor->IsEditorOnly() && Actor->GetLevel() == F.A->GetLevel() && Actor->IsHidden());
+    bPassed &= TestTrue(TEXT("projection actor is transient, PIE-excluded, visible, and in the root's level"),
+        Actor->HasAllFlags(RF_Transient | RF_DuplicateTransient) && Actor->GetLevel() == F.A->GetLevel() && !Actor->IsHidden());
 
     // The occurrence renders through the projection, not through the pool.
     const TArray<FVector> ProjectedMeshes = MeshComponentWorlds(*Projection);
