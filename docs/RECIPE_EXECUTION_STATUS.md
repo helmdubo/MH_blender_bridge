@@ -10,6 +10,7 @@
 
 | Срез | Статус | PR / примечание |
 |---|---|---|
+| Composite drag + viewport selection | READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-drag-selection`, база `b99ff394`; drag 34.977 → 0.209 ms/update на одинаковой fixture, mesh hit выбирает содержащее вхождение, Edit открывает его содержимое с выбранным узлом; NullRHI 291/291, D3D12 63/63; `docs/contracts/composite_drag_selection.md`, `docs/receipts/composite_drag_selection.md` |
 | Composite loading A/B + Save | READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-loading`, база `c6faeae`; готовность выбранных мешей без кубов/каскада rebuild, сохранённые dependency hints, обычный Save без отложенной proof-очереди; NullRHI 288/288, D3D12 59/59; `docs/contracts/composite_loading.md`, `docs/receipts/composite_loading.md` |
 | D0a | MERGED | #62 |
 | M0 | MERGED | #63 |

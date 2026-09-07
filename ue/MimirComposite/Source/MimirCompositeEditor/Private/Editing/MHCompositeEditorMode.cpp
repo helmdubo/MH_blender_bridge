@@ -609,14 +609,14 @@ bool UMHCompositeEditorMode::InputDelta(FEditorViewportClient* InViewportClient,
         Worlds.Add(World);
     }
     FString Error;
-    if (Session->SetNodeTransforms(Ids, Locals, Error))
+    if (Session->SetNodeTransformsInteractive(Ids, Locals, Error))
     {
         if (!Session->GetPreviewError().IsEmpty())
         {
             // A parent edit may make a descendant unrepresentable. Restore
             // this delta as a batch before accepting any gesture state.
             const FString PreviewFailure = Session->GetPreviewError();
-            Session->SetNodeTransforms(Ids, PreviousLocals, Error);
+            Session->SetNodeTransformsInteractive(Ids, PreviousLocals, Error);
             FMessageLog("Mimir").Warning(FText::FromString(PreviewFailure));
             return true;
         }
@@ -634,6 +634,7 @@ bool UMHCompositeEditorMode::EndTracking(FEditorViewportClient* InViewportClient
     if (bCancelledTracking) { bCancelledTracking = false; return true; }
     if (!bTracking) return false;
     bTracking = false;
+    bool bCommittedGesture = false;
     if (GestureTransaction != INDEX_NONE && GEditor != nullptr)
     {
         bool bDifferent = false;
@@ -646,8 +647,16 @@ bool UMHCompositeEditorMode::EndTracking(FEditorViewportClient* InViewportClient
                 bDifferent |= Index != INDEX_NONE && !Draft->GetNodes()[Index].Transform.Equals(Node.AuthoredLocal, 0.0);
             }
         }
-        if (bGestureChanged && bDifferent) GEditor->EndTransaction();
+        if (bGestureChanged && bDifferent)
+        {
+            GEditor->EndTransaction();
+            bCommittedGesture = true;
+        }
         else GEditor->CancelTransaction(GestureTransaction);
+    }
+    if (bCommittedGesture)
+    {
+        if (UMHCompositeEditSession* Session = GetSession()) Session->FinishInteractiveTransform();
     }
     GestureTransaction = INDEX_NONE;
     GestureNodes.Reset();
@@ -664,7 +673,7 @@ void UMHCompositeEditorMode::CancelGesture()
         TArray<FTransform> Locals;
         for (const FGestureNode& Node : GestureNodes) { Ids.Add(Node.NodeId); Locals.Add(Node.AuthoredLocal); }
         FString Error;
-        if (!Session->SetNodeTransforms(Ids, Locals, Error)) FMessageLog("Mimir").Error(FText::FromString(Error));
+        if (!Session->SetNodeTransformsInteractive(Ids, Locals, Error)) FMessageLog("Mimir").Error(FText::FromString(Error));
     }
     // CancelTransaction removes the record; it does not restore object state.
     if (GestureTransaction != INDEX_NONE && GEditor != nullptr) GEditor->CancelTransaction(GestureTransaction);

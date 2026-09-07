@@ -2,6 +2,7 @@
 
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHInstancePool.h"
 #include "CoreGlobals.h"
 #include "Elements/Framework/EngineElementsLibrary.h"
@@ -10,6 +11,10 @@
 #include "Elements/SMInstance/SMInstanceElementData.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
+#include "Editing/MHCompositeEditProjection.h"
+#include "Editing/MHCompositeEditSession.h"
+#include "Editing/MHCompositeEditorMode.h"
+#include "Editor.h"
 #include "LevelUtils.h"
 
 namespace UE::MimirComposite
@@ -120,6 +125,41 @@ bool MHRegisterPoolInstanceSelection(UTypedElementSelectionSet& SelectionSet)
 bool MHIsPoolInstanceSelectionRegistered(const UTypedElementSelectionSet& SelectionSet)
 {
     return RegisteredSets().Contains(&SelectionSet);
+}
+
+bool MHBeginEditPickedComposite(
+    AMHCompositeActor& Actor, const FString& LeafPath, FString& OutError)
+{
+    OutError.Reset();
+    FString OccurrencePath;
+    if (LeafPath.IsEmpty() || !Actor.FindPlacementOccurrenceForLeafPath(LeafPath, OccurrencePath))
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the clicked composite leaf is no longer present");
+        return false;
+    }
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (Subsystem == nullptr)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Edit Contents requires an editor composite subsystem");
+        return false;
+    }
+    const bool bOpened = OccurrencePath.IsEmpty()
+        ? Subsystem->BeginEditComposite(&Actor, OutError)
+        : Subsystem->BeginEditNestedComposite(&Actor, OccurrencePath, OutError);
+    if (!bOpened) return false;
+
+    UMHCompositeEditSession* Session = Subsystem->GetEditSession();
+    UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+    USceneComponent* Component = Projection != nullptr ? Projection->FindComponentForOrigin(LeafPath) : nullptr;
+    if (Mode != nullptr && Component != nullptr && Mode->SelectComponent(Component)) return true;
+
+    FString CancelError;
+    Subsystem->CancelEditComposite(CancelError);
+    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the clicked leaf has no editable authored owner in this occurrence");
+    if (!CancelError.IsEmpty()) OutError += TEXT(": ") + CancelError;
+    return false;
 }
 
 } // namespace UE::MimirComposite

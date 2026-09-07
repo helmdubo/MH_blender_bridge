@@ -179,6 +179,36 @@ bool UMHCompositeEditSession::SetNodeTransforms(const TArray<FGuid>& NodeIds, co
     return true;
 }
 
+bool UMHCompositeEditSession::SetNodeTransformsInteractive(
+    const TArray<FGuid>& NodeIds,
+    const TArray<FTransform>& LocalTransforms,
+    FString& OutError)
+{
+    if (!IsOpen() || Draft == nullptr)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the composite edit session is closed");
+        return false;
+    }
+    const uint32 RevisionBefore = Draft->GetRevision();
+    if (!Draft->SetNodeTransforms(NodeIds, LocalTransforms, OutError)) return false;
+    if (Draft->GetRevision() == RevisionBefore) return true;
+
+    // Mouse samples still need admission and an exact visual result, but UI
+    // observers see the gesture as the single transaction it represents.
+    if (Projection != nullptr && Projection->IsOpen())
+    {
+        FString RefreshError;
+        if (Projection->RefreshTransforms(NodeIds, RefreshError)) PreviewError.Reset();
+        else PreviewError = MoveTemp(RefreshError);
+    }
+    return true;
+}
+
+void UMHCompositeEditSession::FinishInteractiveTransform()
+{
+    if (IsOpen()) OnChanged.Broadcast();
+}
+
 bool UMHCompositeEditSession::SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError)
 {
     return SetNodeTransforms({NodeId}, {LocalTransform}, OutError);

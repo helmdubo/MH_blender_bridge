@@ -189,7 +189,14 @@ public:
     /** Navigation selection only; source and resolved-plan authority are untouched. */
     bool SelectPlacementLeaf(const USceneComponent* Component, int32 InstanceIndex = INDEX_NONE);
     bool SelectPlacementLeafByNodePath(const FString& NodePath);
+    /** Nearest enclosing composite occurrence for an exact resident leaf; empty means the root occurrence. */
+    bool FindPlacementOccurrenceForLeafPath(const FString& LeafPath, FString& OutOccurrencePath) const;
+    /** Clears transient viewport leaf context while preserving ordinary actor selection. */
+    void ClearPlacementLeafSelection();
     const FString& GetSelectedPlacementLeafPath() const { return SelectedPlacementLeafPath; }
+    const FString& GetSelectedPlacementOccurrencePath() const { return SelectedPlacementOccurrencePath; }
+    /** Pool selection predicate: a leaf hit highlights its enclosing occurrence; direct actor selection highlights all. */
+    bool ShouldHighlightPlacementLeafPath(const FString& NodePath) const;
 
     const TArray<FString>& GetLastPlacementWarnings() const
     {
@@ -232,6 +239,8 @@ private:
     void ClearDerivedComponents();
     void RebuildPlacement(bool bSeedOnly, bool bRecipeChanged = false);
     void CancelPendingPlacement();
+    /** Revalidates transient viewport selection against the newly committed plan/view. */
+    void PrunePlacementLeafSelection();
     bool PendingEndpointsSettled(FString& OutError);
     void CommitPendingPlacement();
     void OnEndpointLoadReady(const UE::MimirComposite::FMHResourceKey& Key);
@@ -360,6 +369,7 @@ private:
     bool bPlacementEditMode = false;
     bool bExtractSelectedLeafForEdit = false;
     FString SelectedPlacementLeafPath;
+    FString SelectedPlacementOccurrencePath;
     /** Set by PostLoad; consumed by the single admitted first-build point. */
     bool bNeedsInitialPlacementBuild = false;
     /**

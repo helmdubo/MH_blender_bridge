@@ -45,8 +45,65 @@ FString AuthoringPathForVisual(const FString& Origin, const FString& DefinitionP
     const int32 DefinitionBoundary = Path.Find(TEXT(">"), ESearchCase::CaseSensitive, ESearchDir::FromStart, DefinitionPrefix.Len());
     if (DefinitionBoundary != INDEX_NONE) Path = Path.Left(DefinitionBoundary);
     const int32 OptionBoundary = Path.Find(TEXT("/options["), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
-    if (OptionBoundary != INDEX_NONE) Path = Path.Left(OptionBoundary);
+    // Only a selected option inside this definition belongs to its Random
+    // authored node. Ancestor options are part of the occurrence address.
+    if (OptionBoundary >= DefinitionPrefix.Len()) Path = Path.Left(OptionBoundary);
     return Path;
+}
+
+FMHRandomTrs RandomTrsFromTransform(const FTransform& Transform)
+{
+    FMHRandomTrs Result;
+    Result.TranslationCm = FVector3f(Transform.GetTranslation());
+    Result.RotationQuat = FQuat4f(Transform.GetRotation());
+    Result.Scale = FVector3f(Transform.GetScale3D());
+    return Result;
+}
+
+/** Finds only canonical authored-node selectors; option paths are deliberately excluded. */
+FMHRandomNode* FindGraphNode(FMHRandomComposite& Composite, const FString& Selector)
+{
+    TArray<FString> Parts;
+    Selector.ParseIntoArray(Parts, TEXT("/"), true);
+    TArray<FMHRandomNode>* Level = &Composite.Nodes;
+    FMHRandomNode* Result = nullptr;
+    for (int32 Depth = 0; Depth < Parts.Num(); ++Depth)
+    {
+        const FString Prefix = Depth == 0 ? TEXT("nodes[") : TEXT("children[");
+        const FString& Part = Parts[Depth];
+        if (!Part.StartsWith(Prefix, ESearchCase::CaseSensitive) || !Part.EndsWith(TEXT("]"))) return nullptr;
+        const FString IndexText = Part.Mid(Prefix.Len(), Part.Len() - Prefix.Len() - 1);
+        if (!IndexText.IsNumeric()) return nullptr;
+        const int32 Index = FCString::Atoi(*IndexText);
+        if (Index < 0 || FString::FromInt(Index) != IndexText || !Level->IsValidIndex(Index)) return nullptr;
+        Result = &(*Level)[Index];
+        Level = &Result->Children;
+    }
+    return Result;
+}
+
+bool SameTransformTopology(const FMHResolvedCompositePlan& Before, const FMHResolvedCompositePlan& After)
+{
+    if (Before.Nodes.Num() != After.Nodes.Num() || Before.Leaves.Num() != After.Leaves.Num() ||
+        Before.SelectedDependencies != After.SelectedDependencies) return false;
+    for (int32 Index = 0; Index < Before.Nodes.Num(); ++Index)
+    {
+        const FMHResolvedCompositeNode& A = Before.Nodes[Index];
+        const FMHResolvedCompositeNode& B = After.Nodes[Index];
+        if (A.NodePath != B.NodePath || A.DisplayName != B.DisplayName || A.SemanticKind != B.SemanticKind ||
+            A.Resource != B.Resource || A.RootNodeIndex != B.RootNodeIndex ||
+            A.ParentResolvedNodeIndex != B.ParentResolvedNodeIndex || A.SelectedOptionIndex != B.SelectedOptionIndex) return false;
+    }
+    for (int32 Index = 0; Index < Before.Leaves.Num(); ++Index)
+    {
+        const FMHResolvedCompositeLeaf& A = Before.Leaves[Index];
+        const FMHResolvedCompositeLeaf& B = After.Leaves[Index];
+        if (A.Kind != B.Kind || A.Resource != B.Resource || A.Origin != B.Origin || A.DisplayName != B.DisplayName ||
+            A.RootNodeIndex != B.RootNodeIndex || A.OwningResolvedNodeIndex != B.OwningResolvedNodeIndex ||
+            A.AppearanceBoundaryPath != B.AppearanceBoundaryPath ||
+            FMemory::Memcmp(A.AppearanceChannels, B.AppearanceChannels, sizeof(A.AppearanceChannels)) != 0) return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -246,6 +303,7 @@ bool UMHCompositeEditProjection::UnderOccurrence(const FString& Path) const
 
 bool UMHCompositeEditProjection::BuildDraftGraph(FMHRandomSourceGraph& OutGraph, FString& OutError)
 {
+    ++FullGraphBuildCount;
     UMHCompositeEditSession* Owner = Session.Get();
     UMHCompiledRecipeRegistry* Recipes = UMHCompiledRecipeRegistry::Get();
     const AMHCompositeActor* Root = Owner != nullptr ? Owner->GetRootPlacement() : nullptr;
@@ -316,8 +374,165 @@ USceneComponent* UMHCompositeEditProjection::PlaceComponent(const FString& Origi
     return Component;
 }
 
+bool UMHCompositeEditProjection::RefreshTransforms(const TArray<FGuid>& NodeIds, FString& OutError)
+{
+    UMHCompositeEditSession* Owner = Session.Get();
+    AMHCompositeActor* Root = Owner != nullptr ? Owner->GetRootPlacement() : nullptr;
+    UMHCompositeEditDocument* Draft = Owner != nullptr ? Owner->GetDraft() : nullptr;
+    const UMHCompositeAsset* Edited = Owner != nullptr ? Owner->GetEditedAsset() : nullptr;
+    if (Root == nullptr || Draft == nullptr || Edited == nullptr || !ProjectionActor.IsValid())
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the edit projection is closed");
+        return false;
+    }
+    if (!CachedGraph.IsSet() || !Plan.IsValid()) return Refresh(OutError);
+    FMHRandomComposite* Definition = CachedGraph->Composites.Find(Edited->LogicalName);
+    if (Definition == nullptr) return Refresh(OutError);
+
+    struct FPatchedTransform
+    {
+        FMHRandomNode* Node = nullptr;
+        FMHRandomTrs Previous;
+    };
+    TArray<FPatchedTransform> Patched;
+    Patched.Reserve(NodeIds.Num());
+    for (const FGuid& NodeId : NodeIds)
+    {
+        const int32 DraftIndex = Draft->FindNodeIndex(NodeId);
+        if (DraftIndex == INDEX_NONE)
+        {
+            for (const FPatchedTransform& Item : Patched) Item.Node->Transform = Item.Previous;
+            return Refresh(OutError);
+        }
+        FMHRandomNode* GraphNode = FindGraphNode(*Definition, Draft->GetSelector(DraftIndex));
+        if (GraphNode == nullptr)
+        {
+            for (const FPatchedTransform& Item : Patched) Item.Node->Transform = Item.Previous;
+            return Refresh(OutError);
+        }
+        FPatchedTransform& Item = Patched.AddDefaulted_GetRef();
+        Item.Node = GraphNode;
+        Item.Previous = GraphNode->Transform;
+        GraphNode->Transform = RandomTrsFromTransform(Draft->GetNodes()[DraftIndex].Transform);
+    }
+    auto RestoreCachedGraph = [&Patched]()
+    {
+        for (const FPatchedTransform& Item : Patched) Item.Node->Transform = Item.Previous;
+    };
+
+    TSharedRef<FMHResolvedCompositePlan> NextPlan = MakeShared<FMHResolvedCompositePlan>();
+    if (!MHResolvePreviewGraph(*CachedGraph, Owner->GetFrozenSeed(), Owner->GetFrozenAppearanceSeed(),
+        Owner->GetCallContext().ToResolveContext(), *NextPlan, OutError))
+    {
+        RestoreCachedGraph();
+        return false;
+    }
+    if (!MHValidateResolvedPlacementTransforms(*NextPlan, Root->GetActorTransform(), OutError))
+    {
+        RestoreCachedGraph();
+        return false;
+    }
+    if (!SameTransformTopology(*Plan, *NextPlan))
+    {
+        RestoreCachedGraph();
+        return Refresh(OutError);
+    }
+
+    const FMatrix Basis = Root->GetActorTransform().ToMatrixWithScale();
+    TMap<FString, FMatrix> PreviousWorldByOrigin;
+    for (const FMHResolvedCompositeLeaf& Leaf : Plan->Leaves)
+    {
+        if (UnderOccurrence(Leaf.Origin)) PreviousWorldByOrigin.Add(Leaf.Origin, Leaf.WorldMatrix * Basis);
+    }
+    for (const FMHResolvedCompositeNode& Node : Plan->Nodes)
+    {
+        if (!Node.NodePath.StartsWith(DefinitionPrefix) || PreviousWorldByOrigin.Contains(Node.NodePath)) continue;
+        if (Node.SemanticKind == EMHRandomSemanticKind::Mesh) continue;
+        if (Node.NodePath.Mid(DefinitionPrefix.Len()).Contains(TEXT(">"))) continue;
+        PreviousWorldByOrigin.Add(Node.NodePath, Node.WorldMatrix * Basis);
+    }
+    TMap<FString, FMatrix> NextWorldByOrigin;
+    for (const FMHResolvedCompositeLeaf& Leaf : NextPlan->Leaves)
+    {
+        if (UnderOccurrence(Leaf.Origin)) NextWorldByOrigin.Add(Leaf.Origin, Leaf.WorldMatrix * Basis);
+    }
+    for (const FMHResolvedCompositeNode& Node : NextPlan->Nodes)
+    {
+        if (!Node.NodePath.StartsWith(DefinitionPrefix) || NextWorldByOrigin.Contains(Node.NodePath)) continue;
+        if (Node.SemanticKind == EMHRandomSemanticKind::Mesh) continue;
+        if (Node.NodePath.Mid(DefinitionPrefix.Len()).Contains(TEXT(">"))) continue;
+        NextWorldByOrigin.Add(Node.NodePath, Node.WorldMatrix * Basis);
+    }
+    if (NextWorldByOrigin.Num() != ComponentsByOrigin.Num())
+    {
+        RestoreCachedGraph();
+        return Refresh(OutError);
+    }
+    for (const TPair<FString, FMatrix>& Pair : NextWorldByOrigin)
+    {
+        if (!IsValid(ComponentsByOrigin.FindRef(Pair.Key).Get()))
+        {
+            RestoreCachedGraph();
+            return Refresh(OutError);
+        }
+    }
+
+    TMap<FString, const FMHResolvedCompositeNode*> ResolvedByPath;
+    ResolvedByPath.Reserve(NextPlan->Nodes.Num());
+    for (const FMHResolvedCompositeNode& Node : NextPlan->Nodes) ResolvedByPath.Add(Node.NodePath, &Node);
+    TMap<FGuid, FMHCompositeEditNodeFrame> NextFrames;
+    for (int32 DraftIndex = 0; DraftIndex < Draft->Num(); ++DraftIndex)
+    {
+        const FGuid NodeId = Draft->GetNodeId(DraftIndex);
+        const FString NodePath = DefinitionPrefix + Draft->GetSelector(DraftIndex);
+        const FMHResolvedCompositeNode* const* Resolved = ResolvedByPath.Find(NodePath);
+        if (!NodeId.IsValid() || Resolved == nullptr) continue;
+        const FMHCompositeAssetNode& DraftNode = Draft->GetNodes()[DraftIndex];
+        FMHCompositeEditNodeFrame& Frame = NextFrames.Add(NodeId);
+        Frame.NodeId = NodeId;
+        Frame.ParentNodeId = Draft->GetParentId(NodeId);
+        Frame.AuthoredLocal = DraftNode.Transform;
+        Frame.WorldMatrix = (*Resolved)->WorldMatrix * Basis;
+        Frame.ParentWorldMatrix = NextPlan->Nodes.IsValidIndex((*Resolved)->ParentResolvedNodeIndex)
+            ? NextPlan->Nodes[(*Resolved)->ParentResolvedNodeIndex].WorldMatrix * Basis
+            : Basis;
+        Frame.bGeneratedTransform = !DraftNode.Profile.IsEmpty() || DraftNode.bHasInlinePlacement;
+    }
+    if (NextFrames.Num() != NodeFrames.Num())
+    {
+        RestoreCachedGraph();
+        return Refresh(OutError);
+    }
+    for (const TPair<FGuid, FMHCompositeEditNodeFrame>& Pair : NodeFrames)
+    {
+        if (!NextFrames.Contains(Pair.Key))
+        {
+            RestoreCachedGraph();
+            return Refresh(OutError);
+        }
+    }
+
+    // Every semantic and component guard has passed. Only derived transforms
+    // and exact authored frames change; mesh bindings, appearance and selection
+    // proxies remain untouched for the mouse sample.
+    for (const TPair<FString, FMatrix>& Pair : NextWorldByOrigin)
+    {
+        const FMatrix* PreviousWorld = PreviousWorldByOrigin.Find(Pair.Key);
+        if (PreviousWorld != nullptr && PreviousWorld->Equals(Pair.Value, 0.0)) continue;
+        USceneComponent* Component = ComponentsByOrigin.FindRef(Pair.Key).Get();
+        Component->SetWorldTransform(FTransform(Pair.Value), false, nullptr, ETeleportType::TeleportPhysics);
+    }
+    NodeFrames = MoveTemp(NextFrames);
+    Plan = NextPlan;
+    OutError.Reset();
+    return true;
+}
+
 bool UMHCompositeEditProjection::Refresh(FString& OutError)
 {
+    // A failed full rebuild must never leave a transform cache from an older
+    // draft revision available to the interactive path.
+    CachedGraph.Reset();
     UMHCompositeEditSession* Owner = Session.Get();
     AMHCompositeActor* Root = Owner != nullptr ? Owner->GetRootPlacement() : nullptr;
     if (Root == nullptr || !ProjectionActor.IsValid())
@@ -450,6 +665,7 @@ bool UMHCompositeEditProjection::Refresh(FString& OutError)
     UpdateSelection(Owner->GetSelectedNodeIds());
     PushEditingTint();
     Plan = NextPlan;
+    CachedGraph = MoveTemp(Graph);
     SetPendingEndpointKeys(MoveTemp(NextPendingEndpointKeys));
     return true;
 }
@@ -488,6 +704,7 @@ void UMHCompositeEditProjection::Close()
     FrameComponentByNodeId.Reset();
     Components.Reset();
     Plan.Reset();
+    CachedGraph.Reset();
 }
 
 FString UMHCompositeEditProjection::GetOriginForComponent(const USceneComponent* Component) const

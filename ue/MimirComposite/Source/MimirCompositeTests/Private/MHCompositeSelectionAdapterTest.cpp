@@ -3,6 +3,7 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHCompositeSelectionAdapter.h"
 #include "Composite/MHInstancePool.h"
 #include "CoreMinimal.h"
@@ -11,6 +12,8 @@
 #include "Elements/Framework/TypedElementSelectionSet.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Editing/MHCompositeEditProjection.h"
+#include "Editing/MHCompositeEditSession.h"
 #include "GameFramework/Actor.h"
 #include "Misc/AutomationTest.h"
 #include "Selection.h"
@@ -129,6 +132,262 @@ bool FMHPoolInstanceSelectionResolvesOwnerTest::RunTest(const FString& Parameter
         {
             AddInfo(TEXT("no level editor selection set in this host; integration check skipped"));
         }
+    }
+    return bPassed;
+}
+
+// A viewport hit keeps the native composite actor as the selected element, but
+// its visual selection is the nearest enclosing resolved composite occurrence.
+// Repeated occurrences may share one pool bucket; changing the hit while the
+// actor is already selected must retarget that per-instance highlight. A
+// selected composite option is an occurrence at owner/options[index].
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHPoolLeafSelectsNearestCompositeOccurrenceTest,
+    "Mimir.V5.Composite.Selection.PoolLeafSelectsNearestCompositeOccurrence",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHPoolLeafSelectsNearestCompositeOccurrenceTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    if (!TestNotNull(TEXT("editor"), GEditor)) return false;
+    FMHCompositeEditBackendScope Backend(true);
+
+    FRecipeFixture Recipe(*this);
+    const FString MeshName = Recipe.Name(TEXT("occurrence_selection_mesh"));
+    UStaticMesh* Mesh = Recipe.Mesh(MeshName);
+    if (!TestNotNull(TEXT("shared occurrence mesh"), Mesh)) return false;
+
+    FMHCompositeDocument ChildDocument;
+    for (int32 Index = 0; Index < 2; ++Index)
+    {
+        FMHCompositeNode& Leaf = ChildDocument.Nodes.AddDefaulted_GetRef();
+        Leaf.Kind = EMHCompositeNodeKind::Mesh;
+        Leaf.Resource = MeshName;
+        Leaf.Transform.TranslationCm = FVector(Index * 40.0, 0.0, 0.0);
+    }
+    UMHCompositeAsset* Child = Recipe.Composite(
+        Recipe.Name(TEXT("occurrence_selection_child")), ChildDocument, {});
+    if (!TestNotNull(TEXT("nested child"), Child)) return false;
+
+    FMHCompositeDocument RootDocument;
+    FMHCompositeNode& RootLeaf = RootDocument.Nodes.AddDefaulted_GetRef();
+    RootLeaf.Kind = EMHCompositeNodeKind::Mesh;
+    RootLeaf.Resource = MeshName;
+    for (int32 Index = 0; Index < 2; ++Index)
+    {
+        FMHCompositeNode& Invocation = RootDocument.Nodes.AddDefaulted_GetRef();
+        Invocation.Kind = EMHCompositeNodeKind::Composite;
+        Invocation.Resource = Child->LogicalName;
+        Invocation.Transform.TranslationCm = FVector(200.0 + Index * 300.0, 0.0, 0.0);
+    }
+    FMHCompositeNode& Random = RootDocument.Nodes.AddDefaulted_GetRef();
+    Random.Kind = EMHCompositeNodeKind::Random;
+    Random.Transform.TranslationCm = FVector(800.0, 0.0, 0.0);
+    FMHCompositeOption& SelectedChild = Random.Options.AddDefaulted_GetRef();
+    SelectedChild.Kind = EMHCompositeOptionKind::Composite;
+    SelectedChild.Resource = Child->LogicalName;
+    SelectedChild.Weight = 1.0f;
+    UMHCompositeAsset* Root = Recipe.Composite(
+        Recipe.Name(TEXT("occurrence_selection_root")), RootDocument, {});
+    if (!TestNotNull(TEXT("occurrence root"), Root)) return false;
+
+    UWorld* World = UWorld::CreateWorld(EWorldType::Editor, false);
+    if (!TestNotNull(TEXT("occurrence selection world"), World)) return false;
+    ON_SCOPE_EXIT
+    {
+        if (UMHCompositeLevelSubsystem* Subsystem = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
+            Subsystem != nullptr && Subsystem->IsEditingComposite())
+        {
+            FString Ignored;
+            Subsystem->CancelEditComposite(Ignored);
+        }
+        GEditor->SelectNone(false, true, false);
+        World->DestroyWorld(true);
+    };
+    AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
+    AMHCompositeActor* Other = World->SpawnActor<AMHCompositeActor>(
+        AMHCompositeActor::StaticClass(), FTransform(FVector(0.0, 1000.0, 0.0)));
+    if (!TestNotNull(TEXT("occurrence actor"), Actor) ||
+        !TestNotNull(TEXT("other occurrence actor"), Other)) return false;
+    for (AMHCompositeActor* Placement : {Actor, Other})
+    {
+        Placement->SetAutoSeed(false);
+        Placement->SetAutoAppearanceSeed(false);
+        Placement->SetSeed(3);
+        Placement->SetAppearanceSeed(5);
+        Placement->SetCompositeAsset(Root);
+    }
+    const FMHResolvedCompositePlan* Plan = Actor->GetResolvedPlan();
+    if (!TestNotNull(TEXT("resolved occurrence plan"), Plan)) return false;
+
+    TArray<FString> ExplicitOccurrences;
+    FString RandomOccurrence;
+    for (const FMHResolvedCompositeNode& Node : Plan->Nodes)
+    {
+        if (Node.SemanticKind == EMHRandomSemanticKind::Composite &&
+            Node.Resource == Child->LogicalName)
+        {
+            ExplicitOccurrences.Add(Node.NodePath);
+        }
+        else if (Node.SemanticKind == EMHRandomSemanticKind::Random &&
+                 Node.SelectedOptionIndex == 0)
+        {
+            RandomOccurrence = Node.NodePath + TEXT("/options[0]");
+        }
+    }
+    if (!TestEqual(TEXT("two explicit child occurrences"), ExplicitOccurrences.Num(), 2) ||
+        !TestFalse(TEXT("selected composite option occurrence exists"), RandomOccurrence.IsEmpty())) return false;
+
+    UTypedElementSelectionSet* Set = NewObject<UTypedElementSelectionSet>(GetTransientPackage());
+    if (!TestNotNull(TEXT("occurrence selection set"), Set) ||
+        !TestTrue(TEXT("occurrence adapter registers"), MHRegisterPoolInstanceSelection(*Set))) return false;
+    const FTypedElementHandle OwnerHandle = UEngineElementsLibrary::AcquireEditorActorElementHandle(Actor);
+    auto HitUnder = [&](const FString& Occurrence, const ETypedElementSelectionMethod Method) -> FString
+    {
+        const FMHCompositeLeafMaterialization* Row = Actor->GetLeafMaterializations().FindByPredicate(
+            [&Occurrence](const FMHCompositeLeafMaterialization& Candidate)
+            {
+                return Candidate.NodePath.StartsWith(Occurrence + TEXT(">"));
+            });
+        if (Row == nullptr) return FString();
+        UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Row->Component.Get());
+        if (Bucket == nullptr || Row->InstanceIndex == INDEX_NONE) return FString();
+        const FTypedElementHandle Instance =
+            UEngineElementsLibrary::AcquireEditorSMInstanceElementHandle(Bucket, Row->InstanceIndex);
+        if (!Instance || Set->GetSelectionElement(Instance, Method) != OwnerHandle) return FString();
+        return Row->NodePath;
+    };
+    const auto OnlyOccurrenceHighlighted = [&](const FString& Occurrence) -> bool
+    {
+        for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
+        {
+            const UInstancedStaticMeshComponent* Bucket =
+                Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
+            if (Bucket == nullptr || Row.InstanceIndex == INDEX_NONE) return false;
+            const bool bExpected = Row.NodePath.StartsWith(Occurrence + TEXT(">"));
+            if (Bucket->IsInstanceSelected(Row.InstanceIndex) != bExpected) return false;
+        }
+        for (const FMHCompositeLeafMaterialization& Row : Other->GetLeafMaterializations())
+        {
+            const UInstancedStaticMeshComponent* Bucket =
+                Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
+            if (Bucket == nullptr || Row.InstanceIndex == INDEX_NONE ||
+                Bucket->IsInstanceSelected(Row.InstanceIndex)) return false;
+        }
+        return true;
+    };
+
+    GEditor->SelectNone(false, true, false);
+    const FString FirstHit = HitUnder(ExplicitOccurrences[0], ETypedElementSelectionMethod::Primary);
+    bool bPassed = TestFalse(TEXT("first nested occurrence has a hittable pooled leaf"), FirstHit.IsEmpty());
+    GEditor->SelectActor(Actor, true, true, true);
+    bPassed &= TestEqual(TEXT("native selection remains the owner actor"), GEditor->GetSelectedActorCount(), 1);
+    bPassed &= TestTrue(TEXT("owner actor is selected"), Actor->IsSelected());
+    bPassed &= TestEqual(TEXT("exact hit path remains available for authored-node preselection"),
+        Actor->GetSelectedPlacementLeafPath(), FirstHit);
+    bPassed &= TestTrue(TEXT("only the first enclosing occurrence is highlighted"),
+        OnlyOccurrenceHighlighted(ExplicitOccurrences[0]));
+
+    // Secondary resolution models the right-click that opens the actor context
+    // menu. It must retain the clicked leaf/occurrence while the owner is
+    // already selected.
+    const FString ContextHit = HitUnder(ExplicitOccurrences[0], ETypedElementSelectionMethod::Secondary);
+    bPassed &= TestEqual(TEXT("right-click keeps the exact clicked leaf for Edit Contents"),
+        Actor->GetSelectedPlacementLeafPath(), ContextHit);
+    bPassed &= TestTrue(TEXT("right-click keeps the enclosing occurrence highlight"),
+        OnlyOccurrenceHighlighted(ExplicitOccurrences[0]));
+
+    const FString SecondHit = HitUnder(ExplicitOccurrences[1], ETypedElementSelectionMethod::Primary);
+    bPassed &= TestFalse(TEXT("second occurrence has a hittable pooled leaf"), SecondHit.IsEmpty());
+    bPassed &= TestEqual(TEXT("a hit retargets logical selection while actor stays selected"),
+        Actor->GetSelectedPlacementLeafPath(), SecondHit);
+    bPassed &= TestTrue(TEXT("highlight retargets to the second occurrence without actor reselection"),
+        OnlyOccurrenceHighlighted(ExplicitOccurrences[1]));
+
+    const FString OptionHit = HitUnder(RandomOccurrence, ETypedElementSelectionMethod::Primary);
+    bPassed &= TestFalse(TEXT("selected composite option has a hittable descendant"), OptionHit.IsEmpty());
+    bPassed &= TestEqual(TEXT("selected option keeps its exact clicked descendant"),
+        Actor->GetSelectedPlacementLeafPath(), OptionHit);
+    bPassed &= TestTrue(TEXT("selected composite option is highlighted as one occurrence"),
+        OnlyOccurrenceHighlighted(RandomOccurrence));
+
+    // Once selection leaves the actor, a later direct actor selection has no
+    // stale leaf context and therefore keeps the established whole-placement
+    // actor highlight contract.
+    GEditor->SelectActor(Actor, false, true, true);
+    bPassed &= TestTrue(TEXT("deselect clears stale logical leaf selection"),
+        Actor->GetSelectedPlacementLeafPath().IsEmpty());
+    GEditor->SelectActor(Actor, true, true, true);
+    for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
+    {
+        const UInstancedStaticMeshComponent* Bucket =
+            Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
+        bPassed &= TestTrue(TEXT("direct actor selection highlights the whole placement"),
+            Bucket != nullptr && Row.InstanceIndex != INDEX_NONE &&
+            Bucket->IsInstanceSelected(Row.InstanceIndex));
+    }
+
+    UMHCompositeLevelSubsystem* Subsystem = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
+    if (!TestNotNull(TEXT("edit subsystem"), Subsystem)) return false;
+    FString EditError;
+    bPassed &= TestFalse(TEXT("a stale captured leaf cannot open an edit session"),
+        MHBeginEditPickedComposite(*Actor, FirstHit + TEXT("/stale"), EditError));
+    bPassed &= TestTrue(TEXT("stale leaf refusal is diagnosed"),
+        EditError.Contains(TEXT("MH_E_INVALID_RESOURCE_SOURCE")));
+    bPassed &= TestNull(TEXT("stale leaf leaves no session"), Subsystem->GetEditSession());
+
+    EditError.Reset();
+    bPassed &= TestTrue(TEXT("Edit Contents opens the clicked explicit occurrence"),
+        MHBeginEditPickedComposite(*Actor, FirstHit, EditError));
+    UMHCompositeEditSession* Session = Subsystem->GetEditSession();
+    UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    USceneComponent* PickedProjection = Projection != nullptr ? Projection->FindComponentForOrigin(FirstHit) : nullptr;
+    bPassed &= TestNotNull(TEXT("explicit occurrence session"), Session);
+    bPassed &= TestEqual(TEXT("explicit occurrence is the edit scope"),
+        Session != nullptr ? Session->GetInvocationPath() : FString(), ExplicitOccurrences[0]);
+    bPassed &= TestTrue(TEXT("clicked explicit leaf's authored owner is selected"),
+        Session != nullptr && Projection != nullptr && PickedProjection != nullptr &&
+        Session->GetSelectedNodeIds().Num() == 1 &&
+        Session->GetActiveNodeId() == Projection->GetNodeIdForComponent(PickedProjection));
+    FString CancelError;
+    bPassed &= TestTrue(TEXT("explicit picked edit cancels"), Subsystem->CancelEditComposite(CancelError));
+
+    EditError.Reset();
+    const bool bOptionOpened = MHBeginEditPickedComposite(*Actor, OptionHit, EditError);
+    bPassed &= TestTrue(TEXT("Edit Contents opens the selected composite option occurrence: ") + EditError,
+        bOptionOpened);
+    Session = Subsystem->GetEditSession();
+    Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    PickedProjection = Projection != nullptr ? Projection->FindComponentForOrigin(OptionHit) : nullptr;
+    bPassed &= TestEqual(TEXT("selected option is the edit scope"),
+        Session != nullptr ? Session->GetInvocationPath() : FString(), RandomOccurrence);
+    bPassed &= TestTrue(TEXT("clicked selected-option leaf's authored owner is selected"),
+        Session != nullptr && Projection != nullptr && PickedProjection != nullptr &&
+        Session->GetSelectedNodeIds().Num() == 1 &&
+        Session->GetActiveNodeId() == Projection->GetNodeIdForComponent(PickedProjection));
+    CancelError.Reset();
+    bPassed &= TestTrue(TEXT("selected-option picked edit cancels"),
+        Subsystem->CancelEditComposite(CancelError));
+
+    // A successful rebuild may reuse the same pool bucket while replacing all
+    // semantic paths. The stale occurrence must be pruned and the still
+    // selected owner must return to whole-placement highlighting.
+    bPassed &= TestTrue(TEXT("restore a scoped leaf before replacement"),
+        Actor->SelectPlacementLeafByNodePath(OptionHit));
+    UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(World);
+    if (!TestNotNull(TEXT("selection pool"), Pool)) return false;
+    Pool->SetOwnerSelected(*Actor, true);
+    Actor->SetCompositeAsset(Child);
+    bPassed &= TestTrue(TEXT("replacement prunes the obsolete clicked leaf"),
+        Actor->GetSelectedPlacementLeafPath().IsEmpty() &&
+        Actor->GetSelectedPlacementOccurrencePath().IsEmpty());
+    for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
+    {
+        const UInstancedStaticMeshComponent* Bucket =
+            Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
+        bPassed &= TestTrue(TEXT("replacement applies whole-placement highlight to reused slots"),
+            Bucket != nullptr && Row.InstanceIndex != INDEX_NONE &&
+            Bucket->IsInstanceSelected(Row.InstanceIndex));
     }
     return bPassed;
 }

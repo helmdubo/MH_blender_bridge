@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositeSelectionAdapter.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "ContentBrowserMenuContexts.h"
@@ -381,7 +382,7 @@ void ExecuteBreakComposite(const TArray<TWeakObjectPtr<AMHCompositeActor>>& Acto
         Error);
 }
 
-void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnapshot)
+void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnapshot, const FString& PickedLeafPath)
 {
     AMHCompositeActor* Actor = ActorSnapshot.Get();
     FString Error;
@@ -396,13 +397,17 @@ void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnap
             return;
         }
     }
-    if (Actor == nullptr || Subsystem == nullptr || !Subsystem->BeginEditComposite(Actor, Error))
+    const bool bOpened = Actor != nullptr && Subsystem != nullptr &&
+        (PickedLeafPath.IsEmpty()
+            ? Subsystem->BeginEditComposite(Actor, Error)
+            : MHBeginEditPickedComposite(*Actor, PickedLeafPath, Error));
+    if (!bOpened)
     {
         if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select exactly one MH Composite actor");
     }
     NotifyOperation(
         LOCTEXT("EditCompositePage", "Edit MH Composite"),
-        LOCTEXT("EditCompositeStarted", "Top-level placement transforms are now editable"),
+        LOCTEXT("EditCompositeStarted", "Composite contents are now editable"),
         {},
         Error);
 }
@@ -1735,11 +1740,18 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
 
     if (CompositeActors.Num() == 1 && CompositeActors.Num() == Actors.Num())
     {
-        AddLevelAction(Section, TEXT("MHEditComposite"), LOCTEXT("EditComposite", "Edit Placement Transforms"),
-            LOCTEXT("EditCompositeTip", "Unlock the selected composite's top-level placement transforms."),
-            FToolMenuExecuteAction::CreateLambda([Actor = CompositeActors[0]](const FToolMenuContext&)
+        // Freeze the hit together with the actor: a later click must not retarget
+        // an already open context menu to another occurrence.
+        const ULevelEditorContextMenuContext* MenuContext = Menu->FindContext<ULevelEditorContextMenuContext>();
+        // A World Outliner action explicitly targets the actor, even if UE
+        // emitted no selection event for clicking its already-selected row.
+        const FString PickedLeafPath = MenuContext != nullptr && MenuContext->ContextType == ELevelEditorMenuContext::Viewport
+            ? CompositeActors[0]->GetSelectedPlacementLeafPath() : FString();
+        AddLevelAction(Section, TEXT("MHEditComposite"), LOCTEXT("EditComposite", "Edit Contents"),
+            LOCTEXT("EditCompositeTip", "Edit the composite containing the picked mesh and select its node. With an actor selection, edit the root composite."),
+            FToolMenuExecuteAction::CreateLambda([Actor = CompositeActors[0], PickedLeafPath](const FToolMenuContext&)
             {
-                ExecuteBeginEditComposite(Actor);
+                ExecuteBeginEditComposite(Actor, PickedLeafPath);
             }));
     }
     if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())

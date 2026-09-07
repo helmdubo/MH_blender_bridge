@@ -83,6 +83,10 @@ public:
 
     /** Atomic authoring command on the draft; refused when any target is invalid or procedural. */
     bool SetNodeTransforms(const TArray<FGuid>& NodeIds, const TArray<FTransform>& LocalTransforms, FString& OutError);
+    /** Gesture sample: refreshes derived transforms but defers the authoring notification until the gesture commits. */
+    bool SetNodeTransformsInteractive(const TArray<FGuid>& NodeIds, const TArray<FTransform>& LocalTransforms, FString& OutError);
+    /** Emits the single authoring notification for a committed interactive transform gesture. */
+    void FinishInteractiveTransform();
     /** Single-target compatibility route. */
     bool SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError);
     /** CE-4b1 structural commands on the draft (see UMHCompositeEditDocument); the projection follows each one. */

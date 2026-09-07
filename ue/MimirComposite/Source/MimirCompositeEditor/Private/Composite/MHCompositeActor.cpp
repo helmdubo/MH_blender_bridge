@@ -302,20 +302,101 @@ bool AMHCompositeActor::SelectPlacementLeaf(
     const UE::MimirComposite::FMHCompositeLeafMaterialization* Row =
         FindLeafMaterialization(Component, InstanceIndex);
     if (Row == nullptr) return false;
-    SelectedPlacementLeafPath = Row->NodePath;
-    return true;
+    return SelectPlacementLeafByNodePath(Row->NodePath);
 }
 
 bool AMHCompositeActor::SelectPlacementLeafByNodePath(const FString& NodePath)
 {
-    const bool bExists = LeafMaterializations.ContainsByPredicate(
-        [&NodePath](const UE::MimirComposite::FMHCompositeLeafMaterialization& Row)
-        {
-            return Row.NodePath == NodePath;
-        });
-    if (!bExists) return false;
+    FString OccurrencePath;
+    if (!FindPlacementOccurrenceForLeafPath(NodePath, OccurrencePath)) return false;
     SelectedPlacementLeafPath = NodePath;
+    SelectedPlacementOccurrencePath = MoveTemp(OccurrencePath);
+    if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld());
+        Pool != nullptr && Pool->IsOwnerSelected(*this))
+    {
+        Pool->SetOwnerSelected(*this, true);
+    }
     return true;
+}
+
+bool AMHCompositeActor::FindPlacementOccurrenceForLeafPath(
+    const FString& LeafPath, FString& OutOccurrencePath) const
+{
+    OutOccurrencePath.Reset();
+    const UE::MimirComposite::FMHCompositeLeafMaterialization* Row =
+        FindLeafMaterializationByNodePath(LeafPath);
+    if (Row == nullptr || !ResidentPlan.IsValid() ||
+        !ResidentPlan->Nodes.IsValidIndex(Row->ResolvedNodeIndex)) return false;
+
+    int32 NodeIndex = Row->ResolvedNodeIndex;
+    for (int32 Depth = 0; Depth < ResidentPlan->Nodes.Num(); ++Depth)
+    {
+        if (!ResidentPlan->Nodes.IsValidIndex(NodeIndex)) return false;
+        const UE::MimirComposite::FMHResolvedCompositeNode& Node = ResidentPlan->Nodes[NodeIndex];
+        if (Node.SemanticKind == UE::MimirComposite::EMHRandomSemanticKind::Composite)
+        {
+            OutOccurrencePath = Node.NodePath;
+            return true;
+        }
+        if (Node.SemanticKind == UE::MimirComposite::EMHRandomSemanticKind::Random &&
+            Node.SelectedOptionIndex >= 0)
+        {
+            const FString OptionPath = FString::Printf(
+                TEXT("%s/options[%d]"), *Node.NodePath, Node.SelectedOptionIndex);
+            // A direct mesh option ends at /options[k]. Only descendants below
+            // the option prove that the selected option is a composite occurrence.
+            if (LeafPath.StartsWith(OptionPath + TEXT(">")))
+            {
+                OutOccurrencePath = OptionPath;
+                return true;
+            }
+        }
+        const int32 ParentIndex = Node.ParentResolvedNodeIndex;
+        if (ParentIndex == INDEX_NONE) return true;
+        if (ParentIndex < 0 || ParentIndex >= NodeIndex) return false;
+        NodeIndex = ParentIndex;
+    }
+    return false;
+}
+
+void AMHCompositeActor::ClearPlacementLeafSelection()
+{
+    if (SelectedPlacementLeafPath.IsEmpty() && SelectedPlacementOccurrencePath.IsEmpty()) return;
+    SelectedPlacementLeafPath.Reset();
+    SelectedPlacementOccurrencePath.Reset();
+    if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld());
+        Pool != nullptr && Pool->IsOwnerSelected(*this))
+    {
+        Pool->SetOwnerSelected(*this, true);
+    }
+}
+
+bool AMHCompositeActor::ShouldHighlightPlacementLeafPath(const FString& NodePath) const
+{
+    return SelectedPlacementLeafPath.IsEmpty() || SelectedPlacementOccurrencePath.IsEmpty() ||
+        NodePath.StartsWith(SelectedPlacementOccurrencePath + TEXT(">"));
+}
+
+void AMHCompositeActor::PrunePlacementLeafSelection()
+{
+    if (SelectedPlacementLeafPath.IsEmpty()) return;
+    FString OccurrencePath;
+    if (!FindPlacementOccurrenceForLeafPath(SelectedPlacementLeafPath, OccurrencePath))
+    {
+        SelectedPlacementLeafPath.Reset();
+        SelectedPlacementOccurrencePath.Reset();
+    }
+    else
+    {
+        SelectedPlacementOccurrencePath = MoveTemp(OccurrencePath);
+    }
+    // New/reused pool slots were created before the retained logical path was
+    // revalidated. Reapply the final scope to all of this owner's instances.
+    if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld());
+        Pool != nullptr && Pool->IsOwnerSelected(*this))
+    {
+        Pool->SetOwnerSelected(*this, true);
+    }
 }
 
 void AMHCompositeActor::SetEditScope(const FString& InvocationNodePath)
@@ -789,6 +870,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
 #if WITH_EDITORONLY_DATA
         SelectedMeshDependencies.Reset();
 #endif
+        ClearPlacementLeafSelection();
         ClearDerivedComponents();
         return;
     }
@@ -1115,6 +1197,7 @@ void AMHCompositeActor::CommitPendingPlacement()
     }
     AppliedGraph = CandidateGraph;
     ResidentPlan = CandidatePlan;
+    PrunePlacementLeafSelection();
 #if WITH_EDITORONLY_DATA
     // Only a changed successful commit dirties the dependency hints. In
     // particular, a cold mesh finishing after Save must remain saveable;
@@ -1394,6 +1477,7 @@ void AMHCompositeActor::Tick(const float DeltaSeconds)
     LeafMaterializations = MoveTemp(View.LeafMaterializations);
     DestroyMHRetiredComponents(Previous, DerivedComponents);
     ResidentPlan = Plan;
+    PrunePlacementLeafSelection();
     SyncEditScopeHandles();
     LastEditHandleTransforms.Reset();
     const TArray<TObjectPtr<USceneComponent>>& NextHandles = bScoped ? EditScopeHandles : TopLevelPlacementComponents;

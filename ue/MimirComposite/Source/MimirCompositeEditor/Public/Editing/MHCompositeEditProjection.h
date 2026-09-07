@@ -86,6 +86,8 @@ public:
     bool Open(UMHCompositeEditSession& Session, FString& OutError);
     /** Re-resolves the draft and re-places the components; components keep their identity per plan origin. */
     bool Refresh(FString& OutError);
+    /** Transform-only gesture path; falls back to Refresh when cached topology cannot be reused exactly. */
+    bool RefreshTransforms(const TArray<FGuid>& NodeIds, FString& OutError);
     /** Releases the lease and destroys the projection actor. Safe to call twice. */
     void Close();
 
@@ -119,6 +121,8 @@ public:
      */
     void PushEditingTint();
     const UE::MimirComposite::FMHResolvedCompositePlan* GetPlan() const { return Plan.Get(); }
+    /** Observable cost boundary for edit-mode performance regression tests. */
+    uint64 GetFullGraphBuildCount() const { return FullGraphBuildCount; }
     const UE::MimirComposite::FMHPoolSuppressionLease& GetLease() const { return Lease; }
 
 private:
@@ -145,6 +149,8 @@ private:
     /** Scene proxies that already carry the editing state (CE-3b). */
     TMap<TWeakObjectPtr<const UPrimitiveComponent>, const FPrimitiveSceneProxy*> TintedProxies;
     TSharedPtr<UE::MimirComposite::FMHResolvedCompositePlan> Plan;
+    TOptional<UE::MimirComposite::FMHRandomSourceGraph> CachedGraph;
+    uint64 FullGraphBuildCount = 0;
     /** Selected draft mesh endpoints still loading for the current resolved plan. */
     TSet<UE::MimirComposite::FMHResourceKey> PendingEndpointKeys;
     /** Keeps earlier Ready endpoints resident until the complete batch refreshes. */

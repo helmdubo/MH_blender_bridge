@@ -1,5 +1,6 @@
 #include "Composite/MHInstancePool.h"
 
+#include "Composite/MHCompositeActor.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/Level.h"
@@ -291,7 +292,12 @@ void UMHInstancePoolSubsystem::OnEditorSelectionChanged(UObject* Object)
 void UMHInstancePoolSubsystem::SetOwnerSelected(const AActor& Owner, const bool bSelected)
 {
     if (bSelected) SelectedOwners.Add(&Owner);
-    else SelectedOwners.Remove(&Owner);
+    else
+    {
+        SelectedOwners.Remove(&Owner);
+        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(const_cast<AActor*>(&Owner)))
+            Composite->ClearPlacementLeafSelection();
+    }
     BeginBulk();
     for (FBucket& Bucket : Buckets)
     {
@@ -301,7 +307,10 @@ void UMHInstancePoolSubsystem::SetOwnerSelected(const AActor& Owner, const bool 
         for (const FSlot& Slot : Bucket.Slots)
         {
             if (Slot.bFree || Slot.bHidden || Slot.Owner.Get() != &Owner || !Component->IsValidInstance(Slot.InstanceIndex)) continue;
-            Component->SelectInstance(bSelected, Slot.InstanceIndex);
+            const AMHCompositeActor* Composite = Cast<AMHCompositeActor>(&Owner);
+            const bool bSelectInstance = bSelected &&
+                (Composite == nullptr || Composite->ShouldHighlightPlacementLeafPath(Slot.NodePath));
+            Component->SelectInstance(bSelectInstance, Slot.InstanceIndex);
             bTouched = true;
         }
         if (bTouched) MarkDirty(Bucket, false);
@@ -797,7 +806,12 @@ void UMHInstancePoolSubsystem::AddInstanceToComponent(FBucket& Bucket, const int
     check(Index == Bucket.InstanceToSlot.Num());
     Bucket.InstanceToSlot.Add(SlotId);
     Slot.InstanceIndex = Index;
-    if (SelectedOwners.Contains(Slot.Owner)) Component->SelectInstance(true, Index);
+    if (SelectedOwners.Contains(Slot.Owner))
+    {
+        const AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Slot.Owner.Get());
+        if (Composite == nullptr || Composite->ShouldHighlightPlacementLeafPath(Slot.NodePath))
+            Component->SelectInstance(true, Index);
+    }
     if (PoolAppearanceFits(Bucket.Descriptor))
     {
         const int32 Base = Bucket.Descriptor.AppearanceCustomDataBaseIndex;

@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositeSelectionAdapter.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Editing/MHCompositeEditDocument.h"
 #include "Editing/MHCompositeEditProjection.h"
@@ -395,8 +396,8 @@ private:
             // R6-D1a: a pooled instance is never the selection element (the
             // stock gizmo would edit the ISM behind the model). Select the
             // composite and record the leaf; the pool highlights it (R5b-2a).
-            CurrentActor->SelectPlacementLeafByNodePath(Item->NodePath);
             GEditor->SelectNone(false, true, false);
+            CurrentActor->SelectPlacementLeafByNodePath(Item->NodePath);
             GEditor->SelectActor(CurrentActor.Get(), true, true, true);
             GEditor->RedrawLevelEditingViewports();
             return;
@@ -827,8 +828,7 @@ private:
             RevealItem(Item);
             if (TreeView.IsValid()) TreeView->SetItemExpansion(Item, true);
         }
-        // CE-3d: under the CE backend the mode framed the occurrence on enter
-        // (the projection actor is the selection); a row then grabs its node.
+        // The mode owns logical node selection; entering Edit preserves the camera.
         if (UMHCompositeEditorMode::IsActive() && SessionOf(Root) != nullptr) return;
         const TArray<TObjectPtr<USceneComponent>>& Handles = Root->GetEditScopeHandles();
         if (!Handles.IsEmpty() && IsValid(Handles[0])) SelectHandle(Handles[0]);
@@ -971,14 +971,18 @@ private:
         AMHCompositeActor* Root = CurrentActor.Get();
         if (Subsystem == nullptr || Root == nullptr) return;
         FString Error;
-        const bool bStarted = Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error);
+        const FString PickedLeaf = Root->GetSelectedPlacementLeafPath();
+        const bool bEditPicked = !PickedLeaf.IsEmpty() && Root->GetSelectedPlacementOccurrencePath() == InvocationPath;
+        const bool bStarted = bEditPicked
+            ? UE::MimirComposite::MHBeginEditPickedComposite(*Root, PickedLeaf, Error)
+            : Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error);
         if (!bStarted)
         {
             FMessageLog("Mimir").Error(FText::FromString(Error));
             FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
         }
         RefreshModel();
-        if (bStarted) FocusEditScope(InvocationPath);
+        if (bStarted && !bEditPicked) FocusEditScope(InvocationPath);
     }
 
     /** CE-3d: switch the open session to another definition of this placement. */
@@ -1187,11 +1191,13 @@ private:
             SyncTreeSelectionFromSession();
             return;
         }
-        // R5b-2b: a viewport hit on a pooled instance selects the composite
-        // actor and records the leaf on it; reveal that row.
+        // A normal viewport hit selects the enclosing composite occurrence.
+        // Keep the exact leaf on the actor for preselection after Edit opens.
         if (CurrentActor->IsSelected() && !CurrentActor->GetSelectedPlacementLeafPath().IsEmpty())
         {
-            if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindByNodePath(CurrentActor->GetSelectedPlacementLeafPath()))
+            const FString& Occurrence = CurrentActor->GetSelectedPlacementOccurrencePath();
+            const FString& RevealPath = Occurrence.IsEmpty() ? CurrentActor->GetSelectedPlacementLeafPath() : Occurrence;
+            if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindByNodePath(RevealPath))
             {
                 RevealItem(Item);
                 return;

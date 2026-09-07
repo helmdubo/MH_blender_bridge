@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 
 class UTypedElementSelectionSet;
+class AMHCompositeActor;
 
 namespace UE::MimirComposite
 {
@@ -17,5 +18,9 @@ namespace UE::MimirComposite
  */
 MIMIRCOMPOSITEEDITOR_API bool MHRegisterPoolInstanceSelection(UTypedElementSelectionSet& SelectionSet);
 MIMIRCOMPOSITEEDITOR_API bool MHIsPoolInstanceSelectionRegistered(const UTypedElementSelectionSet& SelectionSet);
+
+/** Opens the clicked leaf's nearest composite occurrence and selects its authored owner. */
+MIMIRCOMPOSITEEDITOR_API bool MHBeginEditPickedComposite(
+    AMHCompositeActor& Actor, const FString& LeafPath, FString& OutError);
 
 } // namespace UE::MimirComposite
