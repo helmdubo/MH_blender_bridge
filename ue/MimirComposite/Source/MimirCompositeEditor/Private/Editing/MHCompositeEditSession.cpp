@@ -100,7 +100,10 @@ bool UMHCompositeEditSession::IsDirty() const
 
 void UMHCompositeEditSession::RebaseOriginal(const FMHCompositeDocument& Committed)
 {
-    static_cast<void>(Committed);
+    Original = Committed;
+    OriginalBytes.Reset();
+    FString Error;
+    MHWriteCanonicalCompositeV5(Original, OriginalBytes, Error);
 }
 
 bool UMHCompositeEditSession::SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError)

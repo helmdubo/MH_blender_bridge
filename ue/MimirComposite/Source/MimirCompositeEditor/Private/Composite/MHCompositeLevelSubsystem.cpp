@@ -14,6 +14,7 @@
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
+#include "Misc/FileHelper.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -997,8 +998,11 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
         return false;
     }
 
+    // CE-5a: a CE-backend root session publishes without closing first.
+    if (bSessionEdit) return PublishFromSession(*Asset, Edited, CanonicalPreflight, OutWarnings, OutError);
+
     const FString PreviousSourceRelativePath = Asset->SourceRelativePath;
-    if (!bSessionEdit) Actor->SetPlacementEditMode(false);
+    Actor->SetPlacementEditMode(false);
     ResetEditSession();
     GEditor->ResetTransaction(INVTEXT("MH Composite source Commit cannot be undone"));
 
@@ -1091,6 +1095,10 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
     FMHCompositeDocument Previous;
     if (!MHExtractCompositeV5(*Child, Previous, OutError)) return false;
 
+    // CE-5a: a CE-backend session publishes without closing first (a
+    // failure keeps the draft); the legacy path crosses the boundary here.
+    if (bSessionEdit) return PublishFromSession(*Child, Edited, CanonicalPreflight, OutWarnings, OutError);
+
     // Source boundary, as for a root Commit: once the file is written, UE
     // Undo must not resurrect a pre-publish snapshot.
     Root->SetPlacementEditMode(false);
@@ -1106,8 +1114,60 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
 
 bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, const FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError)
 {
-    static_cast<void>(Asset); static_cast<void>(Edited); static_cast<void>(CanonicalBytes); static_cast<void>(OutWarnings);
-    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: not implemented");
+    // CE-5a (spec §10.2, A25/A26): the session outlives a failed publish. The
+    // source boundary is crossed only on success; the outcome of a failure
+    // is read from the file itself, not from a UI flag.
+    AMHCompositeActor* Root = EditingActor.Get();
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    FString TargetPath;
+    if (!Asset.SourceRelativePath.IsEmpty())
+    {
+        TargetPath = FPaths::ConvertRelativePathToFull(SourceRoot, Asset.SourceRelativePath);
+        FPaths::NormalizeFilename(TargetPath);
+    }
+    TArray<uint8> Before;
+    if (!TargetPath.IsEmpty()) FFileHelper::LoadFileToArray(Before, *TargetPath);
+
+    if (PublishDefinition(Asset, Edited, SourceRoot, OutWarnings, OutError))
+    {
+        LastPublishOutcome = EMHCompositePublishOutcome::Succeeded;
+        // Source boundary: once the file is written, UE Undo must not
+        // resurrect a pre-publish snapshot (the mode's Exit resets as well).
+        ResetEditSession();
+        if (GEditor != nullptr) GEditor->ResetTransaction(INVTEXT("MH Composite publish cannot be undone"));
+        if (Root != nullptr) Root->RebuildComposite();
+        return true;
+    }
+
+    TArray<uint8> After;
+    if (!TargetPath.IsEmpty()) FFileHelper::LoadFileToArray(After, *TargetPath);
+    const bool bSourceCommitted = !TargetPath.IsEmpty() && After == CanonicalBytes && After != Before;
+    LastPublishOutcome = bSourceCommitted ? EMHCompositePublishOutcome::SourceCommitted : EMHCompositePublishOutcome::NoExternalChange;
+    if (bSourceCommitted)
+    {
+        // The file holds the draft; Cancel can no longer promise the previous
+        // source, so the draft is measured against what was committed. The
+        // definition follows the file too: the restore may have fallen back
+        // to the pre-publish document when the reconcile itself failed, and
+        // the committed document is known exactly.
+        TArray<uint8> DefinitionBytes;
+        FMHCompositeDocument DefinitionDocument;
+        FString RealignError;
+        if (!MHExtractCompositeV5(Asset, DefinitionDocument, RealignError) || !MHWriteCanonicalCompositeV5(DefinitionDocument, DefinitionBytes, RealignError) || DefinitionBytes != CanonicalBytes)
+        {
+            if (MHApplyCompositeV5(Asset, Edited, RealignError)) MHNotifyCompositeAssetChanged(Asset);
+            else OutWarnings.Add(TEXT("MH_W_SOURCE_COMMITTED: the definition could not be realigned to the committed file: ") + RealignError);
+        }
+        if (EditSession != nullptr) EditSession->RebaseOriginal(Edited);
+        OutWarnings.Add(TEXT("MH_W_SOURCE_COMMITTED: the source file was written before the failure; the session stays open and its original is now the committed source — Cancel does not restore the previous file"));
+    }
+    else
+    {
+        OutWarnings.Add(TEXT("MH_W_NO_EXTERNAL_CHANGE: nothing was written; the session and its draft stay — fix the cause and Save again"));
+    }
+    // The restore notified consumers; the projection follows the rebuilt placement.
+    if (EditSession != nullptr) EditSession->RefreshProjection();
     return false;
 }
 
