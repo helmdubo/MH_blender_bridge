@@ -14,6 +14,8 @@
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "Misc/FileHelper.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -1111,6 +1113,39 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
     const bool bPublished = PublishDefinition(*Child, Edited, SourceRoot, OutWarnings, OutError);
     Root->RebuildComposite();
     return bPublished;
+}
+
+void UMHCompositeLevelSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+    Super::Initialize(Collection);
+    // CE-6a (spec CE-6): a session is transient editor state bound to one
+    // placement in one world; it ends with either of them and with the editor.
+    WorldCleanupHandle = FWorldDelegates::OnWorldCleanup.AddUObject(this, &UMHCompositeLevelSubsystem::OnWorldCleanup);
+    if (GEngine != nullptr) LevelActorDeletedHandle = GEngine->OnLevelActorDeleted().AddUObject(this, &UMHCompositeLevelSubsystem::OnLevelActorDeleted);
+}
+
+void UMHCompositeLevelSubsystem::Deinitialize()
+{
+    FWorldDelegates::OnWorldCleanup.Remove(WorldCleanupHandle);
+    if (GEngine != nullptr) GEngine->OnLevelActorDeleted().Remove(LevelActorDeletedHandle);
+    if (IsEditingComposite()) ResetEditSession();
+    Super::Deinitialize();
+}
+
+void UMHCompositeLevelSubsystem::OnWorldCleanup(UWorld* World, const bool bSessionEnded, const bool bCleanupResources)
+{
+    static_cast<void>(bSessionEnded);
+    static_cast<void>(bCleanupResources);
+    // The placement's world goes away: nothing to restore, the projection
+    // and the lease go with the session (the pool rows die with the world).
+    const AMHCompositeActor* Root = EditingActor.Get();
+    if (Root != nullptr && World != nullptr && Root->GetWorld() == World) ResetEditSession();
+}
+
+void UMHCompositeLevelSubsystem::OnLevelActorDeleted(AActor* Actor)
+{
+    // The edited placement is deleted: the session cannot outlive its root.
+    if (Actor != nullptr && Actor == EditingActor.Get()) ResetEditSession();
 }
 
 bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, const FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError)
