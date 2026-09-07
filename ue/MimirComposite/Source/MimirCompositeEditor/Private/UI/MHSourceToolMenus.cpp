@@ -5,7 +5,9 @@
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositeSelectionAdapter.h"
 #include "Editing/MHCompositeEditorMode.h"
+#include "Editing/MHCompositeEditSession.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Diagnostics/MHSourceOperations.h"
 #include "DesktopPlatformModule.h"
@@ -380,7 +382,7 @@ void ExecuteBreakComposite(const TArray<TWeakObjectPtr<AMHCompositeActor>>& Acto
         Error);
 }
 
-void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnapshot)
+void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnapshot, const FString& PickedLeafPath)
 {
     AMHCompositeActor* Actor = ActorSnapshot.Get();
     FString Error;
@@ -395,13 +397,17 @@ void ExecuteBeginEditComposite(const TWeakObjectPtr<AMHCompositeActor> ActorSnap
             return;
         }
     }
-    if (Actor == nullptr || Subsystem == nullptr || !Subsystem->BeginEditComposite(Actor, Error))
+    const bool bOpened = Actor != nullptr && Subsystem != nullptr &&
+        (PickedLeafPath.IsEmpty()
+            ? Subsystem->BeginEditComposite(Actor, Error)
+            : MHBeginEditPickedComposite(*Actor, PickedLeafPath, Error));
+    if (!bOpened)
     {
         if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: select exactly one MH Composite actor");
     }
     NotifyOperation(
         LOCTEXT("EditCompositePage", "Edit MH Composite"),
-        LOCTEXT("EditCompositeStarted", "Top-level placement transforms are now editable"),
+        LOCTEXT("EditCompositeStarted", "Composite contents are now editable"),
         {},
         Error);
 }
@@ -426,31 +432,12 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
         {
             SourceFile = (LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName) + TEXT(".composite");
         }
-        const FText Name = FText::FromString(LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName);
-        // R6-D2: a shared definition is overwritten for every placement that
-        // invokes it; decision (a) 2026-09-06 — no revision guard against Blender.
-        const FText Confirmation = bNested
-            ? FText::Format(
-                LOCTEXT(
-                    "ApplySharedDefinitionPrompt",
-                    "This will overwrite the shared definition {0}.composite and refresh {1} placement(s) that invoke it. Unreal Editor Undo cannot restore the previous source file; revert with a new edit, a Blender export or VCS. Continue?"),
-                Name,
-                FText::AsNumber(EditContext.ConsumerPlacements))
-            : FText::Format(
-                LOCTEXT(
-                    "CommitCompositeIrreversiblePrompt",
-                    "This will overwrite {0}.composite. Unreal Editor Undo cannot restore the previous source file; revert with a new edit or VCS. Continue?"),
-                Name);
         const FText Audit = FText::Format(
             bNested
                 ? LOCTEXT("ApplySharedDefinitionOverwriteAudit", "{0} overwritten from the edited shared definition")
                 : LOCTEXT("CommitCompositeOverwriteAudit", "{0} overwritten from edited transforms"),
             FText::FromString(SourceFile));
-        const EMHSourceOverwriteExecution Execution = MHExecuteSourceOverwrite(
-            SourceFile,
-            Confirmation,
-            Audit,
-            [&Subsystem, &Warnings, &Error]()
+        const auto Publish = [&Subsystem, &Warnings, &Error]()
             {
                 if (!Subsystem->CommitEditComposite(Warnings, Error) && Error.IsEmpty())
                 {
@@ -464,11 +451,10 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
                         : TEXT("Nothing was written — the session and its draft stay, fix and Save again: ")) + Error;
                 }
                 return Error.IsEmpty();
-            });
-        if (Execution == EMHSourceOverwriteExecution::Cancelled)
-        {
-            return;
-        }
+            };
+        // Save is the explicit publish action. A second confirmation can
+        // strand the user in Edit when an automation answers the modal.
+        MHExecuteSourceOverwrite(SourceFile, FText::GetEmpty(), Audit, Publish, true);
     }
     NotifyOperation(
         bNested ? LOCTEXT("ApplySharedDefinitionPage", "Apply MH Shared Definition") : LOCTEXT("CommitCompositePage", "Commit MH Composite Edit"),
@@ -724,13 +710,6 @@ bool ResolveSeedCommandActors(
         {
             OutError = FString::Printf(
                 TEXT("MH_E_INVALID_RESOURCE_SOURCE: seed command requires live placed actors: %s"),
-                *Actor->GetPathName());
-            return false;
-        }
-        if (bMutating && Actor->IsPlacementEditMode())
-        {
-            OutError = FString::Printf(
-                TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel Composite Edit before changing seeds: %s"),
                 *Actor->GetPathName());
             return false;
         }
@@ -1718,7 +1697,7 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
     if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())
     {
         AddLevelAction(Section, TEXT("MHBreakComposite"), LOCTEXT("BreakComposite", "Break Composite"),
-            LOCTEXT("BreakCompositeTip", "Materialize each selected instance's resolved plan as mesh and gameplay actors, dissolving nested composites and groups."),
+            LOCTEXT("BreakCompositeTip", "Remove one composite layer. Promote its meshes and actors into the level; keep nested composites intact. Undo restores the original composite."),
             FToolMenuExecuteAction::CreateLambda([CompositeActors](const FToolMenuContext&)
             {
                 ExecuteBreakComposite(CompositeActors);
@@ -1733,11 +1712,18 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
 
     if (CompositeActors.Num() == 1 && CompositeActors.Num() == Actors.Num())
     {
-        AddLevelAction(Section, TEXT("MHEditComposite"), LOCTEXT("EditComposite", "Edit Placement Transforms"),
-            LOCTEXT("EditCompositeTip", "Unlock the selected composite's top-level placement transforms."),
-            FToolMenuExecuteAction::CreateLambda([Actor = CompositeActors[0]](const FToolMenuContext&)
+        // Freeze the hit together with the actor: a later click must not retarget
+        // an already open context menu to another occurrence.
+        const ULevelEditorContextMenuContext* MenuContext = Menu->FindContext<ULevelEditorContextMenuContext>();
+        // A World Outliner action explicitly targets the actor, even if UE
+        // emitted no selection event for clicking its already-selected row.
+        const FString PickedLeafPath = MenuContext != nullptr && MenuContext->ContextType == ELevelEditorMenuContext::Viewport
+            ? CompositeActors[0]->GetSelectedPlacementLeafPath() : FString();
+        AddLevelAction(Section, TEXT("MHEditComposite"), LOCTEXT("EditComposite", "Edit Contents"),
+            LOCTEXT("EditCompositeTip", "Edit the composite containing the picked mesh and select its node. With an actor selection, edit the root composite."),
+            FToolMenuExecuteAction::CreateLambda([Actor = CompositeActors[0], PickedLeafPath](const FToolMenuContext&)
             {
-                ExecuteBeginEditComposite(Actor);
+                ExecuteBeginEditComposite(Actor, PickedLeafPath);
             }));
     }
     if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())
@@ -1760,11 +1746,6 @@ bool MHPromptCompositeAdoptTarget(
 void MHExecuteCommitEditCompositeInteractive()
 {
     ExecuteCommitEditComposite(FToolMenuContext());
-}
-
-void MHExecuteSaveUniqueInteractive(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant)
-{
-    ExecuteSaveUnique(Scope, Variant);
 }
 
 void MHExecuteSaveUniqueCopyInteractive()
@@ -1816,6 +1797,17 @@ void MHRegisterS6ToolMenus()
                         !Subsystem->IsEditingComposite(CompositeActors[0].Get()))
                     {
                         return;
+                    }
+                }
+                // Finish an already-selected RMB click if UE emitted no selection
+                // change. Its logical level was resolved before opening the menu.
+                if (Subsystem == nullptr || !Subsystem->IsEditingComposite())
+                {
+                    const ULevelEditorContextMenuContext* Context = DynamicMenu->FindContext<ULevelEditorContextMenuContext>();
+                    if (Context != nullptr && Context->ContextType == ELevelEditorMenuContext::Viewport && Actors.Num() == 1)
+                    {
+                        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Actors[0].Get()))
+                            UE::MimirComposite::MHSelectCompositeContextHit(Context->HitProxyElement, *Composite);
                     }
                 }
                 FToolMenuSection& Section = DynamicMenu->AddSection(TEXT("MHCompositeOptions"));

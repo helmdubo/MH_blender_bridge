@@ -7,11 +7,11 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHInstancePool.h"
+#include "Editing/MHCompositeEditSession.h"
+#include "Editing/MHCompositeEditProjection.h"
 #include "UI/MHEditSessionKeys.h"
-#include "UI/MHSourceOverwritePolicy.h"
-#include "Components/BillboardComponent.h"
-#include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "CoreMinimal.h"
 #include "Editor.h"
 #include "Editor/Transactor.h"
@@ -22,6 +22,30 @@ namespace UE::MimirComposite::Tests
 {
 namespace
 {
+
+TArray<TObjectPtr<USceneComponent>> DraftHandles(const UMHCompositeLevelSubsystem& Subsystem)
+{
+    TArray<TObjectPtr<USceneComponent>> Result;
+    const UMHCompositeEditSession* Session = Subsystem.GetEditSession();
+    if (Session == nullptr || Session->GetDraft() == nullptr || Session->GetProjection() == nullptr) return Result;
+    const UMHCompositeEditDocument* Draft = Session->GetDraft();
+    for (int32 Index = 0; Index < Draft->Num(); ++Index)
+    {
+        if (!Draft->GetParentId(Draft->GetNodeId(Index)).IsValid()) Result.Add(Session->GetProjection()->FindComponentForNodeId(Draft->GetNodeId(Index)));
+    }
+    return Result;
+}
+
+bool MoveDraftNodeToWorld(UMHCompositeLevelSubsystem& Subsystem, const USceneComponent* Handle, const FVector& Location, FString& Error)
+{
+    UMHCompositeEditSession* Session = Subsystem.GetEditSession();
+    if (Session == nullptr || Session->GetProjection() == nullptr || Handle == nullptr) return false;
+    FTransform ParentWorld;
+    if (!Session->GetProjection()->GetParentWorldForComponent(Handle, ParentWorld)) return false;
+    FTransform World = Handle->GetComponentTransform();
+    World.SetLocation(Location);
+    return Session->SetNodeTransform(Session->GetProjection()->GetNodeIdForComponent(Handle), World.GetRelativeTransform(ParentWorld), Error);
+}
 
 /** Root = [mesh A] [composite child(mesh C)] placed twice; the child is the shared definition under edit. */
 struct FEditContextFixture
@@ -116,6 +140,21 @@ bool CanonicalBytes(const UMHCompositeAsset& Asset, TArray<uint8>& OutBytes)
 /** World location of the first pooled leaf of Resource in Actor's resident plan. */
 bool LeafWorldLocation(const AMHCompositeActor& Actor, const FString& Resource, FVector& OutLocation)
 {
+    const UMHCompositeLevelSubsystem* Subsystem = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
+    const UMHCompositeEditSession* Session = Subsystem->GetEditSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr && Session->GetRootPlacement() == &Actor ? Session->GetProjection() : nullptr;
+    if (Projection != nullptr && Projection->GetPlan() != nullptr)
+    {
+        for (const FMHResolvedCompositeLeaf& Leaf : Projection->GetPlan()->Leaves)
+        {
+            if (Leaf.Resource != Resource) continue;
+            if (const USceneComponent* Component = Projection->FindComponentForOrigin(Leaf.Origin))
+            {
+                OutLocation = Component->GetComponentLocation();
+                return true;
+            }
+        }
+    }
     const FMHResolvedCompositePlan* Plan = Actor.GetResolvedPlan();
     const TArray<FMHCompositeLeafMaterialization>& Rows = Actor.GetLeafMaterializations();
     if (Plan == nullptr) return false;
@@ -159,13 +198,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextNestedInvocationTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
     if (!F.Build(*this)) return false;
-    // Copy: entering the session re-materializes the root and replaces its resident plan.
+    // Freeze the invocation identity before opening its editing context.
     const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
     if (!TestNotNull(TEXT("root placement resolves the nested invocation"), InvocationNode)) return false;
     const FMHResolvedCompositeNode InvocationCopy = *InvocationNode;
@@ -196,11 +233,10 @@ bool FMHEditContextNestedInvocationTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("child extracts"), MHExtractCompositeV5(*F.Child, ChildDocument, Error));
     bPassed &= TestEqual(TEXT("the draft starts as the child definition"), Subsystem->GetEditingDraft().Nodes.Num(), ChildDocument.Nodes.Num());
     bPassed &= TestEqual(TEXT("the root's own session name reports the edited child"), Subsystem->GetEditingCompositeLogicalName(), F.Child->LogicalName);
-    // R6-D1: opening the context enters the root's edit session under the
-    // scope (one materialization with handles); the plan itself is unchanged.
-    bPassed &= TestTrue(TEXT("opening the context enters edit mode under the scope"), F.A->IsPlacementEditMode() && F.A->GetEditScopeInvocationPath() == Invocation->NodePath);
+    // Opening the context projects the selected occurrence; the published plan stays sealed.
+    bPassed &= TestTrue(TEXT("opening the context enters edit mode under the scope"), Subsystem->IsEditingComposite(F.A) && Subsystem->GetEditContext().InvocationPath == Invocation->NodePath);
     bPassed &= TestTrue(TEXT("opening the context keeps a resolved plan"), F.A->GetResolvedPlan() != nullptr && F.A->GetLastPlacementError().IsEmpty());
-    static_cast<void>(RevisionA);
+    bPassed &= TestEqual(TEXT("opening keeps the placement revision"), F.A->GetPreviewRevision(), RevisionA);
     bPassed &= TestFalse(TEXT("a second session is refused while one is active"), Subsystem->BeginEditComposite(F.B, Error));
 
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
@@ -209,17 +245,17 @@ bool FMHEditContextNestedInvocationTest::RunTest(const FString& Parameters)
     TArray<uint8> ChildAfter;
     bPassed &= TestTrue(TEXT("child source bytes after cancel"), CanonicalBytes(*F.Child, ChildAfter));
     bPassed &= TestTrue(TEXT("cancel leaves the shared definition untouched"), ChildAfter == ChildBefore);
-    bPassed &= TestTrue(TEXT("cancel leaves edit mode and the scope"), !F.A->IsPlacementEditMode() && F.A->GetEditScopeInvocationPath().IsEmpty());
-    static_cast<void>(RebuildsA);
+    bPassed &= TestTrue(TEXT("cancel leaves edit mode and the scope"), !Subsystem->IsEditingComposite(F.A) && Subsystem->GetEditContext().InvocationPath.IsEmpty());
+    bPassed &= TestEqual(TEXT("begin/cancel does not rebuild the placement"), F.A->GetPlacementRebuildCount(), RebuildsA);
     bPassed &= TestNotNull(TEXT("root still previews"), F.A->GetResolvedPlan());
     return bPassed;
 }
 
 // R6-D1b (docs/16 §2.7): inside a nested edit context the child definition's
 // nodes get handles under the invocation's effective parent transform. Moving
-// a handle edits the draft node's local transform (EditedLocal = EditedWorld *
-// inverse(ParentEffectiveWorld)), the root preview follows through the pool
-// without a full re-materialization, other placements stay untouched until a
+// a node edits the draft local transform (EditedLocal = EditedWorld *
+// inverse(ParentEffectiveWorld)); its projection follows, while the pooled
+// placement and other occurrences stay untouched until a
 // publish, and Cancel restores the preview from the unchanged definition.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditContextNestedHandlesTest,
@@ -229,8 +265,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextNestedHandlesTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -245,44 +279,69 @@ bool FMHEditContextNestedHandlesTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("pool"), Pool)) return false;
 
     const auto LeafWorld = &LeafWorldLocation;
-    FVector MeshCBeforeA, MeshCBeforeB;
+    FVector MeshCBeforeA, MeshCBeforeB, MeshABeforeA;
     bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorld(*F.A, F.MeshC, MeshCBeforeA));
     bPassed &= TestTrue(TEXT("mesh C renders in B"), LeafWorld(*F.B, F.MeshC, MeshCBeforeB));
+    bPassed &= TestTrue(TEXT("sibling mesh A renders before edit"), LeafWorld(*F.A, F.MeshA, MeshABeforeA));
+    const int32 OtherLiveBefore = Pool->NumLiveInstances(*F.B);
     const FMatrix ParentWorld = Invocation->WorldMatrix * F.A->GetActorTransform().ToMatrixWithScale();
     const int32 LiveBefore = Pool->NumLiveInstances(*F.A);
 
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, Invocation->NodePath, Error))) return false;
-    bPassed &= TestTrue(TEXT("root placement is in edit mode for the nested scope"), F.A->IsPlacementEditMode());
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    bPassed &= TestTrue(TEXT("root placement is in edit mode for the nested scope"), Subsystem->IsEditingComposite(F.A));
+    const TArray<TObjectPtr<USceneComponent>>& Handles = DraftHandles(*Subsystem);
     bPassed &= TestEqual(TEXT("one handle per child definition node"), Handles.Num(), 1);
     if (Handles.Num() != 1 || !IsValid(Handles[0])) return false;
     USceneComponent* Handle = Handles[0];
     // The child node sits at (0,0,40) in the child's space -> under the invocation's world.
     const FVector ExpectedHandle = FTransform(FTransform(FVector(0, 0, 40)).ToMatrixWithScale() * ParentWorld).GetLocation();
     bPassed &= TestTrue(TEXT("handle sits at the node's world under the effective parent"), Handle->GetComponentLocation().Equals(ExpectedHandle, 1e-2));
-    bPassed &= TestTrue(TEXT("handle is the actor's own component"), Handle->GetOwner() == F.A);
+    bPassed &= TestTrue(TEXT("handle belongs to the edit projection"), Handle->GetOwner() == Subsystem->GetEditSession()->GetProjection()->GetProjectionActor());
 
     // Drag: +100 along world X.
-    Handle->SetWorldLocation(ExpectedHandle + FVector(100, 0, 0));
-    F.A->Tick(0.0f);
-    bPassed &= TestTrue(TEXT("edit tick keeps the preview: ") + F.A->GetLastPlacementError(), F.A->GetLastPlacementError().IsEmpty() && F.A->GetResolvedPlan() != nullptr);
+    bPassed &= TestTrue(TEXT("move node"), MoveDraftNodeToWorld(*Subsystem, Handle, ExpectedHandle + FVector(100, 0, 0), Error));
+    bPassed &= TestTrue(TEXT("draft command preserves the sealed preview: ") + F.A->GetLastPlacementError(), F.A->GetLastPlacementError().IsEmpty() && F.A->GetResolvedPlan() != nullptr);
     FMHCompositeDocument Draft;
-    bPassed &= TestTrue(TEXT("edited draft is available"), F.A->GetEditedCompositeDocument(Draft));
+    bPassed &= TestTrue(TEXT("edited draft is available"), Subsystem->GetEditSession()->GetDraft()->Extract(Draft, Error));
     const FMatrix EditedLocal = FTransform(ExpectedHandle + FVector(100, 0, 0)).ToMatrixWithScale() * ParentWorld.Inverse();
     bPassed &= TestTrue(TEXT("draft node local = edited world * inverse(parent effective world)"),
         Draft.Nodes.Num() == 1 && Draft.Nodes[0].Transform.TranslationCm.Equals(FTransform(EditedLocal).GetLocation(), 1e-2));
     FVector MeshCAfterA;
     bPassed &= TestTrue(TEXT("A renders the moved leaf"), LeafWorld(*F.A, F.MeshC, MeshCAfterA) && MeshCAfterA.Equals(MeshCBeforeA + FVector(100, 0, 0), 1e-2));
-    bPassed &= TestEqual(TEXT("no duplicated instances while dragging"), Pool->NumLiveInstances(*F.A), LiveBefore);
+    // The selected occurrence leaves the visible pool while its editable mesh
+    // replaces it. Count both representations and verify the lease scope.
+    const UMHCompositeEditProjection* Projection = Subsystem->GetEditSession()->GetProjection();
+    int32 ProjectedMeshes = 0;
+    for (const TObjectPtr<USceneComponent>& Component : Projection->GetComponents())
+    {
+        const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component.Get());
+        if (IsValid(Mesh) && Mesh->IsRegistered() && Mesh->IsVisible() && Mesh->GetStaticMesh() != nullptr) ++ProjectedMeshes;
+    }
+    bPassed &= TestEqual(TEXT("the edited occurrence has one visible mesh in the projection"), ProjectedMeshes, 1);
+    bPassed &= TestEqual(TEXT("pool plus projection preserves exactly the original visible leaf count"), Pool->NumLiveInstances(*F.A) + ProjectedMeshes, LiveBefore);
+    int32 SuppressedLeaves = 0;
+    const FString EditedPrefix = InvocationCopy.NodePath + TEXT(">");
+    for (const FMHCompositeLeafMaterialization& Row : F.A->GetLeafMaterializations())
+    {
+        const bool bEditedLeaf = Row.NodePath.StartsWith(EditedPrefix);
+        const bool bSuppressed = Pool->IsSuppressed(Row.Handle);
+        bPassed &= TestEqual(TEXT("only leaves of the edited occurrence are suppressed"), bSuppressed, bEditedLeaf);
+        if (bSuppressed) ++SuppressedLeaves;
+    }
+    bPassed &= TestEqual(TEXT("the projected mesh replaces exactly one suppressed leaf"), SuppressedLeaves, ProjectedMeshes);
+    FVector MeshAAfterA;
+    bPassed &= TestTrue(TEXT("the sibling mesh stays at its published world transform"), LeafWorld(*F.A, F.MeshA, MeshAAfterA) && MeshAAfterA.Equals(MeshABeforeA, 1e-2));
+    bPassed &= TestEqual(TEXT("the other placement retains every pooled leaf"), Pool->NumLiveInstances(*F.B), OtherLiveBefore);
     FVector MeshCB;
     bPassed &= TestTrue(TEXT("B is untouched until a publish"), LeafWorld(*F.B, F.MeshC, MeshCB) && MeshCB.Equals(MeshCBeforeB, 1e-2));
     bPassed &= TestEqual(TEXT("the draft is the session's document"), Subsystem->GetEditingDraft().Nodes.Num(), 1);
 
     // Cancel: the preview comes back from the unchanged definition.
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
-    bPassed &= TestFalse(TEXT("edit mode ended"), F.A->IsPlacementEditMode());
-    bPassed &= TestEqual(TEXT("scope handles retired"), F.A->GetEditScopeHandles().Num(), 0);
+    bPassed &= TestFalse(TEXT("edit mode ended"), Subsystem->IsEditingComposite(F.A));
+    bPassed &= TestEqual(TEXT("scope handles retired"), DraftHandles(*Subsystem).Num(), 0);
+    bPassed &= TestEqual(TEXT("cancel restores the full published pool view"), Pool->NumLiveInstances(*F.A), LiveBefore);
     FVector MeshCRestored;
     bPassed &= TestTrue(TEXT("cancel restores the leaf"), LeafWorld(*F.A, F.MeshC, MeshCRestored) && MeshCRestored.Equals(MeshCBeforeA, 1e-2));
     TArray<uint8> ChildAfter;
@@ -302,8 +361,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextApplySharedDefinitionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -321,23 +378,20 @@ bool FMHEditContextApplySharedDefinitionTest::RunTest(const FString& Parameters)
 
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationCopy.NodePath, Error))) return false;
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    const TArray<TObjectPtr<USceneComponent>>& Handles = DraftHandles(*Subsystem);
     if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
     const FVector HandleBefore = Handles[0]->GetComponentLocation();
-    Handles[0]->SetWorldLocation(HandleBefore + FVector(100, 0, 0));
+    bPassed &= TestTrue(TEXT("move node"), MoveDraftNodeToWorld(*Subsystem, Handles[0], HandleBefore + FVector(100, 0, 0), Error));
     const FVector ExpectedLocal = FTransform(FTransform(HandleBefore + FVector(100, 0, 0)).ToMatrixWithScale() * ParentWorld.Inverse()).GetLocation();
 
     // The publish seam stands in for MHPublishCompositeV5: the asset arrives
-    // applied, UE Undo is already cleared, and consumers are notified as the
+    // applied, and consumers are notified as the
     // real publisher does after writing the source.
     UMHCompositeAsset* PublishedAsset = nullptr;
-    bool bUndoClearedBeforePublish = false;
     Subsystem->SetCommitPublisherForTests(
-        [&PublishedAsset, &bUndoClearedBeforePublish](UMHCompositeAsset& Asset, FString&)
+        [&PublishedAsset](UMHCompositeAsset& Asset, FString&)
         {
             PublishedAsset = &Asset;
-            bUndoClearedBeforePublish = GEditor != nullptr && !GEditor->IsTransactionActive() &&
-                GEditor->Trans != nullptr && !GEditor->Trans->CanUndo();
             MHNotifyCompositeAssetChanged(Asset);
             return true;
         });
@@ -346,10 +400,10 @@ bool FMHEditContextApplySharedDefinitionTest::RunTest(const FString& Parameters)
     Subsystem->SetCommitPublisherForTests({});
     bPassed &= TestTrue(TEXT("apply shared definition: ") + Error, bCommitted);
     bPassed &= TestTrue(TEXT("the shared child definition is what gets published"), PublishedAsset == F.Child);
-    bPassed &= TestTrue(TEXT("UE Undo is cleared before the source boundary"), bUndoClearedBeforePublish);
+    bPassed &= TestTrue(TEXT("UE Undo is cleared after a successful publish"), GEditor->Trans != nullptr && !GEditor->Trans->CanUndo());
     bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
-    bPassed &= TestFalse(TEXT("root left edit mode"), F.A->IsPlacementEditMode());
-    bPassed &= TestEqual(TEXT("scope handles retired"), F.A->GetEditScopeHandles().Num(), 0);
+    bPassed &= TestFalse(TEXT("root left edit mode"), Subsystem->IsEditingComposite(F.A));
+    bPassed &= TestEqual(TEXT("scope handles retired"), DraftHandles(*Subsystem).Num(), 0);
 
     FMHCompositeDocument ChildDocument;
     bPassed &= TestTrue(TEXT("child definition carries the edited node"),
@@ -367,7 +421,7 @@ bool FMHEditContextApplySharedDefinitionTest::RunTest(const FString& Parameters)
 }
 
 // R6-D2: a refused publish keeps the shared definition and every placement as
-// they were; the session is closed either way.
+// they were; the failed draft stays recoverable until Cancel.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditContextApplySharedDefinitionFailureTest,
     "Mimir.V5.Composite.EditContext.ApplySharedDefinitionFailureKeepsDefinition",
@@ -376,8 +430,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextApplySharedDefinitionFailureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -393,9 +445,9 @@ bool FMHEditContextApplySharedDefinitionFailureTest::RunTest(const FString& Para
 
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    const TArray<TObjectPtr<USceneComponent>>& Handles = DraftHandles(*Subsystem);
     if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
-    Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(100, 0, 0));
+    bPassed &= TestTrue(TEXT("move node"), MoveDraftNodeToWorld(*Subsystem, Handles[0], Handles[0]->GetComponentLocation() + FVector(100, 0, 0), Error));
 
     Subsystem->SetCommitPublisherForTests(
         [](UMHCompositeAsset&, FString& OutError)
@@ -408,8 +460,9 @@ bool FMHEditContextApplySharedDefinitionFailureTest::RunTest(const FString& Para
     Subsystem->SetCommitPublisherForTests({});
     bPassed &= TestFalse(TEXT("refused publish fails the apply"), bCommitted);
     bPassed &= TestTrue(TEXT("the refusal is reported"), Error.Contains(TEXT("MH_E_TEST_PUBLISH_REFUSED")));
-    bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
-    bPassed &= TestFalse(TEXT("root left edit mode"), F.A->IsPlacementEditMode());
+    bPassed &= TestTrue(TEXT("failed publish keeps the draft session"), Subsystem->IsEditingComposite());
+    bPassed &= TestTrue(TEXT("cancel failed draft"), Subsystem->CancelEditComposite(Error));
+    bPassed &= TestFalse(TEXT("root left edit mode"), Subsystem->IsEditingComposite(F.A));
     TArray<uint8> ChildAfter;
     bPassed &= TestTrue(TEXT("child definition kept"), CanonicalBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
     FVector MeshCAfterA, MeshCAfterB;
@@ -430,8 +483,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextMakeUniqueForPlacementTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -449,10 +500,10 @@ bool FMHEditContextMakeUniqueForPlacementTest::RunTest(const FString& Parameters
 
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationCopy.NodePath, Error))) return false;
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    const TArray<TObjectPtr<USceneComponent>>& Handles = DraftHandles(*Subsystem);
     if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
     const FVector HandleBefore = Handles[0]->GetComponentLocation();
-    Handles[0]->SetWorldLocation(HandleBefore + FVector(100, 0, 0));
+    bPassed &= TestTrue(TEXT("move node"), MoveDraftNodeToWorld(*Subsystem, Handles[0], HandleBefore + FVector(100, 0, 0), Error));
     const FVector ExpectedLocal = FTransform(FTransform(HandleBefore + FVector(100, 0, 0)).ToMatrixWithScale() * ParentWorld.Inverse()).GetLocation();
 
     FMHCompositeSaveUniquePlan Plan;
@@ -484,8 +535,8 @@ bool FMHEditContextMakeUniqueForPlacementTest::RunTest(const FString& Parameters
     bPassed &= TestTrue(TEXT("definitions are created innermost first"),
         Created.Num() == 2 && Created[0] == Targets[0].LogicalName && Created[1] == Targets[1].LogicalName);
     bPassed &= TestFalse(TEXT("session ended"), Subsystem->IsEditingComposite());
-    bPassed &= TestFalse(TEXT("root left edit mode"), F.A->IsPlacementEditMode());
-    bPassed &= TestEqual(TEXT("scope handles retired"), F.A->GetEditScopeHandles().Num(), 0);
+    bPassed &= TestFalse(TEXT("root left edit mode"), Subsystem->IsEditingComposite(F.A));
+    bPassed &= TestEqual(TEXT("scope handles retired"), DraftHandles(*Subsystem).Num(), 0);
 
     const UMHCompositeAsset* NewRoot = F.A->GetCompositeAsset();
     bPassed &= TestTrue(TEXT("this placement now invokes the unique root"), NewRoot != nullptr && NewRoot->LogicalName == Targets[1].LogicalName);
@@ -520,8 +571,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextMakeUniqueInDefinitionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -537,9 +586,9 @@ bool FMHEditContextMakeUniqueInDefinitionTest::RunTest(const FString& Parameters
 
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    const TArray<TObjectPtr<USceneComponent>>& Handles = DraftHandles(*Subsystem);
     if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
-    Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(100, 0, 0));
+    bPassed &= TestTrue(TEXT("move node"), MoveDraftNodeToWorld(*Subsystem, Handles[0], Handles[0]->GetComponentLocation() + FVector(100, 0, 0), Error));
 
     FMHCompositeSaveUniquePlan Plan;
     bPassed &= TestTrue(TEXT("describe: ") + Error, Subsystem->DescribeSaveUnique(EMHCompositeUniqueScope::InParentDefinition, EMHCompositeUniqueVariant::Procedural, Plan, Error));
@@ -592,8 +641,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextSaveUniqueValidationTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     {
         FMHCompositeDocument Plain;
         Plain.Nodes.AddDefaulted_GetRef().Kind = EMHCompositeNodeKind::Mesh;
@@ -642,7 +689,7 @@ bool FMHEditContextSaveUniqueValidationTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(TEXT("duplicate target names are refused"), Subsystem->SaveEditAsUnique(EMHCompositeUniqueScope::ForThisPlacement, EMHCompositeUniqueVariant::Procedural, Duplicate, Warnings, Error));
     Subsystem->SetDefinitionCreatorForTests({});
     bPassed &= TestFalse(TEXT("nothing was created"), bCreatorCalled);
-    bPassed &= TestTrue(TEXT("the session survives refused saves"), Subsystem->IsEditingComposite() && F.A->IsPlacementEditMode());
+    bPassed &= TestTrue(TEXT("the session survives refused saves"), Subsystem->IsEditingComposite() && Subsystem->IsEditingComposite(F.A));
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }
@@ -658,8 +705,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditContextBakeCurrentResultTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -707,15 +752,26 @@ bool FMHEditContextBakeCurrentResultTest::RunTest(const FString& Parameters)
     const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*P);
     if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
     const FMHResolvedCompositeNode InvocationCopy = *InvocationNode;
-    const TArray<FVector> LeavesBefore = AllLeafWorldLocations(*P);
+    TArray<FVector> LeavesBefore = AllLeafWorldLocations(*P);
     bool bPassed = TestEqual(TEXT("P renders mesh A, the random pick and the grouped mesh"), LeavesBefore.Num(), 3);
 
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(P, InvocationCopy.NodePath, Error))) return false;
-    // The resolved leaves under the edited definition, before anything changes.
+    UMHCompositeEditSession* BakeSession = Subsystem->GetEditSession();
+    const int32 GroupIndex = BakeSession->GetDraft()->FindNodeIndexBySelector(TEXT("nodes[1]"));
+    if (!TestTrue(TEXT("group is editable"), GroupIndex != INDEX_NONE)) return false;
+    FTransform GroupTransform = BakeSession->GetDraft()->GetNodes()[GroupIndex].Transform;
+    GroupTransform.AddToTranslation(FVector(0, 0, 25));
+    bPassed &= TestTrue(TEXT("edit the group before baking"), BakeSession->SetNodeTransform(BakeSession->GetDraft()->GetNodeId(GroupIndex), GroupTransform, Error));
+    // The copied definition must include the current draft, not the sealed placement.
+    LeavesBefore.Reset();
+    for (const FMHResolvedCompositeLeaf& Leaf : BakeSession->GetProjection()->GetPlan()->Leaves)
+    {
+        LeavesBefore.Add(FTransform(Leaf.WorldMatrix * P->GetActorTransform().ToMatrixWithScale()).GetLocation());
+    }
     const FString Prefix = InvocationCopy.NodePath + TEXT(">") + RandomChild->LogicalName + TEXT(":");
     TArray<TPair<FString, FMatrix>> ExpectedLeaves;
-    for (const FMHResolvedCompositeLeaf& Leaf : P->GetResolvedPlan()->Leaves)
+    for (const FMHResolvedCompositeLeaf& Leaf : BakeSession->GetProjection()->GetPlan()->Leaves)
     {
         if (Leaf.Origin.StartsWith(Prefix) && Leaf.Kind == EMHRandomSemanticKind::Mesh) ExpectedLeaves.Emplace(Leaf.Resource, Leaf.WorldMatrix);
     }
@@ -774,86 +830,17 @@ bool FMHEditContextBakeCurrentResultTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
-// R6-UX1 (owner field feedback 2026-09-06): a nested session must be
-// grabbable and visible — scope handles are viewport-clickable sprites, any
-// row of the edited subtree resolves to its handle, and a wireframe frame
-// marks the edited subtree in the scene.
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHEditContextScopeHandlesGrabbableTest,
-    "Mimir.V5.Composite.EditContext.ScopeHandlesAreGrabbableAndFramed",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FMHEditContextScopeHandlesGrabbableTest::RunTest(const FString& Parameters)
-{
-    static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
-    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
-    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
-    FEditContextFixture F(*this);
-    if (!F.Build(*this)) return false;
-    const FMHResolvedCompositeNode* InvocationNode = FEditContextFixture::Invocation(*F.A);
-    if (!TestNotNull(TEXT("nested invocation"), InvocationNode)) return false;
-    const FString InvocationPath = InvocationNode->NodePath;
-    FVector MeshCWorld;
-    bool bPassed = TestTrue(TEXT("mesh C renders in A"), LeafWorldLocation(*F.A, F.MeshC, MeshCWorld));
-
-    // Outside a session nothing is grabbable and nothing is framed.
-    bPassed &= TestNull(TEXT("no session: no handle for a node path"), F.A->FindSessionHandleForNodePath(InvocationPath));
-    bPassed &= TestNull(TEXT("no session: no frame"), F.A->GetEditScopeFrame());
-
-    FString Error;
-    if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
-    if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
-    bPassed &= TestTrue(TEXT("a scope handle is a viewport-clickable sprite"), Handles[0]->IsA<UBillboardComponent>());
-    const FString ChildNodePath = InvocationPath + TEXT(">") + F.Child->LogicalName + TEXT(":nodes[0]");
-    bPassed &= TestTrue(TEXT("the child node row resolves to its handle"), F.A->FindSessionHandleForNodePath(ChildNodePath) == Handles[0]);
-    bPassed &= TestTrue(TEXT("a descendant path resolves to the same handle"), F.A->FindSessionHandleForNodePath(ChildNodePath + TEXT("/children[0]")) == Handles[0]);
-    bPassed &= TestNull(TEXT("a row outside the scope has no handle"), F.A->FindSessionHandleForNodePath(F.Root->LogicalName + TEXT(":nodes[0]")));
-    bPassed &= TestNull(TEXT("the invocation itself is not a handle"), F.A->FindSessionHandleForNodePath(InvocationPath));
-
-    const FBox ScopeBounds = F.A->GetEditScopeBounds();
-    bPassed &= TestTrue(TEXT("scope bounds are valid"), ScopeBounds.IsValid != 0);
-    bPassed &= TestTrue(TEXT("scope bounds contain the edited mesh"), ScopeBounds.IsInsideOrOn(MeshCWorld));
-    const UBoxComponent* Frame = F.A->GetEditScopeFrame();
-    bPassed &= TestNotNull(TEXT("the edited subtree is framed"), Frame);
-    if (Frame != nullptr)
-    {
-        bPassed &= TestTrue(TEXT("the frame is the actor's own component"), Frame->GetOwner() == F.A);
-        bPassed &= TestFalse(TEXT("the frame cannot be grabbed"), Frame->bSelectable);
-        bPassed &= TestTrue(TEXT("the frame spans the scope"), Frame->GetScaledBoxExtent().Equals(ScopeBounds.GetExtent(), 1e-2) && Frame->GetComponentLocation().Equals(ScopeBounds.GetCenter(), 1e-2));
-    }
-    bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
-    bPassed &= TestNull(TEXT("cancel retires the frame"), F.A->GetEditScopeFrame());
-    bPassed &= TestEqual(TEXT("cancel retires the handles"), F.A->GetEditScopeHandles().Num(), 0);
-
-    // A root session resolves rows to the top-level handles.
-    if (!TestTrue(TEXT("root session: ") + Error, Subsystem->BeginEditComposite(F.B, Error))) return false;
-    const TArray<TObjectPtr<USceneComponent>>& TopLevel = F.B->GetTopLevelPlacementComponents();
-    if (!TestEqual(TEXT("two top-level handles"), TopLevel.Num(), 2)) return false;
-    bPassed &= TestTrue(TEXT("root row resolves to its top-level handle"), F.B->FindSessionHandleForNodePath(F.Root->LogicalName + TEXT(":nodes[0]")) == TopLevel[0]);
-    bPassed &= TestTrue(TEXT("a nested leaf resolves to its top-level ancestor"), F.B->FindSessionHandleForNodePath(F.Root->LogicalName + TEXT(":nodes[1]>") + F.Child->LogicalName + TEXT(":nodes[0]")) == TopLevel[1]);
-    bPassed &= TestNull(TEXT("root session has no frame"), F.B->GetEditScopeFrame());
-    bPassed &= TestTrue(TEXT("cancel root session"), Subsystem->CancelEditComposite(Error));
-    return bPassed;
-}
-
-// R6-UX2a (owner field feedback 2026-09-06): the session answers the keyboard
-// — Esc discards, Enter applies (behind the usual confirmation) — so the
-// context menu is not the only way out.
+// Escape discards the session; Enter stays available to editor widgets.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditContextSessionKeysTest,
-    "Mimir.V5.Composite.EditContext.EscapeCancelsEnterApplies",
+    "Mimir.V5.Composite.EditContext.EscapeCancelsEnterPassesThrough",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FMHEditContextSessionKeysTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     bool bPassed = TestEqual(TEXT("Esc in a session cancels"), MHEditSessionKeyAction(EKeys::Escape, true), EMHEditSessionKeyAction::Cancel);
-    bPassed &= TestEqual(TEXT("Enter in a session applies"), MHEditSessionKeyAction(EKeys::Enter, true), EMHEditSessionKeyAction::Apply);
+    bPassed &= TestEqual(TEXT("Enter in a session passes through"), MHEditSessionKeyAction(EKeys::Enter, true), EMHEditSessionKeyAction::None);
     bPassed &= TestEqual(TEXT("other keys are not session keys"), MHEditSessionKeyAction(EKeys::A, true), EMHEditSessionKeyAction::None);
     bPassed &= TestEqual(TEXT("without a session nothing is intercepted"), MHEditSessionKeyAction(EKeys::Escape, false), EMHEditSessionKeyAction::None);
 
@@ -874,60 +861,33 @@ bool FMHEditContextSessionKeysTest::RunTest(const FString& Parameters)
     // Esc: the draft is discarded, the preview comes back.
     FString Error;
     if (!TestTrue(TEXT("nested context: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
+    const TArray<TObjectPtr<USceneComponent>>& Handles = DraftHandles(*Subsystem);
     if (!TestEqual(TEXT("one handle"), Handles.Num(), 1) || !IsValid(Handles[0])) return false;
-    Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(100, 0, 0));
-    F.A->Tick(0.0f);
+    bPassed &= TestTrue(TEXT("move node"), MoveDraftNodeToWorld(*Subsystem, Handles[0], Handles[0]->GetComponentLocation() + FVector(100, 0, 0), Error));
     bPassed &= TestTrue(TEXT("Esc is handled"), MHHandleEditSessionKey(EKeys::Escape, false));
     bPassed &= TestFalse(TEXT("Esc ended the session"), Subsystem->IsEditingComposite());
-    bPassed &= TestFalse(TEXT("Esc left edit mode"), F.A->IsPlacementEditMode());
+    bPassed &= TestFalse(TEXT("Esc left edit mode"), Subsystem->IsEditingComposite(F.A));
     FVector MeshCAfterEsc;
     bPassed &= TestTrue(TEXT("Esc restored the leaf"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterEsc) && MeshCAfterEsc.Equals(MeshCBeforeA, 1e-2));
     TArray<uint8> ChildAfterEsc;
     bPassed &= TestTrue(TEXT("Esc never touches the source"), CanonicalBytes(*F.Child, ChildAfterEsc) && ChildAfterEsc == ChildBefore);
 
-    // Enter: the confirmation is asked, then the shared definition is published.
     if (!TestTrue(TEXT("nested context again: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error))) return false;
-    if (!TestEqual(TEXT("one handle again"), F.A->GetEditScopeHandles().Num(), 1) || !IsValid(F.A->GetEditScopeHandles()[0])) return false;
-    F.A->GetEditScopeHandles()[0]->SetWorldLocation(F.A->GetEditScopeHandles()[0]->GetComponentLocation() + FVector(100, 0, 0));
-    int32 Confirmations = 0;
-    FMHSourceOverwritePolicyTestHooks Hooks;
-    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return true; };
-    Hooks.Notify = [](const FText&) {};
-    Hooks.MessageLog = [](const FText&) {};
-    MHSetSourceOverwritePolicyTestHooks(Hooks);
-    UMHCompositeAsset* PublishedAsset = nullptr;
-    Subsystem->SetCommitPublisherForTests(
-        [&PublishedAsset](UMHCompositeAsset& Asset, FString&)
-        {
-            PublishedAsset = &Asset;
-            MHNotifyCompositeAssetChanged(Asset);
-            return true;
-        });
-    const bool bEnterHandled = MHHandleEditSessionKey(EKeys::Enter, false);
-    Subsystem->SetCommitPublisherForTests({});
-    MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
-    bPassed &= TestTrue(TEXT("Enter is handled"), bEnterHandled);
-    bPassed &= TestEqual(TEXT("Enter asks the overwrite confirmation once"), Confirmations, 1);
-    bPassed &= TestTrue(TEXT("Enter published the shared child"), PublishedAsset == F.Child);
-    bPassed &= TestFalse(TEXT("Enter ended the session"), Subsystem->IsEditingComposite());
-    FVector MeshCAfterEnter;
-    bPassed &= TestTrue(TEXT("A renders the published node"), LeafWorldLocation(*F.A, F.MeshC, MeshCAfterEnter) && MeshCAfterEnter.Equals(MeshCBeforeA + FVector(100, 0, 0), 1e-2));
+    bPassed &= TestFalse(TEXT("Enter passes through"), MHHandleEditSessionKey(EKeys::Enter, false));
+    bPassed &= TestTrue(TEXT("Enter keeps the session open"), Subsystem->IsEditingComposite());
+    bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }
 
-// CE-pre (spec CE §9, auditor 2026-09-06): an Apply queued for one session must
-// never publish a later one — the callback carries the session epoch.
+// A deferred Escape belongs to one session and cannot cancel a later one.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHEditContextStaleApplyTest,
-    "Mimir.V5.Composite.EditContext.QueuedApplyIgnoresLaterSession",
+    FMHEditContextStaleCancelTest,
+    "Mimir.V5.Composite.EditContext.QueuedCancelIgnoresLaterSession",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHEditContextStaleApplyTest::RunTest(const FString& Parameters)
+bool FMHEditContextStaleCancelTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FEditContextFixture F(*this);
@@ -938,16 +898,6 @@ bool FMHEditContextStaleApplyTest::RunTest(const FString& Parameters)
     TArray<uint8> ChildBefore;
     if (!TestTrue(TEXT("child source bytes"), CanonicalBytes(*F.Child, ChildBefore))) return false;
 
-    int32 Confirmations = 0;
-    FMHSourceOverwritePolicyTestHooks Hooks;
-    Hooks.Confirm = [&Confirmations](const FText&) { ++Confirmations; return true; };
-    Hooks.Notify = [](const FText&) {};
-    Hooks.MessageLog = [](const FText&) {};
-    MHSetSourceOverwritePolicyTestHooks(Hooks);
-    int32 Publishes = 0;
-    Subsystem->SetCommitPublisherForTests([&Publishes](UMHCompositeAsset& Asset, FString&) { ++Publishes; MHNotifyCompositeAssetChanged(Asset); return true; });
-
-    // Session A queues an Apply, then ends; session B begins on another placement.
     FString Error;
     bool bPassed = TestTrue(TEXT("session A: ") + Error, Subsystem->BeginEditNestedComposite(F.A, InvocationPath, Error));
     const uint32 EpochA = Subsystem->GetEditSessionEpoch();
@@ -958,18 +908,13 @@ bool FMHEditContextStaleApplyTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("a new session has a new epoch"), Subsystem->GetEditSessionEpoch() != EpochA);
 
     // The stale callback fires: nothing may happen to B.
-    bPassed &= TestFalse(TEXT("stale Apply is a no-op"), MHRunDeferredEditSessionApply(EpochA));
+    bPassed &= TestFalse(TEXT("stale Cancel is a no-op"), MHRunDeferredEditSessionCancel(EpochA));
     bPassed &= TestTrue(TEXT("B is still being edited"), Subsystem->IsEditingComposite() && Subsystem->IsEditingComposite(F.B));
-    bPassed &= TestEqual(TEXT("no confirmation was asked"), Confirmations, 0);
-    bPassed &= TestEqual(TEXT("nothing was published"), Publishes, 0);
 
-    // The current epoch still applies B.
-    bPassed &= TestTrue(TEXT("current Apply runs"), MHRunDeferredEditSessionApply(Subsystem->GetEditSessionEpoch()));
-    bPassed &= TestEqual(TEXT("B was confirmed once"), Confirmations, 1);
-    bPassed &= TestEqual(TEXT("B was published once"), Publishes, 1);
+    // The current epoch cancels B.
+    bPassed &= TestTrue(TEXT("current Cancel runs"), MHRunDeferredEditSessionCancel(Subsystem->GetEditSessionEpoch()));
     bPassed &= TestFalse(TEXT("B session ended"), Subsystem->IsEditingComposite());
     Subsystem->SetCommitPublisherForTests({});
-    MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
     TArray<uint8> ChildAfter;
     bPassed &= TestTrue(TEXT("no external change from the stale callback"), CanonicalBytes(*F.Child, ChildAfter) && ChildAfter == ChildBefore);
     return bPassed;

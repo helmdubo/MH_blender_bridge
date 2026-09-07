@@ -1,6 +1,7 @@
 #include "UI/MHCompositeActorDetails.h"
 
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
 #include "Editor.h"
@@ -24,6 +25,13 @@ namespace
 {
 
 bool GCompositeActorDetailsRegistered = false;
+
+bool HasActiveCompositeEditSession()
+{
+    const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    return Subsystem != nullptr && Subsystem->IsEditingComposite();
+}
 
 FText SeedTransactionTitle(const EMHCompositeSeedTarget Target)
 {
@@ -103,10 +111,10 @@ private:
 
     bool CanGenerate() const
     {
-        return !Actors.IsEmpty() &&
+        return !HasActiveCompositeEditSession() && !Actors.IsEmpty() &&
             !Actors.ContainsByPredicate([](const TWeakObjectPtr<AMHCompositeActor>& Actor)
             {
-                return !Actor.IsValid() || Actor->IsPlacementEditMode();
+                return !Actor.IsValid();
             });
     }
 
@@ -140,6 +148,11 @@ bool MHGenerateCompositeSeedsForDetails(
         OutError = TEXT("No MH Composite actors are available in Details");
         return false;
     }
+    if (HasActiveCompositeEditSession())
+    {
+        OutError = TEXT("Finish or cancel Composite Edit before generating seeds");
+        return false;
+    }
 
     TArray<AMHCompositeActor*> ResolvedActors;
     ResolvedActors.Reserve(Actors.Num());
@@ -149,13 +162,6 @@ bool MHGenerateCompositeSeedsForDetails(
         if (Actor == nullptr)
         {
             OutError = TEXT("The MH Composite Details selection is no longer valid");
-            return false;
-        }
-        if (Actor->IsPlacementEditMode())
-        {
-            OutError = FString::Printf(
-                TEXT("%s is in Placement Edit Mode; finish or cancel Edit before generating seeds"),
-                *Actor->GetPathName());
             return false;
         }
         ResolvedActors.AddUnique(Actor);

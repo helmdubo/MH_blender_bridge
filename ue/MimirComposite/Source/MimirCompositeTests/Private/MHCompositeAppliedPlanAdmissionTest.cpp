@@ -1,3 +1,6 @@
+#include "Editing/MHCompositeEditSession.h"
+#include "Editing/MHCompositeEditProjection.h"
+#include "Misc/ScopeExit.h"
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -315,21 +318,19 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     USceneComponent* Leaf = Actor->GetLeafMaterializations()[0].Component;
     if (!TestNotNull(TEXT("edit leaf is a scene component"), Leaf)) return false;
 
-    Actor->SetPlacementEditMode(true);
     const FTransform MovedBasis(FRotator(0.0, 90.0, 0.0), FVector(1000.0, 200.0, 50.0));
     Actor->SetActorTransform(MovedBasis);
-    Actor->Tick(0.0f);
-    if (!TestNotNull(TEXT("placement move during Edit retains admitted prospective plan"), Actor->GetResolvedPlan())) return false;
-    TestEqual(TEXT("moving placement during Edit does not change Seed"), Actor->GetSeed(), 100);
+    if (!TestNotNull(TEXT("placement move retains admitted plan"), Actor->GetResolvedPlan())) return false;
+    TestEqual(TEXT("moving placement does not change Seed"), Actor->GetSeed(), 100);
     // R2b-2: the preview publishes no signature and no closure, so an unchanged basis
     // move is asserted as unchanged plan content instead.
     TArray<FString> Mismatches;
     TestTrue(TEXT("placement basis alone does not change the plan content"),
         MHCompareRecipeShadowParity(AppliedPlan, *Actor->GetResolvedPlan(), Mismatches));
     TestTrue(TEXT("preview plan carries no source closure"), Actor->GetResolvedPlan()->Closure.Resources.IsEmpty());
-    TestEqual(TEXT("moving in Edit keeps authored handle object"), Actor->GetTopLevelPlacementComponents()[0].Get(), Handle);
+    TestEqual(TEXT("moving placement keeps authored handle object"), Actor->GetTopLevelPlacementComponents()[0].Get(), Handle);
     // 16 §2.8 (R5b-1): the pooled leaf keeps its bucket component; the actor owns only the handle.
-    TestEqual(TEXT("moving in Edit keeps leaf object"), Actor->GetLeafMaterializations()[0].Component.Get(), Leaf);
+    TestEqual(TEXT("moving placement keeps leaf object"), Actor->GetLeafMaterializations()[0].Component.Get(), Leaf);
     TestTrue(TEXT("authored handle follows placement basis without baking profile"), MHMatrixElementsWithinTrsTolerance(
         Handle->GetComponentTransform().ToMatrixWithScale(), FTransform(FVector(100.0, 0.0, 0.0)).ToMatrixWithScale() * MovedBasis.ToMatrixWithScale()));
     FTransform MovedLeafTransform;
@@ -340,21 +341,33 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
         AppliedPlan.Leaves[0].WorldMatrix * MovedBasis.ToMatrixWithScale()));
     TestEqual(TEXT("placement move preserves applied SourceHash"), Root->SourceHash, SourceHash);
 
-    const FTransform EditedLocal(FVector(150.0, 0.0, 0.0));
-    const FTransform SubmittedWorld(EditedLocal.ToMatrixWithScale() * MovedBasis.ToMatrixWithScale());
-    Handle->SetWorldTransform(SubmittedWorld);
-    // The rotated basis can leave tiny finite components after world->local.
-    // Canonical expectation preserves the complete submitted host decomposition;
-    // the test must not silently snap it back to an ideal translation-only TRS.
-    const FTransform SubmittedLocal(Handle->GetComponentTransform().ToMatrixWithScale() *
-        Actor->GetActorTransform().ToInverseMatrixWithScale());
-    Actor->Tick(0.0f);
-    if (!TestNotNull(TEXT("authored handle update produces prospective plan"), Actor->GetResolvedPlan())) return false;
-    const FMHResolvedCompositePlan ProspectivePlan = *Actor->GetResolvedPlan();
-    TestEqual(TEXT("prospective authored transform is not sampled profile transform"), ProspectivePlan.Nodes[0].AuthoredLocalTrs.TranslationCm.X, 150.0f);
+    UMHCompositeEditSession* Session = NewObject<UMHCompositeEditSession>();
+    Session->Open(Actor, Root, FString(), Document, 1);
+    ON_SCOPE_EXIT { Session->Close(); };
+    if (!TestTrue(TEXT("modern edit projection opens: ") + Error, Session->OpenProjection(Error))) return false;
+    UMHCompositeEditProjection* Projection = Session->GetProjection();
+    const FTransform SubmittedLocal(FVector(150.0, 0.0, 0.0));
+    // The profile-bearing parent is procedural. Ordinary editing must refuse
+    // that node; its ordinary child can move without baking or rerolling the
+    // parent's sampled placement profile.
+    TestFalse(TEXT("ordinary transform refuses the procedural parent"),
+        Session->SetNodeTransform(Session->GetDraft()->GetNodeId(0), SubmittedLocal, Error));
+    TestTrue(TEXT("refusal identifies the procedural transform"), Error.Contains(TEXT("procedural profile/p2")));
+    TestFalse(TEXT("refused transform leaves the draft clean"), Session->IsDirty());
+    Error.Reset();
+    if (!TestTrue(TEXT("ordinary child transform command succeeds: ") + Error,
+        Session->SetNodeTransform(Session->GetDraft()->GetNodeId(1), SubmittedLocal, Error))) return false;
+    if (!TestNotNull(TEXT("authored command produces prospective projection plan"), Projection->GetPlan())) return false;
+    const FMHResolvedCompositePlan ProspectivePlan = *Projection->GetPlan();
+    if (!TestEqual(TEXT("projection retains the parent and child nodes"), ProspectivePlan.Nodes.Num(), 2)) return false;
+    TestEqual(TEXT("the procedural parent's authored transform remains unchanged"), ProspectivePlan.Nodes[0].AuthoredLocalTrs.TranslationCm.X, 100.0f);
+    TestEqual(TEXT("the ordinary child's transform updates independently"), ProspectivePlan.Nodes[1].AuthoredLocalTrs.TranslationCm.X, 150.0f);
     // R2b-2: an authored Edit is observed as changed plan content, not as a changed signature or closure hash.
     TestFalse(TEXT("authored Edit changes the prospective plan content"),
         MHCompareRecipeShadowParity(AppliedPlan, ProspectivePlan, Mismatches));
+    TestTrue(TEXT("the placement retains its applied plan during the draft edit"),
+        MHCompareRecipeShadowParity(AppliedPlan, *Actor->GetResolvedPlan(), Mismatches));
+    TestTrue(TEXT("the prospective projection carries no source closure"), ProspectivePlan.Closure.Resources.IsEmpty());
     TestEqual(TEXT("authored Edit does not change applied SourceHash"), Root->SourceHash, SourceHash);
     TestEqual(TEXT("authored Edit does not change applied canonical hash"), Root->AppliedHash, AppliedHash);
     TestEqual(TEXT("authored Edit does not change inlined profile receipt"), Root->InlinedPlacementProfiles[0].GetAppliedSourceHash(), ProfileHash);
@@ -362,11 +375,10 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
     TArray<uint8> StillAppliedBytes;
     if (!MHExtractCompositeV5(*Root, Extracted, Error) || !MHWriteCanonicalCompositeV5(Extracted, StillAppliedBytes, Error)) return false;
     TestTrue(TEXT("Edit never mutates source-shaped applied asset"), StillAppliedBytes == AppliedBytes);
-    // R2b-2: the preview builds no closure, so the submitted host decomposition is
-    // verified on the prospective plan's authored TRS instead of a closure receipt
-    // over canonical edited bytes.
-    const FMHRandomTrs& ProspectiveAuthored = ProspectivePlan.Nodes[0].AuthoredLocalTrs;
-    TestTrue(TEXT("prospective authored TRS preserves the submitted host decomposition"),
+    // The preview builds no closure: verify the submitted local transform on
+    // the prospective plan's authored TRS directly.
+    const FMHRandomTrs& ProspectiveAuthored = ProspectivePlan.Nodes[1].AuthoredLocalTrs;
+    TestTrue(TEXT("prospective authored TRS preserves the submitted local transform"),
         ProspectiveAuthored.TranslationCm.Equals(FVector3f(SubmittedLocal.GetTranslation()), 0.05f) &&
         ProspectiveAuthored.RotationQuat.Equals(FQuat4f(SubmittedLocal.GetRotation()), 0.005f) &&
         ProspectiveAuthored.Scale.Equals(FVector3f(SubmittedLocal.GetScale3D()), 0.005f));
@@ -377,10 +389,9 @@ bool FMHCompositeProspectiveEditPlanTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("editing transform preserves profile sample"), ProspectivePlan.Draws[Index].Sample, AppliedPlan.Draws[Index].Sample);
     }
 
-    Actor->SetPlacementEditMode(false);
-    Actor->RebuildComposite();
-    if (!TestNotNull(TEXT("Cancel plus Rebuild restores applied plan"), Actor->GetResolvedPlan())) return false;
-    TestFalse(TEXT("Cancel exits transient Edit mode"), Actor->IsPlacementEditMode());
+    Session->Close();
+    if (!TestNotNull(TEXT("Cancel retains applied plan"), Actor->GetResolvedPlan())) return false;
+    TestFalse(TEXT("Cancel closes the transient session"), Session->IsOpen());
     // R2b-2: Cancel is observed as restored plan content; the preview has no signature or closure.
     TestTrue(TEXT("Cancel restores original plan content despite moved placement"),
         MHCompareRecipeShadowParity(AppliedPlan, *Actor->GetResolvedPlan(), Mismatches));

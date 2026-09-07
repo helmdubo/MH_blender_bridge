@@ -34,6 +34,13 @@ reference resolver, runtime-мост, Source-конвейер остаются. 
 `docs/RECIPE_EXECUTION_STATUS.md`; перед началом любого среза исполнитель
 читает его и начинает **только** срез со статусом NEXT/READY.
 
+Уточнение owner 2026-09-08: взаимодействие Composite Edit и Break приняты,
+CE-6b2 выполняется по явному запросу на удаление legacy и merge в `main`.
+Контракт `docs/contracts/composite_edit_cleanup.md` задаёт единственный
+session/draft/projection backend и заменяет прежние переходные указания
+сохранять actor edit handles, edit `Tick` и переключатель backend. Фактический
+статус проверок и merge задаёт `docs/RECIPE_EXECUTION_STATUS.md`.
+
 ## 1. Обязательное чтение до любых правок
 
 1. Этот документ целиком.
@@ -134,9 +141,12 @@ uint64 MaterialBindingHash; TSoftClassPtr<AActor> ActorClass }`.
   `FSoftObjectPath`. **Запрещено** в preview-плоскости: `IAssetRegistry::
   GetAssets` с tag-фильтром, `GetAssetsByTags`, `FAssetData(&Object)`,
   чтение `GetAssetRegistryTags` живого объекта, `FinishCompilation`.
-- Загрузка выбранных endpoint'ов асинхронная (`FStreamableManager`); пока
-  `Loading` — `UMHCompositeSettings::PlaceholderMesh` (по умолчанию
-  `/Engine/BasicShapes/Cube`). Невыбранные варианты не загружаются.
+- Выбранные mesh dependencies сохраняются на placement как editor-only hard
+  references для package loader. Новые зависимости загружаются асинхронно
+  (`FStreamableManager`); пока `Loading`, новый normal placement ожидает без
+  кубов, обновляемый сохраняет прежнюю геометрию. Готовый выбранный план
+  материализуется один раз. Невыбранные варианты не запрашиваются.
+  Контракт owner: `docs/contracts/composite_loading.md`.
 - Пять хэшей/ревизий интерфейса меша для пула (единое поле заменено срезом
   П4), считаются при `Ready` и при каждом `Revision++`:
   `PayloadRevision` — геометрия / render resource → render refresh;
@@ -206,7 +216,8 @@ FMHMaterializeResult MHMaterializeLayout(
 1. `PreSaveWorld` **читает** background proof cache (ключ: `RecipeRevision`
    root'а, generation индекса, `ImporterVersion`, `Registry.Revision`) и
    выводит warning по состоянию `Fresh | Stale | Missing | ProofPending |
-   Unknown`. Сам proof в `PreSaveWorld` не строится. Синхронно дождаться
+   Unknown`. Save не строит proof и не ставит его в отложенную очередь.
+   Синхронно дождаться
    полного proof имеют право только build preflight и runtime snapshot
    admission (явные действия пользователя).
 2. Build preflight (`MHCompositeBuildPreflight*`) — error, блокирует.
@@ -298,6 +309,7 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
 
 ```
 TSoftObjectPtr<UMHCompositeAsset> CompositeAsset;
+TArray<TObjectPtr<UStaticMesh>> SelectedMeshDependencies; // editor-only selected loading hints, never layout/proof
 int32 Seed; bool bAutoSeed;
 int32 AppearanceSeed; bool bAutoAppearanceSeed;   // семантика как сейчас
 FMHNodeOverrideSet NodeOverrides;                  // с R6
@@ -320,7 +332,8 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 | MI-параметры (scalar/vector/texture) изменились in place | ничего в пулах | — |
 | Material object identity / slot binding изменились | reconcile дескриптора затронутых бакетов | rebuild актора |
 | Physical material mapping изменился | reconcile collision/trace-интерфейса затронутых бакетов | — |
-| Меш появился (был `Invalid`/`Loading`) | прототип → `Ready`; перенос инстансов с заглушки | rebuild актора |
+| Mesh загрузился (`Loading`) | прототип → `Ready`; один commit подготовленного placement после готовности выбранных мешей | reimport notification, повторный resolver |
+| Missing mesh восстановлен (`Invalid`) | endpoint reconcile и восстановление диагностического представления | скрывать настоящую ошибку как Loading |
 | Смена `Seed`, `SeedAffectsResult == None` | сохранить значение; layout, appearance и хэндлы не трогать | — |
 | Смена `Seed`, `SeedAffectsResult == ChildSeedsOnly` | обновить только endpoint'ы, реально потребляющие layout-сид (вложенные рецепты с `bGenerated`) | — |
 | Смена `Seed`, `SeedAffectsResult == Transform` | пересчитать трансформы, `Update` хэндлов | — |
@@ -329,7 +342,7 @@ FMHNodeOverrideSet NodeOverrides;                  // с R6
 | Перемещение актора (вне драга) | `Update(WorldMatrix)` по хэндлам | `Materialize` |
 | **Драг гизмо** | каждый кадр: `Update` трансформов инстансов в `BeginBulk/EndBulk`, без collision/nav/snapping, без per-instance `MarkRenderStateDirty`; на `bFinished`: один physics/nav refresh, snapping, bounds | замораживать визуальное движение до отпускания |
 | Изменение `NodeOverrides` | Layout + diff по затронутым поддеревьям | — |
-| Загрузка карты | `PostRegisterAllComponents` → Layout с заглушками для `Loading`; ноль синхронных `LoadObject` мешей, ноль `FinishCompilation`, ноль proof | — |
+| Загрузка карты | package loader читает сохранённые выбранные mesh references; `PostRegisterAllComponents` → Layout, ожидание cold dependencies без кубов; ноль preview `LoadObject` мешей, ноль `FinishCompilation`, ноль proof | — |
 
 ## 5. Программа срезов
 

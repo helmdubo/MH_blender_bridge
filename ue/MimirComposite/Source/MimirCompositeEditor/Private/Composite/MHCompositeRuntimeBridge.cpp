@@ -1,6 +1,7 @@
 #include "Composite/MHCompositeRuntimeBridge.h"
 
 #include "Composite/MHCompositeActor.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
@@ -477,7 +478,8 @@ bool MHBuildRuntimeCompositeInput(const AMHCompositeActor& Placement,
 {
     OutInput = FMHRuntimeCompositeInput();
     OutError.Reset();
-    if (Placement.IsPlacementEditMode())
+    const UMHCompositeLevelSubsystem* Editing = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (Editing != nullptr && Editing->IsEditingComposite(&Placement))
     {
         OutError = MHRuntimeBridgeError(Placement.GetPathName() + TEXT(" has an active uncommitted Edit session"));
         return false;

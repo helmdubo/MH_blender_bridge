@@ -48,8 +48,7 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(
     AActor& Target, const FMHResolvedCompositePlan& Plan,
     const FMHRandomComposite& RootDefinition, const UMHCompositeSettings& Settings,
-    TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
-    const FString& UninstancedLeafPath = FString());
+    TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents);
 
 /**
  * Attempt a seed-only reconciliation against a strictly validated prior view.
@@ -65,8 +64,7 @@ MIMIRCOMPOSITEEDITOR_API bool MHTryCompileCompositePlacementReseedV5(
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousHandles,
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousLeaves,
     TConstArrayView<FMHCompositeLeafMaterialization> PreviousMaterializations,
-    FMHCompositePlacementCompileResult& OutResult,
-    const FString& UninstancedLeafPath = FString());
+    FMHCompositePlacementCompileResult& OutResult);
 
 /** No resolution or signature: explicit diagnostics when no applied plan is available. */
 MIMIRCOMPOSITEEDITOR_API FMHCompositePlacementCompileResult MHBuildCompositeDiagnosticView(

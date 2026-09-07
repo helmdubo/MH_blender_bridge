@@ -6,27 +6,11 @@
 #include "Editing/MHCompositeEditorMode.h"
 #include "Editor/Transactor.h"
 #include "Selection.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FTransformV2Scope
-{
-    bool bPrevious = false;
-    FTransformV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FTransformV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 FVector DraftTranslation(const UMHCompositeEditDocument& Draft, const int32 Index)
 {
@@ -62,7 +46,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeGestureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FTransformV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);
@@ -153,7 +137,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeGestureEdgesTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FTransformV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);
@@ -169,9 +153,10 @@ bool FMHEditModeGestureEdgesTest::RunTest(const FString& Parameters)
     AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
     if (!TestNotNull(TEXT("mode"), Mode) || !TestNotNull(TEXT("projection actor"), ProjectionActor)) return false;
 
-    // The frame (actor-only selection, as on enter) swallows the gesture.
-    bool bPassed = TestTrue(TEXT("the frame is selected on enter"), ProjectionActor->IsSelected() && GEditor->GetSelectedComponentCount() == 0);
-    bPassed &= TestTrue(TEXT("a frame gesture is swallowed"), Gesture(*Mode, FVector(10.0, 0.0, 0.0)));
+    // The frame is infrastructure only: no logical selection means no widget/gesture.
+    bool bPassed = TestTrue(TEXT("empty node selection selects no native infrastructure"), !ProjectionActor->IsSelected() && GEditor->GetSelectedActorCount() == 0 && GEditor->GetSelectedComponentCount() == 0);
+    bPassed &= TestFalse(TEXT("the empty frame has no transform widget"), Mode->ShouldDrawWidget());
+    bPassed &= TestFalse(TEXT("the empty frame starts no authoring gesture"), Mode->StartTracking(nullptr, nullptr));
     bPassed &= TestFalse(TEXT("it changed nothing"), Session->IsDirty());
     bPassed &= TestFalse(TEXT("it left no undo step"), GEditor->Trans->CanUndo());
 

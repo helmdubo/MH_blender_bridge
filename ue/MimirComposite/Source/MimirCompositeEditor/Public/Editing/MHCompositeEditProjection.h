@@ -1,10 +1,12 @@
 #pragma once
 
 #include "Composite/MHInstancePool.h"
+#include "Components/StaticMeshComponent.h"
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Misc/Guid.h"
 #include "Random/MHRandomStream.h"
+#include "Source/MHSourceResolver.h"
 #include "UObject/Object.h"
 #include "MHCompositeEditProjection.generated.h"
 
@@ -15,11 +17,44 @@ class UPrimitiveComponent;
 class USceneComponent;
 
 /**
+ * The single authoring frame for one session node.  Visual components are
+ * explicitly bound to this identity when a projection refresh succeeds; the
+ * frame therefore remains coherent even when an origin is reused after a
+ * structural edit.
+ */
+struct MIMIRCOMPOSITEEDITOR_API FMHCompositeEditNodeFrame
+{
+    FGuid NodeId;
+    FGuid ParentNodeId;
+    FTransform AuthoredLocal = FTransform::Identity;
+    FMatrix WorldMatrix = FMatrix::Identity;
+    FMatrix ParentWorldMatrix = FMatrix::Identity;
+    bool bGeneratedTransform = false;
+};
+
+/** Mesh visual whose outline follows logical edit selection only. */
+UCLASS(Transient, NotBlueprintable)
+class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditMeshComponent final : public UStaticMeshComponent
+{
+    GENERATED_BODY()
+
+public:
+    UMHCompositeEditMeshComponent();
+    void SetEditSelected(bool bSelected);
+    virtual bool ShouldRenderSelected() const override;
+
+private:
+    bool IsEditIndividuallySelected(const UPrimitiveComponent* Component) const;
+    bool bEditSelected = false;
+};
+
+/**
  * CE-2b (docs/contracts/composite_edit_ce0.md, spec §5.4–5.5): the one
  * transient actor that carries the edit projection of a session — a
  * component per resolved node of the edited definition under the selected
- * occurrence. Never saved, never in PIE or cook, hidden from the World
- * Outliner (the Composite Outliner is the tree). Owner decision 2026-09-06:
+ * occurrence. Spawned transient and duplicate-transient, so it is never saved,
+ * cooked, or copied into PIE; it remains visible in editor Game View and is
+ * hidden from the World Outliner (the Composite Outliner is the tree). Owner decision 2026-09-06:
  * components of one projection actor, not an actor per node.
  */
 UCLASS(Transient, NotPlaceable, NotBlueprintable)
@@ -47,9 +82,12 @@ class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditProjection : public UObject
     GENERATED_BODY()
 
 public:
+    virtual void BeginDestroy() override;
     bool Open(UMHCompositeEditSession& Session, FString& OutError);
     /** Re-resolves the draft and re-places the components; components keep their identity per plan origin. */
     bool Refresh(FString& OutError);
+    /** Transform-only gesture path; falls back to Refresh when cached topology cannot be reused exactly. */
+    bool RefreshTransforms(const TArray<FGuid>& NodeIds, FString& OutError);
     /** Releases the lease and destroys the projection actor. Safe to call twice. */
     void Close();
 
@@ -60,8 +98,16 @@ public:
     FString GetOriginForComponent(const USceneComponent* Component) const;
     /** Session node the component belongs to: the leaf's node, or the random node that picked it. */
     FGuid GetNodeIdForComponent(const USceneComponent* Component) const;
-    /** First component of a session node (its leaf, or its handle). */
+    /** The deterministic component at the authored node's exact structural frame. */
     USceneComponent* FindComponentForNodeId(const FGuid& NodeId) const;
+    /** The authoring frame built from the exact current-definition node in the resolved plan. */
+    bool GetNodeFrame(const FGuid& NodeId, FMHCompositeEditNodeFrame& OutFrame) const;
+    /** Visuals bound to this node; optionally includes visuals of authored descendants. */
+    TArray<USceneComponent*> GetComponentsForNodeId(const FGuid& NodeId, bool bIncludeDescendants = false) const;
+    /** Bounds of all primitive visuals relevant to this logical node. */
+    bool GetNodeBounds(const FGuid& NodeId, FBox& OutBounds) const;
+    /** Updates mesh outlines from the logical selection (groups include their descendants). */
+    void UpdateSelection(const TArray<FGuid>& NodeIds);
     /** CE-3b: the component at a plan origin (a Composite Outliner row's node path); null when the origin is not projected. */
     USceneComponent* FindComponentForOrigin(const FString& Origin) const;
     /** CE-4a: world transform of the session node's parent (the occurrence for top-level nodes) — the frame a local transform is authored in. */
@@ -75,6 +121,8 @@ public:
      */
     void PushEditingTint();
     const UE::MimirComposite::FMHResolvedCompositePlan* GetPlan() const { return Plan.Get(); }
+    /** Observable cost boundary for edit-mode performance regression tests. */
+    uint64 GetFullGraphBuildCount() const { return FullGraphBuildCount; }
     const UE::MimirComposite::FMHPoolSuppressionLease& GetLease() const { return Lease; }
 
 private:
@@ -83,6 +131,9 @@ private:
     bool UnderOccurrence(const FString& Path) const;
     USceneComponent* PlaceComponent(const FString& Origin, UClass* Class, const FMatrix& WorldMatrix, const TFunction<void(USceneComponent&)>& Configure);
     void AcquireLease();
+    void OnEndpointLoadReady(const UE::MimirComposite::FMHResourceKey& Key);
+    void SetPendingEndpointKeys(TSet<UE::MimirComposite::FMHResourceKey>&& Keys);
+    void ClearEndpointLoadReadySubscription();
 
     UPROPERTY()
     TObjectPtr<UMHCompositeAsset> DraftAsset;
@@ -91,9 +142,21 @@ private:
     TWeakObjectPtr<UMHCompositeEditSession> Session;
     TWeakObjectPtr<AMHCompositeEditProjectionActor> ProjectionActor;
     TMap<FString, TWeakObjectPtr<USceneComponent>> ComponentsByOrigin;
+    /** Successful-refresh bindings. Never inferred from the current draft during a query. */
+    TMap<TWeakObjectPtr<USceneComponent>, FGuid> NodeIdByComponent;
+    TMap<FGuid, FMHCompositeEditNodeFrame> NodeFrames;
+    TMap<FGuid, TWeakObjectPtr<USceneComponent>> FrameComponentByNodeId;
     /** Scene proxies that already carry the editing state (CE-3b). */
     TMap<TWeakObjectPtr<const UPrimitiveComponent>, const FPrimitiveSceneProxy*> TintedProxies;
     TSharedPtr<UE::MimirComposite::FMHResolvedCompositePlan> Plan;
+    TOptional<UE::MimirComposite::FMHRandomSourceGraph> CachedGraph;
+    uint64 FullGraphBuildCount = 0;
+    /** Selected draft mesh endpoints still loading for the current resolved plan. */
+    TSet<UE::MimirComposite::FMHResourceKey> PendingEndpointKeys;
+    /** Keeps earlier Ready endpoints resident until the complete batch refreshes. */
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<UStaticMesh>> PendingReadyMeshes;
+    FDelegateHandle EndpointLoadReadyHandle;
     UE::MimirComposite::FMHPoolSuppressionLease Lease;
     FString OccurrencePrefix;
     FString DefinitionPrefix;

@@ -4,6 +4,7 @@
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
+#include "Editing/MHCompositeEditSession.h"
 
 #include "MHRecipeTestFixture.h"
 #include "Components/SceneComponent.h"
@@ -63,8 +64,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
 {
-    // CE-6b: the Edit guards here are the legacy actor-handle path's.
-    const FMHCompositeEditBackendScope Legacy(false);
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
     const FString SourceRoot = FPaths::Combine(
         FPaths::ProjectSavedDir(),
@@ -217,7 +216,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(
             TEXT("Edit unlocks top-level transforms"),
             Subsystem->BeginEditComposite(CompositeActor, Error));
-        bPassed &= TestTrue(TEXT("actor records active edit mode"), CompositeActor->IsPlacementEditMode());
+        bPassed &= TestTrue(TEXT("actor records active edit mode"), Subsystem->IsEditingComposite(CompositeActor));
         TArray<AActor*> UnsafeBreakActors;
         Error.Reset();
         bPassed &= TestFalse(
@@ -240,14 +239,15 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
                 Warnings,
                 Error));
         bPassed &= TestTrue(TEXT("blocked Build names the active edit"), Error.Contains(TEXT("active composite edit")));
-        bPassed &= TestTrue(TEXT("blocked operations preserve edit mode"), CompositeActor->IsPlacementEditMode());
+        bPassed &= TestTrue(TEXT("blocked operations preserve edit mode"), Subsystem->IsEditingComposite(CompositeActor));
         if (CompositeActor->GetTopLevelComponents().Num() == 4)
         {
-            CompositeActor->GetTopLevelComponents()[0]->SetWorldLocation(FVector(999.0, 0.0, 0.0));
+            bPassed &= TestTrue(TEXT("edit draft transform"), Subsystem->GetEditSession()->SetNodeTransform(
+                Subsystem->GetEditSession()->GetDraft()->GetNodeId(0), FTransform(FVector(899.0, 0.0, 0.0)), Error));
         }
         Error.Reset();
         bPassed &= TestTrue(TEXT("Cancel closes edit mode"), Subsystem->CancelEditComposite(Error));
-        bPassed &= TestFalse(TEXT("Cancel reseals the actor"), CompositeActor->IsPlacementEditMode());
+        bPassed &= TestFalse(TEXT("Cancel reseals the actor"), Subsystem->IsEditingComposite(CompositeActor));
         if (CompositeActor->GetTopLevelComponents().Num() == 4)
         {
             bPassed &= TestTrue(
@@ -261,16 +261,12 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
         bPassed &= TestTrue(
             TEXT("Edit can restart for irreversible Commit boundary gate"),
             Subsystem->BeginEditComposite(CompositeActor, Error));
-        if (CompositeActor->GetTopLevelComponents().Num() == 4)
         {
-            USceneComponent* EditedComponent = CompositeActor->GetTopLevelComponents()[0];
-            {
-                const FScopedTransaction UserTransformTransaction(
-                    INVTEXT("Automation composite placement edit"));
-                EditedComponent->Modify();
-                EditedComponent->SetWorldLocation(FVector(126.0, 0.0, 0.0));
-                EditedComponent->SetWorldLocation(FVector(125.0, 0.0, 0.0));
-            }
+            const FScopedTransaction UserTransformTransaction(INVTEXT("Automation composite draft edit"));
+            bPassed &= TestTrue(TEXT("change draft"), Subsystem->GetEditSession()->SetNodeTransform(
+                Subsystem->GetEditSession()->GetDraft()->GetNodeId(0), FTransform(FVector(26.0, 0.0, 0.0)), Error));
+            bPassed &= TestTrue(TEXT("restore draft"), Subsystem->GetEditSession()->SetNodeTransform(
+                Subsystem->GetEditSession()->GetDraft()->GetNodeId(0), FTransform(FVector(25.0, 0.0, 0.0)), Error));
         }
         bool bPublisherObservedClosedTransaction = false;
         Subsystem->SetCommitPublisherForTests(
@@ -278,9 +274,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
             {
                 bPublisherObservedClosedTransaction =
                     GEditor != nullptr &&
-                    !GEditor->IsTransactionActive() &&
-                    GEditor->Trans != nullptr &&
-                    !GEditor->Trans->CanUndo();
+                    !GEditor->IsTransactionActive();
                 return true;
             });
         Error.Reset();
@@ -288,7 +282,7 @@ bool FMHCompositeLevelOperationsTest::RunTest(const FString& Parameters)
             TEXT("Commit succeeds through the source-publish seam"),
             Subsystem->CommitEditComposite(Warnings, Error));
         bPassed &= TestTrue(
-            TEXT("Commit clears UE Undo before the source-publish seam"),
+            TEXT("Commit publishes outside the editor transaction"),
             bPublisherObservedClosedTransaction);
         bPassed &= TestFalse(
             TEXT("Ctrl+Z cannot resurrect a pre-Commit placement edit"),

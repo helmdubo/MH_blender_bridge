@@ -3,6 +3,9 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositeTransformAdmission.h"
+#include "ConvexVolume.h"
+#include "UnrealWidget.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Editing/MHCompositeEditDocument.h"
@@ -24,6 +27,7 @@
 #include "TimerManager.h"
 #include "Toolkits/BaseToolkit.h"
 #include "Toolkits/IToolkitHost.h"
+#include "UI/MHCompositeOutliner.h"
 #include "UI/MHSourceToolMenus.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
@@ -44,7 +48,7 @@ FMHCompositeEditCommands::FMHCompositeEditCommands()
 
 void FMHCompositeEditCommands::RegisterCommands()
 {
-    UI_COMMAND(CancelEdit, "Cancel", "Discard the composite draft and leave Edit Contents (asks first when there are changes).", EUserInterfaceActionType::Button, FInputChord(EKeys::Escape));
+    UI_COMMAND(CancelEdit, "Cancel", "Discard the composite draft and leave Edit Contents immediately.", EUserInterfaceActionType::Button, FInputChord(EKeys::Escape));
     UI_COMMAND(SaveEdit, "Save", "Apply the shared definition and leave Edit Contents.", EUserInterfaceActionType::Button, FInputChord());
 }
 
@@ -52,7 +56,6 @@ namespace
 {
 
 #if WITH_DEV_AUTOMATION_TESTS
-TFunction<bool()> GDiscardConfirmForTests;
 TFunction<EAppReturnType::Type()> GSwitchConfirmForTests;
 #endif
 /** Set while the subsystem itself ends the session: Exit must not cancel it a second time. */
@@ -75,7 +78,8 @@ FText Breadcrumb()
     const FMHCompositeEditContext Context = Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext();
     const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
     const TCHAR* Dirty = Session != nullptr && Session->IsDirty() ? TEXT(" *") : TEXT("");
-    return FText::FromString(Context.EditedLogicalName + Dirty);
+    const FString Preview = Session != nullptr && !Session->GetPreviewError().IsEmpty() ? TEXT(" — preview unavailable") : TEXT("");
+    return FText::FromString(Context.EditedLogicalName + Dirty + Preview);
 }
 
 /**
@@ -119,6 +123,12 @@ TSharedRef<SWidget> BuildCrumbs(TWeakObjectPtr<UMHCompositeEditorMode> Mode)
     Box->AddSlot().AutoWidth().VAlign(VAlign_Center)
     [
         SNew(STextBlock).Text_Static(&Breadcrumb)
+        .ToolTipText_Lambda([]()
+        {
+            const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+            const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
+            return Session != nullptr ? FText::FromString(Session->GetPreviewError()) : FText::GetEmpty();
+        })
     ];
     return Box;
 }
@@ -136,6 +146,7 @@ public:
     {
         FModeToolkit::Init(InitToolkitHost, InOwningMode);
         TWeakObjectPtr<UMHCompositeEditorMode> Mode = Cast<UMHCompositeEditorMode>(InOwningMode.Get());
+        InlineContent = UE::MimirComposite::MHCreateCompositeOutlinerWidget();
         SAssignNew(Overlay, SHorizontalBox)
         + SHorizontalBox::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(FMargin(0.0f, 0.0f, 0.0f, 15.0f))
         [
@@ -178,8 +189,10 @@ public:
 
     virtual FName GetToolkitFName() const override { return FName("MHCompositeEditorModeToolkit"); }
     virtual FText GetBaseToolkitName() const override { return LOCTEXT("ToolkitName", "MH Composite Edit"); }
+    virtual TSharedPtr<SWidget> GetInlineContent() const override { return InlineContent; }
 
 private:
+    TSharedPtr<SWidget> InlineContent;
     TSharedPtr<SWidget> Overlay;
 };
 
@@ -236,11 +249,6 @@ void UMHCompositeEditorMode::UnregisterCommands()
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
-void UMHCompositeEditorMode::SetDiscardConfirmForTests(TFunction<bool()> Confirm)
-{
-    GDiscardConfirmForTests = MoveTemp(Confirm);
-}
-
 void UMHCompositeEditorMode::SetSwitchConfirmForTests(TFunction<EAppReturnType::Type()> Confirm)
 {
     GSwitchConfirmForTests = MoveTemp(Confirm);
@@ -350,16 +358,6 @@ UMHCompositeEditSession* UMHCompositeEditorMode::GetSession() const
     return Session != nullptr && Session->IsOpen() ? Session : nullptr;
 }
 
-bool UMHCompositeEditorMode::ConfirmDiscard() const
-{
-#if WITH_DEV_AUTOMATION_TESTS
-    if (GDiscardConfirmForTests) return GDiscardConfirmForTests();
-#endif
-    return FMessageDialog::Open(EAppMsgType::YesNo,
-        LOCTEXT("DiscardPrompt", "Discard unsaved composite changes?"),
-        LOCTEXT("DiscardTitle", "Cancel Edit Contents")) == EAppReturnType::Yes;
-}
-
 void UMHCompositeEditorMode::RequestSave()
 {
     if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetActiveModalWindow().IsValid()) return;
@@ -369,40 +367,100 @@ void UMHCompositeEditorMode::RequestSave()
 
 bool UMHCompositeEditorMode::RequestCancel()
 {
-    if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetActiveModalWindow().IsValid()) return false;
+    CancelGesture();
     UMHCompositeEditSession* Session = GetSession();
     if (Session == nullptr)
     {
         DeactivateForSession();
         return true;
     }
-    if (Session->IsDirty() && !ConfirmDiscard()) return false;
     FString Error;
-    if (UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem()) Subsystem->CancelEditComposite(Error);
-    return true;
+    UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+    const bool bCancelled = Subsystem != nullptr && Subsystem->CancelEditComposite(Error);
+    if (!Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
+    return bCancelled;
+}
+
+void UMHCompositeEditorMode::SelectNodeIds(const TArray<FGuid>& NodeIds, const FGuid& ActiveNodeId)
+{
+    if (bTracking) return;
+    if (UMHCompositeEditSession* Session = GetSession()) Session->SetSelectedNodeIds(NodeIds, ActiveNodeId);
 }
 
 bool UMHCompositeEditorMode::SelectComponent(USceneComponent* Component)
 {
     const UMHCompositeEditSession* Session = GetSession();
     const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
-    AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
-    if (GEditor == nullptr || ProjectionActor == nullptr || !IsValid(Component) || Component->GetOwner() != ProjectionActor) return false;
-    // The projection actor exclusively, then the node's component: the
-    // engine's gizmo follows the selected component.
-    if (!ProjectionActor->IsSelected() || GEditor->GetSelectedActorCount() != 1)
+    const FGuid Id = Projection != nullptr ? Projection->GetNodeIdForComponent(Component) : FGuid();
+    if (!Id.IsValid()) return false;
+    SelectNodeIds({Id}, Id);
+    return true;
+}
+
+void UMHCompositeEditorMode::MirrorSelection()
+{
+    if (bMirroringSelection || GEditor == nullptr) return;
+    UMHCompositeEditSession* Session = GetSession();
+    UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    AActor* Actor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
+    if (Actor == nullptr) return;
+    TGuardValue<bool> Guard(bMirroringSelection, true);
+    if (Session->GetSelectedNodeIds().IsEmpty())
+    {
+        // Selecting only the infrastructure actor lets the default mode draw
+        // a widget at world zero even though no authored node can be moved.
+        GEditor->SelectNone(false, true, false);
+        Projection->UpdateSelection({});
+        GEditor->NoteSelectionChange();
+        GEditor->RedrawLevelEditingViewports();
+        return;
+    }
+    if (!Actor->IsSelected() || GEditor->GetSelectedActorCount() != 1)
     {
         GEditor->SelectNone(false, true, false);
-        GEditor->SelectActor(ProjectionActor, true, true, true);
+        GEditor->SelectActor(Actor, true, false, true);
     }
     USelection* Components = GEditor->GetSelectedComponents();
     Components->BeginBatchSelectOperation();
     Components->DeselectAll();
-    GEditor->SelectComponent(Component, true, false, true);
+    TSet<USceneComponent*> Selected;
+    for (const FGuid& Id : Session->GetSelectedNodeIds())
+    {
+        for (USceneComponent* Component : Projection->GetComponentsForNodeId(Id, true))
+        {
+            if (IsValid(Component) && !Selected.Contains(Component))
+            {
+                Selected.Add(Component);
+                GEditor->SelectComponent(Component, true, false, true);
+            }
+        }
+    }
+    Projection->UpdateSelection(Session->GetSelectedNodeIds());
     Components->EndBatchSelectOperation(true);
     GEditor->NoteSelectionChange();
     GEditor->RedrawLevelEditingViewports();
-    return true;
+}
+
+void UMHCompositeEditorMode::ActorSelectionChangeNotify()
+{
+    if (bMirroringSelection) return;
+    UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    const AActor* Actor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
+    if (Actor != nullptr && !Actor->IsSelected()) Session->SetSelectedNodeIds({});
+}
+
+void UMHCompositeEditorMode::SelectNone()
+{
+    if (!bMirroringSelection) SelectNodeIds({});
+}
+
+void UMHCompositeEditorMode::PostUndo()
+{
+    // Object PostEditUndo rebuilds the projection before the engine finishes
+    // restoring its own selection snapshot. Reconcile that snapshot last.
+    Super::PostUndo();
+    MirrorSelection();
 }
 
 bool UMHCompositeEditorMode::HandleHitProxy(HHitProxy* HitProxy)
@@ -410,112 +468,353 @@ bool UMHCompositeEditorMode::HandleHitProxy(HHitProxy* HitProxy)
     if (HitProxy == nullptr) return false;
     if (HitProxy->IsA(HActor::StaticGetType()))
     {
-        const HActor* ActorHit = static_cast<const HActor*>(HitProxy);
-        const UMHCompositeEditSession* Session = GetSession();
-        const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
-        AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
-        if (ProjectionActor != nullptr && ActorHit->Actor == ProjectionActor)
-        {
-            // Projection geometry: the node under the cursor.
-            UPrimitiveComponent* Hit = const_cast<UPrimitiveComponent*>(ActorHit->PrimComponent.Get());
-            if (!SelectComponent(Hit) && GEditor != nullptr && !ProjectionActor->IsSelected())
-            {
-                GEditor->SelectNone(false, true, false);
-                GEditor->SelectActor(ProjectionActor, true, true, true);
-            }
-            return true;
-        }
-        // Locked context: any other actor is not a target while editing.
-        return true;
+        const HActor* Hit = static_cast<const HActor*>(HitProxy);
+        SelectComponent(const_cast<UPrimitiveComponent*>(Hit->PrimComponent.Get()));
+        return true; // Other actors are locked context.
     }
-    // Pooled instances (shared ISM buckets) are locked too.
-    if (HitProxy->IsA(HInstancedStaticMeshInstance::StaticGetType())) return true;
-    // Gizmo axes, brush handles, empty space: not ours.
-    return false;
+    return HitProxy->IsA(HInstancedStaticMeshInstance::StaticGetType());
 }
 
-USceneComponent* UMHCompositeEditorMode::SelectedProjectionComponent() const
+bool UMHCompositeEditorMode::HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
 {
-    const UMHCompositeEditSession* Session = GetSession();
+    if (Click.IsAltDown()) return false; // Orbit/navigation belongs to the viewport.
+    if (Click.GetKey() != EKeys::LeftMouseButton && Click.GetKey() != EKeys::RightMouseButton) return false;
+    UMHCompositeEditSession* Session = GetSession();
     const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
-    const AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
-    if (GEditor == nullptr || ProjectionActor == nullptr) return nullptr;
-    USceneComponent* Found = nullptr;
-    for (FSelectionIterator It(*GEditor->GetSelectedComponents()); It; ++It)
+    if (Projection == nullptr) return false;
+    if (HitProxy == nullptr)
     {
-        USceneComponent* Component = Cast<USceneComponent>(*It);
-        if (Component == nullptr || Component->GetOwner() != ProjectionActor) continue;
-        if (Found != nullptr) return nullptr;
-        Found = Component;
+        if (Click.GetKey() == EKeys::LeftMouseButton && !Click.IsControlDown() && !Click.IsShiftDown()) SelectNodeIds({});
+        return false;
     }
-    return Found;
+    if (HitProxy->IsA(HActor::StaticGetType()))
+    {
+        const HActor* Hit = static_cast<const HActor*>(HitProxy);
+        const FGuid Id = Projection->GetNodeIdForComponent(Hit->PrimComponent.Get());
+        if (Id.IsValid())
+        {
+            TArray<FGuid> Ids = Session->GetSelectedNodeIds();
+            if (Click.GetKey() == EKeys::RightMouseButton)
+            {
+                if (!Ids.Contains(Id)) SelectNodeIds({Id}, Id);
+                return true;
+            }
+            if (Click.IsControlDown())
+            {
+                if (Ids.Contains(Id)) Ids.Remove(Id); else Ids.Add(Id);
+            }
+            else if (Click.IsShiftDown()) Ids.AddUnique(Id);
+            else Ids = {Id};
+            SelectNodeIds(Ids, Ids.Contains(Id) ? Id : FGuid());
+        }
+        return true;
+    }
+    return HitProxy->IsA(HInstancedStaticMeshInstance::StaticGetType());
 }
 
 bool UMHCompositeEditorMode::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
-    static_cast<void>(InViewportClient);
-    static_cast<void>(InViewport);
-    const UMHCompositeEditSession* Session = GetSession();
+    // Camera and marquee drags must never open an authoring transaction.
+    if (InViewportClient != nullptr && InViewportClient->GetCurrentWidgetAxis() == EAxisList::None) return false;
+    if (bTracking || bCancelledTracking || bNavigationTracking) return true;
+    if (InViewportClient != nullptr && InViewport != nullptr)
+    {
+        if (!InViewport->KeyState(EKeys::LeftMouseButton) || InViewport->KeyState(EKeys::RightMouseButton) || InViewport->KeyState(EKeys::MiddleMouseButton))
+        {
+            // A hovered axis must not turn RMB navigation into an object drag.
+            InViewportClient->SetCurrentWidgetAxis(EAxisList::None);
+            bNavigationTracking = true;
+            return true;
+        }
+        if (InViewportClient->IsAltPressed())
+        {
+            // Alt-drag duplication needs a draft command; never duplicate or
+            // silently move the transient projection through native fallback.
+            bCancelledTracking = true;
+            return true;
+        }
+    }
+    UMHCompositeEditSession* Session = GetSession();
     const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
-    const AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
-    if (GEditor == nullptr || ProjectionActor == nullptr || !ProjectionActor->IsSelected()) return false;
+    if (GEditor == nullptr || Projection == nullptr || !Projection->GetProjectionActor()->IsSelected()) return false;
+    if (!Session->GetPreviewError().IsEmpty()) return true;
+    GestureNodes.Reset();
+    const UMHCompositeEditDocument* Draft = Session->GetDraft();
+    const TArray<FGuid>& Ids = Session->GetSelectedNodeIds();
+    for (const FGuid& Id : Ids)
+    {
+        bool bCoveredByParent = false;
+        for (FGuid Parent = Draft->GetParentId(Id); Parent.IsValid(); Parent = Draft->GetParentId(Parent))
+        {
+            if (Ids.Contains(Parent)) { bCoveredByParent = true; break; }
+        }
+        if (bCoveredByParent) continue;
+        FMHCompositeEditNodeFrame Frame;
+        if (!Projection->GetNodeFrame(Id, Frame) || Frame.bGeneratedTransform || !UE::MimirComposite::MHIsRepresentableTransformMatrix(Frame.WorldMatrix))
+        {
+            GestureNodes.Reset();
+            return true; // Cannot route unsupported targets to default component editing.
+        }
+        FGestureNode& Node = GestureNodes.AddDefaulted_GetRef();
+        Node.NodeId = Id;
+        Node.AuthoredLocal = Frame.AuthoredLocal;
+        Node.ParentWorld = Frame.ParentWorldMatrix;
+        Node.World = FTransform(Frame.WorldMatrix);
+    }
+    if (GestureNodes.IsEmpty()) return false;
+    GesturePivot = GetWidgetLocation();
     bTracking = true;
     bGestureChanged = false;
-    // A node gesture transacts; the frame (actor-only selection) only swallows.
-    if (SelectedProjectionComponent() != nullptr)
-    {
-        GestureTransaction = GEditor->BeginTransaction(LOCTEXT("MoveNodeTransaction", "Move Composite Node"));
-    }
+    GestureTransaction = GEditor->BeginTransaction(LOCTEXT("MoveNodeTransaction", "Transform Composite Nodes"));
     return true;
 }
 
 bool UMHCompositeEditorMode::InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale)
 {
-    static_cast<void>(InViewportClient);
-    static_cast<void>(InViewport);
-    if (!bTracking) return false;
+    if (bCancelledTracking) return true;
+    if (bNavigationTracking) return false;
+    if (!bTracking) return InViewportClient != nullptr && InViewportClient->GetCurrentWidgetAxis() != EAxisList::None;
     UMHCompositeEditSession* Session = GetSession();
-    UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
-    USceneComponent* Component = SelectedProjectionComponent();
-    if (Projection == nullptr || Component == nullptr) return true;
-    if (InDrag.IsNearlyZero() && InRot.IsNearlyZero() && InScale.IsNearlyZero()) return true;
-    const FGuid NodeId = Projection->GetNodeIdForComponent(Component);
-    FTransform ParentWorld;
-    if (!NodeId.IsValid() || !Projection->GetParentWorldForComponent(Component, ParentWorld)) return true;
-    // The engine's delta semantics for a selected component: translation
-    // added in world space, rotation about the gizmo pivot (the component),
-    // scale added componentwise.
-    FTransform World = Component->GetComponentTransform();
-    World.SetLocation(World.GetLocation() + InDrag);
-    if (!InRot.IsNearlyZero()) World.SetRotation((InRot.Quaternion() * World.GetRotation()).GetNormalized());
-    if (!InScale.IsNearlyZero()) World.SetScale3D(World.GetScale3D() + InScale);
+    if (Session == nullptr || (InDrag.IsNearlyZero() && InRot.IsNearlyZero() && InScale.IsNearlyZero())) return true;
+    TArray<FGuid> Ids;
+    TArray<FTransform> Locals, Worlds, PreviousLocals;
+    for (const FGestureNode& Node : GestureNodes)
+    {
+        FTransform World = Node.World;
+        FVector Position = World.GetLocation();
+        if (!InRot.IsNearlyZero())
+        {
+            const FQuat Rotation = InRot.Quaternion();
+            Position = GesturePivot + Rotation.RotateVector(Position - GesturePivot);
+            World.SetRotation((Rotation * World.GetRotation()).GetNormalized());
+        }
+        if (!InScale.IsNearlyZero())
+        {
+            const FVector OldScale = World.GetScale3D();
+            const FVector NewScale = AActor::bUsePercentageBasedScaling ? OldScale * (FVector::OneVector + InScale) : OldScale + InScale;
+            Position = GesturePivot + World.GetRotation().RotateVector(World.GetRotation().UnrotateVector(Position - GesturePivot) * (NewScale / OldScale));
+            World.SetScale3D(NewScale);
+        }
+        World.SetLocation(Position + InDrag);
+        // Test the full matrix BEFORE decomposition: silently discarding shear changes the authored pose.
+        const FMatrix LocalMatrix = World.ToMatrixWithScale() * Node.ParentWorld.Inverse();
+        if (!UE::MimirComposite::MHIsRepresentableTransformMatrix(LocalMatrix)) return true;
+        Ids.Add(Node.NodeId);
+        const int32 DraftIndex = Session->GetDraft()->FindNodeIndex(Node.NodeId);
+        if (DraftIndex == INDEX_NONE) return true;
+        PreviousLocals.Add(Session->GetDraft()->GetNodes()[DraftIndex].Transform);
+        Locals.Emplace(LocalMatrix);
+        Worlds.Add(World);
+    }
     FString Error;
-    if (Session->SetNodeTransform(NodeId, World.GetRelativeTransform(ParentWorld), Error)) bGestureChanged = true;
+    if (Session->SetNodeTransformsInteractive(Ids, Locals, Error))
+    {
+        if (!Session->GetPreviewError().IsEmpty())
+        {
+            // A parent edit may make a descendant unrepresentable. Restore
+            // this delta as a batch before accepting any gesture state.
+            const FString PreviewFailure = Session->GetPreviewError();
+            Session->SetNodeTransformsInteractive(Ids, PreviousLocals, Error);
+            FMessageLog("Mimir").Warning(FText::FromString(PreviewFailure));
+            return true;
+        }
+        for (int32 Index = 0; Index < GestureNodes.Num(); ++Index) GestureNodes[Index].World = Worlds[Index];
+        GesturePivot += InDrag;
+        bGestureChanged = true;
+    }
+    else if (!Error.IsEmpty()) FMessageLog("Mimir").Warning(FText::FromString(Error));
     return true;
 }
 
 bool UMHCompositeEditorMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
-    static_cast<void>(InViewportClient);
-    static_cast<void>(InViewport);
+    if (bNavigationTracking) { bNavigationTracking = false; return true; }
+    if (bCancelledTracking) { bCancelledTracking = false; return true; }
     if (!bTracking) return false;
     bTracking = false;
+    bool bCommittedGesture = false;
     if (GestureTransaction != INDEX_NONE && GEditor != nullptr)
     {
-        // A click without a drag leaves no undo step.
-        if (bGestureChanged) GEditor->EndTransaction();
+        bool bDifferent = false;
+        if (const UMHCompositeEditSession* Session = GetSession())
+        {
+            const UMHCompositeEditDocument* Draft = Session->GetDraft();
+            for (const FGestureNode& Node : GestureNodes)
+            {
+                const int32 Index = Draft->FindNodeIndex(Node.NodeId);
+                bDifferent |= Index != INDEX_NONE && !Draft->GetNodes()[Index].Transform.Equals(Node.AuthoredLocal, 0.0);
+            }
+        }
+        if (bGestureChanged && bDifferent)
+        {
+            GEditor->EndTransaction();
+            bCommittedGesture = true;
+        }
         else GEditor->CancelTransaction(GestureTransaction);
     }
+    if (bCommittedGesture)
+    {
+        if (UMHCompositeEditSession* Session = GetSession()) Session->FinishInteractiveTransform();
+    }
     GestureTransaction = INDEX_NONE;
+    GestureNodes.Reset();
     bGestureChanged = false;
     return true;
 }
 
-bool UMHCompositeEditorMode::HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
+void UMHCompositeEditorMode::CancelGesture()
 {
-    static_cast<void>(InViewportClient);
-    static_cast<void>(Click);
-    return HandleHitProxy(HitProxy);
+    if (!bTracking) return;
+    if (UMHCompositeEditSession* Session = GetSession())
+    {
+        TArray<FGuid> Ids;
+        TArray<FTransform> Locals;
+        for (const FGestureNode& Node : GestureNodes) { Ids.Add(Node.NodeId); Locals.Add(Node.AuthoredLocal); }
+        FString Error;
+        if (!Session->SetNodeTransformsInteractive(Ids, Locals, Error)) FMessageLog("Mimir").Error(FText::FromString(Error));
+    }
+    // CancelTransaction removes the record; it does not restore object state.
+    if (GestureTransaction != INDEX_NONE && GEditor != nullptr) GEditor->CancelTransaction(GestureTransaction);
+    GestureTransaction = INDEX_NONE;
+    GestureNodes.Reset();
+    bTracking = false;
+    bCancelledTracking = true;
+    bGestureChanged = false;
+}
+
+bool UMHCompositeEditorMode::HandleEscape()
+{
+    return RequestCancel();
+}
+
+bool UMHCompositeEditorMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event)
+{
+    if (Key != EKeys::Escape || Event != IE_Pressed) return false;
+    // Stop authoring now; defer mode teardown until UE finishes dispatching
+    // this key through its active mode collection.
+    CancelGesture();
+    if (GEditor != nullptr)
+    {
+        TWeakObjectPtr<UMHCompositeEditorMode> WeakThis(this);
+        const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+        const uint32 Epoch = Subsystem != nullptr ? Subsystem->GetEditSessionEpoch() : 0;
+        GEditor->GetTimerManager()->SetTimerForNextTick([WeakThis, Epoch]()
+        {
+            const UMHCompositeLevelSubsystem* Current = LevelSubsystem();
+            if (WeakThis.IsValid() && GetActive() == WeakThis.Get() && Current != nullptr && Current->GetEditSessionEpoch() == Epoch)
+                WeakThis->RequestCancel();
+        });
+    }
+    return true;
+}
+
+bool UMHCompositeEditorMode::UsesTransformWidget(UE::Widget::EWidgetMode CheckMode) const
+{
+    return CheckMode == UE::Widget::WM_Translate || CheckMode == UE::Widget::WM_Rotate || CheckMode == UE::Widget::WM_Scale;
+}
+
+bool UMHCompositeEditorMode::ShouldDrawWidget() const
+{
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    if (Projection == nullptr || !Session->GetPreviewError().IsEmpty() || Session->GetSelectedNodeIds().IsEmpty()) return false;
+    for (const FGuid& Id : Session->GetSelectedNodeIds())
+    {
+        bool bCoveredByParent = false;
+        for (FGuid Parent = Session->GetDraft()->GetParentId(Id); Parent.IsValid(); Parent = Session->GetDraft()->GetParentId(Parent))
+        {
+            if (Session->GetSelectedNodeIds().Contains(Parent)) { bCoveredByParent = true; break; }
+        }
+        if (bCoveredByParent) continue;
+        FMHCompositeEditNodeFrame Frame;
+        if (!Projection->GetNodeFrame(Id, Frame) || Frame.bGeneratedTransform) return false;
+    }
+    return true;
+}
+
+FVector UMHCompositeEditorMode::GetWidgetLocation() const
+{
+    if (bTracking) return GesturePivot;
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    FMHCompositeEditNodeFrame Frame;
+    return Projection != nullptr && Projection->GetNodeFrame(Session->GetActiveNodeId(), Frame) ? Frame.WorldMatrix.GetOrigin() : FVector::ZeroVector;
+}
+
+bool UMHCompositeEditorMode::GetCustomDrawingCoordinateSystem(FMatrix& InMatrix, void* InData)
+{
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    FMHCompositeEditNodeFrame Frame;
+    if (Projection == nullptr || !Projection->GetNodeFrame(Session->GetActiveNodeId(), Frame)) return false;
+    InMatrix = FQuatRotationMatrix(FTransform(Frame.WorldMatrix).GetRotation());
+    return true;
+}
+
+bool UMHCompositeEditorMode::GetCustomInputCoordinateSystem(FMatrix& InMatrix, void* InData)
+{
+    return GetCustomDrawingCoordinateSystem(InMatrix, InData);
+}
+
+FVector UMHCompositeEditorMode::GetWidgetNormalFromCurrentAxis(void* InData)
+{
+    FMatrix Matrix = FMatrix::Identity;
+    if (GetModeManager() != nullptr && GetModeManager()->GetCoordSystem() == COORD_Local) GetCustomDrawingCoordinateSystem(Matrix, InData);
+    FVector Axis = FVector::ZeroVector;
+    if ((CurrentWidgetAxis & EAxisList::X) != 0) Axis += Matrix.GetUnitAxis(EAxis::X);
+    if ((CurrentWidgetAxis & EAxisList::Y) != 0) Axis += Matrix.GetUnitAxis(EAxis::Y);
+    if ((CurrentWidgetAxis & EAxisList::Z) != 0) Axis += Matrix.GetUnitAxis(EAxis::Z);
+    return Axis.GetSafeNormal();
+}
+
+FBox UMHCompositeEditorMode::ComputeCustomViewportFocus() const
+{
+    FBox Bounds(ForceInit);
+    const UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    if (Projection != nullptr)
+    {
+        for (const FGuid& Id : Session->GetSelectedNodeIds())
+        {
+            FBox NodeBounds(ForceInit);
+            if (Projection->GetNodeBounds(Id, NodeBounds)) Bounds += NodeBounds;
+        }
+    }
+    return Bounds;
+}
+
+bool UMHCompositeEditorMode::SelectBounds(TFunctionRef<bool(const FBox&)> Intersects, bool bSelect)
+{
+    UMHCompositeEditSession* Session = GetSession();
+    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    if (Projection == nullptr) return false;
+    TArray<FGuid> Ids = Session->GetSelectedNodeIds();
+    TSet<FGuid> Hits;
+    // Any visual leaf selects its authoring owner, exactly like a click.
+    for (USceneComponent* Component : Projection->GetComponents())
+    {
+        const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component);
+        const FGuid Id = Projection->GetNodeIdForComponent(Component);
+        if (Primitive != nullptr && Id.IsValid() && Intersects(Primitive->Bounds.GetBox())) Hits.Add(Id);
+    }
+    // Draft order keeps the active node deterministic, independent of component/hash ordering.
+    for (int32 Index = 0; Index < Session->GetDraft()->Num(); ++Index)
+    {
+        const FGuid Id = Session->GetDraft()->GetNodeId(Index);
+        if (Hits.Contains(Id)) { if (bSelect) Ids.AddUnique(Id); else Ids.Remove(Id); }
+    }
+    SelectNodeIds(Ids);
+    return true;
+}
+
+bool UMHCompositeEditorMode::BoxSelect(FBox& InBox, bool InSelect)
+{
+    return SelectBounds([&InBox](const FBox& Box) { return InBox.Intersect(Box); }, InSelect);
+}
+
+bool UMHCompositeEditorMode::FrustumSelect(const FConvexVolume& InFrustum, FEditorViewportClient* InViewportClient, bool InSelect)
+{
+    return SelectBounds([&InFrustum](const FBox& Box) { return InFrustum.IntersectBox(Box.GetCenter(), Box.GetExtent()); }, InSelect);
 }
 
 void UMHCompositeEditorMode::Enter()
@@ -527,26 +826,32 @@ void UMHCompositeEditorMode::Enter()
     if (GEditor != nullptr) GEditor->ResetTransaction(LOCTEXT("EnterResetTransaction", "Composite Edit Contents started"));
     UpdateEngineShowFlags(true);
     FEditorDelegates::PreBeginPIE.AddUObject(this, &UMHCompositeEditorMode::OnPreBeginPIE);
-    // CE-3d: entering frames the occurrence — the projection actor is the
-    // exclusive selection (its outline covers every projected node), no
-    // component yet; a row or a click then grabs a node.
-    const UMHCompositeEditSession* Session = GetSession();
-    const UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
-    AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
-    if (GEditor != nullptr && ProjectionActor != nullptr)
+    // The actor is infrastructure; node selection owns the gizmo and outlines.
+    // Entering changes no viewport camera or focus.
+    BoundSession = GetSession();
+    if (BoundSession.IsValid())
     {
-        GEditor->SelectNone(false, true, false);
-        GEditor->SelectActor(ProjectionActor, true, true, true);
+        BoundSession->OnSelectionChanged.AddUObject(this, &UMHCompositeEditorMode::MirrorSelection);
+        BoundSession->OnChanged.AddUObject(this, &UMHCompositeEditorMode::MirrorSelection);
     }
+    MirrorSelection();
 }
 
 void UMHCompositeEditorMode::Exit()
 {
     FEditorDelegates::PreBeginPIE.RemoveAll(this);
+    if (BoundSession.IsValid())
+    {
+        BoundSession->OnSelectionChanged.RemoveAll(this);
+        BoundSession->OnChanged.RemoveAll(this);
+    }
+    BoundSession.Reset();
     UpdateEngineShowFlags(false);
     if (GestureTransaction != INDEX_NONE && GEditor != nullptr) GEditor->CancelTransaction(GestureTransaction);
     GestureTransaction = INDEX_NONE;
     bTracking = false;
+    bCancelledTracking = false;
+    bNavigationTracking = false;
     // The session's steps cannot outlive it (the draft is gone).
     if (GEditor != nullptr) GEditor->ResetTransaction(LOCTEXT("ExitResetTransaction", "Composite Edit Contents ended"));
     UEdMode::Exit();
@@ -618,23 +923,7 @@ void UMHCompositeEditorMode::BindCommands()
     if (!Toolkit.IsValid()) return;
     const TSharedRef<FUICommandList>& CommandList = Toolkit->GetToolkitCommands();
     const FMHCompositeEditCommands& Commands = FMHCompositeEditCommands::Get();
-    CommandList->MapAction(
-        Commands.CancelEdit,
-        FExecuteAction::CreateLambda([this]() { RequestCancel(); }),
-        FCanExecuteAction::CreateLambda([]()
-        {
-            // Escape first clears a selection (the engine's SelectNone chord), only then leaves.
-            if (GEditor != nullptr && GEditor->GetSelectedActors()->Num() > 0)
-            {
-                const FMHCompositeEditCommands& Own = FMHCompositeEditCommands::Get();
-                for (const EMultipleKeyBindingIndex Index : {EMultipleKeyBindingIndex::Primary, EMultipleKeyBindingIndex::Secondary})
-                {
-                    const FInputChord& SelectNone = FLevelEditorCommands::Get().SelectNone->GetActiveChord(Index).Get();
-                    if (SelectNone.IsValidChord() && Own.CancelEdit->HasActiveChord(SelectNone)) return false;
-                }
-            }
-            return true;
-        }));
+    CommandList->MapAction(Commands.CancelEdit, FExecuteAction::CreateLambda([this]() { HandleEscape(); }));
     CommandList->MapAction(Commands.SaveEdit, FExecuteAction::CreateLambda([this]() { RequestSave(); }));
 }
 

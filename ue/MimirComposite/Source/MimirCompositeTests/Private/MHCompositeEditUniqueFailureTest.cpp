@@ -4,27 +4,11 @@
 #include "Editing/MHCompositeEditDocument.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FUniqueFailureV2Scope
-{
-    bool bPrevious = false;
-    FUniqueFailureV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FUniqueFailureV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 TArray<FMHCompositeAdoptTarget> TargetsFor(const FMHCompositeSaveUniquePlan& Plan, const TCHAR* Suffix)
 {
@@ -51,7 +35,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditUniqueFailureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FUniqueFailureV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

@@ -25,6 +25,8 @@ public class MimirCompositeTests : ModuleRules
                 "Projects",
                 "RenderCore",
                 "RHI",
+                "Slate",
+                "SlateCore",
                 "StaticMeshDescription",
                 "UnrealEd",
                 "TypedElementFramework",

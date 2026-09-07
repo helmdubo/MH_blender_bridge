@@ -163,29 +163,11 @@ bool FMHCompositeISMBucketMaterializationTest::RunTest(const FString& Parameters
             Actor->SelectPlacementLeafByNodePath(Plan->Leaves[Probe].Origin) &&
             Actor->GetSelectedPlacementLeafPath() == Plan->Leaves[Probe].Origin);
 
-        const FString EditedPath = Plan->Leaves[Probe].Origin;
-        Actor->SetPlacementEditMode(true);
-        const TArray<FMHCompositeLeafMaterialization>& EditRows = Actor->GetLeafMaterializations();
-        const FMHCompositeLeafMaterialization* Extracted = EditRows.FindByPredicate(
-            [&EditedPath](const FMHCompositeLeafMaterialization& Row)
-            {
-                return Row.NodePath == EditedPath;
-            });
-        bPassed &= TestTrue(TEXT("selected edit leaf is extracted to an ordinary SMC"),
-            Extracted != nullptr && Extracted->InstanceIndex == INDEX_NONE &&
-            Cast<UInstancedStaticMeshComponent>(Extracted->Component) == nullptr &&
-            Cast<UStaticMeshComponent>(Extracted->Component) != nullptr);
-        int32 InstancedDuringEdit = 0;
-        for (const FMHCompositeLeafMaterialization& Row : EditRows)
-            if (Row.IsInstanced()) ++InstancedDuringEdit;
-        bPassed &= TestEqual(TEXT("all unselected leaves remain instanced in Edit Mode"),
-            InstancedDuringEdit, LeafCount - 1);
-        Actor->SetPlacementEditMode(false);
-        int32 InstancedAfterEdit = 0;
+        int32 InstancedAfterSelection = 0;
         for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
-            if (Row.IsInstanced()) ++InstancedAfterEdit;
-        bPassed &= TestEqual(TEXT("Edit Mode exit returns the leaf to its bucket"),
-            InstancedAfterEdit, LeafCount);
+            if (Row.IsInstanced()) ++InstancedAfterSelection;
+        bPassed &= TestEqual(TEXT("navigation selection preserves every pooled leaf"),
+            InstancedAfterSelection, LeafCount);
     }
 
     Actor->Destroy();

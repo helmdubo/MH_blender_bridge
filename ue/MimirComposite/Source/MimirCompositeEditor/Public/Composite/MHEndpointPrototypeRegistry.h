@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "EditorSubsystem.h"
 #include "Source/MHSourceResolver.h"
 #include "MHEndpointPrototypeRegistry.generated.h"
@@ -80,6 +81,12 @@ MIMIRCOMPOSITEEDITOR_API bool MHAdmitEndpointIdentity(
     const FMHResourceKey& Key,
     const UObject& Object,
     FString& OutError);
+
+/**
+ * A previously Loading endpoint has settled and was admitted. This is a load
+ * readiness signal only: it does not mean that the generated resource changed.
+ */
+DECLARE_MULTICAST_DELEGATE_OneParam(FMHEndpointLoadReady, const FMHResourceKey&);
 } // namespace UE::MimirComposite
 
 /**
@@ -131,6 +138,9 @@ public:
      */
     bool FlushAsyncLoadsForTests();
 
+    /** Async readiness, kept separate from the reimport notification funnel. */
+    UE::MimirComposite::FMHEndpointLoadReady& OnEndpointLoadReady() { return EndpointLoadReady; }
+
     /** Revision++ and re-admission on the next Resolve. */
     void Invalidate(const UE::MimirComposite::FMHResourceKey& Key);
     void InvalidateAll();
@@ -167,7 +177,17 @@ private:
 
     /** R4: async package load per key; a key is Loading while it has an entry here. */
     void OnAsyncLoadComplete(UE::MimirComposite::FMHResourceKey Key);
+    void QueueEndpointLoadReady(const UE::MimirComposite::FMHResourceKey& Key);
+    bool BroadcastQueuedEndpointLoads(float);
     TMap<UE::MimirComposite::FMHResourceKey, TSharedPtr<struct FStreamableHandle>> PendingLoads;
+    /** Failed async requests stay diagnosed until explicit invalidation. */
+    TSet<UE::MimirComposite::FMHResourceKey> FailedAsyncLoads;
+    /** Coalesces completions onto the next editor tick, outside loader callbacks. */
+    TSet<UE::MimirComposite::FMHResourceKey> QueuedReadyNotifications;
+    /** Keeps successfully loaded objects resident until every queued consumer has retained them. */
+    TArray<TSharedPtr<struct FStreamableHandle>> CompletedLoadsAwaitingBroadcast;
+    FTSTicker::FDelegateHandle ReadyNotificationTickerHandle;
+    UE::MimirComposite::FMHEndpointLoadReady EndpointLoadReady;
 
     TMap<UE::MimirComposite::FMHResourceKey, UE::MimirComposite::FMHEndpointPrototype> Prototypes;
     TMap<UE::MimirComposite::FMHResourceKey, FReadyMeshInterface> ReadyMeshInterfaces;

@@ -3,9 +3,9 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Containers/Ticker.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositePlacementMetrics.h"
-#include "Composite/MHCompositePlacementEvents.h"
 #include "Editor.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StaticMesh.h"
@@ -289,6 +289,20 @@ void UMHEndpointPrototypeRegistry::Deinitialize()
     }
     AssetsAddedHandle.Reset();
     AssetsRemovedHandle.Reset();
+    for (const TPair<FMHResourceKey, TSharedPtr<FStreamableHandle>>& Pair : PendingLoads)
+    {
+        if (Pair.Value.IsValid()) Pair.Value->CancelHandle();
+    }
+    PendingLoads.Reset();
+    FailedAsyncLoads.Reset();
+    QueuedReadyNotifications.Reset();
+    CompletedLoadsAwaitingBroadcast.Reset();
+    if (ReadyNotificationTickerHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(ReadyNotificationTickerHandle);
+        ReadyNotificationTickerHandle.Reset();
+    }
+    EndpointLoadReady.Clear();
     Prototypes.Reset();
     ReadyMeshInterfaces.Reset();
     Super::Deinitialize();
@@ -327,6 +341,10 @@ const FMHEndpointPrototype& UMHEndpointPrototypeRegistry::Resolve(const FMHResou
     }
     // A load in flight is neither a hit nor a re-admission (R4).
     if (Prototype.State == EMHEndpointState::Loading && PendingLoads.Contains(Key)) return Prototype;
+    // A failed request is sticky until an explicit invalidation. Without this
+    // guard every ordinary Resolve would immediately start the same failed
+    // package request again.
+    if (Prototype.State == EMHEndpointState::Invalid && FailedAsyncLoads.Contains(Key)) return Prototype;
     // Unresolved, Invalid and dead prototypes re-admit: an invalid key never
     // becomes sticky, so an in-memory repair heals on the next resolve.
     Admit(Key, Prototype);
@@ -372,13 +390,55 @@ UStaticMesh* UMHEndpointPrototypeRegistry::ResolveMeshForPreview(
 
 void UMHEndpointPrototypeRegistry::OnAsyncLoadComplete(FMHResourceKey Key)
 {
-    PendingLoads.Remove(Key);
-    if (!Prototypes.Contains(Key)) return;
-    // The object is resident now. The reimport protocol (R3b) performs the
-    // first Ready admission itself (Invalidate -> Resolve), so its delta reports
-    // bFirstAdmission and the dependents rebuild from the placeholder; admitting
-    // here first would make that admission a no-change re-admission.
-    MHNotifyGeneratedResourceChanged(Key);
+    TSharedPtr<FStreamableHandle> Completed;
+    if (!PendingLoads.RemoveAndCopyValue(Key, Completed)) return;
+    FMHEndpointPrototype* Prototype = Prototypes.Find(Key);
+    if (Prototype == nullptr) return;
+    if (!Completed.IsValid() || Completed->GetLoadedAsset() == nullptr)
+    {
+        const uint32 Revision = Prototype->Revision;
+        *Prototype = FMHEndpointPrototype();
+        Prototype->Revision = Revision;
+        Prototype->State = EMHEndpointState::Invalid;
+        Prototype->AdmissionError = TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE: async package load failed for ") + Key.ToString();
+        FailedAsyncLoads.Add(Key);
+        QueueEndpointLoadReady(Key);
+        return;
+    }
+    CompletedLoadsAwaitingBroadcast.Add(Completed);
+    // Ordinary package readiness is not a content mutation. Admit the resident
+    // object directly, then let pending placement batches decide whether their
+    // complete selected set is ready. Reimport remains the sole caller of the
+    // generated-resource notification funnel.
+    Admit(Key, *Prototype);
+    FailedAsyncLoads.Remove(Key);
+    QueueEndpointLoadReady(Key);
+}
+
+void UMHEndpointPrototypeRegistry::QueueEndpointLoadReady(const FMHResourceKey& Key)
+{
+    QueuedReadyNotifications.Add(Key);
+    if (ReadyNotificationTickerHandle.IsValid()) return;
+    ReadyNotificationTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateUObject(this, &UMHEndpointPrototypeRegistry::BroadcastQueuedEndpointLoads));
+}
+
+bool UMHEndpointPrototypeRegistry::BroadcastQueuedEndpointLoads(float)
+{
+    ReadyNotificationTickerHandle.Reset();
+    // Keep the completed handles (and therefore their loaded objects) alive
+    // through every consumer callback. A callback may enqueue another batch;
+    // moving this one aside keeps the two lifetimes independent.
+    TArray<TSharedPtr<FStreamableHandle>> CompletedLoads = MoveTemp(CompletedLoadsAwaitingBroadcast);
+    TArray<FMHResourceKey> Keys = QueuedReadyNotifications.Array();
+    QueuedReadyNotifications.Reset();
+    Keys.Sort([](const FMHResourceKey& A, const FMHResourceKey& B)
+    {
+        return A.ToString() < B.ToString();
+    });
+    for (const FMHResourceKey& Key : Keys) EndpointLoadReady.Broadcast(Key);
+    CompletedLoads.Reset();
+    return false;
 }
 
 bool UMHEndpointPrototypeRegistry::FlushAsyncLoadsForTests()
@@ -394,11 +454,20 @@ bool UMHEndpointPrototypeRegistry::FlushAsyncLoadsForTests()
         if (PendingLoads.Contains(Key)) OnAsyncLoadComplete(Key);
         if (Resolve(Key).State == EMHEndpointState::Loading) return false;
     }
+    // Production notifications run on the next editor tick. Tests flush the
+    // same coalesced queue explicitly so materialization is deterministic.
+    if (ReadyNotificationTickerHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(ReadyNotificationTickerHandle);
+        ReadyNotificationTickerHandle.Reset();
+    }
+    if (!QueuedReadyNotifications.IsEmpty()) BroadcastQueuedEndpointLoads(0.0f);
     return true;
 }
 
 void UMHEndpointPrototypeRegistry::Invalidate(const FMHResourceKey& Key)
 {
+    FailedAsyncLoads.Remove(Key);
     if (FMHEndpointPrototype* Prototype = Prototypes.Find(Key))
     {
         const uint32 NextRevision = Prototype->Revision + 1u;
@@ -409,6 +478,7 @@ void UMHEndpointPrototypeRegistry::Invalidate(const FMHResourceKey& Key)
 
 void UMHEndpointPrototypeRegistry::InvalidateAll()
 {
+    FailedAsyncLoads.Reset();
     for (TPair<FMHResourceKey, FMHEndpointPrototype>& Pair : Prototypes)
     {
         const uint32 NextRevision = Pair.Value.Revision + 1u;

@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 
 class UTypedElementSelectionSet;
+class AMHCompositeActor;
+struct FTypedElementHandle;
 
 namespace UE::MimirComposite
 {
@@ -17,5 +19,13 @@ namespace UE::MimirComposite
  */
 MIMIRCOMPOSITEEDITOR_API bool MHRegisterPoolInstanceSelection(UTypedElementSelectionSet& SelectionSet);
 MIMIRCOMPOSITEEDITOR_API bool MHIsPoolInstanceSelectionRegistered(const UTypedElementSelectionSet& SelectionSet);
+
+/** Finishes native selection when an already selected RMB target emits no change. Does not choose a new scope. */
+MIMIRCOMPOSITEEDITOR_API bool MHSelectCompositeContextHit(
+    const FTypedElementHandle& ContextHit, AMHCompositeActor& ExpectedOwner);
+
+/** Opens the clicked leaf's nearest composite occurrence and selects its authored owner. */
+MIMIRCOMPOSITEEDITOR_API bool MHBeginEditPickedComposite(
+    AMHCompositeActor& Actor, const FString& LeafPath, FString& OutError);
 
 } // namespace UE::MimirComposite

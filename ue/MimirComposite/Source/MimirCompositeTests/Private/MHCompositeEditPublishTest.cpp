@@ -16,18 +16,10 @@ namespace UE::MimirComposite::Tests
 namespace
 {
 
-struct FPublishV2Scope
+struct FPublishTestScope
 {
-    bool bPrevious = false;
-    FPublishV2Scope()
+    ~FPublishTestScope()
     {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FPublishV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
         MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
     }
 };
@@ -64,7 +56,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditPublishPreWriteFailureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FPublishV2Scope V2;
+    const FPublishTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -125,7 +117,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditPublishPostWriteFailureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FPublishV2Scope V2;
+    const FPublishTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

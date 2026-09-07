@@ -649,17 +649,54 @@ bool ReadSourceHash(const FString& Path, FString& OutHash, TArray<uint8>* OutByt
     return true;
 }
 
-bool ContainsMHPropertyMarker(const TArray<uint8>& Bytes)
+bool NodeHasMHPropertyMarker(FbxNode& Node)
 {
-    constexpr uint8 Marker[] = {'M', 'H', '_'};
-    for (int32 Index = 0; Index + static_cast<int32>(UE_ARRAY_COUNT(Marker)) <= Bytes.Num(); ++Index)
+    for (FbxProperty Property = Node.GetFirstProperty(); Property.IsValid();
+         Property = Node.GetNextProperty(Property))
     {
-        if (FMemory::Memcmp(Bytes.GetData() + Index, Marker, UE_ARRAY_COUNT(Marker)) == 0)
+        if (Property.GetFlag(FbxPropertyFlags::eUserDefined) &&
+            FString(UTF8_TO_TCHAR(Property.GetNameAsCStr())).StartsWith(TEXT("mh_"), ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    for (int32 Index = 0; Index < Node.GetChildCount(); ++Index)
+    {
+        if (FbxNode* Child = Node.GetChild(Index); Child != nullptr && NodeHasMHPropertyMarker(*Child))
         {
             return true;
         }
     }
     return false;
+}
+
+/** Inspect the serialized Model-node properties rather than arbitrary binary FBX bytes. */
+bool ReadMHPropertyMarker(const FString& Path, bool& OutHasMarker, FString& OutError)
+{
+    OutHasMarker = false;
+    OutError.Reset();
+    FbxManager* Manager = FbxManager::Create();
+    if (Manager == nullptr)
+    {
+        OutError = TEXT("FbxManager::Create failed while inspecting metadata");
+        return false;
+    }
+    FbxIOSettings* IOSettings = FbxIOSettings::Create(Manager, IOSROOT);
+    Manager->SetIOSettings(IOSettings);
+    FbxScene* Scene = FbxScene::Create(Manager, "MetadataInspection");
+    FbxImporter* Importer = FbxImporter::Create(Manager, "MetadataImporter");
+    if (!Importer->Initialize(TCHAR_TO_UTF8(*Path), -1, IOSettings) || !Importer->Import(Scene))
+    {
+        OutError = UTF8_TO_TCHAR(Importer->GetStatus().GetErrorString());
+        Manager->Destroy();
+        return false;
+    }
+    if (FbxNode* Root = Scene->GetRootNode())
+    {
+        OutHasMarker = NodeHasMHPropertyMarker(*Root);
+    }
+    Manager->Destroy();
+    return true;
 }
 
 bool HasWarning(const FMHStaticMeshOperationResult& Result, const TCHAR* Code)
@@ -855,7 +892,12 @@ bool FMHStaticMeshImporterEndToEndTest::RunTest(const FString& Parameters)
     Entry.Change = EMHSourceChange::Create;
     TArray<uint8> InitialBytes;
     bPassed &= TestTrue(TEXT("hash initial FBX"), ReadSourceHash(MeshPath, Entry.RawHash, &InitialBytes));
-    bPassed &= TestFalse(TEXT("FBX has no MH metadata marker"), ContainsMHPropertyMarker(InitialBytes));
+    bool bHasMHPropertyMarker = false;
+    bPassed &= TestTrue(
+        TEXT("inspect initial FBX metadata"),
+        ReadMHPropertyMarker(MeshPath, bHasMHPropertyMarker, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestFalse(TEXT("FBX has no mh_ user-defined node property"), bHasMHPropertyMarker);
 
     FStaticMeshImporterTestResolver Resolver;
     Resolver.MaterialName = MaterialName;
@@ -928,7 +970,11 @@ bool FMHStaticMeshImporterEndToEndTest::RunTest(const FString& Parameters)
     TArray<uint8> ReplacementBytes;
     bPassed &= TestTrue(TEXT("hash changed FBX"), ReadSourceHash(MeshPath, Entry.RawHash, &ReplacementBytes));
     bPassed &= TestNotEqual(TEXT("replacement raw hash changed"), Entry.RawHash, InitialHash);
-    bPassed &= TestFalse(TEXT("replacement FBX has no MH metadata marker"), ContainsMHPropertyMarker(ReplacementBytes));
+    bPassed &= TestTrue(
+        TEXT("inspect replacement FBX metadata"),
+        ReadMHPropertyMarker(MeshPath, bHasMHPropertyMarker, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestFalse(TEXT("replacement FBX has no mh_ user-defined node property"), bHasMHPropertyMarker);
     Entry.Change = EMHSourceChange::Reimport;
     Receipt = Cast<UMHStaticMeshImportData>(OriginalMesh->GetAssetImportData());
     if (Receipt != nullptr)

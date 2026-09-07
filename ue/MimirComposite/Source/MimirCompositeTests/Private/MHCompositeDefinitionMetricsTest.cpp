@@ -279,11 +279,14 @@ bool DefinitionMetricsCommonAssertions(
         Metrics.Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
     bPassed &= Test.TestEqual(TEXT("each placement resolves its own plan"),
         Metrics.Get(EMHPlacementStage::ResolveCompositePlan).Calls, PlacementCount);
-    bPassed &= Test.TestEqual(TEXT("each placement loads its endpoints"),
-        Metrics.Get(EMHPlacementStage::LoadEndpoints).Calls, PlacementCount);
+    // Loading A separates readiness admission from the compiler's resident
+    // endpoint binding. Both CPU scopes remain measured; these warm fixtures
+    // execute each once, while still resolving/compiling each placement once.
+    bPassed &= Test.TestEqual(TEXT("each warm placement admits then binds endpoints"),
+        Metrics.Get(EMHPlacementStage::LoadEndpoints).Calls, PlacementCount * 2ull);
     bPassed &= Test.TestEqual(TEXT("each placement compiles its component delta"),
         Metrics.Get(EMHPlacementStage::CompilePlacement).Calls, PlacementCount);
-    bPassed &= Test.TestEqual(TEXT("new placement components are registered exactly once"),
+    bPassed &= Test.TestEqual(TEXT("new actor-owned placement components are registered exactly once"),
         Metrics.Get(EMHPlacementStage::RegisterComponents).Calls, RegisteredComponents);
     bPassed &= Test.TestEqual(TEXT("each placement runs one retirement pass"),
         Metrics.Get(EMHPlacementStage::DestroyRetiredComponents).Calls, PlacementCount);
@@ -427,7 +430,7 @@ bool FMHDefinitionMetricsSyntheticTest::RunTest(const FString& Parameters)
         *this, *Fixture.Root, PlacementCount, Metrics, WallMilliseconds);
     AddInfo(DefinitionMetricsLine(TEXT("synthetic100"), PlacementCount, WallMilliseconds, Metrics));
     bPassed &= DefinitionMetricsCommonAssertions(
-        *this, Metrics, PlacementCount, PlacementCount * (TopLevelNodes + 1));
+        *this, Metrics, PlacementCount, PlacementCount * TopLevelNodes);
     return bPassed;
 }
 
@@ -447,7 +450,7 @@ bool FMHDefinitionMetricsGaz53Test::RunTest(const FString& Parameters)
     bool bPassed = DefinitionMetricsPlaceActors(
         *this, *Fixture.Root, PlacementCount, Metrics, WallMilliseconds);
     AddInfo(DefinitionMetricsLine(TEXT("gaz53_two_placements"), PlacementCount, WallMilliseconds, Metrics));
-    bPassed &= DefinitionMetricsCommonAssertions(*this, Metrics, PlacementCount, 6);
+    bPassed &= DefinitionMetricsCommonAssertions(*this, Metrics, PlacementCount, 4);
     return bPassed;
 }
 

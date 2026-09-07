@@ -3,6 +3,8 @@
 #include "AssetRegistry/AssetData.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeThumbnailRenderer.h"
+#include "ThumbnailRendering/ThumbnailManager.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
@@ -27,8 +29,6 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
-#include "UI/MHCompositeOutliner.h"
-#include "UI/MHEditSessionKeys.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "UI/MHCompositeActorDetails.h"
 #include "UI/MHSourceToolMenus.h"
@@ -191,6 +191,8 @@ void ExecuteReimportManagedMaterials(const FToolMenuContext& MenuContext)
 
 void FMimirCompositeEditorModule::StartupModule()
 {
+    if (!IsRunningCommandlet())
+        UThumbnailManager::Get().RegisterCustomRenderer(UMHCompositeAsset::StaticClass(), UMHCompositeThumbnailRenderer::StaticClass());
     UE::MimirComposite::MHStartupRuntimeCompositeBridge();
     UE::MimirComposite::MHStartupManagedStaticMeshReimportHandler();
     AssetRegistryTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(
@@ -210,8 +212,6 @@ void FMimirCompositeEditorModule::StartupModule()
     MessageLogModule.RegisterLogListing("Mimir", INVTEXT("Mimir"), LogOptions);
 
     UE::MimirComposite::MHRegisterCompositeActorDetails();
-    UE::MimirComposite::MHRegisterCompositeOutliner();
-    MHRegisterEditSessionKeys();
     UMHCompositeEditorMode::RegisterCommands();
     // The level editor registers its own SMInstance customization in
     // SLevelEditor::Initialize, before OnLevelEditorCreated; ours must follow
@@ -244,6 +244,9 @@ void FMimirCompositeEditorModule::RegisterPoolInstanceSelection()
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
+    UE::MimirComposite::MHReleaseCompositeThumbnails();
+    if (UThumbnailManager* Manager = UThumbnailManager::TryGet())
+        Manager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
     UE::MimirComposite::MHShutdownManagedStaticMeshReimportHandler();
     UE::MimirComposite::MHShutdownRuntimeCompositeBridge();
     UE::MimirComposite::MHShutdownProjectIndex();
@@ -260,7 +263,6 @@ void FMimirCompositeEditorModule::ShutdownModule()
     }
     if (!IsRunningCommandlet())
     {
-        MHUnregisterEditSessionKeys();
         UMHCompositeEditorMode::UnregisterCommands();
         UE::MimirComposite::MHUnregisterCompositeActorDetails();
         // Dynamic plugin unload still needs cleanup, but engine exit must not
@@ -273,7 +275,6 @@ void FMimirCompositeEditorModule::ShutdownModule()
         {
             UnregisterMenusBeforeExit();
         }
-        UE::MimirComposite::MHUnregisterCompositeOutliner();
         bOwnsToolMenusRegistration = false;
     }
     if (ObjectModifiedHandle.IsValid())
@@ -294,7 +295,8 @@ void FMimirCompositeEditorModule::ShutdownModule()
 
 void FMimirCompositeEditorModule::UnregisterMenusBeforeExit()
 {
-    UE::MimirComposite::MHUnregisterCompositeOutliner();
+    // Preview worlds must go away while the renderer and UObject services are alive.
+    UE::MimirComposite::MHReleaseCompositeThumbnails();
     if (!bOwnsToolMenusRegistration)
     {
         return;

@@ -46,8 +46,12 @@ public:
     /** Authoring revision: advances on every command; restored by Undo. */
     uint32 GetRevision() const { return Revision; }
 
-    /** Authoring command: the node's authored local transform. Modify()s the draft first. */
+    /** Authoring command: atomically replaces authored local transforms after validating every target. */
+    bool SetNodeTransforms(const TArray<FGuid>& Ids, const TArray<FTransform>& LocalTransforms, FString& OutError);
+    /** Single-target compatibility route. */
     bool SetNodeTransform(const FGuid& Id, const FTransform& LocalTransform, FString& OutError);
+    /** Writer and host-representation admission shared by transform command entry points. */
+    static bool ValidateAuthoredTransform(const FTransform& LocalTransform, FString& OutError);
 
     /**
      * CE-4b1 structural commands. Every command validates first (grammar of

@@ -5,29 +5,15 @@
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "ScopedTransaction.h"
-#include "Settings/MHCompositeSettings.h"
+#include "UI/MHCompositeOutliner.h"
 #include "UI/MHCompositeOutlinerEditActions.h"
 #include "UI/MHCompositeOutlinerModel.h"
+#include "Widgets/Text/STextBlock.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FOutlinerDraftV2Scope
-{
-    bool bPrevious = false;
-    FOutlinerDraftV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FOutlinerDraftV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 /** Builds the model for the placement and opens the edited occurrence's rows. */
 bool BuildOpened(FMHCompositeOutlinerModel& Model, AMHCompositeActor& Actor, const FString& InvocationPath)
@@ -38,10 +24,30 @@ bool BuildOpened(FMHCompositeOutlinerModel& Model, AMHCompositeActor& Actor, con
     return Invocation.IsValid() && Model.ExpandItem(Invocation);
 }
 
+bool WidgetTreeContainsText(SWidget& Root, const FString& Expected)
+{
+    TArray<SWidget*> Stack{&Root};
+    while (!Stack.IsEmpty())
+    {
+        SWidget* Widget = Stack.Pop();
+        if (Widget->GetType() == FName(TEXT("STextBlock")) &&
+            static_cast<STextBlock*>(Widget)->GetText().ToString().Contains(Expected))
+        {
+            return true;
+        }
+        FChildren* Children = Widget->GetChildren();
+        for (int32 Index = 0; Index < Children->Num(); ++Index)
+        {
+            Stack.Add(&Children->GetChildAt(Index).Get());
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 // CE-4b2 (spec CE-4b "Outliner отображение только через согласованный API"):
-// with a CE-backend session on the placement the Composite Outliner model
+// with an edit session on the placement the Composite Outliner model
 // shows the session draft for the edited occurrence (rows carry the session
 // node id), binds those rows to the projection's components, and the
 // freshness key follows the draft so a command triggers a rebuild.
@@ -53,7 +59,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHOutlinerShowsDraftTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FOutlinerDraftV2Scope V2;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -124,7 +129,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHOutlinerAddDescribeTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FOutlinerDraftV2Scope V2;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -158,6 +162,80 @@ bool FMHOutlinerAddDescribeTest::RunTest(const FString& Parameters)
     bPassed &= TestFalse(TEXT("a foreign object is refused"), MHDescribeOutlinerAssetAdd(GetTransientPackage(), GroupRow.Get(), *Draft, Request, Error));
     bPassed &= TestFalse(TEXT("nothing is refused"), MHDescribeOutlinerAssetAdd(nullptr, GroupRow.Get(), *Draft, Request, Error));
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHOutlinerPinsActiveSessionRootTest,
+    "Mimir.V5.Composite.EditMode.Structure.OutlinerPinsActiveSessionRoot",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHOutlinerPinsActiveSessionRootTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+        ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
+    FCompositeEditFixture F(*this);
+    if (!F.Build(*this)) return false;
+    const FMHResolvedCompositeNode* Invocation = FCompositeEditFixture::Invocation(*F.A, 1);
+    if (!TestNotNull(TEXT("nested invocation"), Invocation)) return false;
+
+    GEditor->SelectNone(false, true, false);
+    GEditor->SelectActor(F.A, true, true, true);
+    TSharedRef<SWidget> Outliner = MHCreateCompositeOutlinerWidget();
+    bool bPassed = TestTrue(TEXT("without Edit the Outliner shows no session"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("No composite edit session")));
+    bPassed &= TestFalse(TEXT("native placement selection does not populate an Outliner outside Edit"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    FString Error;
+    if (!TestTrue(TEXT("begin nested edit: ") + Error,
+            Subsystem->BeginEditNestedComposite(F.A, Invocation->NodePath, Error))) return false;
+    UMHCompositeEditSession* Session = Subsystem->GetEditSession();
+    UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+    if (!TestNotNull(TEXT("session"), Session) || !TestNotNull(TEXT("projection"), Projection) ||
+        !TestNotNull(TEXT("mode"), Mode)) return false;
+
+    // Enter has no logical node selection, so the native editor selection is empty.
+    bPassed &= TestEqual(TEXT("enter selects no infrastructure actor"), GEditor->GetSelectedActorCount(), 0);
+    bPassed &= TestTrue(TEXT("empty native selection keeps the active session tree"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    const FGuid NodeId = Session->GetDraft()->GetNodeId(0);
+    Mode->SelectNodeIds({NodeId}, NodeId);
+    bPassed &= TestTrue(TEXT("a node selection selects the projection actor"),
+        Projection->GetProjectionActor()->IsSelected());
+    bPassed &= TestTrue(TEXT("projection actor/component selection keeps the active session tree"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    // Replaces standalone InstanceSelectionRetention: editor selection can no
+    // longer switch this panel to a different composite or a pooled owner.
+    F.B->SetCompositeAsset(F.Child);
+    GEditor->SelectNone(false, true, false);
+    GEditor->SelectActor(F.B, true, true, true);
+    bPassed &= TestTrue(TEXT("another native actor cannot replace the active session tree"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
+    bPassed &= TestTrue(TEXT("closed session empties the Outliner"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("No composite edit session")));
+    GEditor->SelectActor(F.A, true, true, true);
+    bPassed &= TestFalse(TEXT("native placement selection does not repopulate the Outliner after cancel"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    // Closing with no logical or native selection must also notify the panel;
+    // there may be no actor-selection event at all on this path.
+    if (!TestTrue(TEXT("reopen root edit"), Subsystem->BeginEditComposite(F.A, Error))) return false;
+    bPassed &= TestTrue(TEXT("mode re-entry repopulates the retained widget"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+    bPassed &= TestTrue(TEXT("reopened session has no selected node"), Subsystem->GetEditSession()->GetSelectedNodeIds().IsEmpty());
+    bPassed &= TestTrue(TEXT("cancel without selecting any node"), Subsystem->CancelEditComposite(Error));
+    bPassed &= TestTrue(TEXT("empty-selection close immediately empties the Outliner"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("No composite edit session")));
+    bPassed &= TestFalse(TEXT("empty-selection close removes the previous root"),
+        WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
     return bPassed;
 }
 

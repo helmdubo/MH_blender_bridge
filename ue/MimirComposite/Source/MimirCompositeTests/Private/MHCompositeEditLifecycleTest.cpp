@@ -5,29 +5,15 @@
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "Editor/Transactor.h"
+#include "Engine/Level.h"
 #include "EngineUtils.h"
-#include "Settings/MHCompositeSettings.h"
+#include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FLifecycleV2Scope
-{
-    bool bPrevious = false;
-    FLifecycleV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FLifecycleV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 int32 ProjectionActorsIn(UWorld* World)
 {
@@ -63,7 +49,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditLifecycleCyclesTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FLifecycleV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);
@@ -112,7 +98,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditLifecycleTeardownTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FLifecycleV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -145,8 +131,8 @@ bool FMHEditLifecycleTeardownTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
-// CE-6a (A28): the projection is invisible to save and cook — transient,
-// editor-only, hidden in game, off the World Outliner; so are its components.
+// CE-6a (A28): the projection is invisible to save/cook/PIE — transient and
+// duplicate-transient — while remaining renderable in editor Game View.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditLifecycleInvisibilityTest,
     "Mimir.V5.Composite.EditMode.Lifecycle.ProjectionNeverSavesOrCooks",
@@ -155,7 +141,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditLifecycleInvisibilityTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FLifecycleV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -169,8 +155,8 @@ bool FMHEditLifecycleInvisibilityTest::RunTest(const FString& Parameters)
     AActor* Actor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
     if (!TestNotNull(TEXT("projection actor"), Actor)) return false;
     bool bPassed = TestTrue(TEXT("transient (never saved)"), Actor->HasAnyFlags(RF_Transient));
-    bPassed &= TestTrue(TEXT("editor-only (never cooked)"), Actor->IsEditorOnly());
-    bPassed &= TestTrue(TEXT("hidden in game"), Actor->IsHidden());
+    bPassed &= TestTrue(TEXT("duplicate-transient (never copied into PIE)"), Actor->HasAnyFlags(RF_DuplicateTransient));
+    bPassed &= TestFalse(TEXT("visible in editor Game View"), Actor->IsHidden());
     bPassed &= TestFalse(TEXT("off the World Outliner"), Actor->IsListedInSceneOutliner());
     bPassed &= TestTrue(TEXT("outside any actor package"), Actor->GetExternalPackage() == nullptr);
     int32 Components = 0;
@@ -179,8 +165,28 @@ bool FMHEditLifecycleInvisibilityTest::RunTest(const FString& Parameters)
         if (!IsValid(Component)) continue;
         ++Components;
         bPassed &= TestTrue(TEXT("component transient: ") + Projection->GetOriginForComponent(Component), Component->HasAnyFlags(RF_Transient));
+        bPassed &= TestTrue(TEXT("component duplicate-transient: ") + Projection->GetOriginForComponent(Component), Component->HasAnyFlags(RF_DuplicateTransient));
+        bPassed &= TestFalse(TEXT("component visible in editor Game View: ") + Projection->GetOriginForComponent(Component), Component->bHiddenInGame);
     }
     bPassed &= TestTrue(TEXT("the projection has components"), Components > 0);
+
+    // Exercise the same persistent duplicate archive and PPF_DuplicateForPIE
+    // path used by UWorld::DuplicateWorldForPIE. The projection must be absent
+    // as an object, rather than merely carrying an advisory flag.
+    const FString DuplicatePackageName = TEXT("/Temp/MHCompositeProjectionPIE_") +
+        FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    UPackage* DuplicatePackage = CreatePackage(*DuplicatePackageName);
+    DuplicatePackage->SetPackageFlags(PKG_PlayInEditor | PKG_NewlyCreated);
+    UWorld* DuplicateWorld = UWorld::GetDuplicatedWorldForPIE(F.World, DuplicatePackage, 991);
+    bPassed &= TestNotNull(TEXT("PIE duplicate world"), DuplicateWorld);
+    if (DuplicateWorld != nullptr)
+    {
+        bPassed &= TestEqual(TEXT("PIE duplicate contains no projection actor"), ProjectionActorsIn(DuplicateWorld), 0);
+        DuplicateWorld->DestroyWorld(false);
+        DuplicateWorld->MarkAsGarbage();
+    }
+    DuplicatePackage->MarkAsGarbage();
+
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }

@@ -7,27 +7,11 @@
 #include "Editing/MHCompositeEditorMode.h"
 #include "Editor/Transactor.h"
 #include "ScopedTransaction.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FStructureV2Scope
-{
-    bool bPrevious = false;
-    FStructureV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FStructureV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 FString SelectorOf(const UMHCompositeEditDocument& Draft, const FGuid& Id)
 {
@@ -53,7 +37,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditStructureCommandsTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FStructureV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);
@@ -153,7 +137,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditStructureRefusalTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FStructureV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

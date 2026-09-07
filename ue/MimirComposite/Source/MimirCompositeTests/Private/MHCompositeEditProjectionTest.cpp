@@ -3,7 +3,6 @@
 #include "Components/StaticMeshComponent.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -11,17 +10,7 @@ namespace
 {
 
 /** Runs the test under the CE backend (spec: the flag picks one backend wholesale). */
-struct FEditModeV2Scope
-{
-    bool bPrevious = false;
-    FEditModeV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FEditModeV2Scope() { GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious; }
-};
+
 
 TArray<FVector> MeshComponentWorlds(const UMHCompositeEditProjection& Projection)
 {
@@ -58,7 +47,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditProjectionOccurrenceTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FEditModeV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -86,12 +75,10 @@ bool FMHEditProjectionOccurrenceTest::RunTest(const FString& Parameters)
     UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
     if (!TestNotNull(TEXT("session"), Session) || !TestNotNull(TEXT("projection"), Projection)) return false;
     bool bPassed = TestTrue(TEXT("projection is open"), Projection->IsOpen());
-    bPassed &= TestFalse(TEXT("the root never enters the legacy edit mode"), F.A->IsPlacementEditMode());
-    bPassed &= TestEqual(TEXT("no legacy scope handles"), F.A->GetEditScopeHandles().Num(), 0);
     const AMHCompositeEditProjectionActor* Actor = Projection->GetProjectionActor();
     if (!TestNotNull(TEXT("projection actor"), Actor)) return false;
-    bPassed &= TestTrue(TEXT("projection actor is transient and editor-only, in the root's level"),
-        Actor->HasAnyFlags(RF_Transient) && Actor->IsEditorOnly() && Actor->GetLevel() == F.A->GetLevel() && Actor->IsHidden());
+    bPassed &= TestTrue(TEXT("projection actor is transient, PIE-excluded, visible, and in the root's level"),
+        Actor->HasAllFlags(RF_Transient | RF_DuplicateTransient) && Actor->GetLevel() == F.A->GetLevel() && !Actor->IsHidden());
 
     // The occurrence renders through the projection, not through the pool.
     const TArray<FVector> ProjectedMeshes = MeshComponentWorlds(*Projection);
@@ -136,7 +123,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditProjectionMappingTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FEditModeV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

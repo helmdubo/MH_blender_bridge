@@ -356,42 +356,37 @@ bool FMHPoolReimportThenMoveTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
-// R5-F (audit §2.3): Undo while Placement Edit Mode is active must not leave
-// the placement empty behind a session that blocks its own rebuild. The
-// session ends, the preview is restored from the actor's record.
+// Undo/Redo restore only the placement record; the pool view is rebuilt once
+// with no duplicate instances or stale reverse-lookup rows.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHPoolUndoDuringEditTest,
-    "Mimir.V5.Composite.Pool.UndoDuringEditRestoresPreview",
+    FMHPoolPlacementUndoRedoTest,
+    "Mimir.V5.Composite.Pool.UndoRedoRestoresPreview",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHPoolUndoDuringEditTest::RunTest(const FString& Parameters)
+bool FMHPoolPlacementUndoRedoTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
     if (GEditor == nullptr || GEditor->Trans == nullptr) return false;
     FPoolPlacementFixture F(*this);
     if (!F.Build(*this)) return false;
-    GEditor->Trans->Reset(INVTEXT("MH pool undo-in-edit test start"));
+    GEditor->Trans->Reset(INVTEXT("MH pool undo-redo test start"));
     AMHCompositeActor* A = F.Spawn(FVector(0, 0, 0));
     if (!TestNotNull(TEXT("actor A"), A)) return false;
     bool bPassed = F.RowsAreLive(*this, *A, TEXT("initial A"));
 
-    GEditor->BeginTransaction(INVTEXT("MH pool test move before edit"));
+    GEditor->BeginTransaction(INVTEXT("MH pool test placement move"));
     A->Modify();
     A->SetActorLocation(FVector(0, 0, 300));
     GEditor->EndTransaction();
-    A->SetPlacementEditMode(true);
-    bPassed &= TestTrue(TEXT("edit session is active"), A->IsPlacementEditMode());
-    bPassed &= TestTrue(TEXT("undo succeeds during the edit session"), GEditor->UndoTransaction());
-    bPassed &= TestFalse(TEXT("undo ends the edit session instead of starving it"), A->IsPlacementEditMode());
+    bPassed &= TestTrue(TEXT("undo succeeds"), GEditor->UndoTransaction());
     bPassed &= TestTrue(TEXT("actor location restored"), A->GetActorLocation().Equals(FVector::ZeroVector, 1e-3));
     bPassed &= TestNotNull(TEXT("preview restored after undo: ") + A->GetLastPlacementError(), A->GetResolvedPlan());
     bPassed &= TestEqual(TEXT("A renders its three leaves after undo"), F.Pool->NumLiveInstances(*A), 3);
-    bPassed &= F.RowsAreLive(*this, *A, TEXT("A after undo during edit"));
-    // A fresh session still works on the restored preview.
-    A->SetPlacementEditMode(true);
-    bPassed &= TestTrue(TEXT("a new edit session starts"), A->IsPlacementEditMode());
-    A->SetPlacementEditMode(false);
-    bPassed &= F.RowsAreLive(*this, *A, TEXT("A after the new session"));
+    bPassed &= F.RowsAreLive(*this, *A, TEXT("A after undo"));
+    bPassed &= TestTrue(TEXT("redo succeeds"), GEditor->RedoTransaction());
+    bPassed &= TestTrue(TEXT("redo restores moved location"), A->GetActorLocation().Equals(FVector(0, 0, 300), 1e-3));
+    bPassed &= TestEqual(TEXT("A still renders exactly three leaves after redo"), F.Pool->NumLiveInstances(*A), 3);
+    bPassed &= F.RowsAreLive(*this, *A, TEXT("A after redo"));
     return bPassed;
 }
 

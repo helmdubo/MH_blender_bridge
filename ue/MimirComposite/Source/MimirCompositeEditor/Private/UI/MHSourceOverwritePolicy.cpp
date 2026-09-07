@@ -65,10 +65,11 @@ EMHSourceOverwriteExecution MHExecuteSourceOverwrite(
     const FString& SourceFile,
     const FText& Confirmation,
     const FText& SuccessAudit,
-    TFunctionRef<bool()> Operation)
+    TFunctionRef<bool()> Operation,
+    const bool bExplicitSave)
 {
     const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    const bool bConfirm = Settings == nullptr || Settings->bConfirmSourceOverwrite;
+    const bool bConfirm = !bExplicitSave && (Settings == nullptr || Settings->bConfirmSourceOverwrite);
     if (bConfirm && !ConfirmOverwrite(Confirmation))
     {
         return EMHSourceOverwriteExecution::Cancelled;

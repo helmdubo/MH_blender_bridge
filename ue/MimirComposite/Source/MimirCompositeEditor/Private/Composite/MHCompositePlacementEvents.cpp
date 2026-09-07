@@ -3,6 +3,7 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeThumbnailRenderer.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHInstancePool.h"
 #include "Composite/MHProofCache.h"
@@ -31,7 +32,7 @@ int32 MHRebuildAllLoadedCompositeActors()
         AMHCompositeActor* Actor = *It;
         UWorld* World = IsValid(Actor) ? Actor->GetWorld() : nullptr;
         if (!IsValid(Actor) || Actor->IsTemplate() || Actor->IsActorBeingDestroyed() ||
-            Actor->IsPlacementEditMode() || World == nullptr || World->IsGameWorld() ||
+            World == nullptr || World->IsGameWorld() ||
             World->IsBeingCleanedUp() || World->IsCleanedUp())
         {
             continue;
@@ -130,6 +131,7 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         }
     }
 
+    MHInvalidateCompositeThumbnails(Key);
     if (Key.Kind == EMHResourceKind::Material || Key.Kind == EMHResourceKind::Texture) return;
 
     // 16 §4 on the pool (R5b-0/R5b-1): a mesh interface delta reconciles each

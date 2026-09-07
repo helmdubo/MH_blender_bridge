@@ -12,7 +12,6 @@
 #include "PrimitiveSceneProxy.h"
 #include "RenderingThread.h"
 #include "Selection.h"
-#include "Settings/MHCompositeSettings.h"
 #include "UI/MHEditSessionKeys.h"
 #include "UI/MHSourceOverwritePolicy.h"
 
@@ -21,19 +20,10 @@ namespace UE::MimirComposite::Tests
 namespace
 {
 
-struct FSelectionV2Scope
+struct FSelectionTestScope
 {
-    bool bPrevious = false;
-    FSelectionV2Scope()
+    ~FSelectionTestScope()
     {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FSelectionV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-        UMHCompositeEditorMode::SetDiscardConfirmForTests({});
         MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
     }
 };
@@ -57,7 +47,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeClickSelectionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FSelectionV2Scope V2;
+    const FSelectionTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -121,7 +111,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeTintTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FSelectionV2Scope V2;
+    const FSelectionTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -176,7 +166,7 @@ bool FMHEditModeTintTest::RunTest(const FString& Parameters)
 }
 
 // CE-3b: under the mode the keys follow the Level Instance Edit contract —
-// Escape is the mode's Cancel (asks when dirty), Enter publishes nothing.
+// Escape cancels the entire session without a prompt; Enter publishes nothing.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditModeKeysTest,
     "Mimir.V5.Composite.EditMode.Selection.KeysFollowTheMode",
@@ -185,7 +175,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeKeysTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FSelectionV2Scope V2;
+    const FSelectionTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -209,15 +199,9 @@ bool FMHEditModeKeysTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("Enter asked for no overwrite"), Confirmations, 0);
     bPassed &= TestTrue(TEXT("session still open after Enter"), Subsystem->IsEditingComposite() && UMHCompositeEditorMode::IsActive());
 
-    // Escape: the mode's Cancel — asks when dirty, staying keeps everything.
-    int32 Asked = 0;
-    UMHCompositeEditorMode::SetDiscardConfirmForTests([&Asked]() { ++Asked; return false; });
+    // Escape is unconditional Cancel, including a dirty selected node.
+    UMHCompositeEditorMode::GetActive()->SelectNodeIds({Session->GetDraft()->GetNodeId(0)});
     bPassed &= TestTrue(TEXT("Escape is the mode's Cancel"), MHHandleEditSessionKey(EKeys::Escape, false));
-    bPassed &= TestEqual(TEXT("Escape asked once"), Asked, 1);
-    bPassed &= TestTrue(TEXT("staying keeps the session and the mode"), Subsystem->IsEditingComposite() && UMHCompositeEditorMode::IsActive());
-    UMHCompositeEditorMode::SetDiscardConfirmForTests([&Asked]() { ++Asked; return true; });
-    bPassed &= TestTrue(TEXT("Escape again"), MHHandleEditSessionKey(EKeys::Escape, false));
-    bPassed &= TestEqual(TEXT("Escape asked again"), Asked, 2);
     bPassed &= TestFalse(TEXT("discarding leaves"), Subsystem->IsEditingComposite() || UMHCompositeEditorMode::IsActive());
     return bPassed;
 }

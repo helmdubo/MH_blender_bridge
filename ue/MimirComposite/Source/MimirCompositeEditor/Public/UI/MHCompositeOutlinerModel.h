@@ -9,7 +9,6 @@ class AMHCompositeActor;
 class UMHCompositeEditDocument;
 class UMHCompositeEditSession;
 class UObject;
-class UInstancedStaticMeshComponent;
 class USceneComponent;
 
 namespace UE::MimirComposite
@@ -75,11 +74,6 @@ struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerNavigation
     TWeakObjectPtr<UObject> Asset;
 };
 
-/** Resolve the sole composite represented by the editor's current selection. */
-MIMIRCOMPOSITEEDITOR_API AMHCompositeActor* MHResolveCompositeOutlinerActor(
-    const TArray<UObject*>& SelectedActors,
-    const TArray<UInstancedStaticMeshComponent*>& SelectedInstances);
-
 /** Public actor state that proves an already-built Outliner model is current. */
 struct MIMIRCOMPOSITEEDITOR_API FMHCompositeOutlinerFreshness final
 {
@@ -131,7 +125,7 @@ public:
         const FString& PlanUnavailableReason = FString());
     bool BuildFromActor(AMHCompositeActor& Actor);
     /**
-     * CE-4b2: the CE-backend session whose draft replaces the edited
+     * The edit session whose draft replaces the edited
      * definition's rows (root, or the nested occurrence) and whose projection
      * overlays and binds them. BuildFromActor sets it from the level
      * subsystem; null shows the assets as they are.

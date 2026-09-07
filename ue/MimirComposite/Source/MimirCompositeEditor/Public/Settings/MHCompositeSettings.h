@@ -70,15 +70,6 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Source")
     bool bConfirmSourceOverwrite = true;
 
-    /**
-     * CE-6b (docs/contracts/composite_edit_ce0.md): the Composite Edit Mode —
-     * session draft, edit projection and the viewport mode with Save | Cancel —
-     * is the production Edit backend (owner decision 2026-09-07). Turning it
-     * off falls back to the legacy actor-handle path, which is kept until the
-     * legacy code is removed. One backend at a time, never both.
-     */
-    UPROPERTY(EditAnywhere, config, Category = "Mimir Composite|Edit", meta = (DisplayName = "Composite Edit Mode (session + projection)"))
-    bool bCompositeEditModeV2 = true;
 
     UPROPERTY(EditAnywhere, config, Category = "Mimir Composite")
     FString StaticMeshPrefix;

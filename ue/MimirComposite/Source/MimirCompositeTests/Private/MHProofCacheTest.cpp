@@ -197,8 +197,8 @@ bool FMHProofBuildPreflightFullClosureTest::RunTest(const FString& Parameters)
 }
 
 // Saving a map is not an exit point: it reads the proof cache, warns about
-// every placement that is not Fresh, schedules a deferred proof for Unknown
-// ones, and never builds a proof or refuses the save (§2.6 п. 1).
+// every placement that is not Fresh, and never builds or schedules a proof or
+// refuses the save (§2.6 п. 1).
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHProofSaveWarnsWithoutProofTest,
     "Mimir.V5.Composite.Proof.SaveWarnsWithoutProof",
@@ -212,7 +212,20 @@ bool FMHProofSaveWarnsWithoutProofTest::RunTest(const FString& Parameters)
     FProofFixture Fixture(*this);
     if (!Fixture.Build(*this)) return false;
     AMHCompositeActor& Actor = *Fixture.Actor;
+    AMHCompositeActor* SecondActor = Fixture.World->SpawnActor<AMHCompositeActor>();
+    if (!TestNotNull(TEXT("second proof placement"), SecondActor)) return false;
+    SecondActor->SetAutoSeed(false);
+    SecondActor->SetAutoAppearanceSeed(false);
+    SecondActor->SetSeed(6);
+    SecondActor->SetAppearanceSeed(10);
+    SecondActor->SetCompositeAsset(Fixture.Root);
+    if (!TestTrue(TEXT("second preview builds: ") + SecondActor->GetLastPlacementError(),
+        SecondActor->GetLastPlacementError().IsEmpty()))
+    {
+        return false;
+    }
     bool bPassed = TestTrue(TEXT("placement starts Unknown"), Proofs->GetProofState(Actor).State == EMHProofState::Unknown);
+    bPassed &= TestTrue(TEXT("second placement starts Unknown"), Proofs->GetProofState(*SecondActor).State == EMHProofState::Unknown);
 
     MHResetPlacementStageMetrics();
     {
@@ -223,13 +236,29 @@ bool FMHProofSaveWarnsWithoutProofTest::RunTest(const FString& Parameters)
         FEditorDelegates::PreSaveWorldWithContext.Broadcast(Fixture.World, Context);
     }
     bPassed &= TestEqual(TEXT("save builds no proof"), MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
-    bPassed &= TestTrue(TEXT("save schedules the missing proof"), Proofs->GetProofState(Actor).State == EMHProofState::ProofPending);
-    bPassed &= TestTrue(TEXT("save warned about the unproven placement"), Proofs->GetLastSaveAuditWarningCount() >= 1);
+    bPassed &= TestTrue(TEXT("save leaves the missing proof Unknown"), Proofs->GetProofState(Actor).State == EMHProofState::Unknown);
+    bPassed &= TestTrue(TEXT("save leaves the second missing proof Unknown"), Proofs->GetProofState(*SecondActor).State == EMHProofState::Unknown);
+    bPassed &= TestEqual(TEXT("save warns once per unproven placement"), Proofs->GetLastSaveAuditWarningCount(), 2);
     bPassed &= TestTrue(TEXT("save leaves the preview alone"), Actor.GetResolvedPlan() != nullptr && Actor.GetLastPlacementError().IsEmpty());
 
-    // The deferred proof runs later; once Fresh, the next save has nothing to warn about.
+    // Save must not leave delayed proof work behind for a later editor tick.
+    MHResetPlacementStageMetrics();
     Proofs->FlushPendingProofs();
-    bPassed &= TestTrue(TEXT("deferred proof became Fresh"), Proofs->GetProofState(Actor).State == EMHProofState::Fresh);
+    bPassed &= TestEqual(TEXT("flush after save builds no proof"), MHGetPlacementStageMetrics().Get(EMHPlacementStage::BuildAppliedGraph).Calls, 0ull);
+    bPassed &= TestTrue(TEXT("flush after save leaves proof Unknown"), Proofs->GetProofState(Actor).State == EMHProofState::Unknown);
+    bPassed &= TestTrue(TEXT("flush after save leaves second proof Unknown"), Proofs->GetProofState(*SecondActor).State == EMHProofState::Unknown);
+
+    // An explicit proof build still works; once Fresh, the next save has
+    // nothing to warn about.
+    FMHProofResult Fresh;
+    FString Error;
+    const bool bExplicitBuildSucceeded = Proofs->BuildProofNow(Actor, Fresh, Error);
+    bPassed &= TestTrue(TEXT("explicit proof build succeeds: ") + Error, bExplicitBuildSucceeded);
+    bPassed &= TestTrue(TEXT("explicit proof became Fresh"), Proofs->GetProofState(Actor).State == EMHProofState::Fresh);
+    Error.Reset();
+    const bool bSecondExplicitBuildSucceeded = Proofs->BuildProofNow(*SecondActor, Fresh, Error);
+    bPassed &= TestTrue(TEXT("second explicit proof build succeeds: ") + Error, bSecondExplicitBuildSucceeded);
+    bPassed &= TestTrue(TEXT("second explicit proof became Fresh"), Proofs->GetProofState(*SecondActor).State == EMHProofState::Fresh);
     MHResetPlacementStageMetrics();
     {
         FObjectSaveContextData Data(Fixture.World->GetOutermost(), nullptr, TEXT(""), SAVE_None);

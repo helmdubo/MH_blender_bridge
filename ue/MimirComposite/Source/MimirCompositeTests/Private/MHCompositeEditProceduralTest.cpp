@@ -6,27 +6,11 @@
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "ScopedTransaction.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FProceduralV2Scope
-{
-    bool bPrevious = false;
-    FProceduralV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FProceduralV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 FMHCompositeOption MakeOption(const EMHCompositeOptionKind Kind, const FString& Resource, const float Weight)
 {
@@ -62,7 +46,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditProceduralCommandsTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FProceduralV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
