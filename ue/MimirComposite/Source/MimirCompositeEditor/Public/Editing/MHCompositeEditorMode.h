@@ -11,7 +11,7 @@ class USceneComponent;
 class HHitProxy;
 struct FMHCompositeEditContext;
 
-/** CE-3a: the mode's commands (Escape = Cancel, like Level Instance Edit). */
+/** The mode's explicit Save/Cancel commands; Esc also respects gesture and node selection. */
 class MIMIRCOMPOSITEEDITOR_API FMHCompositeEditCommands final : public TCommands<FMHCompositeEditCommands>
 {
 public:
@@ -23,24 +23,13 @@ public:
 };
 
 /**
- * CE-3a (docs/contracts/composite_edit_ce0.md §2, spec CE-ADR-2): the
- * Composite Edit Mode — a public `UEdMode` of this plugin, invisible in the
- * modes toolbar, activated by the level subsystem for a CE-backend session
- * and deactivated when the session ends. It restricts selection and editing
- * to the session's projection actor, shows the `<breadcrumb> | Save | Cancel`
- * overlay (Level Instance Edit shape, owner 2026-09-07), routes Escape to
- * Cancel (after SelectNone, like the engine's mode), dims everything but the
- * projection through the `EditingLevelInstance` show flag, and leaves the
- * session before PIE.
- *
- * CE-3b: a Composite Outliner row or a viewport click grabs a node of the
- * projection (`SelectComponent`, `HandleHitProxy`): the projection actor is
- * selected exclusively, then the node's component — the gizmo sits on the
- * node. Clicks on anything else are swallowed (locked context); gizmo axes
- * and empty space keep their meaning.
+ * Composite authoring mode: logical session nodes own selection, outlines and
+ * widget frames. The viewport supplies native navigation, snapping and gizmo
+ * deltas; the mode writes validated draft commands in one transaction per
+ * gesture. Projection objects remain disposable rendering infrastructure.
  */
 UCLASS(Transient)
-class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditorMode : public UEdMode, public ILegacyEdModeViewportInterface
+class MIMIRCOMPOSITEEDITOR_API UMHCompositeEditorMode : public UEdMode, public ILegacyEdModeViewportInterface, public ILegacyEdModeWidgetInterface, public ILegacyEdModeSelectInterface
 {
     GENERATED_BODY()
 
@@ -62,8 +51,11 @@ public:
     void RequestSave();
     /** Cancel: discard the draft and leave; asks first when the draft is dirty. Returns false when the user stays. */
     bool RequestCancel();
-    /** CE-3b: grab a node — the projection actor exclusively, then its component. False for anything outside the projection. */
+    /** Select the authored owner of any projection visual; all of its visuals follow. */
     bool SelectComponent(USceneComponent* Component);
+    void SelectNodeIds(const TArray<FGuid>& NodeIds, const FGuid& ActiveNodeId = FGuid());
+    /** Esc cancels a gesture, then clears nodes, then offers to leave the session. */
+    bool HandleEscape();
     /** CE-3b: a viewport click. True = handled (a projection node grabbed, or a locked target swallowed). */
     bool HandleHitProxy(HHitProxy* HitProxy);
     virtual bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click) override;
@@ -80,11 +72,42 @@ public:
      * CE-4a: a gizmo gesture on a projection node is one transaction — Start
      * opens it, every delta writes the node's local transform into the draft
      * (the projection follows), End closes it (an empty gesture is cancelled).
-     * The framed occurrence itself (actor-only selection) swallows gestures.
+     * Empty logical selection hides the widget and starts no authoring gesture.
      */
     virtual bool StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
     virtual bool InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale) override;
     virtual bool EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
+    virtual bool InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event) override;
+    virtual bool AllowsViewportDragTool() const override { return true; }
+    virtual bool BoxSelect(FBox& InBox, bool InSelect = true) override;
+    virtual bool FrustumSelect(const FConvexVolume& InFrustum, FEditorViewportClient* InViewportClient, bool InSelect = true) override;
+    virtual void SelectNone() override;
+    virtual void ActorSelectionChangeNotify() override;
+    virtual void PostUndo() override;
+
+    virtual bool AllowWidgetMove() override { return false; }
+    virtual bool CanCycleWidgetMode() const override { return true; }
+    virtual bool ShowModeWidgets() const override { return true; }
+    virtual EAxisList::Type GetWidgetAxisToDraw(UE::Widget::EWidgetMode InWidgetMode) const override { return EAxisList::XYZ; }
+    virtual FVector GetWidgetLocation() const override;
+    virtual bool ShouldDrawWidget() const override;
+    virtual bool UsesTransformWidget() const override { return true; }
+    virtual bool UsesTransformWidget(UE::Widget::EWidgetMode CheckMode) const override;
+    virtual FVector GetWidgetNormalFromCurrentAxis(void* InData) override;
+    virtual void SetCurrentWidgetAxis(EAxisList::Type InAxis) override { CurrentWidgetAxis = InAxis; }
+    virtual EAxisList::Type GetCurrentWidgetAxis() const override { return CurrentWidgetAxis; }
+    virtual bool UsesPropertyWidgets() const override { return false; }
+    virtual bool GetCustomDrawingCoordinateSystem(FMatrix& InMatrix, void* InData) override;
+    virtual bool GetCustomInputCoordinateSystem(FMatrix& InMatrix, void* InData) override;
+    virtual bool HasCustomViewportFocus() const override { return true; }
+    virtual FBox ComputeCustomViewportFocus() const override;
+
+    // Projection objects are derived. Structural commands must go through the draft.
+    virtual EEditAction::Type GetActionEditDuplicate() override { return EEditAction::Halt; }
+    virtual EEditAction::Type GetActionEditDelete() override { return EEditAction::Halt; }
+    virtual EEditAction::Type GetActionEditCut() override { return EEditAction::Halt; }
+    virtual EEditAction::Type GetActionEditCopy() override { return EEditAction::Halt; }
+    virtual EEditAction::Type GetActionEditPaste() override { return EEditAction::Halt; }
 
     virtual void Enter() override;
     virtual void Exit() override;
@@ -110,11 +133,26 @@ private:
     UMHCompositeEditSession* GetSession() const;
     bool ConfirmDiscard() const;
     EAppReturnType::Type ConfirmSwitch(const FString& TargetInvocationPath) const;
-    /** The selected component of the session's projection, if the selection is exactly that. */
-    USceneComponent* SelectedProjectionComponent() const;
+    void MirrorSelection();
+    void CancelGesture();
+    bool SelectBounds(TFunctionRef<bool(const FBox&)> Intersects, bool bSelect);
+    bool bMirroringSelection = false;
+    EAxisList::Type CurrentWidgetAxis = EAxisList::None;
+    TWeakObjectPtr<UMHCompositeEditSession> BoundSession;
+    struct FGestureNode
+    {
+        FGuid NodeId;
+        FTransform AuthoredLocal;
+        FMatrix ParentWorld = FMatrix::Identity;
+        FTransform World;
+    };
+    TArray<FGestureNode> GestureNodes;
+    FVector GesturePivot = FVector::ZeroVector;
 
     /** CE-4a gesture state. */
     bool bTracking = false;
+    bool bCancelledTracking = false;
+    bool bNavigationTracking = false;
     int32 GestureTransaction = INDEX_NONE;
     bool bGestureChanged = false;
 };

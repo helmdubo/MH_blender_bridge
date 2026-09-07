@@ -169,9 +169,10 @@ bool FMHEditModeGestureEdgesTest::RunTest(const FString& Parameters)
     AActor* ProjectionActor = Projection != nullptr ? Projection->GetProjectionActor() : nullptr;
     if (!TestNotNull(TEXT("mode"), Mode) || !TestNotNull(TEXT("projection actor"), ProjectionActor)) return false;
 
-    // The frame (actor-only selection, as on enter) swallows the gesture.
+    // The frame is infrastructure only: no logical selection means no widget/gesture.
     bool bPassed = TestTrue(TEXT("the frame is selected on enter"), ProjectionActor->IsSelected() && GEditor->GetSelectedComponentCount() == 0);
-    bPassed &= TestTrue(TEXT("a frame gesture is swallowed"), Gesture(*Mode, FVector(10.0, 0.0, 0.0)));
+    bPassed &= TestFalse(TEXT("the empty frame has no transform widget"), Mode->ShouldDrawWidget());
+    bPassed &= TestFalse(TEXT("the empty frame starts no authoring gesture"), Mode->StartTracking(nullptr, nullptr));
     bPassed &= TestFalse(TEXT("it changed nothing"), Session->IsDirty());
     bPassed &= TestFalse(TEXT("it left no undo step"), GEditor->Trans->CanUndo());
 

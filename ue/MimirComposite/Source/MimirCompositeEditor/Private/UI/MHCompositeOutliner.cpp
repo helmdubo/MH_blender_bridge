@@ -166,7 +166,12 @@ public:
                     [
                         SAssignNew(TreeView, STreeView<TSharedPtr<FMHCompositeOutlinerItem>>)
                         .TreeItemsSource(&RootItems)
-                        .SelectionMode(ESelectionMode::Single)
+                        .SelectionMode_Lambda([]()
+                        {
+                            return UMHCompositeEditorMode::IsActive()
+                                ? ESelectionMode::Multi
+                                : ESelectionMode::Single;
+                        })
                         .OnGenerateRow(this, &SMHCompositeOutliner::GenerateRow)
                         .OnGetChildren(this, &SMHCompositeOutliner::GetTreeChildren)
                         .OnSelectionChanged(this, &SMHCompositeOutliner::TreeSelectionChanged)
@@ -213,6 +218,7 @@ public:
 
     virtual ~SMHCompositeOutliner() override
     {
+        ObserveSession(nullptr);
         if (FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
         {
             FLevelEditorModule& LevelEditor =
@@ -310,20 +316,58 @@ private:
         TSharedPtr<FMHCompositeOutlinerItem> Item,
         const ESelectInfo::Type SelectInfo)
     {
+        if (SelectInfo == ESelectInfo::Direct || bSyncingTreeSelection) return;
         SelectedItem = Item;
         RebuildDetails();
-        if (!Item.IsValid() || SelectInfo == ESelectInfo::Direct || GEditor == nullptr) return;
+        if (GEditor == nullptr) return;
         // CE-3b: under the CE backend a row grabs its projection component
-        // through the mode (the gizmo sits on the node); rows the projection
-        // does not carry leave the selection alone.
+        // through the mode (the gizmo sits on the node). Selection is stored
+        // as authored GUIDs: option rows and resolved contents of a composite
+        // reference climb to the nearest editable authored row.
         if (UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive())
         {
             if (const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get()))
             {
-                if (const UMHCompositeEditProjection* Projection = Session->GetProjection()) Mode->SelectComponent(Projection->FindComponentForOrigin(Item->NodePath));
+                TArray<TSharedPtr<FMHCompositeOutlinerItem>> SelectedRows;
+                if (TreeView.IsValid()) SelectedRows = TreeView->GetSelectedItems();
+                TArray<FGuid> RowIds;
+                TSet<FGuid> DesiredIds;
+                for (const TSharedPtr<FMHCompositeOutlinerItem>& Row : SelectedRows)
+                {
+                    const FGuid RowId = EditableNodeIdForItem(Row);
+                    if (!RowId.IsValid() || DesiredIds.Contains(RowId)) continue;
+                    DesiredIds.Add(RowId);
+                    RowIds.Add(RowId);
+                }
+
+                // Read-only context rows remain browsable for their Edit Contents
+                // menu; they do not become transform targets of this definition.
+                const FGuid ClickedId = EditableNodeIdForItem(Item);
+                if (!ClickedId.IsValid() && Item.IsValid()) return;
+
+                TArray<FGuid> OrderedIds;
+                OrderedIds.Reserve(DesiredIds.Num());
+                for (const FGuid& ExistingId : Session->GetSelectedNodeIds())
+                {
+                    if (DesiredIds.Contains(ExistingId)) OrderedIds.Add(ExistingId);
+                }
+                for (const FGuid& RowId : RowIds)
+                {
+                    if (!OrderedIds.Contains(RowId)) OrderedIds.Add(RowId);
+                }
+                const FGuid ActiveId = DesiredIds.Contains(ClickedId)
+                    ? ClickedId
+                    : DesiredIds.Contains(Session->GetActiveNodeId())
+                        ? Session->GetActiveNodeId()
+                        : OrderedIds.IsEmpty() ? FGuid() : OrderedIds[0];
+                Mode->SelectNodeIds(OrderedIds, ActiveId);
+                // SetSelectedNodeIds intentionally does not broadcast a no-op;
+                // still canonicalize a clicked nested visual to its authored row.
+                SyncTreeSelectionFromSession();
                 return;
             }
         }
+        if (!Item.IsValid()) return;
         // R6-UX1: in a session a row of the edited subtree grabs its handle —
         // the gizmo moves the node, never the actor. Rows outside the subtree
         // leave the selection alone until the session ends.
@@ -672,6 +716,90 @@ private:
         const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
         const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
         return Session != nullptr && Session->IsOpen() && Actor != nullptr && Session->GetRootPlacement() == Actor ? Session : nullptr;
+    }
+
+    /** Nearest authored node represented by this row (options and referenced contents normalize upward). */
+    static FGuid EditableNodeIdForItem(TSharedPtr<FMHCompositeOutlinerItem> Item)
+    {
+        while (Item.IsValid())
+        {
+            if (Item->DraftNodeId.IsValid()) return Item->DraftNodeId;
+            Item = Item->Parent.Pin();
+        }
+        return FGuid();
+    }
+
+    static TSharedPtr<FMHCompositeOutlinerItem> FindItemByNodeId(
+        const TArray<TSharedPtr<FMHCompositeOutlinerItem>>& Items,
+        const FGuid& NodeId)
+    {
+        for (const TSharedPtr<FMHCompositeOutlinerItem>& Item : Items)
+        {
+            if (!Item.IsValid()) continue;
+            if (Item->DraftNodeId == NodeId) return Item;
+            if (TSharedPtr<FMHCompositeOutlinerItem> Found = FindItemByNodeId(Item->Children, NodeId)) return Found;
+        }
+        return nullptr;
+    }
+
+    void ObserveSession(UMHCompositeEditSession* Session)
+    {
+        if (ObservedSession.Get() == Session) return;
+        if (UMHCompositeEditSession* Previous = ObservedSession.Get())
+        {
+            Previous->OnSelectionChanged.Remove(SessionSelectionChangedHandle);
+            Previous->OnChanged.Remove(SessionChangedHandle);
+        }
+        SessionSelectionChangedHandle.Reset();
+        SessionChangedHandle.Reset();
+        ObservedSession = Session;
+        if (Session != nullptr)
+        {
+            SessionSelectionChangedHandle = Session->OnSelectionChanged.AddSP(
+                SharedThis(this), &SMHCompositeOutliner::SessionSelectionChanged);
+            SessionChangedHandle = Session->OnChanged.AddSP(
+                SharedThis(this), &SMHCompositeOutliner::SessionChanged);
+        }
+    }
+
+    void SessionSelectionChanged()
+    {
+        if (UMHCompositeEditorMode::IsActive()) SyncTreeSelectionFromSession();
+    }
+
+    void SessionChanged()
+    {
+        if (UMHCompositeEditorMode::IsActive() && !bRefreshingModel) RefreshModel();
+    }
+
+    /** Mirror semantic GUID selection into the current row objects after refresh/reorder/Undo. */
+    void SyncTreeSelectionFromSession()
+    {
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        if (Session == nullptr || !TreeView.IsValid() || !UMHCompositeEditorMode::IsActive()) return;
+
+        bSyncingTreeSelection = true;
+        TreeView->ClearSelection();
+        TSharedPtr<FMHCompositeOutlinerItem> FirstItem;
+        TSharedPtr<FMHCompositeOutlinerItem> ActiveItem;
+        for (const FGuid& NodeId : Session->GetSelectedNodeIds())
+        {
+            const TSharedPtr<FMHCompositeOutlinerItem> SelectedRow = FindItemByNodeId(RootItems, NodeId);
+            if (!SelectedRow.IsValid()) continue;
+            if (!FirstItem.IsValid()) FirstItem = SelectedRow;
+            if (NodeId == Session->GetActiveNodeId()) ActiveItem = SelectedRow;
+            for (TSharedPtr<FMHCompositeOutlinerItem> Parent = SelectedRow->Parent.Pin();
+                 Parent.IsValid(); Parent = Parent->Parent.Pin())
+            {
+                TreeView->SetItemExpansion(Parent, true);
+            }
+            TreeView->SetItemSelection(SelectedRow, true, ESelectInfo::Direct);
+        }
+        if (!ActiveItem.IsValid()) ActiveItem = FirstItem;
+        SelectedItem = ActiveItem;
+        if (ActiveItem.IsValid()) TreeView->RequestScrollIntoView(ActiveItem);
+        bSyncingTreeSelection = false;
+        RebuildDetails();
     }
 
     void SelectHandle(USceneComponent* Handle)
@@ -1052,6 +1180,13 @@ private:
     void EditorSelectionChanged(UObject*)
     {
         if (!CurrentActor.IsValid() || GEditor == nullptr || !TreeView.IsValid()) return;
+        // In Composite Edit Mode the session is the selection authority. A
+        // projection leaf may be a descendant visual of its authored node.
+        if (UMHCompositeEditorMode::IsActive() && SessionOf(CurrentActor.Get()) != nullptr)
+        {
+            SyncTreeSelectionFromSession();
+            return;
+        }
         // R5b-2b: a viewport hit on a pooled instance selects the composite
         // actor and records the leaf on it; reveal that row.
         if (CurrentActor->IsSelected() && !CurrentActor->GetSelectedPlacementLeafPath().IsEmpty())
@@ -1146,12 +1281,15 @@ private:
         {
             CurrentActor = NextActor;
         }
-        if (!bNeedsRebuild) return;
+        const UMHCompositeEditSession* NextSession = SessionOf(CurrentActor.Get());
+        if (!bNeedsRebuild && ObservedSession.Get() == NextSession) return;
         RefreshModel();
     }
 
     void RefreshModel()
     {
+        TGuardValue<bool> RefreshGuard(bRefreshingModel, true);
+        ObserveSession(const_cast<UMHCompositeEditSession*>(SessionOf(CurrentActor.Get())));
         const FString PreviousPath = SelectedItem.IsValid() ? SelectedItem->NodePath : FString();
         // R6-UX1: a refresh never collapses what the user opened.
         TArray<FString> ExpandedPaths;
@@ -1204,7 +1342,7 @@ private:
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
                     // CE-3b: under the mode Save and Cancel live in the viewport overlay.
                     const TCHAR* Hint = UMHCompositeEditorMode::IsActive()
-                        ? TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport, Esc cancels; right-click for Save As Unique Copy")
+                        ? TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport; Esc cancels a gesture, clears selection, then exits; right-click for Save As Unique Copy")
                         : TEXT("Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Save As Unique Copy, Cancel Edit Contents");
                     StatusText->SetText(FText::FromString(FString::Printf(
                         TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  %s"),
@@ -1240,7 +1378,11 @@ private:
         if (TreeView.IsValid())
         {
             TreeView->RequestTreeRefresh();
-            if (SelectedItem.IsValid()) RevealItem(SelectedItem);
+            if (UMHCompositeEditorMode::IsActive() && SessionOf(CurrentActor.Get()) != nullptr)
+            {
+                SyncTreeSelectionFromSession();
+            }
+            else if (SelectedItem.IsValid()) RevealItem(SelectedItem);
             else TreeView->ClearSelection();
         }
         RebuildDetails();
@@ -1263,7 +1405,12 @@ private:
     FDelegateHandle SelectionChangedHandle;
     FDelegateHandle SelectObjectHandle;
     FDelegateHandle TypedSelectionChangedHandle;
+    TWeakObjectPtr<UMHCompositeEditSession> ObservedSession;
+    FDelegateHandle SessionSelectionChangedHandle;
+    FDelegateHandle SessionChangedHandle;
     bool bRefreshPending = false;
+    bool bRefreshingModel = false;
+    bool bSyncingTreeSelection = false;
 };
 
 TSharedRef<SDockTab> SpawnOutlinerTab(const FSpawnTabArgs&)

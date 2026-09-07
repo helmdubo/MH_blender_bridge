@@ -34,6 +34,8 @@
 | `docs/reference_notes/evidence/` | сырые артефакты и логи проб (evidence/research), не норматив |
 | `docs/reference_notes/dagor_composite_build_break_20260903.md` | исследование RS-1: как daEditor строит композит из выбранного и разбирает его на один слой (evidence/research) |
 | `docs/reference_notes/MH_Composite_Edit_Mode_Spec_19b7515.md` | внешний аудит 2026-09-06: спецификация MH Composite Edit Mode по образцу Packed Level Actor Edit (evidence/research); принятые из неё решения — `docs/contracts/composite_edit_ce0.md` |
+| `docs/reference_notes/MH_Edit_Interaction_Audit_d3ec999.md` | внешний аудит взаимодействия 2026-09-07; уточнения owner и контракт исправления — `docs/contracts/composite_edit_interaction_i1.md` |
+| `docs/reference_notes/dagor_assetviewer_composite_edit_20260907.md` | проверенный референс Asset Viewer: nested context, shared/unique save, Undo identity; без переноса camera remap в UE |
 
 ## История
 

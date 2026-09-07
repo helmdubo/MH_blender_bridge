@@ -5,6 +5,9 @@
 читал 5.8.2). Ниже — сверка на локальной лицензированной **UE 5.7.4**
 (`Engine/Build/Build.version`: 5.7.4, CL 51494982), file+line.
 
+Уточнение взаимодействия owner 2026-09-07: `composite_edit_interaction_i1.md`
+задаёт выбор целого узла, pivot, Esc и сохранение контроля камеры.
+
 ## 1. Решения owner (2026-09-06)
 
 | Решение | Значение |
@@ -13,7 +16,7 @@
 | Проекция | **компоненты одного transient projection-актора на сессию** (не actor на узел). Подтверждено owner по BPP (2026-09-07): на время Edit листья — отдельные `StaticMeshComponent`, после Save/Cancel — снова ISM пула |
 | Undo | BPP-политика v1: `ResetTransaction` на входе и терминальном выходе, внутри — полноценный Undo/Redo, один gesture = одна запись |
 | Клавиатура | Esc: gesture → снять выделение → Exit (диалог ниже); Enter не публикует; глобальный Slate processor R6-UX2a уходит |
-| Панель режима | **как у Level Instance Edit** (уточнение owner 2026-09-07 по скриншоту): `<breadcrumb> | Save | Cancel`, других кнопок нет. **Save** — Apply Shared Definition и выход; **Cancel** — отбросить draft и выйти, при изменениях подтверждение «Discard unsaved composite changes?»; Esc = Cancel. Save As Unique Copy… — только из контекстного меню Composite Outliner / Composite Actions |
+| Панель режима | **как у Level Instance Edit** (уточнение owner 2026-09-07 по скриншоту): `<breadcrumb> | Save | Cancel`, других кнопок нет. **Save** — Apply Shared Definition и выход; **Cancel** — отбросить draft и выйти, при изменениях подтверждение «Discard unsaved composite changes?»; Esc после отмены жеста и снятия выбора вызывает Cancel. Save As Unique Copy… — только из контекстного меню Composite Outliner / Composite Actions |
 | Структура | в режиме можно **добавлять узлы**: empty/group, ссылка на composite, static mesh, actor/gameobj (CE-4b, только уже управляемые ресурсы) |
 | Навигация | Composite Outliner сохраняется; правый клик по любому подкомпозиту → Edit Contents его определения (breadcrumbs), как Edit у Packed Level Actor |
 | Контекст | locked context + рамка/outline обязательны; native dimming через show flag `EditingLevelInstance` — проверить визуально в spike (см. §3) |

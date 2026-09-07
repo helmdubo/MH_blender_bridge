@@ -33,8 +33,8 @@ public:
         const UMHCompositeLevelSubsystem* Subsystem = EditSessionSubsystem();
         const EMHEditSessionKeyAction Action = MHEditSessionKeyAction(KeyEvent.GetKey(), Subsystem != nullptr && Subsystem->IsEditingComposite());
         if (Action == EMHEditSessionKeyAction::None) return false;
-        // CE-3b: under the Composite Edit Mode Enter means nothing (Save is a button).
-        if (Action == EMHEditSessionKeyAction::Apply && UMHCompositeEditorMode::IsActive()) return false;
+        // Composite mode owns viewport input after Slate focus and native tracking routing.
+        if (UMHCompositeEditorMode::IsActive()) return false;
         const TSharedPtr<SWidget> Focused = SlateApp.GetKeyboardFocusedWidget();
         if (!Focused.IsValid() || Focused->GetType() != TEXT("SViewport")) return false;
         return MHHandleEditSessionKey(KeyEvent.GetKey());
@@ -73,12 +73,12 @@ bool MHHandleEditSessionKey(const FKey& Key, const bool bDeferApply)
                 {
                     const UMHCompositeLevelSubsystem* Current = EditSessionSubsystem();
                     UMHCompositeEditorMode* CurrentMode = UMHCompositeEditorMode::GetActive();
-                    if (Current != nullptr && Current->IsEditingComposite() && Current->GetEditSessionEpoch() == Epoch && CurrentMode != nullptr) CurrentMode->RequestCancel();
+                    if (Current != nullptr && Current->IsEditingComposite() && Current->GetEditSessionEpoch() == Epoch && CurrentMode != nullptr) CurrentMode->HandleEscape();
                 });
             }
             else
             {
-                Mode->RequestCancel();
+                Mode->HandleEscape();
             }
             return true;
         }
