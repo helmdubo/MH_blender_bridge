@@ -6,27 +6,11 @@
 #include "Editing/MHCompositeEditorMode.h"
 #include "Editor/Transactor.h"
 #include "Selection.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FTransformV2Scope
-{
-    bool bPrevious = false;
-    FTransformV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FTransformV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 FVector DraftTranslation(const UMHCompositeEditDocument& Draft, const int32 Index)
 {
@@ -62,7 +46,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeGestureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FTransformV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);
@@ -153,7 +137,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeGestureEdgesTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FTransformV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);

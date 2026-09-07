@@ -32,7 +32,7 @@ bool FMHCompositeNativeSelectionCycleTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
     if (!TestNotNull(TEXT("editor"), GEditor)) return false;
-    FMHCompositeEditBackendScope Backend(true);
+
 
     FRecipeFixture Recipe(*this);
     const FString MeshName = Recipe.Name(TEXT("native_selection_mesh"));

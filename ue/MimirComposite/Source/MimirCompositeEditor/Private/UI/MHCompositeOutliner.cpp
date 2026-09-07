@@ -2,8 +2,6 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
-#include "Composite/MHCompositeSelectionAdapter.h"
-#include "Components/InstancedStaticMeshComponent.h"
 #include "Editing/MHCompositeEditDocument.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
@@ -12,9 +10,6 @@
 #include "Logging/MessageLog.h"
 #include "Editor/EditorEngine.h"
 #include "EditorModeManager.h"
-#include "Elements/Framework/EngineElementsLibrary.h"
-#include "Elements/Framework/TypedElementSelectionSet.h"
-#include "Elements/SMInstance/SMInstanceElementData.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -22,7 +17,6 @@
 #include "LevelEditor.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
-#include "Selection.h"
 #include "Settings/MHCompositeSettings.h"
 #include "Styling/AppStyle.h"
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -136,7 +130,7 @@ public:
                     + SVerticalBox::Slot().AutoHeight()
                     [
                         SAssignNew(HeaderText, STextBlock)
-                        .Text(LOCTEXT("NoCompositeSelected", "Select one MH Composite actor"))
+                        .Text(LOCTEXT("NoEditSession", "No composite edit session"))
                         .Font(FAppStyle::GetFontStyle(TEXT("DetailsView.CategoryFontStyle")))
                     ]
                     + SVerticalBox::Slot().AutoHeight()
@@ -159,12 +153,7 @@ public:
                     [
                         SAssignNew(TreeView, STreeView<TSharedPtr<FMHCompositeOutlinerItem>>)
                         .TreeItemsSource(&RootItems)
-                        .SelectionMode_Lambda([]()
-                        {
-                            return UMHCompositeEditorMode::IsActive()
-                                ? ESelectionMode::Multi
-                                : ESelectionMode::Single;
-                        })
+                        .SelectionMode(ESelectionMode::Multi)
                         .OnGenerateRow(this, &SMHCompositeOutliner::GenerateRow)
                         .OnGetChildren(this, &SMHCompositeOutliner::GetTreeChildren)
                         .OnSelectionChanged(this, &SMHCompositeOutliner::TreeSelectionChanged)
@@ -189,45 +178,28 @@ public:
 
         FLevelEditorModule& LevelEditor =
             FModuleManager::LoadModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
-        ActorSelectionHandle = LevelEditor.OnActorSelectionChanged().AddSP(
-            SharedThis(this), &SMHCompositeOutliner::ActorSelectionChanged);
-        ComponentsEditedHandle = LevelEditor.OnComponentsEdited().AddSP(
-            SharedThis(this), &SMHCompositeOutliner::ComponentsEdited);
-        SelectionChangedHandle = USelection::SelectionChangedEvent.AddSP(
-            SharedThis(this), &SMHCompositeOutliner::EditorSelectionChanged);
-        SelectObjectHandle = USelection::SelectObjectEvent.AddSP(
-            SharedThis(this), &SMHCompositeOutliner::EditorSelectionChanged);
         if (GEditor != nullptr)
         {
-            if (UTypedElementSelectionSet* SelectionSet =
-                    GLevelEditorModeTools().GetEditorSelectionSet())
-            {
-                TypedSelectionChangedHandle = SelectionSet->OnChanged().AddSP(
-                    SharedThis(this), &SMHCompositeOutliner::TypedSelectionChanged);
-            }
+            ModeChangedHandle = GLevelEditorModeTools().OnEditorModeIDChanged().AddSP(
+                SharedThis(this), &SMHCompositeOutliner::EditorModeChanged);
         }
+        ComponentsEditedHandle = LevelEditor.OnComponentsEdited().AddSP(
+            SharedThis(this), &SMHCompositeOutliner::ComponentsEdited);
         RefreshSelectedActor();
     }
 
     virtual ~SMHCompositeOutliner() override
     {
         ObserveSession(nullptr);
+        if (GEditor != nullptr)
+        {
+            GLevelEditorModeTools().OnEditorModeIDChanged().Remove(ModeChangedHandle);
+        }
         if (FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
         {
             FLevelEditorModule& LevelEditor =
                 FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
-            LevelEditor.OnActorSelectionChanged().Remove(ActorSelectionHandle);
             LevelEditor.OnComponentsEdited().Remove(ComponentsEditedHandle);
-        }
-        USelection::SelectionChangedEvent.Remove(SelectionChangedHandle);
-        USelection::SelectObjectEvent.Remove(SelectObjectHandle);
-        if (GEditor != nullptr)
-        {
-            if (UTypedElementSelectionSet* SelectionSet =
-                    GLevelEditorModeTools().GetEditorSelectionSet())
-            {
-                SelectionSet->OnChanged().Remove(TypedSelectionChangedHandle);
-            }
         }
     }
 
@@ -313,7 +285,7 @@ private:
         SelectedItem = Item;
         RebuildDetails();
         if (GEditor == nullptr) return;
-        // CE-3b: under the CE backend a row grabs its projection component
+        // A row selects its projection component
         // through the mode (the gizmo sits on the node). Selection is stored
         // as authored GUIDs: option rows and resolved contents of a composite
         // reference climb to the nearest editable authored row.
@@ -360,42 +332,6 @@ private:
                 return;
             }
         }
-        if (!Item.IsValid()) return;
-        // R6-UX1: in a session a row of the edited subtree grabs its handle —
-        // the gizmo moves the node, never the actor. Rows outside the subtree
-        // leave the selection alone until the session ends.
-        if (CurrentActor.IsValid() && CurrentActor->IsPlacementEditMode())
-        {
-            if (USceneComponent* Handle = CurrentActor->FindSessionHandleForNodePath(Item->NodePath))
-            {
-                CurrentActor->SelectPlacementLeafByNodePath(Item->NodePath);
-                SelectHandle(Handle);
-            }
-            return;
-        }
-        USceneComponent* Component = Item->PlacementComponent.Get();
-        if (!IsValid(Component)) return;
-        if (Item->PlacementInstanceIndex != INDEX_NONE)
-        {
-            // Pooled leaf (16 §2.8): the ISM address moves under swap-remove;
-            // resolve the current one through the actor's handle row.
-            const UE::MimirComposite::FMHCompositeLeafMaterialization* Row =
-                CurrentActor->FindLeafMaterializationByNodePath(Item->NodePath);
-            UInstancedStaticMeshComponent* Bucket = Row != nullptr
-                ? Cast<UInstancedStaticMeshComponent>(Row->Component.Get()) : nullptr;
-            const int32 InstanceIndex = Row != nullptr ? Row->InstanceIndex : INDEX_NONE;
-            if (Bucket == nullptr || InstanceIndex == INDEX_NONE) return;
-            // R6-D1a: a pooled instance is never the selection element (the
-            // stock gizmo would edit the ISM behind the model). Select the
-            // composite and record the leaf; the pool highlights it (R5b-2a).
-            GEditor->SelectNone(false, true, false);
-            CurrentActor->SelectPlacementLeafByNodePath(Item->NodePath);
-            GEditor->SelectActor(CurrentActor.Get(), true, true, true);
-            GEditor->RedrawLevelEditingViewports();
-            return;
-        }
-        SelectHandle(Component);
-        CurrentActor->SelectPlacementLeaf(Component);
     }
 
     // CE-4b2: draft rows take Content Browser assets — onto a group as its
@@ -703,7 +639,7 @@ private:
         FinishDraftCommand(FGuid());
     }
 
-    /** CE-3b: the open CE-backend session of this placement, if any. */
+    /** The open edit session of this placement, if any. */
     static const UMHCompositeEditSession* SessionOf(const AMHCompositeActor* Actor)
     {
         const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
@@ -795,21 +731,7 @@ private:
         RebuildDetails();
     }
 
-    void SelectHandle(USceneComponent* Handle)
-    {
-        USelection* Components = GEditor != nullptr ? GEditor->GetSelectedComponents() : nullptr;
-        if (Components == nullptr || !IsValid(Handle)) return;
-        AActor* Owner = Handle->GetOwner();
-        if (Owner != nullptr && !Owner->IsSelected()) GEditor->SelectActor(Owner, true, true, true);
-        Components->BeginBatchSelectOperation();
-        Components->DeselectAll();
-        GEditor->SelectComponent(Handle, true, false, true);
-        Components->EndBatchSelectOperation(true);
-        GEditor->NoteSelectionChange();
-        GEditor->RedrawLevelEditingViewports();
-    }
-
-    /** R6-UX1: the edited sub-composite stays in view — expanded, revealed, and its first handle grabbed. */
+    /** Reveal the edited subtree without changing viewport selection or camera. */
     void FocusEditScope(const FString& InvocationPath)
     {
         AMHCompositeActor* Root = CurrentActor.Get();
@@ -820,10 +742,6 @@ private:
             RevealItem(Item);
             if (TreeView.IsValid()) TreeView->SetItemExpansion(Item, true);
         }
-        // The mode owns logical node selection; entering Edit preserves the camera.
-        if (UMHCompositeEditorMode::IsActive() && SessionOf(Root) != nullptr) return;
-        const TArray<TObjectPtr<USceneComponent>>& Handles = Root->GetEditScopeHandles();
-        if (!Handles.IsEmpty() && IsValid(Handles[0])) SelectHandle(Handles[0]);
     }
 
     TSharedPtr<SWidget> OpenContextMenu()
@@ -899,16 +817,6 @@ private:
                 FSlateIcon(),
                 FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::CancelEditContents)));
         }
-        else if (Item->IsCompositeReference() && !Item->NodePath.IsEmpty() && CurrentActor.IsValid())
-        {
-            // R6-D0 (docs/16 §2.7): open the shared child definition as a draft
-            // under this placement; the source stays untouched until published.
-            Menu.AddMenuEntry(
-                LOCTEXT("EditContents", "Edit Contents..."),
-                LOCTEXT("EditContentsTip", "Open the nested composite definition for editing in the context of this placement: its nodes get handles here, Apply Shared Definition publishes, Cancel Edit Contents discards."),
-                FSlateIcon(),
-                FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::EditContents, Item->NodePath)));
-        }
         if (bHasNavigation && Navigation.Asset.IsValid() && Navigation.Asset->IsA<UMHCompositeAsset>())
         {
             Menu.AddMenuEntry(
@@ -955,26 +863,6 @@ private:
                 })));
         }
         return Menu.MakeWidget();
-    }
-
-    void EditContents(const FString InvocationPath)
-    {
-        UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
-        AMHCompositeActor* Root = CurrentActor.Get();
-        if (Subsystem == nullptr || Root == nullptr) return;
-        FString Error;
-        const FString PickedLeaf = Root->GetSelectedPlacementLeafPath();
-        const bool bEditPicked = !PickedLeaf.IsEmpty() && Root->GetSelectedPlacementOccurrencePath() == InvocationPath;
-        const bool bStarted = bEditPicked
-            ? UE::MimirComposite::MHBeginEditPickedComposite(*Root, PickedLeaf, Error)
-            : Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error);
-        if (!bStarted)
-        {
-            FMessageLog("Mimir").Error(FText::FromString(Error));
-            FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
-        }
-        RefreshModel();
-        if (bStarted && !bEditPicked) FocusEditScope(InvocationPath);
     }
 
     /** CE-3d: switch the open session to another definition of this placement. */
@@ -1153,9 +1041,19 @@ private:
         AddSection(LOCTEXT("NodeSection", "Node"), Node);
     }
 
-    void ActorSelectionChanged(const TArray<UObject*>&, bool)
+    void EditorModeChanged(const FEditorModeID& ModeId, const bool bEnteringMode)
     {
-        RefreshSelectedActor();
+        if (ModeId != UMHCompositeEditorMode::EM_MHCompositeEditModeId) return;
+        if (bEnteringMode)
+        {
+            RefreshSelectedActor();
+            return;
+        }
+        // Closing a session need not change native selection, and an empty
+        // session has no selection notification to broadcast. Mode lifetime
+        // owns the panel even when a caller retains its widget after Exit.
+        CurrentActor.Reset();
+        RefreshModel();
     }
 
     void ComponentsEdited()
@@ -1171,64 +1069,6 @@ private:
         bRefreshPending = false;
         RefreshModel();
         return EActiveTimerReturnType::Stop;
-    }
-
-    void EditorSelectionChanged(UObject*)
-    {
-        if (!CurrentActor.IsValid() || GEditor == nullptr || !TreeView.IsValid()) return;
-        // In Composite Edit Mode the session is the selection authority. A
-        // projection leaf may be a descendant visual of its authored node.
-        if (UMHCompositeEditorMode::IsActive() && SessionOf(CurrentActor.Get()) != nullptr)
-        {
-            SyncTreeSelectionFromSession();
-            return;
-        }
-        // A normal viewport hit selects the enclosing composite occurrence.
-        // Keep the exact leaf on the actor for preselection after Edit opens.
-        if (CurrentActor->IsSelected() && !CurrentActor->GetSelectedPlacementLeafPath().IsEmpty())
-        {
-            const FString& Occurrence = CurrentActor->GetSelectedPlacementOccurrencePath();
-            const FString& RevealPath = Occurrence.IsEmpty() ? CurrentActor->GetSelectedPlacementLeafPath() : Occurrence;
-            if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindByNodePath(RevealPath))
-            {
-                RevealItem(Item);
-                return;
-            }
-        }
-        TArray<UObject*> SelectedComponents;
-        GEditor->GetSelectedComponents()->GetSelectedObjects(SelectedComponents);
-        for (UObject* Object : SelectedComponents)
-        {
-            const USceneComponent* Component = Cast<USceneComponent>(Object);
-            if (Component == nullptr || Component->GetOwner() != CurrentActor.Get()) continue;
-            if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindForComponent(Component))
-            {
-                RevealItem(Item);
-            }
-            return;
-        }
-    }
-
-    void TypedSelectionChanged(const UTypedElementSelectionSet* SelectionSet)
-    {
-        if (!CurrentActor.IsValid() || SelectionSet == nullptr || !TreeView.IsValid()) return;
-        for (const FTypedElementHandle& Handle : SelectionSet->GetSelectedElementHandles())
-        {
-            const FSMInstanceManager Instance =
-                SMInstanceElementDataUtil::GetSMInstanceFromHandle(Handle, true);
-            if (!Instance) continue;
-            UInstancedStaticMeshComponent* Component = Instance.GetISMComponent();
-            // Pooled buckets belong to the pool actor; ownership is the pool's answer.
-            if (Component == nullptr ||
-                CurrentActor->FindLeafMaterialization(Component, Instance.GetISMInstanceIndex()) == nullptr) continue;
-            CurrentActor->SelectPlacementLeaf(Component, Instance.GetISMInstanceIndex());
-            if (TSharedPtr<FMHCompositeOutlinerItem> Item =
-                    Model.FindForInstance(Component, Instance.GetISMInstanceIndex()))
-            {
-                RevealItem(Item);
-            }
-            return;
-        }
     }
 
     void RevealItem(const TSharedPtr<FMHCompositeOutlinerItem>& Item)
@@ -1248,31 +1088,6 @@ private:
 
     void RefreshSelectedActor()
     {
-        TArray<UObject*> SelectedActors;
-        if (GEditor != nullptr && GEditor->GetSelectedActors() != nullptr)
-        {
-            GEditor->GetSelectedActors()->GetSelectedObjects(SelectedActors);
-        }
-        TArray<UInstancedStaticMeshComponent*> SelectedInstances;
-        if (GEditor != nullptr)
-        {
-            if (const UTypedElementSelectionSet* SelectionSet =
-                    GLevelEditorModeTools().GetEditorSelectionSet())
-            {
-                for (const FTypedElementHandle& Handle : SelectionSet->GetSelectedElementHandles())
-                {
-                    const FSMInstanceManager Instance =
-                        SMInstanceElementDataUtil::GetSMInstanceFromHandle(Handle, true);
-                    if (Instance && Instance.GetISMComponent() != nullptr)
-                        SelectedInstances.Add(Instance.GetISMComponent());
-                }
-            }
-        }
-        // Composite Edit Mode owns native selection with its transient
-        // projection (or nothing before the first node is chosen). Keep the
-        // source placement as the Outliner authority for the lifetime of that
-        // projection-backed session; after Close, ordinary editor selection
-        // becomes authoritative again.
         AMHCompositeActor* NextActor = nullptr;
         const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
             ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
@@ -1283,10 +1098,6 @@ private:
             IsValid(EditSession->GetRootPlacement()))
         {
             NextActor = EditSession->GetRootPlacement();
-        }
-        else
-        {
-            NextActor = MHResolveCompositeOutlinerActor(SelectedActors, SelectedInstances);
         }
         const FMHCompositeOutlinerFreshness NextFreshness = NextActor != nullptr
             ? FMHCompositeOutlinerFreshness::Capture(*NextActor)
@@ -1321,7 +1132,7 @@ private:
         RowScopePath.Reset();
         SelectedItem.Reset();
         RootItems.Reset();
-        const bool bBuilt = CurrentActor.IsValid() && Model.BuildFromActor(*CurrentActor);
+        const bool bBuilt = SessionOf(CurrentActor.Get()) != nullptr && Model.BuildFromActor(*CurrentActor);
         const FMHCompositeOutlinerFreshness BuiltFreshness = CurrentActor.IsValid()
             ? FMHCompositeOutlinerFreshness::Capture(*CurrentActor)
             : FMHCompositeOutlinerFreshness();
@@ -1330,7 +1141,7 @@ private:
         RefreshState.RecordRebuild(CurrentActor.Get(), BuiltFreshness, bFreshBuild);
         if (!bBuilt)
         {
-            if (HeaderText.IsValid()) HeaderText->SetText(LOCTEXT("NoCompositeSelected", "Select one MH Composite actor"));
+            if (HeaderText.IsValid()) HeaderText->SetText(LOCTEXT("NoEditSession", "No composite edit session"));
             if (StatusText.IsValid())
             {
                 StatusText->SetText(LOCTEXT("NoOverlay", "Open a composite edit session to work with its nodes"));
@@ -1361,10 +1172,7 @@ private:
                     const FString Context = EditContext.InvocationPath.IsEmpty()
                         ? Asset != nullptr ? Asset->LogicalName : FString()
                         : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
-                    // CE-3b: under the mode Save and Cancel live in the viewport overlay.
-                    const TCHAR* Hint = UMHCompositeEditorMode::IsActive()
-                        ? TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport; Esc cancels the whole session immediately; right-click for Save As Unique Copy")
-                        : TEXT("Click a node row or its sprite in the viewport to grab its handle; Enter applies, Esc discards; right-click for Apply Shared Definition, Save As Unique Copy, Cancel Edit Contents");
+                    const TCHAR* Hint = TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport; Esc cancels the whole session immediately; right-click for Save As Unique Copy");
                     StatusText->SetText(FText::FromString(FString::Printf(
                         TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  %s"),
                         *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"), Hint)));
@@ -1407,7 +1215,6 @@ private:
             else TreeView->ClearSelection();
         }
         RebuildDetails();
-        EditorSelectionChanged(nullptr);
     }
 
     FMHCompositeOutlinerModel Model;
@@ -1421,11 +1228,8 @@ private:
     TSharedPtr<SVerticalBox> DetailsBox;
     TSharedPtr<STextBlock> HeaderText;
     TSharedPtr<STextBlock> StatusText;
-    FDelegateHandle ActorSelectionHandle;
+    FDelegateHandle ModeChangedHandle;
     FDelegateHandle ComponentsEditedHandle;
-    FDelegateHandle SelectionChangedHandle;
-    FDelegateHandle SelectObjectHandle;
-    FDelegateHandle TypedSelectionChangedHandle;
     TWeakObjectPtr<UMHCompositeEditSession> ObservedSession;
     FDelegateHandle SessionSelectionChangedHandle;
     FDelegateHandle SessionChangedHandle;

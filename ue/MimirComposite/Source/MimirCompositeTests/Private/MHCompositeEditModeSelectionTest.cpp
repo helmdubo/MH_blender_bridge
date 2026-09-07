@@ -12,7 +12,6 @@
 #include "PrimitiveSceneProxy.h"
 #include "RenderingThread.h"
 #include "Selection.h"
-#include "Settings/MHCompositeSettings.h"
 #include "UI/MHEditSessionKeys.h"
 #include "UI/MHSourceOverwritePolicy.h"
 
@@ -21,19 +20,10 @@ namespace UE::MimirComposite::Tests
 namespace
 {
 
-struct FSelectionV2Scope
+struct FSelectionTestScope
 {
-    bool bPrevious = false;
-    FSelectionV2Scope()
+    ~FSelectionTestScope()
     {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FSelectionV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-        UMHCompositeEditorMode::SetDiscardConfirmForTests({});
         MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
     }
 };
@@ -57,7 +47,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeClickSelectionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FSelectionV2Scope V2;
+    const FSelectionTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -121,7 +111,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeTintTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FSelectionV2Scope V2;
+    const FSelectionTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -185,7 +175,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeKeysTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FSelectionV2Scope V2;
+    const FSelectionTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -210,11 +200,8 @@ bool FMHEditModeKeysTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("session still open after Enter"), Subsystem->IsEditingComposite() && UMHCompositeEditorMode::IsActive());
 
     // Escape is unconditional Cancel, including a dirty selected node.
-    int32 Asked = 0;
-    UMHCompositeEditorMode::SetDiscardConfirmForTests([&Asked]() { ++Asked; return false; });
     UMHCompositeEditorMode::GetActive()->SelectNodeIds({Session->GetDraft()->GetNodeId(0)});
     bPassed &= TestTrue(TEXT("Escape is the mode's Cancel"), MHHandleEditSessionKey(EKeys::Escape, false));
-    bPassed &= TestEqual(TEXT("Escape asks nothing"), Asked, 0);
     bPassed &= TestFalse(TEXT("discarding leaves"), Subsystem->IsEditingComposite() || UMHCompositeEditorMode::IsActive());
     return bPassed;
 }

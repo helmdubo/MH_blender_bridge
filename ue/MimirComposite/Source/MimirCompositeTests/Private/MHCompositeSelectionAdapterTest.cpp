@@ -154,7 +154,7 @@ bool FMHPoolLeafSelectsNearestCompositeOccurrenceTest::RunTest(const FString& Pa
 {
     static_cast<void>(Parameters);
     if (!TestNotNull(TEXT("editor"), GEditor)) return false;
-    FMHCompositeEditBackendScope Backend(true);
+
 
     FRecipeFixture Recipe(*this);
     const FString MeshName = Recipe.Name(TEXT("occurrence_selection_mesh"));

@@ -34,6 +34,13 @@ reference resolver, runtime-мост, Source-конвейер остаются. 
 `docs/RECIPE_EXECUTION_STATUS.md`; перед началом любого среза исполнитель
 читает его и начинает **только** срез со статусом NEXT/READY.
 
+Уточнение owner 2026-09-08: взаимодействие Composite Edit и Break приняты,
+CE-6b2 выполняется по явному запросу на удаление legacy и merge в `main`.
+Контракт `docs/contracts/composite_edit_cleanup.md` задаёт единственный
+session/draft/projection backend и заменяет прежние переходные указания
+сохранять actor edit handles, edit `Tick` и переключатель backend. Фактический
+статус проверок и merge задаёт `docs/RECIPE_EXECUTION_STATUS.md`.
+
 ## 1. Обязательное чтение до любых правок
 
 1. Этот документ целиком.

@@ -8,7 +8,6 @@
 #include "Editing/MHCompositeEditSession.h"
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
-#include "Settings/MHCompositeSettings.h"
 #include "Source/MHPayloadHashes.h"
 #include "StaticMesh/MHStaticMeshImportData.h"
 #include "StaticMesh/MHStaticMeshImporter.h"
@@ -20,21 +19,6 @@ namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FEditLoadReadyV2Scope
-{
-    bool bPrevious = false;
-    FEditLoadReadyV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FEditLoadReadyV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 /** Managed mesh persisted to its canonical package and then evicted from memory. */
 struct FEditColdMesh
@@ -105,7 +89,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHCompositeEditProjectionLoadReadyTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FEditLoadReadyV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
         ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     UMHEndpointPrototypeRegistry* Registry = UMHEndpointPrototypeRegistry::Get();

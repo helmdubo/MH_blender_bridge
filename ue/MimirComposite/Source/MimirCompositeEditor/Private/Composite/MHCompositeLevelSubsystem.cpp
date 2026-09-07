@@ -13,6 +13,7 @@
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Editing/MHCompositeEditSession.h"
+#include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -23,7 +24,6 @@
 #include "Engine/Selection.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
-#include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "Index/MHProjectResourceIndex.h"
 #include "Materials/MaterialInterface.h"
@@ -797,7 +797,7 @@ bool UMHCompositeLevelSubsystem::BreakComposites(
     for (AMHCompositeActor* Actor : Actors)
     {
         if (!IsValid(Actor) || Actor->IsTemplate() || Actor->IsActorBeingDestroyed() || Actor->GetWorld() == nullptr ||
-            Actor->GetLevel() == nullptr || Actor->IsPlacementEditMode() ||
+            Actor->GetLevel() == nullptr ||
             Plans.ContainsByPredicate([Actor](const FActorBreakPlan& Existing) { return Existing.Actor == Actor; }))
         {
             OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Break requires distinct live, sealed MH Composite placements");
@@ -905,50 +905,18 @@ bool UMHCompositeLevelSubsystem::BeginEditComposite(
             *Actor->GetPathName(), *Actor->GetLastPlacementError());
         return false;
     }
-    const TArray<TObjectPtr<USceneComponent>>& TopLevel = Actor->GetTopLevelComponents();
-    if (TopLevel.Num() != EditingDocument.Nodes.Num())
-    {
-        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: placement view does not match top-level composite nodes");
-        return false;
-    }
-    const UMHCompositeSettings* EditSettings = GetDefault<UMHCompositeSettings>();
-    if (EditSettings != nullptr && EditSettings->bCompositeEditModeV2)
-    {
-        // CE-3c: the CE backend for the root definition — the same session,
-        // draft and projection as a nested one (the whole placement is the
-        // occurrence); the placement never enters the legacy edit mode.
-        ++EditSessionEpoch;
-        EditingActor = Actor;
-        EditingAsset = Asset;
-        EditingInvocationPath.Reset();
-        EditingParentWorld = Actor->GetActorTransform().ToMatrixWithScale();
-        EditingTopLevelComponents.Reset();
-        OpenEditSession(Actor, Asset, FString());
-        FString ProjectionError;
-        if (!EditSession->OpenProjection(ProjectionError))
-        {
-            OutError = ProjectionError;
-            ResetEditSession();
-            return false;
-        }
-        UMHCompositeEditorMode::ActivateForSession();
-        return true;
-    }
-
-    const FScopedTransaction Transaction(INVTEXT("Edit MH Composite"));
-    Actor->Modify();
-    Actor->SetPlacementEditMode(true);
     ++EditSessionEpoch;
     EditingActor = Actor;
     EditingAsset = Asset;
     EditingInvocationPath.Reset();
     EditingParentWorld = Actor->GetActorTransform().ToMatrixWithScale();
-    EditingTopLevelComponents.Reset();
-    for (USceneComponent* Component : TopLevel)
-    {
-        EditingTopLevelComponents.Add(Component);
-    }
     OpenEditSession(Actor, Asset, FString());
+    if (!EditSession->OpenProjection(OutError))
+    {
+        ResetEditSession();
+        return false;
+    }
+    UMHCompositeEditorMode::ActivateForSession();
     return true;
 }
 
@@ -968,159 +936,32 @@ bool UMHCompositeLevelSubsystem::CommitEditComposite(
     AMHCompositeActor* Actor = EditingActor.Get();
     UMHCompositeAsset* Asset = Actor != nullptr ? Actor->GetCompositeAsset() : nullptr;
     if (Actor != nullptr && !EditingInvocationPath.IsEmpty()) return CommitNestedEditComposite(OutWarnings, OutError);
-    // CE-3c: a root session under the CE backend commits the session draft;
-    // the legacy path reads the placement's handles.
-    const bool bSessionEdit = Actor != nullptr && !Actor->IsPlacementEditMode() && EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr;
-    if (Actor == nullptr || Asset == nullptr || (!bSessionEdit && EditingTopLevelComponents.Num() != EditingDocument.Nodes.Num()))
+    if (Actor == nullptr || Asset == nullptr || EditSession == nullptr || !EditSession->IsOpen() || EditSession->GetDraft() == nullptr)
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid composite edit session is active");
         return false;
     }
-
     FMHCompositeDocument Edited;
-    if (bSessionEdit)
-    {
-        if (!EditSession->GetDraft()->Extract(Edited, OutError)) return false;
-    }
-    else
-    {
-        // Flush a handle edit even if Commit precedes the next editor tick. Basis
-        // moves are already serviced synchronously by the root transform hook.
-        Actor->Tick(0.0f);
-        if (!Actor->GetEditedCompositeDocument(Edited))
-        {
-            OutError = Actor->GetLastPlacementError().IsEmpty()
-                ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited placement has no admitted resolved plan")
-                : Actor->GetLastPlacementError();
-            return false;
-        }
-    }
-    // Commit the already-admitted prospective document. Re-decomposing the
-    // displayed world transforms here would add another numeric round trip
-    // and could publish different bytes than the preview plan was hashed from.
-
-    // Validate the complete edited document while the edit session is still
-    // recoverable. Once Commit crosses the source-file boundary, UE Undo must
-    // no longer be able to resurrect a pre-Commit component snapshot.
+    if (!EditSession->GetDraft()->Extract(Edited, OutError)) return false;
     TArray<uint8> CanonicalPreflight;
-    if (!MHWriteCanonicalCompositeV5(Edited, CanonicalPreflight, OutError))
-    {
-        return false;
-    }
-
-    // CE-5a: a CE-backend root session publishes without closing first.
-    if (bSessionEdit) return PublishFromSession(*Asset, Edited, CanonicalPreflight, OutWarnings, OutError);
-
-    const FString PreviousSourceRelativePath = Asset->SourceRelativePath;
-    Actor->SetPlacementEditMode(false);
-    ResetEditSession();
-    GEditor->ResetTransaction(INVTEXT("MH Composite source Commit cannot be undone"));
-
-    if (!MHApplyCompositeV5(*Asset, Edited, OutError))
-    {
-        Actor->RebuildComposite();
-        return false;
-    }
-    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
-    FMHCompositeOperationResult Published;
-#if WITH_DEV_AUTOMATION_TESTS
-    if (CommitPublisherForTests)
-    {
-        if (CommitPublisherForTests(*Asset, Published.Error))
-        {
-            Published.Asset = Asset;
-        }
-    }
-    else
-#endif
-    {
-        Published = MHPublishCompositeV5(*Asset, SourceRoot, nullptr);
-    }
-    OutWarnings.Append(Published.Warnings);
-    if (!Published.Succeeded())
-    {
-        const FString PublishError = MoveTemp(Published.Error);
-        FString ReconcileError;
-        TArray<FString> ReconcileWarnings;
-        UMHCompositeAsset* ReconciledAsset = nullptr;
-        UMHSourceImporter* Importer = GEditor->GetEditorSubsystem<UMHSourceImporter>();
-        FString SourcePath = FPaths::ConvertRelativePathToFull(
-            SourceRoot,
-            PreviousSourceRelativePath);
-        FPaths::NormalizeFilename(SourcePath);
-        const bool bReconciled =
-            Importer != nullptr &&
-            !PreviousSourceRelativePath.IsEmpty() &&
-            Importer->ImportCompositeFile(
-                SourcePath,
-                Asset->GetOutermost()->GetName(),
-                ReconciledAsset,
-                ReconcileWarnings,
-                ReconcileError) &&
-            ReconciledAsset == Asset;
-        OutWarnings.Append(ReconcileWarnings);
-        OutError = bReconciled
-            ? PublishError
-            : FString::Printf(
-                TEXT("%s; managed asset reconciliation from authoritative source failed: %s"),
-                *PublishError,
-                ReconcileError.IsEmpty() ? TEXT("source import was unavailable") : *ReconcileError);
-        Actor->RebuildComposite();
-        return false;
-    }
-    Actor->RebuildComposite();
-    return true;
+    if (!MHWriteCanonicalCompositeV5(Edited, CanonicalPreflight, OutError)) return false;
+    return PublishFromSession(*Asset, Edited, CanonicalPreflight, OutWarnings, OutError);
 }
 
 bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutWarnings, FString& OutError)
 {
-    // R6-D2 (docs/16 §2.7): Apply Shared Definition. The nested draft becomes
-    // the child definition's source; every placement invoking it follows via
-    // the resource-changed notification. Decision (a), 2026-09-06: no revision
-    // guard against Blender — the file is overwritten as-is, and a later
-    // Blender export may overwrite it in turn.
     AMHCompositeActor* Root = EditingActor.Get();
     UMHCompositeAsset* Child = EditingAsset.Get();
-    const bool bLegacyEdit = Root != nullptr && Root->IsPlacementEditMode();
-    const bool bSessionEdit = EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr;
-    if (Root == nullptr || Child == nullptr || (!bLegacyEdit && !bSessionEdit) ||
-        (bLegacyEdit && Root->GetEditScopeInvocationPath() != EditingInvocationPath))
+    if (Root == nullptr || Child == nullptr || EditSession == nullptr || !EditSession->IsOpen() || EditSession->GetDraft() == nullptr)
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid nested composite edit session is active");
         return false;
     }
-    // Flush a handle edit even if the publish precedes the next editor tick.
-    Root->Tick(0.0f);
     FMHCompositeDocument Edited;
-    if (bLegacyEdit ? !Root->GetEditedCompositeDocument(Edited) : !EditSession->GetDraft()->Extract(Edited, OutError))
-    {
-        OutError = Root->GetLastPlacementError().IsEmpty()
-            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited nested definition has no admitted resolved plan")
-            : Root->GetLastPlacementError();
-        return false;
-    }
+    if (!EditSession->GetDraft()->Extract(Edited, OutError)) return false;
     TArray<uint8> CanonicalPreflight;
     if (!MHWriteCanonicalCompositeV5(Edited, CanonicalPreflight, OutError)) return false;
-    FMHCompositeDocument Previous;
-    if (!MHExtractCompositeV5(*Child, Previous, OutError)) return false;
-
-    // CE-5a: a CE-backend session publishes without closing first (a
-    // failure keeps the draft); the legacy path — where the session is only
-    // the facade over the placement's handles — crosses the boundary here.
-    if (bSessionEdit && !bLegacyEdit) return PublishFromSession(*Child, Edited, CanonicalPreflight, OutWarnings, OutError);
-
-    // Source boundary, as for a root Commit: once the file is written, UE
-    // Undo must not resurrect a pre-publish snapshot.
-    Root->SetPlacementEditMode(false);
-    ResetEditSession();
-    GEditor->ResetTransaction(INVTEXT("MH Composite shared definition publish cannot be undone"));
-
-    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
-    const bool bPublished = PublishDefinition(*Child, Edited, SourceRoot, OutWarnings, OutError);
-    Root->RebuildComposite();
-    return bPublished;
+    return PublishFromSession(*Child, Edited, CanonicalPreflight, OutWarnings, OutError);
 }
 
 void UMHCompositeLevelSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -1452,7 +1293,7 @@ bool UMHCompositeLevelSubsystem::DescribeSaveUnique(const EMHCompositeUniqueScop
         if (Index == 0)
         {
             // A baked copy carries the resolved result: nothing draws in it.
-            bRandom = Variant == EMHCompositeUniqueVariant::Procedural && MHCompositeDocumentHasRandomization(EditingDocument);
+            bRandom = Variant == EMHCompositeUniqueVariant::Procedural && MHCompositeDocumentHasRandomization(GetEditingDraft());
         }
         else
         {
@@ -1489,10 +1330,8 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     OutWarnings.Append(Plan.Warnings);
     AMHCompositeActor* Root = EditingActor.Get();
     UMHCompositeAsset* Edited = EditingAsset.Get();
-    const bool bLegacyEdit = Root != nullptr && Root->IsPlacementEditMode();
     const bool bSessionEdit = EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr;
-    if (Root == nullptr || Edited == nullptr || (!bLegacyEdit && !bSessionEdit) ||
-        (bLegacyEdit && Root->GetEditScopeInvocationPath() != EditingInvocationPath))
+    if (Root == nullptr || Edited == nullptr || !bSessionEdit)
     {
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no valid nested composite edit session is active");
         return false;
@@ -1558,21 +1397,14 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
             return false;
         }
     }
-    // The edited draft, flushed and admitted.
-    Root->Tick(0.0f);
     FMHCompositeDocument EditedDocument;
-    if (bLegacyEdit ? !Root->GetEditedCompositeDocument(EditedDocument) : !EditSession->GetDraft()->Extract(EditedDocument, OutError))
-    {
-        OutError = Root->GetLastPlacementError().IsEmpty()
-            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: edited nested definition has no admitted resolved plan")
-            : Root->GetLastPlacementError();
-        return false;
-    }
+    if (!EditSession->GetDraft()->Extract(EditedDocument, OutError)) return false;
     if (Variant == EMHCompositeUniqueVariant::BakeCurrentResult)
     {
         // R6-U2: the copy is the resolved subtree of this placement's session plan.
-        const FMHResolvedCompositePlan* ResolvedPlan = Root->GetResolvedPlan();
-        if (ResolvedPlan == nullptr || !BakeScopeDocument(*ResolvedPlan, EditingInvocationPath, Edited->LogicalName, EditedDocument, OutWarnings, OutError))
+        const UMHCompositeEditProjection* Projection = EditSession->GetProjection();
+        const FMHResolvedCompositePlan* ResolvedPlan = Projection != nullptr ? Projection->GetPlan() : nullptr;
+        if (ResolvedPlan == nullptr || !EditSession->GetPreviewError().IsEmpty() || !BakeScopeDocument(*ResolvedPlan, EditingInvocationPath, Edited->LogicalName, EditedDocument, OutWarnings, OutError))
         {
             if (OutError.IsEmpty()) OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the edited placement has no resolved plan to bake");
             return false;
@@ -1583,16 +1415,7 @@ bool UMHCompositeLevelSubsystem::SaveEditAsUnique(
     const UMHCompositeAsset* OriginalRoot = Root->GetCompositeAsset();
     const FString OriginalRootName = OriginalRoot != nullptr ? OriginalRoot->LogicalName : FString();
 
-    // Source boundary: new definitions are published and, for the parent
-    // scope, the shared parent is overwritten; UE Undo cannot cross it. The
-    // legacy path crosses it here; a CE-backend session (CE-5b) only once
-    // the batch succeeded — a failure keeps the session and its draft.
-    if (!bSessionEdit)
-    {
-        Root->SetPlacementEditMode(false);
-        ResetEditSession();
-        GEditor->ResetTransaction(INVTEXT("MH Composite Save Unique cannot be undone"));
-    }
+    // Keep the draft recoverable until every required source write succeeds.
     auto CloseSessionAfterSuccess = [this]()
     {
         LastPublishOutcome = EMHCompositePublishOutcome::Succeeded;
@@ -1767,52 +1590,27 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
         EditingDocument = FMHCompositeDocument();
         return false;
     }
-    // The root enters a Placement Edit session scoped to the invocation: the
-    // child definition's nodes get handles under the invocation's effective
-    // world (R6-D1); the source is untouched until R6-D2 publishes.
     ++EditSessionEpoch;
     EditingActor = Root;
     EditingAsset = Child;
     EditingInvocationPath = InvocationNodePath;
     EditingParentWorld = Invocation->WorldMatrix * Root->GetActorTransform().ToMatrixWithScale();
-    EditingTopLevelComponents.Reset();
-    const UMHCompositeSettings* EditSettings = GetDefault<UMHCompositeSettings>();
-    if (EditSettings != nullptr && EditSettings->bCompositeEditModeV2)
-    {
-        // CE-2b: the CE backend — session draft + edit projection; the root
-        // placement stays sealed and never enters the legacy edit mode.
-        OpenEditSession(Root, Child, EditingInvocationPath);
-        FString ProjectionError;
-        if (!EditSession->OpenProjection(ProjectionError))
-        {
-            OutError = ProjectionError;
-            ResetEditSession();
-            return false;
-        }
-        // CE-3a: the editor mode follows the session (overlay, locked context, Escape).
-        UMHCompositeEditorMode::ActivateForSession();
-        return true;
-    }
-    {
-        const FScopedTransaction Transaction(INVTEXT("Edit MH Composite Contents"));
-        Root->Modify();
-        Root->SetEditScope(InvocationNodePath);
-        Root->SetPlacementEditMode(true);
-    }
-    // InvocationNodePath may alias a node of the plan SetPlacementEditMode just
-    // replaced; the stored copy is the safe one from here on.
     OpenEditSession(Root, Child, EditingInvocationPath);
+    if (!EditSession->OpenProjection(OutError))
+    {
+        ResetEditSession();
+        return false;
+    }
+    UMHCompositeEditorMode::ActivateForSession();
     return true;
 }
 
 const FMHCompositeDocument& UMHCompositeLevelSubsystem::GetEditingDraft() const
 {
-    // CE-1: the session's draft is the one current document; the field is
-    // only its typed view (the legacy actor edits are mirrored in first).
+    // The field is a typed view of the session's current authoring document.
     if (EditSession != nullptr && EditSession->IsOpen() && EditSession->GetDraft() != nullptr)
     {
         FString Error;
-        EditSession->SyncDraftFromLegacyEdit(Error);
         EditSession->GetDraft()->Extract(EditingDocument, Error);
     }
     return EditingDocument;
@@ -1858,7 +1656,6 @@ void UMHCompositeLevelSubsystem::ResetEditSession()
     EditingAsset.Reset();
     EditingInvocationPath.Reset();
     EditingParentWorld = FMatrix::Identity;
-    EditingTopLevelComponents.Reset();
     EditingDocument = FMHCompositeDocument();
 }
 
@@ -1883,21 +1680,7 @@ bool UMHCompositeLevelSubsystem::CancelEditComposite(FString& OutError)
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no composite edit session is active");
         return false;
     }
-    // CE-4a: under the CE backend nothing of the placement is in the record
-    // and the mode's Exit resets the undo history (BPP policy) — no transaction.
-    if (!Actor->IsPlacementEditMode())
-    {
-        ResetEditSession();
-        return true;
-    }
-    const FScopedTransaction Transaction(INVTEXT("Cancel MH Composite Edit"));
-    Actor->Modify();
-    // A root session extracted handles into the placement: rebuild restores
-    // the preview. A nested draft (R6-D0) never touched the root's view.
-    const bool bRootSession = Actor->IsPlacementEditMode();
-    Actor->SetPlacementEditMode(false);
     ResetEditSession();
-    if (bRootSession) Actor->RebuildComposite();
     return true;
 }
 

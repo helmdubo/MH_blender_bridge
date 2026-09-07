@@ -19,8 +19,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditSessionOwnerTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -50,11 +48,8 @@ bool FMHEditSessionOwnerTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("draft holds the child's four nodes"), Draft->Num(), 4);
     bPassed &= TestFalse(TEXT("clean session is not dirty"), Session->IsDirty());
 
-    // A legacy handle edit reaches the draft through the facade.
-    const TArray<TObjectPtr<USceneComponent>>& Handles = F.A->GetEditScopeHandles();
-    if (!TestEqual(TEXT("three handles"), Handles.Num(), 3) || !IsValid(Handles[0])) return false;
-    Handles[0]->SetWorldLocation(Handles[0]->GetComponentLocation() + FVector(0.0, 0.0, 30.0));
-    F.A->Tick(0.0f);
+    // Authoring commands update the session's draft immediately.
+    bPassed &= TestTrue(TEXT("move the plain node"), Session->SetNodeTransform(Draft->GetNodeId(0), FTransform(FVector(0, 0, 70)), Error));
     const FMHCompositeDocument& View = Subsystem->GetEditingDraft();
     bPassed &= TestTrue(TEXT("the subsystem's draft view shows the edit"), View.Nodes.Num() == 3 && View.Nodes[0].Transform.TranslationCm.Equals(FVector(0.0, 0.0, 70.0), 1e-2));
     bPassed &= TestTrue(TEXT("the session is dirty now"), Session->IsDirty() && Session->GetState() == EMHCompositeEditSessionState::EditingDirty);
@@ -83,8 +78,7 @@ bool FMHEditSessionOwnerTest::RunTest(const FString& Parameters)
 }
 
 // CE-1: a session command edits the draft inside a native transaction and
-// Undo restores the draft; the session stays open (the actor's legacy
-// PostEditUndo is not involved when only the draft is modified).
+// Undo restores the draft while the session stays open.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHEditSessionCommandUndoTest,
     "Mimir.V5.Composite.EditMode.Session.CommandIsUndoableWithoutClosing",
@@ -93,8 +87,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditSessionCommandUndoTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    // CE-6b: this test describes the legacy actor-handle path.
-    const FMHCompositeEditBackendScope Legacy(false);
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);

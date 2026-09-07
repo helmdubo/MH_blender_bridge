@@ -432,21 +432,6 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
         {
             SourceFile = (LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName) + TEXT(".composite");
         }
-        const FText Name = FText::FromString(LogicalName.IsEmpty() ? TEXT("<unknown>") : LogicalName);
-        // R6-D2: a shared definition is overwritten for every placement that
-        // invokes it; decision (a) 2026-09-06 — no revision guard against Blender.
-        const FText Confirmation = bNested
-            ? FText::Format(
-                LOCTEXT(
-                    "ApplySharedDefinitionPrompt",
-                    "This will overwrite the shared definition {0}.composite and refresh {1} placement(s) that invoke it. Unreal Editor Undo cannot restore the previous source file; revert with a new edit, a Blender export or VCS. Continue?"),
-                Name,
-                FText::AsNumber(EditContext.ConsumerPlacements))
-            : FText::Format(
-                LOCTEXT(
-                    "CommitCompositeIrreversiblePrompt",
-                    "This will overwrite {0}.composite. Unreal Editor Undo cannot restore the previous source file; revert with a new edit or VCS. Continue?"),
-                Name);
         const FText Audit = FText::Format(
             bNested
                 ? LOCTEXT("ApplySharedDefinitionOverwriteAudit", "{0} overwritten from the edited shared definition")
@@ -467,15 +452,9 @@ void ExecuteCommitEditComposite(const FToolMenuContext&)
                 }
                 return Error.IsEmpty();
             };
-        // Save is the explicit publish action of the CE session. A second
-        // modal can be intercepted by automation and strand the user in Edit.
-        // Keep the configured overwrite policy for the legacy workflow.
-        const UMHCompositeEditSession* Session = Subsystem->GetEditSession();
-        const bool bExplicitSave = Session != nullptr && Session->IsOpen() && Session->GetProjection() != nullptr;
-        if (MHExecuteSourceOverwrite(SourceFile, Confirmation, Audit, Publish, bExplicitSave) == EMHSourceOverwriteExecution::Cancelled)
-        {
-            return;
-        }
+        // Save is the explicit publish action. A second confirmation can
+        // strand the user in Edit when an automation answers the modal.
+        MHExecuteSourceOverwrite(SourceFile, FText::GetEmpty(), Audit, Publish, true);
     }
     NotifyOperation(
         bNested ? LOCTEXT("ApplySharedDefinitionPage", "Apply MH Shared Definition") : LOCTEXT("CommitCompositePage", "Commit MH Composite Edit"),
@@ -731,13 +710,6 @@ bool ResolveSeedCommandActors(
         {
             OutError = FString::Printf(
                 TEXT("MH_E_INVALID_RESOURCE_SOURCE: seed command requires live placed actors: %s"),
-                *Actor->GetPathName());
-            return false;
-        }
-        if (bMutating && Actor->IsPlacementEditMode())
-        {
-            OutError = FString::Printf(
-                TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel Composite Edit before changing seeds: %s"),
                 *Actor->GetPathName());
             return false;
         }
@@ -1774,11 +1746,6 @@ bool MHPromptCompositeAdoptTarget(
 void MHExecuteCommitEditCompositeInteractive()
 {
     ExecuteCommitEditComposite(FToolMenuContext());
-}
-
-void MHExecuteSaveUniqueInteractive(const EMHCompositeUniqueScope Scope, const EMHCompositeUniqueVariant Variant)
-{
-    ExecuteSaveUnique(Scope, Variant);
 }
 
 void MHExecuteSaveUniqueCopyInteractive()

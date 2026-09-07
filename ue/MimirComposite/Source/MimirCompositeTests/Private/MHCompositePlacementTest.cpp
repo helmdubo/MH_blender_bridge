@@ -130,7 +130,7 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
             static_cast<UObject*>(Asset));
         bPassed &= TestEqual(TEXT("one authored group compiles"), Actor->GetDerivedComponents().Num(), 1);
         bPassed &= TestEqual(
-            TEXT("one ordered top-level edit seam"),
+            TEXT("one ordered top-level placement component"),
             Actor->GetTopLevelPlacementComponents().Num(),
             1);
         if (Actor->GetDerivedComponents().Num() == 1)
@@ -153,14 +153,6 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
             }
         }
 
-        USceneComponent* EditedComponent = Actor->GetTopLevelPlacementComponents().IsEmpty()
-            ? nullptr
-            : Actor->GetTopLevelPlacementComponents()[0];
-        if (EditedComponent != nullptr)
-        {
-            EditedComponent->SetWorldLocation(FVector(1175.0, 0.0, 0.0));
-            Actor->SetPlacementEditMode(true);
-        }
         Document.Nodes[0].Transform.TranslationCm = FVector(250.0, 0.0, 0.0);
         bPassed &= TestTrue(TEXT("updated asset applies in place"), ApplyPlacementReceiptFixture(*Asset, Document, Error));
         FMHResourceKey RootKey;
@@ -168,20 +160,6 @@ bool FMHCompositePlacementActorTest::RunTest(const FString& Parameters)
         RootKey.LogicalName = LogicalName;
         MHNotifyGeneratedResourceChanged(RootKey);
         bPassed &= TestTrue(TEXT("actor observes its root ResourceKey"), Actor->DependsOnResource(RootKey));
-        bPassed &= TestEqual(
-            TEXT("notify is deferred while placement edit mode is active"),
-            Actor->GetTopLevelPlacementComponents().IsEmpty()
-                ? nullptr
-                : Actor->GetTopLevelPlacementComponents()[0].Get(),
-            EditedComponent);
-        if (EditedComponent != nullptr)
-        {
-            bPassed &= TestTrue(
-                TEXT("edit-mode notify preserves local top-level transform"),
-                EditedComponent->GetComponentLocation().Equals(FVector(1175.0, 0.0, 0.0), 0.01));
-        }
-        Actor->SetPlacementEditMode(false);
-        Actor->RebuildComposite();
         bPassed &= TestEqual(TEXT("notify keeps one derived group"), Actor->GetDerivedComponents().Num(), 1);
         if (Actor->GetDerivedComponents().Num() == 1)
         {

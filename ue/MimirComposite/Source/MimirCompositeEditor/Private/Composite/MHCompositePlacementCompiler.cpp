@@ -359,8 +359,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousHandles,
     TConstArrayView<TObjectPtr<USceneComponent>> PreviousLeaves,
     TConstArrayView<FMHCompositeLeafMaterialization> PreviousMaterializations,
-    FMHCompositePlacementCompileResult& OutResult,
-    const FString& UninstancedLeafPath)
+    FMHCompositePlacementCompileResult& OutResult)
 {
     FMHPlacementStageScope CompileStage(EMHPlacementStage::CompilePlacement);
     OutResult = FMHCompositePlacementCompileResult();
@@ -404,7 +403,6 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
             // bucket renders; anything else is the full compiler's job.
             if (ExpectedMesh == nullptr || Bucket->GetStaticMesh() != ExpectedMesh) return false;
         }
-        if (!UninstancedLeafPath.IsEmpty()) return false;
         for (int32 Index = 0; Index < PreviousHandles.Num(); ++Index)
         {
             USceneComponent* Handle = PreviousHandles[Index];
@@ -840,8 +838,7 @@ bool MHTryCompileCompositePlacementReseedV5(AActor& Target,
 
 FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
     const FMHResolvedCompositePlan& Plan, const FMHRandomComposite& RootDefinition,
-    const UMHCompositeSettings& Settings, TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents,
-    const FString& UninstancedLeafPath)
+    const UMHCompositeSettings& Settings, TConstArrayView<TObjectPtr<UActorComponent>> PreviousComponents)
 {
     FMHPlacementStageScope CompileStage(EMHPlacementStage::CompilePlacement);
     FMHCompositePlacementCompileResult Result;
@@ -917,7 +914,7 @@ FMHCompositePlacementCompileResult MHCompileCompositePlacementV5(AActor& Target,
         {
             const FMHResolvedCompositeLeaf& Leaf = Plan.Leaves[LeafIndex];
             UStaticMesh* Mesh = Endpoints[LeafIndex].Mesh;
-            if (Mesh == nullptr || Leaf.Origin == UninstancedLeafPath) continue;
+            if (Mesh == nullptr) continue;
             FMHPoolBucketDescriptor* Descriptor = Descriptors.Find(Mesh);
             if (Descriptor == nullptr) Descriptor = &Descriptors.Add(Mesh, PlanViewPoolDescriptor(*Mesh, Settings));
             MHRecordPlacementWorldTransformUpdate();

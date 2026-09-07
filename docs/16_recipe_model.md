@@ -238,6 +238,19 @@ freshness proof.
 **R6-D0 → R6-D1 → R6-D2 → R6-U → R6-O (опц., последним)**; программный
 порядок вокруг семьи — §8.
 
+**Уточнение CE-6b2, owner 2026-09-08.** После полевой приёмки взаимодействия
+и Break пользователь запросил снятие legacy и merge в `main`. Корневое и
+вложенное редактирование имеют единственный backend: subsystem → session →
+транзакционный draft → временная projection → Edit Mode. Actor edit handles,
+edit `Tick`, копии draft/graph на размещении, переключатель backend и старый
+глобальный Enter/Apply preprocessor удаляются. Native actor/secondary selection
+остаётся; Composite Outliner работает только внутри Edit Mode и закреплён за
+сессией. Временные SMC проекции отображают draft, suppression lease скрывает
+редактируемые ISM instances. Ниже R6 описывает семантику операций, а не
+сохраняемый альтернативный backend. Контракт:
+`docs/contracts/composite_edit_cleanup.md`; фактический статус проверок и merge
+— `docs/RECIPE_EXECUTION_STATUS.md` (cleanup пока VALIDATING).
+
 **R6-D0 — контекст вложенного редактирования.** Пользователь выбирает
 корневой `AMHCompositeActor`, входит в режим Edit Contents, выбирает
 вложенный вызов; открывается draft определения подкомпозита с сохранением

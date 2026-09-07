@@ -4,24 +4,11 @@
 #include "Editing/MHCompositeEditDocument.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FNodeFrameV2Scope
-{
-    bool bPrevious = false;
-    FNodeFrameV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FNodeFrameV2Scope() { GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious; }
-};
 
 const FMHResolvedCompositeNode* PlanNode(const UMHCompositeEditProjection& Projection, const FString& Path)
 {
@@ -40,7 +27,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditNodeFrameBindingTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FNodeFrameV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -160,7 +147,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditNodeFrameScaledOccurrenceTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FNodeFrameV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

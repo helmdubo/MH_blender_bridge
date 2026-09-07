@@ -81,32 +81,6 @@ FString OutlinerOptionLabel(const FMHCompositeOption& Option)
 namespace UE::MimirComposite
 {
 
-AMHCompositeActor* MHResolveCompositeOutlinerActor(
-    const TArray<UObject*>& SelectedActors,
-    const TArray<UInstancedStaticMeshComponent*>& SelectedInstances)
-{
-    AMHCompositeActor* Actor = nullptr;
-    for (UObject* Object : SelectedActors)
-    {
-        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Object))
-        {
-            if (Actor != nullptr && Actor != Composite) return nullptr;
-            Actor = Composite;
-        }
-    }
-    if (Actor != nullptr) return Actor;
-
-    for (UInstancedStaticMeshComponent* Instance : SelectedInstances)
-    {
-        if (!IsValid(Instance)) continue;
-        AMHCompositeActor* Owner = Cast<AMHCompositeActor>(Instance->GetOwner());
-        if (Owner == nullptr) continue;
-        if (Actor != nullptr && Actor != Owner) return nullptr;
-        Actor = Owner;
-    }
-    return Actor;
-}
-
 FMHCompositeOutlinerFreshness FMHCompositeOutlinerFreshness::Capture(
     const AMHCompositeActor& Actor)
 {
@@ -204,7 +178,7 @@ bool FMHCompositeOutlinerModel::Build(
 
 bool FMHCompositeOutlinerModel::BuildFromActor(AMHCompositeActor& Actor)
 {
-    // CE-4b2: a CE-backend session on this placement shows its draft.
+    // An active edit session on this placement supplies its draft.
     const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     const UMHCompositeEditSession* Session = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
     SetEditSession(Session != nullptr && Session->IsOpen() && Session->GetRootPlacement() == &Actor ? Session : nullptr);
@@ -223,12 +197,6 @@ bool FMHCompositeOutlinerModel::BuildFromActor(AMHCompositeActor& Actor)
         if (IsValid(Component))
             ComponentsByPath.Add(Path, {Component, Row->InstanceIndex, Row->ResolvedNodeIndex});
         else MissingEndpointPaths.Add(Path);
-    }
-    const TArray<TObjectPtr<USceneComponent>>& Handles = Actor.GetTopLevelPlacementComponents();
-    for (int32 Index = 0; Index < Roots.Num() && Index < Handles.Num(); ++Index)
-    {
-        if (IsValid(Handles[Index]))
-            ComponentsByPath.FindOrAdd(Roots[Index]->NodePath, {Handles[Index], INDEX_NONE, INDEX_NONE});
     }
     // CE-4b2: the sealed placement still has rows for the edited occurrence;
     // in a session its projection components are the handles, not the buckets.

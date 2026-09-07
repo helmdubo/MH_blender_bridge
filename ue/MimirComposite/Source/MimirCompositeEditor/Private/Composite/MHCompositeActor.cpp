@@ -8,17 +8,13 @@
 #include "Composite/MHInstancePool.h"
 #include "Composite/MHMaterializeLayout.h"
 #include "Performance/MHPerformanceTrace.h"
-#include "Composite/MHCompositeProtocol.h"
 #include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Engine/World.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/CollisionProfile.h"
-#include "Components/BillboardComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
-#include "Engine/Texture2D.h"
 #include "Components/StaticMeshComponent.h"
-#include "Editor.h"
 #include "LevelEditor.h"
 #include "Logging/MessageLog.h"
 #include "Misc/Guid.h"
@@ -26,7 +22,6 @@
 #include "Serialization/Archive.h"
 #include "Serialization/ArchiveSavePackageData.h"
 #include "Settings/MHCompositeSettings.h"
-#include "Source/MHPayloadHashes.h"
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/UnrealType.h"
 
@@ -103,8 +98,7 @@ AMHCompositeActor::AMHCompositeActor()
 {
     CompositeRoot = CreateDefaultSubobject<USceneComponent>(TEXT("MHCompositeRoot"));
     SetRootComponent(CompositeRoot);
-    PrimaryActorTick.bCanEverTick = true;
-    PrimaryActorTick.bStartWithTickEnabled = false;
+    PrimaryActorTick.bCanEverTick = false;
 }
 
 void AMHCompositeActor::Serialize(FArchive& Archive)
@@ -148,11 +142,6 @@ void AMHCompositeActor::SetCallContext(const FMHCompositeCallContext& NewContext
 
 void AMHCompositeActor::SetSeed(const int32 NewSeed)
 {
-    if (bPlacementEditMode)
-    {
-        LastPlacementError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel Edit before changing Seed");
-        return;
-    }
     if (Seed != NewSeed)
     {
         Modify();
@@ -177,11 +166,6 @@ void AMHCompositeActor::SetAutoSeed(const bool bEnabled)
 
 void AMHCompositeActor::SetAppearanceSeed(const int32 NewSeed)
 {
-    if (bPlacementEditMode)
-    {
-        LastPlacementError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: finish or cancel Edit before changing Appearance Seed");
-        return;
-    }
     if (AppearanceSeed != NewSeed || !bAppearanceSeedStored)
     {
         Modify();
@@ -219,7 +203,6 @@ const UE::MimirComposite::FMHResolvedCompositePlan* AMHCompositeActor::GetResolv
 void AMHCompositeActor::SetCompositeAsset(UMHCompositeAsset* Asset)
 {
     Modify();
-    SetPlacementEditMode(false);
     if (CompositeAsset.Get() != Asset)
     {
         ObservedRecipeGraph.Reset();
@@ -398,258 +381,6 @@ void AMHCompositeActor::PrunePlacementLeafSelection()
     }
 }
 
-void AMHCompositeActor::SetEditScope(const FString& InvocationNodePath)
-{
-    EditScopeInvocationPath = InvocationNodePath;
-    EditScopeComposite.Reset();
-    EditScopeParentLocal = FMatrix::Identity;
-    if (InvocationNodePath.IsEmpty() || !ResidentPlan.IsValid()) return;
-    const UE::MimirComposite::FMHResolvedCompositeNode* Invocation = ResidentPlan->Nodes.FindByPredicate(
-        [&InvocationNodePath](const UE::MimirComposite::FMHResolvedCompositeNode& Node) { return Node.NodePath == InvocationNodePath; });
-    if (Invocation == nullptr || Invocation->SemanticKind != UE::MimirComposite::EMHRandomSemanticKind::Composite) return;
-    EditScopeComposite = Invocation->Resource;
-    EditScopeParentLocal = Invocation->WorldMatrix;
-}
-
-USceneComponent* AMHCompositeActor::FindSessionHandleForNodePath(const FString& NodePath) const
-{
-    // R6-UX1: the handle that moves the node at NodePath — the scope handle of
-    // its top-level ancestor inside the edited definition, or the top-level
-    // placement handle in a root session.
-    if (!bPlacementEditMode || NodePath.IsEmpty()) return nullptr;
-    if (!EditScopeInvocationPath.IsEmpty())
-    {
-        for (int32 Index = 0; Index < EditScopeHandlePaths.Num() && Index < EditScopeHandles.Num(); ++Index)
-        {
-            const FString& Path = EditScopeHandlePaths[Index];
-            if (NodePath == Path || NodePath.StartsWith(Path + TEXT("/")) || NodePath.StartsWith(Path + TEXT(">")))
-            {
-                return IsValid(EditScopeHandles[Index]) ? EditScopeHandles[Index].Get() : nullptr;
-            }
-        }
-        return nullptr;
-    }
-    const UMHCompositeAsset* Asset = GetCompositeAsset();
-    if (Asset == nullptr) return nullptr;
-    // Root session: "<root prefix>:nodes[i]..." -> top-level handle i; the
-    // prefix is the call-context namespace when the placement carries one.
-    const FString Prefix = (CallContext.StreamNamespace.IsEmpty() ? Asset->LogicalName : CallContext.StreamNamespace) + TEXT(":nodes[");
-    if (!NodePath.StartsWith(Prefix)) return nullptr;
-    int32 Close = INDEX_NONE;
-    if (!NodePath.FindChar(TEXT(']'), Close) || Close <= Prefix.Len()) return nullptr;
-    const int32 Index = FCString::Atoi(*NodePath.Mid(Prefix.Len(), Close - Prefix.Len()));
-    return TopLevelPlacementComponents.IsValidIndex(Index) && IsValid(TopLevelPlacementComponents[Index])
-        ? TopLevelPlacementComponents[Index].Get() : nullptr;
-}
-
-FBox AMHCompositeActor::GetEditScopeBounds() const
-{
-    FBox Bounds(ForceInit);
-    if (EditScopeInvocationPath.IsEmpty() || EditScopeComposite.IsEmpty()) return Bounds;
-    for (const TObjectPtr<USceneComponent>& Handle : EditScopeHandles)
-    {
-        if (IsValid(Handle)) Bounds += Handle->GetComponentLocation();
-    }
-    const FString Prefix = EditScopeInvocationPath + TEXT(">") + EditScopeComposite + TEXT(":");
-    for (const UE::MimirComposite::FMHCompositeLeafMaterialization& Row : GetLeafMaterializations())
-    {
-        if (!Row.NodePath.StartsWith(Prefix)) continue;
-        const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Row.Component.Get());
-        if (!IsValid(Primitive)) continue;
-        if (Row.InstanceIndex != INDEX_NONE)
-        {
-            const UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Primitive);
-            FTransform InstanceWorld;
-            if (Bucket == nullptr || Bucket->GetStaticMesh() == nullptr ||
-                !Bucket->GetInstanceTransform(Row.InstanceIndex, InstanceWorld, true)) continue;
-            Bounds += Bucket->GetStaticMesh()->GetBoundingBox().TransformBy(InstanceWorld);
-        }
-        else
-        {
-            Bounds += Primitive->Bounds.GetBox();
-        }
-    }
-    return Bounds;
-}
-
-void AMHCompositeActor::SyncEditScopeFrame()
-{
-    // R6-UX1: a wireframe box marks the edited subtree in the scene; it is
-    // never grabbable and never rendered in game.
-    const FBox Bounds = GetEditScopeBounds();
-    if (!Bounds.IsValid)
-    {
-        if (IsValid(EditScopeFrame)) EditScopeFrame->DestroyComponent();
-        EditScopeFrame = nullptr;
-        return;
-    }
-    if (!IsValid(EditScopeFrame))
-    {
-        UBoxComponent* Frame = NewObject<UBoxComponent>(this, UBoxComponent::StaticClass(),
-            MakeUniqueObjectName(this, UBoxComponent::StaticClass(), TEXT("MH_ScopeFrame")),
-            RF_Transient | RF_DuplicateTransient | RF_TextExportTransient);
-        AddInstanceComponent(Frame);
-        Frame->ComponentTags.Add(TEXT("MHScope.Frame"));
-        Frame->SetupAttachment(GetRootComponent());
-        Frame->SetAbsolute(true, true, true);
-        Frame->bSelectable = false;
-        Frame->bDrawOnlyIfSelected = false;
-        Frame->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        Frame->SetCanEverAffectNavigation(false);
-        Frame->SetHiddenInGame(true);
-        Frame->ShapeColor = FColor(255, 170, 40);
-        Frame->SetLineThickness(3.0f);
-        Frame->RegisterComponent();
-        EditScopeFrame = Frame;
-    }
-    EditScopeFrame->SetWorldTransform(FTransform(Bounds.GetCenter()), false, nullptr, ETeleportType::TeleportPhysics);
-    EditScopeFrame->SetBoxExtent(Bounds.GetExtent(), false);
-}
-
-void AMHCompositeActor::DestroyEditScopeHandles()
-{
-    for (TObjectPtr<USceneComponent>& Handle : EditScopeHandles)
-    {
-        if (IsValid(Handle)) Handle->DestroyComponent();
-    }
-    EditScopeHandles.Reset();
-    EditScopeHandlePaths.Reset();
-    if (IsValid(EditScopeFrame)) EditScopeFrame->DestroyComponent();
-    EditScopeFrame = nullptr;
-}
-
-void AMHCompositeActor::SyncEditScopeHandles()
-{
-    using namespace UE::MimirComposite;
-    if (EditScopeInvocationPath.IsEmpty() || !ResidentPlan.IsValid())
-    {
-        DestroyEditScopeHandles();
-        return;
-    }
-    // The scoped definition's nodes are the resident-plan nodes whose parent
-    // is the invocation (16 §2.10); their world under the placement basis is
-    // where the artist grabs them.
-    const int32 InvocationIndex = ResidentPlan->Nodes.IndexOfByPredicate(
-        [this](const FMHResolvedCompositeNode& Node) { return Node.NodePath == EditScopeInvocationPath; });
-    TArray<const FMHResolvedCompositeNode*> ScopeNodes;
-    if (InvocationIndex != INDEX_NONE)
-    {
-        EditScopeParentLocal = ResidentPlan->Nodes[InvocationIndex].WorldMatrix;
-        for (const FMHResolvedCompositeNode& Node : ResidentPlan->Nodes)
-        {
-            if (Node.ParentResolvedNodeIndex == InvocationIndex) ScopeNodes.Add(&Node);
-        }
-    }
-    const FMatrix Basis = GetActorTransform().ToMatrixWithScale();
-    while (EditScopeHandles.Num() > ScopeNodes.Num())
-    {
-        if (IsValid(EditScopeHandles.Last())) EditScopeHandles.Last()->DestroyComponent();
-        EditScopeHandles.Pop();
-    }
-    for (int32 Index = 0; Index < ScopeNodes.Num(); ++Index)
-    {
-        USceneComponent* Handle = EditScopeHandles.IsValidIndex(Index) ? EditScopeHandles[Index].Get() : nullptr;
-        if (!IsValid(Handle))
-        {
-            // Not an "MH." tag: the placement compiler's retirement never
-            // touches scope handles; the session owns their lifetime. A sprite
-            // (R6-UX1): clickable in the viewport, so the gizmo can grab the
-            // node without the Outliner.
-            UBillboardComponent* Sprite = NewObject<UBillboardComponent>(this, UBillboardComponent::StaticClass(),
-                MakeUniqueObjectName(this, UBillboardComponent::StaticClass(), TEXT("MH_ScopeNode")),
-                RF_Transient | RF_DuplicateTransient | RF_TextExportTransient);
-            AddInstanceComponent(Sprite);
-            Sprite->ComponentTags.Add(FName(*FString::Printf(TEXT("MHScope.Handle:%d"), Index)));
-            Sprite->SetupAttachment(GetRootComponent());
-            Sprite->SetAbsolute(true, true, true);
-            Sprite->SetHiddenInGame(true);
-            Sprite->bIsScreenSizeScaled = true;
-            if (UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EditorResources/S_TargetPoint.S_TargetPoint")))
-            {
-                Sprite->SetSprite(Texture);
-            }
-            Sprite->RegisterComponent();
-            Handle = Sprite;
-            if (EditScopeHandles.IsValidIndex(Index)) EditScopeHandles[Index] = Handle;
-            else EditScopeHandles.Add(Handle);
-        }
-        Handle->SetWorldTransform(FTransform(ScopeNodes[Index]->WorldMatrix * Basis), false, nullptr, ETeleportType::TeleportPhysics);
-    }
-    EditScopeHandlePaths.Reset();
-    for (const FMHResolvedCompositeNode* Node : ScopeNodes) EditScopeHandlePaths.Add(Node->NodePath);
-    SyncEditScopeFrame();
-}
-
-void AMHCompositeActor::SetPlacementEditMode(const bool bEnabled)
-{
-    // A pending candidate has no published handles of its own. Keep the
-    // committed view visible and refuse entry until readiness commits it.
-    if (bEnabled && IsPreviewLoading()) return;
-    if (bPlacementEditMode == bEnabled) return;
-    TArray<FTransform> PendingHandleEdits;
-    if (bEnabled)
-    {
-        PendingHandleEdits.Reserve(TopLevelPlacementComponents.Num());
-        for (const USceneComponent* Handle : TopLevelPlacementComponents)
-            PendingHandleEdits.Add(IsValid(Handle)
-                ? Handle->GetComponentTransform() : FTransform::Identity);
-    }
-    // Reconcile the materialization while the regular rebuild gate is open.
-    // On entry only the selected static leaf is extracted; on exit it is
-    // admitted back into its immutable-policy bucket.
-    bPlacementEditMode = false;
-    bExtractSelectedLeafForEdit = bEnabled && !SelectedPlacementLeafPath.IsEmpty();
-    if (HasActorRegisteredAllComponents() && ResidentPlan.IsValid()) RebuildPlacement(false);
-    // Beginning an edit session must not erase a handle transform the user
-    // changed immediately before invoking Edit. The subsequent editor tick
-    // turns these restored world transforms into the prospective signed plan.
-    if (bEnabled && PendingHandleEdits.Num() == TopLevelPlacementComponents.Num())
-    {
-        for (int32 Index = 0; Index < PendingHandleEdits.Num(); ++Index)
-            if (IsValid(TopLevelPlacementComponents[Index]))
-                TopLevelPlacementComponents[Index]->SetWorldTransform(
-                    PendingHandleEdits[Index], false, nullptr, ETeleportType::TeleportPhysics);
-    }
-    bPlacementEditMode = bEnabled;
-    EditingGraph.Reset();
-    EditingDocument.Reset();
-    LastEditHandleTransforms.Reset();
-    LastEditBasis = GetActorTransform();
-    if (bEnabled && AppliedGraph.IsValid())
-    {
-        EditingGraph = *AppliedGraph;
-        // R6-D1: under a nested scope the session edits the invoked definition's
-        // document; its nodes get handles under the invocation's world.
-        const UMHCompositeAsset* EditedAsset = GetCompositeAsset();
-        if (!EditScopeInvocationPath.IsEmpty())
-        {
-            UE::MimirComposite::FMHResourceKey ChildKey;
-            ChildKey.Kind = EMHResourceKind::Composite;
-            ChildKey.LogicalName = EditScopeComposite;
-            FString AdmissionError;
-            EditedAsset = Cast<UMHCompositeAsset>(UMHEndpointPrototypeRegistry::ResolveEndpoint(ChildKey, AdmissionError));
-        }
-        if (EditedAsset != nullptr)
-        {
-            UE::MimirComposite::FMHCompositeDocument Document;
-            FString Error;
-            if (UE::MimirComposite::MHExtractCompositeV5(*EditedAsset, Document, Error)) EditingDocument = MoveTemp(Document);
-        }
-        SyncEditScopeHandles();
-        const TArray<TObjectPtr<USceneComponent>>& SessionHandles = EditScopeInvocationPath.IsEmpty() ? TopLevelPlacementComponents : EditScopeHandles;
-        for (const USceneComponent* Handle : SessionHandles)
-            LastEditHandleTransforms.Add(Handle != nullptr ? Handle->GetComponentTransform() : FTransform::Identity);
-    }
-    if (!bEnabled)
-    {
-        DestroyEditScopeHandles();
-        EditScopeInvocationPath.Reset();
-        EditScopeComposite.Reset();
-        EditScopeParentLocal = FMatrix::Identity;
-    }
-    SetActorTickEnabled(bEnabled);
-}
-
 bool AMHCompositeActor::DependsOnResource(const UE::MimirComposite::FMHResourceKey& Key) const
 {
     using namespace UE::MimirComposite;
@@ -668,17 +399,6 @@ bool AMHCompositeActor::DependsOnResource(const UE::MimirComposite::FMHResourceK
     TSet<FMHResourceKey> Observed;
     MHCollectRecipeGraphDependencies(*Graph, Observed);
     return Observed.Contains(Key);
-}
-
-bool AMHCompositeActor::GetEditedCompositeDocument(UE::MimirComposite::FMHCompositeDocument& OutDocument) const
-{
-    if (!bPlacementEditMode || !EditingDocument.IsSet() ||
-        !bPlanAvailable || !ResidentPlan.IsValid()) return false;
-    const TArray<TObjectPtr<USceneComponent>>& SessionHandles = EditScopeInvocationPath.IsEmpty() ? TopLevelPlacementComponents : EditScopeHandles;
-    if (SessionHandles.Num() != EditingDocument->Nodes.Num() ||
-        SessionHandles.ContainsByPredicate([](const USceneComponent* Handle) { return !IsValid(Handle); })) return false;
-    OutDocument = EditingDocument.GetValue();
-    return true;
 }
 
 void AMHCompositeActor::AttachRootTransformHook()
@@ -721,7 +441,6 @@ void AMHCompositeActor::ClearDerivedComponents()
     // Pooled leaves are released with the owner (16 §2.8); Undo rebuilds them
     // from the actor's record afterwards (OPEN-R-1).
     if (UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(GetWorld())) Pool->RemoveOwner(*this);
-    DestroyEditScopeHandles();
     // Undo can restore transaction-era plan-view components after the transient
     // tracking arrays were cleared. Include every MH-tagged instance component
     // so rebuilding from the actor record cannot leave an untracked twin.
@@ -760,7 +479,7 @@ void AMHCompositeActor::ReconcileEndpoint(const UE::MimirComposite::FMHResourceK
     const UE::MimirComposite::FMHEndpointInterfaceDelta& Delta)
 {
     using namespace UE::MimirComposite;
-    if (!Delta.Any() || bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed() ||
+    if (!Delta.Any() || bRebuildInProgress || IsTemplate() || IsActorBeingDestroyed() ||
         IsRunningCookCommandlet() || (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     // The contract explicitly retains the missing-endpoint recovery path until R4.
     if (Delta.bFirstAdmission)
@@ -828,7 +547,7 @@ void AMHCompositeActor::ReconcileEndpoint(const UE::MimirComposite::FMHResourceK
 
 void AMHCompositeActor::ReconcileRecipe(const UE::MimirComposite::FMHResourceKey& Key)
 {
-    if (Key.Kind != EMHResourceKind::Composite || bRebuildInProgress || bPlacementEditMode ||
+    if (Key.Kind != EMHResourceKind::Composite || bRebuildInProgress ||
         IsTemplate() || IsActorBeingDestroyed() || IsRunningCookCommandlet() ||
         (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     const UInstancedStaticMeshComponent* Defaults = GetDefault<UInstancedStaticMeshComponent>();
@@ -857,7 +576,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
         (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::PIE)) return;
     // Undo of creation marks garbage without running Destroyed(). Such an
     // actor must never recreate preview geometry in the shared level pool.
-    if (!IsValid(this) || bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
+    if (!IsValid(this) || bRebuildInProgress || IsTemplate() || IsActorBeingDestroyed()) return;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
     CancelPendingPlacement();
     ++PlacementRebuildCount;
@@ -962,8 +681,7 @@ void AMHCompositeActor::RebuildPlacement(const bool bSeedOnly, const bool bRecip
             if (PreviousRoot != nullptr)
             {
                 View = MHCompileCompositePlacementV5(
-                    *this, *ResidentPlan, *PreviousRoot, *Settings, Previous,
-                    bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
+                    *this, *ResidentPlan, *PreviousRoot, *Settings, Previous);
             }
         }
         FMHCompositePlacementCompileResult Marker = MHBuildCompositeDiagnosticView(*this, TEXT("composite:") + Name, Error);
@@ -1074,7 +792,7 @@ bool AMHCompositeActor::PendingEndpointsSettled(FString& OutError)
 void AMHCompositeActor::OnEndpointLoadReady(const UE::MimirComposite::FMHResourceKey& Key)
 {
     if (!PendingPlacementPlan.IsValid() || !PendingSelectedMeshKeys.Contains(Key) ||
-        bRebuildInProgress || bPlacementEditMode || IsTemplate() || IsActorBeingDestroyed()) return;
+        bRebuildInProgress || IsTemplate() || IsActorBeingDestroyed()) return;
     const uint64 ExpectedEpoch = PendingPlacementEpoch;
     TGuardValue<bool> Guard(bRebuildInProgress, true);
     FString EndpointError;
@@ -1122,8 +840,7 @@ void AMHCompositeActor::CommitPendingPlacement()
     {
         const TArray<TObjectPtr<UActorComponent>> Previous = CollectPreviousDerivedComponents();
         FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
-            *this, *CandidatePlan, *Root, *Settings, Previous,
-            bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
+            *this, *CandidatePlan, *Root, *Settings, Previous);
         if (!View.Succeeded())
         {
             LastPlacementError = View.Error;
@@ -1154,8 +871,7 @@ void AMHCompositeActor::CommitPendingPlacement()
         if (MHTryCompileCompositePlacementReseedV5(
                 *this, *PreviousPlan, *CandidatePlan, *Root, *Settings, Previous,
                 TopLevelPlacementComponents, LeafPlacementComponents,
-                LeafMaterializations, View,
-                bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString()))
+                LeafMaterializations, View))
         {
             if (!View.Succeeded())
             {
@@ -1229,11 +945,6 @@ void AMHCompositeActor::UpdatePlacementBasis(USceneComponent*, EUpdateTransformF
 {
     using namespace UE::MimirComposite;
     if (bRebuildInProgress) return;
-    if (bPlacementEditMode)
-    {
-        Tick(0.0f);
-        return;
-    }
     const bool bMovingRetainedView = IsPreviewLoading();
     if (!ResidentPlan.IsValid() || !AppliedGraph.IsValid()) return;
     if (!bMovingRetainedView &&
@@ -1389,107 +1100,6 @@ void AMHCompositeActor::Destroyed()
     Super::Destroyed();
 }
 
-void AMHCompositeActor::Tick(const float DeltaSeconds)
-{
-    using namespace UE::MimirComposite;
-    Super::Tick(DeltaSeconds);
-    if (!bPlacementEditMode || bRebuildInProgress || !EditingGraph.IsSet() || !EditingDocument.IsSet()) return;
-    FMHRandomComposite* Root = EditingGraph->Composites.Find(EditingGraph->RootComposite);
-    // R6-D1: under a nested scope the edited definition is the invoked child
-    // and the handles are the scope handles; the local space of an edited node
-    // is the invocation's effective world, not the placement basis.
-    const bool bScoped = !EditScopeInvocationPath.IsEmpty();
-    FMHRandomComposite* Edited = bScoped ? EditingGraph->Composites.Find(EditScopeComposite) : Root;
-    const TArray<TObjectPtr<USceneComponent>>& SessionHandles = bScoped ? EditScopeHandles : TopLevelPlacementComponents;
-    if (Root == nullptr || Edited == nullptr || Edited->Nodes.Num() != SessionHandles.Num() ||
-        SessionHandles.ContainsByPredicate([](const USceneComponent* Handle) { return !IsValid(Handle); }))
-    {
-        LastPlacementError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: an authored Edit handle disappeared");
-        bPlanAvailable = false;
-        return;
-    }
-    const FTransform CurrentBasis = GetActorTransform();
-    bool bChanged = !CurrentBasis.Equals(LastEditBasis, 0.0);
-    bool bAuthoredChanged = false;
-    const FMatrix ParentInverse = bScoped
-        ? (EditScopeParentLocal * LastEditBasis.ToMatrixWithScale()).Inverse()
-        : LastEditBasis.ToInverseMatrixWithScale();
-    for (int32 Index = 0; Index < SessionHandles.Num(); ++Index)
-    {
-        USceneComponent* Handle = SessionHandles[Index];
-        const FTransform Current = Handle->GetComponentTransform();
-        if (LastEditHandleTransforms.IsValidIndex(Index) && Current.Equals(LastEditHandleTransforms[Index], 0.0)) continue;
-        // Absolute handles still live in the previously admitted basis when
-        // the actor moves. A placement move must not become a source edit.
-        const FMatrix LocalMatrix = Current.ToMatrixWithScale() * ParentInverse;
-        if (!MHIsRepresentableTransformMatrix(LocalMatrix))
-        {
-            LastPlacementError = TEXT("MH_E_UNREPRESENTABLE_TRANSFORM: edited handle");
-            bPlanAvailable = false;
-            return;
-        }
-        const FTransform Local(LocalMatrix);
-        Edited->Nodes[Index].Transform.TranslationCm = FVector3f(Local.GetTranslation());
-        Edited->Nodes[Index].Transform.RotationQuat = FQuat4f(Local.GetRotation());
-        Edited->Nodes[Index].Transform.Scale = FVector3f(Local.GetScale3D());
-        EditingDocument->Nodes[Index].Transform.TranslationCm = Local.GetTranslation();
-        EditingDocument->Nodes[Index].Transform.RotationQuat = Local.GetRotation();
-        EditingDocument->Nodes[Index].Transform.Scale = Local.GetScale3D();
-        bAuthoredChanged = true;
-        bChanged = true;
-    }
-    if (!bChanged) return;
-    TGuardValue<bool> Guard(bRebuildInProgress, true);
-    TSharedRef<FMHResolvedCompositePlan> Plan = MakeShared<FMHResolvedCompositePlan>();
-    FString Error;
-    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    if (bAuthoredChanged)
-    {
-        TArray<uint8> ProspectiveBytes;
-        if (!MHWriteCanonicalCompositeV5(*EditingDocument, ProspectiveBytes, Error))
-        {
-            LastPlacementError = Error;
-            bPlanAvailable = false;
-            return;
-        }
-    }
-    // Preview plane: the prospective source resolves through Layout +
-    // Appearance only; proof (closure, signatures) is never built here.
-    if (!MHResolvePreviewGraph(*EditingGraph, Seed, AppearanceSeed, CallContext.ToResolveContext(), *Plan, Error) ||
-        !MHValidateResolvedPlacementTransforms(*Plan, GetActorTransform(), Error))
-    {
-        LastPlacementError = Error;
-        bPlanAvailable = false;
-        return;
-    }
-    FMHCompositePlacementCompileResult View = MHCompileCompositePlacementV5(
-        *this, *Plan, *Root, *Settings, DerivedComponents,
-        bExtractSelectedLeafForEdit ? SelectedPlacementLeafPath : FString());
-    if (!View.Succeeded())
-    {
-        LastPlacementError = View.Error;
-        bPlanAvailable = false;
-        return;
-    }
-    const TArray<TObjectPtr<UActorComponent>> Previous = MoveTemp(DerivedComponents);
-    DerivedComponents = MoveTemp(View.Components);
-    TopLevelPlacementComponents = MoveTemp(View.TopLevelComponents);
-    LeafPlacementComponents = MoveTemp(View.LeafComponents);
-    LeafMaterializations = MoveTemp(View.LeafMaterializations);
-    DestroyMHRetiredComponents(Previous, DerivedComponents);
-    ResidentPlan = Plan;
-    PrunePlacementLeafSelection();
-    SyncEditScopeHandles();
-    LastEditHandleTransforms.Reset();
-    const TArray<TObjectPtr<USceneComponent>>& NextHandles = bScoped ? EditScopeHandles : TopLevelPlacementComponents;
-    for (const USceneComponent* Handle : NextHandles) LastEditHandleTransforms.Add(IsValid(Handle) ? Handle->GetComponentTransform() : FTransform::Identity);
-    LastEditBasis = CurrentBasis;
-    ++PreviewRevision;
-    LastPlacementError.Reset();
-    bPlanAvailable = true;
-    SyncPoolVisibility();
-}
-
 #if WITH_EDITOR
 void AMHCompositeActor::PreEditUndo()
 {
@@ -1514,21 +1124,6 @@ void AMHCompositeActor::PostEditUndo(TSharedPtr<ITransactionObjectAnnotation> Tr
 
 void AMHCompositeActor::RestorePlacementAfterUndo()
 {
-    // R5-F: a live Placement Edit session would block its own restore (the
-    // rebuild gate is closed while editing) and then tick against an empty
-    // view. The session is transient state, not part of the record: end it.
-    if (bPlacementEditMode)
-    {
-        bPlacementEditMode = false;
-        bExtractSelectedLeafForEdit = false;
-        EditingGraph.Reset();
-        EditingDocument.Reset();
-        LastEditHandleTransforms.Reset();
-        SetActorTickEnabled(false);
-    }
-    DestroyEditScopeHandles();
-    EditScopeInvocationPath.Reset();
-    EditScopeComposite.Reset();
     // The actor is the transaction record; its plan-view is derived. Retire
     // anything the transaction restored, discard cached state, then rebuild
     // the preview through the normal recipe/materialization path.
@@ -1560,16 +1155,6 @@ bool AMHCompositeActor::GetReferencedContentObjects(TArray<UObject*>& Objects) c
     // source asset in the Content Browser.
     if (UMHCompositeAsset* Asset = CompositeAsset.LoadSynchronous()) Objects.AddUnique(Asset);
     return true;
-}
-
-bool AMHCompositeActor::CanEditChange(const FProperty* Property) const
-{
-    if (bPlacementEditMode && Property != nullptr &&
-        (Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, Seed) ||
-         Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, bAutoSeed) ||
-         Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, AppearanceSeed) ||
-         Property->GetFName() == GET_MEMBER_NAME_CHECKED(AMHCompositeActor, bAutoAppearanceSeed))) return false;
-    return Super::CanEditChange(Property);
 }
 
 void AMHCompositeActor::SetIsTemporarilyHiddenInEditor(const bool bIsHidden)

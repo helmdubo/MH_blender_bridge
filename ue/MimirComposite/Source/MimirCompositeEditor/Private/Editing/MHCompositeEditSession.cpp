@@ -373,29 +373,3 @@ bool UMHCompositeEditSession::SetNodeOptions(const FGuid& NodeId, const TArray<F
     FinishAuthoringCommand();
     return true;
 }
-
-bool UMHCompositeEditSession::SyncDraftFromLegacyEdit(FString& OutError)
-{
-    if (!IsOpen() || Draft == nullptr)
-    {
-        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the composite edit session is closed");
-        return false;
-    }
-    const AMHCompositeActor* Root = RootPlacement.Get();
-    FMHCompositeDocument Legacy;
-    // Nothing admitted yet (or no legacy session): the draft already is the truth.
-    if (Root == nullptr || !Root->IsPlacementEditMode() || !Root->GetEditedCompositeDocument(Legacy)) return true;
-    TArray<FGuid> NodeIds;
-    TArray<FTransform> LocalTransforms;
-    for (int32 Index = 0; Index < Legacy.Nodes.Num(); ++Index)
-    {
-        const int32 DraftIndex = Draft->FindNodeIndexBySelector(FString::Printf(TEXT("nodes[%d]"), Index));
-        if (DraftIndex == INDEX_NONE) continue;
-        const FMHCompositeTransform& Edited = Legacy.Nodes[Index].Transform;
-        const FTransform LegacyTransform(Edited.RotationQuat, Edited.TranslationCm, Edited.Scale);
-        if (Draft->GetNodes()[DraftIndex].Transform.Equals(LegacyTransform, 1e-6)) continue;
-        NodeIds.Add(Draft->GetNodeId(DraftIndex));
-        LocalTransforms.Add(LegacyTransform);
-    }
-    return SetNodeTransforms(NodeIds, LocalTransforms, OutError);
-}

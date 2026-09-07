@@ -5,7 +5,6 @@
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
-#include "Settings/MHCompositeSettings.h"
 #include "UI/MHSourceOverwritePolicy.h"
 
 namespace UE::MimirComposite::Tests
@@ -13,18 +12,10 @@ namespace UE::MimirComposite::Tests
 namespace
 {
 
-struct FRootV2Scope
+struct FRootTestScope
 {
-    bool bPrevious = false;
-    FRootV2Scope()
+    ~FRootTestScope()
     {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FRootV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
         MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
     }
 };
@@ -55,7 +46,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditRootSessionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FRootV2Scope V2;
+    const FRootTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -68,7 +59,7 @@ bool FMHEditRootSessionTest::RunTest(const FString& Parameters)
     const TArray<FVector> ForeignBefore = F.ForeignWorlds();
     FString Error;
     if (!TestTrue(TEXT("root session: ") + Error, Subsystem->BeginEditComposite(F.A, Error))) return false;
-    bool bPassed = TestFalse(TEXT("the root never enters the legacy edit mode"), F.A->IsPlacementEditMode());
+    bool bPassed = true;
     UMHCompositeEditSession* Session = Subsystem->GetEditSession();
     UMHCompositeEditProjection* Projection = Session != nullptr ? Session->GetProjection() : nullptr;
     UMHCompositeEditDocument* Draft = Session != nullptr ? Session->GetDraft() : nullptr;
@@ -105,7 +96,6 @@ bool FMHEditRootSessionTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     bPassed &= TestFalse(TEXT("mode gone"), UMHCompositeEditorMode::IsActive());
     bPassed &= TestTrue(TEXT("the placement renders where it did"), FCompositeEditFixture::SameLocations(ABefore, FCompositeEditFixture::LeafWorldsUnder(*F.A, Prefix)));
-    bPassed &= TestFalse(TEXT("still no legacy edit mode"), F.A->IsPlacementEditMode());
     return bPassed;
 }
 
@@ -118,7 +108,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditRootSaveTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FRootV2Scope V2;
+    const FRootTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -143,7 +133,6 @@ bool FMHEditRootSaveTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("the root definition was published"), Published == F.Root);
     bPassed &= TestFalse(TEXT("session gone"), Subsystem->IsEditingComposite());
     bPassed &= TestFalse(TEXT("mode gone"), UMHCompositeEditorMode::IsActive());
-    bPassed &= TestFalse(TEXT("no legacy edit mode"), F.A->IsPlacementEditMode());
     FMHCompositeDocument RootDocument;
     bPassed &= TestTrue(TEXT("the root carries the edit"), MHExtractCompositeV5(*F.Root, RootDocument, Error) && RootDocument.Nodes.Num() == 3 && RootDocument.Nodes[0].Transform.TranslationCm.Equals(FVector(100.0, 0.0, 0.0), 1e-2));
     return bPassed;

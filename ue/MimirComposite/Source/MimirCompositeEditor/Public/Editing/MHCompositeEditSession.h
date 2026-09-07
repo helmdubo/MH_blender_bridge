@@ -76,7 +76,7 @@ public:
     /** Most recent projection refresh failure; cleared by the next successful refresh. */
     const FString& GetPreviewError() const { return PreviewError; }
 
-    /** CE-2b: the edit projection of the selected occurrence; null for root sessions or the legacy backend. */
+    /** The edit projection of the selected occurrence; null until opened or after close. */
     UMHCompositeEditProjection* GetProjection() const { return Projection; }
     bool OpenProjection(FString& OutError);
     void CloseProjection();
@@ -103,12 +103,6 @@ public:
     /** The projection follows the draft after a command (a refresh failure is a preview problem, not an authoring one). */
     void RefreshProjection();
 
-    /**
-     * CE-1 bridge until CE-4a moves the writes here: mirrors the legacy
-     * actor-side handle edits (top-level nodes of the edited definition) into
-     * the draft, so the draft is the one current document.
-     */
-    bool SyncDraftFromLegacyEdit(FString& OutError);
 
 private:
     /** Removes identities that no longer exist and preserves the active id when possible. */

@@ -67,7 +67,6 @@ bool FMHEditProjectionGameViewVisibilityTest::RunTest(const FString& Parameters)
         Client->Invalidate(true, true);
     };
 
-    const FMHCompositeEditBackendScope Backend(true);
     FRecipeFixture Recipe(*this);
     const FString MeshName = Recipe.Name(TEXT("ce_game_view_mesh"));
     if (!TestNotNull(TEXT("mesh receipt"), Recipe.Mesh(MeshName))) return false;

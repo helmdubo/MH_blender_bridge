@@ -7,7 +7,6 @@
 #include "Editor/Transactor.h"
 #include "Engine/Level.h"
 #include "EngineUtils.h"
-#include "Settings/MHCompositeSettings.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 
@@ -15,21 +14,6 @@ namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FLifecycleV2Scope
-{
-    bool bPrevious = false;
-    FLifecycleV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FLifecycleV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 int32 ProjectionActorsIn(UWorld* World)
 {
@@ -65,7 +49,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditLifecycleCyclesTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FLifecycleV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem) || GEditor->Trans == nullptr) return false;
     FCompositeEditFixture F(*this);
@@ -114,7 +98,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditLifecycleTeardownTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FLifecycleV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -157,7 +141,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditLifecycleInvisibilityTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FLifecycleV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

@@ -8,27 +8,11 @@
 #include "HAL/PlatformTime.h"
 #include "Misc/ScopeExit.h"
 #include "Selection.h"
-#include "Settings/MHCompositeSettings.h"
 
 namespace UE::MimirComposite::Tests
 {
 namespace
 {
-
-struct FPerfV2Scope
-{
-    bool bPrevious = false;
-    FPerfV2Scope()
-    {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FPerfV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
-    }
-};
 
 double MillisecondsSince(const double Start)
 {
@@ -55,7 +39,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditPerfBaselineTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FPerfV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -140,7 +124,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditPerfGestureNotificationTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FPerfV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -238,7 +222,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditPerfSubtreeTransformOracleTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FPerfV2Scope V2;
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

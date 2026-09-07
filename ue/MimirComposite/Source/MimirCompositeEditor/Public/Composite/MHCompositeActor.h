@@ -3,8 +3,6 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeAsset.h"
-#include "Composite/MHCompositeProtocol.h"
-#include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -105,39 +103,12 @@ public:
     /** True while a resolved candidate waits for all selected mesh endpoints. */
     bool IsPreviewLoading() const { return PendingPlacementPlan.IsValid(); }
 
-    /** Transient authoring session; no edit state is persisted. */
-    void SetPlacementEditMode(bool bEnabled);
-    bool IsPlacementEditMode() const { return bPlacementEditMode; }
-    /** The edited definition's document: the root's, or the nested definition's under the edit scope (R6-D1). */
-    bool GetEditedCompositeDocument(UE::MimirComposite::FMHCompositeDocument& OutDocument) const;
-    /**
-     * R6-D1 (docs/16 §2.7): scope of the next Placement Edit session — the
-     * definition invoked at InvocationNodePath of the resident plan (empty =
-     * the root definition). Its nodes get handles under the invocation's
-     * effective world transform; handle edits write the nested draft.
-     */
-    void SetEditScope(const FString& InvocationNodePath);
-    const FString& GetEditScopeInvocationPath() const { return EditScopeInvocationPath; }
-    /** Handles of the scoped definition's nodes while a nested session is active (empty for a root session). */
-    const TArray<TObjectPtr<USceneComponent>>& GetEditScopeHandles() const { return EditScopeHandles; }
-    /**
-     * R6-UX1: the session handle that moves the node at NodePath — the scope
-     * handle of its top-level ancestor inside the edited definition, or the
-     * top-level placement handle in a root session. Null outside a session
-     * or for paths outside the edited subtree.
-     */
-    USceneComponent* FindSessionHandleForNodePath(const FString& NodePath) const;
-    /** World bounds of everything the edited definition materializes here (handles and leaves); invalid without a scope. */
-    FBox GetEditScopeBounds() const;
-    /** Wireframe frame around the edited subtree while a nested session is active. */
-    UBoxComponent* GetEditScopeFrame() const { return EditScopeFrame; }
-
     /** Rebuild from managed applied assets, never from the source filesystem. */
     void RebuildComposite();
 
     /** Instrumentation only: full placement rebuilds performed by this actor. */
     uint32 GetPlacementRebuildCount() const { return PlacementRebuildCount; }
-    /** Increments on every successful preview build or edit-session step (R2b-2); zero before the first. */
+    /** Increments on every successful preview build; zero before the first. */
     uint32 GetPreviewRevision() const { return PreviewRevision; }
 
     /** Instrumentation only: rebuilds forced by a fail-closed state desync. */
@@ -215,8 +186,6 @@ public:
     virtual void PostRegisterAllComponents() override;
     virtual void PostActorCreated() override;
     virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
-    virtual void Tick(float DeltaSeconds) override;
-    virtual bool ShouldTickIfViewportsOnly() const override { return bPlacementEditMode; }
     virtual void Destroyed() override;
     /** Own components plus the pooled instances of this placement (16 §2.8): F / focus frames the whole placement. */
     virtual FBox GetComponentsBoundingBox(bool bNonColliding = false, bool bIncludeFromChildActors = false) const override;
@@ -227,7 +196,6 @@ public:
     virtual void PostEditUndo(TSharedPtr<ITransactionObjectAnnotation> TransactionAnnotation) override;
     virtual void PostEditImport() override;
     virtual void SetIsTemporarilyHiddenInEditor(bool bIsHidden) override;
-    virtual bool CanEditChange(const FProperty* InProperty) const override;
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
     virtual bool GetReferencedContentObjects(TArray<UObject*>& Objects) const override;
 #endif
@@ -312,23 +280,6 @@ private:
     UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
     TArray<TObjectPtr<USceneComponent>> LeafPlacementComponents;
 
-    /** R6-D1: handles of the nested definition's nodes under the edit scope. */
-    UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
-    TArray<TObjectPtr<USceneComponent>> EditScopeHandles;
-    /** Resident-plan node path per scope handle (parallel to EditScopeHandles). */
-    TArray<FString> EditScopeHandlePaths;
-    /** R6-UX1: the frame marking the edited subtree in the scene. */
-    UPROPERTY(Transient, DuplicateTransient, TextExportTransient)
-    TObjectPtr<UBoxComponent> EditScopeFrame;
-    FString EditScopeInvocationPath;
-    /** Logical name of the scoped definition and the invocation's world in actor space (resident plan). */
-    FString EditScopeComposite;
-    FMatrix EditScopeParentLocal = FMatrix::Identity;
-    /** Creates/positions the scope handles from the resident plan; destroys them when no scope is active. */
-    void SyncEditScopeHandles();
-    void SyncEditScopeFrame();
-    void DestroyEditScopeHandles();
-
     /** Derived navigation rows; own components are retained by DerivedComponents, pooled ones by the pool. */
     mutable TArray<UE::MimirComposite::FMHCompositeLeafMaterialization> LeafMaterializations;
 
@@ -360,10 +311,6 @@ private:
     bool bPendingSeedOnly = false;
     bool bPendingRecipeChanged = false;
     uint32 PreviewRevision = 0;
-    TOptional<UE::MimirComposite::FMHRandomSourceGraph> EditingGraph;
-    TOptional<UE::MimirComposite::FMHCompositeDocument> EditingDocument;
-    TArray<FTransform> LastEditHandleTransforms;
-    FTransform LastEditBasis = FTransform::Identity;
     EMHCompositeSeedEffect SeedAffectsResult = EMHCompositeSeedEffect::None;
     bool bPlanAvailable = false;
     // Only a rejected placement basis can recover by reapplying the old plan.
@@ -371,8 +318,6 @@ private:
     bool bBasisRejected = false;
 
     bool bRebuildInProgress = false;
-    bool bPlacementEditMode = false;
-    bool bExtractSelectedLeafForEdit = false;
     FString SelectedPlacementLeafPath;
     FString SelectedPlacementOccurrencePath;
     /** Set by PostLoad; consumed by the single admitted first-build point. */

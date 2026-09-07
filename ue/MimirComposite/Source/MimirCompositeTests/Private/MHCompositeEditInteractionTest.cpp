@@ -27,7 +27,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHNestedVisualGestureTest,
 bool FMHNestedVisualGestureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FMHCompositeEditBackendScope Backend(true);
+
     FCompositeEditFixture F(*this);
     if (!F.Build(*this)) return false;
     UMHCompositeLevelSubsystem* Subsystem = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
@@ -164,7 +164,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHMultiNodeGestureTest,
 bool FMHMultiNodeGestureTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FMHCompositeEditBackendScope Backend(true);
+
     FCompositeEditFixture F(*this);
     if (!F.Build(*this)) return false;
     UMHCompositeLevelSubsystem* Subsystem = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
@@ -221,7 +221,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHEscapeInputDispatchTest,
 bool FMHEscapeInputDispatchTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const TSharedRef<FMHCompositeEditBackendScope> Backend = MakeShared<FMHCompositeEditBackendScope>(true);
     const TSharedRef<FCompositeEditFixture> Fixture = MakeShared<FCompositeEditFixture>(*this);
     if (!Fixture->Build(*this)) return false;
     UMHCompositeLevelSubsystem* Subsystem = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
@@ -245,7 +244,7 @@ bool FMHEscapeInputDispatchTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("remaining drag before teardown is consumed"), Mode->InputDelta(nullptr, nullptr, Drag, Rotation, Scale));
     TestEqual(TEXT("remaining drag writes nothing"), Session->GetDraft()->GetRevision(), CancelledRevision);
     const double Started = FPlatformTime::Seconds();
-    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Backend, Fixture, Before, Started]()
+    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Fixture, Before, Started]()
     {
         UMHCompositeLevelSubsystem* Current = GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>();
         if (Current->IsEditingComposite() && FPlatformTime::Seconds() - Started < 1.0) return false;

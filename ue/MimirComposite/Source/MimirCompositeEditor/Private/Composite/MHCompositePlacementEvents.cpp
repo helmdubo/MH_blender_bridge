@@ -32,7 +32,7 @@ int32 MHRebuildAllLoadedCompositeActors()
         AMHCompositeActor* Actor = *It;
         UWorld* World = IsValid(Actor) ? Actor->GetWorld() : nullptr;
         if (!IsValid(Actor) || Actor->IsTemplate() || Actor->IsActorBeingDestroyed() ||
-            Actor->IsPlacementEditMode() || World == nullptr || World->IsGameWorld() ||
+            World == nullptr || World->IsGameWorld() ||
             World->IsBeingCleanedUp() || World->IsCleanedUp())
         {
             continue;

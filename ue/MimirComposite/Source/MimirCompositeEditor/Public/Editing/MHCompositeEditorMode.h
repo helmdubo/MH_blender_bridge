@@ -11,7 +11,7 @@ class USceneComponent;
 class HHitProxy;
 struct FMHCompositeEditContext;
 
-/** The mode's explicit Save/Cancel commands; Esc also respects gesture and node selection. */
+/** The mode's explicit Save/Cancel commands; Esc cancels the entire session. */
 class MIMIRCOMPOSITEEDITOR_API FMHCompositeEditCommands final : public TCommands<FMHCompositeEditCommands>
 {
 public:
@@ -120,8 +120,6 @@ public:
     virtual void ModeTick(float DeltaTime) override;
 
 #if WITH_DEV_AUTOMATION_TESTS
-    /** Stands in for the "Discard unsaved composite changes?" question: true = discard. */
-    static void SetDiscardConfirmForTests(TFunction<bool()> Confirm);
     /** Stands in for "Save changes before editing …?": Yes = save, No = discard, Cancel = stay. */
     static void SetSwitchConfirmForTests(TFunction<EAppReturnType::Type()> Confirm);
 #endif

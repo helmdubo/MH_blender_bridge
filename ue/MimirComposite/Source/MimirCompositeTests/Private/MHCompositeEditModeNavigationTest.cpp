@@ -5,7 +5,6 @@
 #include "Editing/MHCompositeEditSession.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "Selection.h"
-#include "Settings/MHCompositeSettings.h"
 #include "UI/MHSourceOverwritePolicy.h"
 
 namespace UE::MimirComposite::Tests
@@ -13,18 +12,10 @@ namespace UE::MimirComposite::Tests
 namespace
 {
 
-struct FNavV2Scope
+struct FNavTestScope
 {
-    bool bPrevious = false;
-    FNavV2Scope()
+    ~FNavTestScope()
     {
-        UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
-        bPrevious = Settings->bCompositeEditModeV2;
-        Settings->bCompositeEditModeV2 = true;
-    }
-    ~FNavV2Scope()
-    {
-        GetMutableDefault<UMHCompositeSettings>()->bCompositeEditModeV2 = bPrevious;
         UMHCompositeEditorMode::SetSwitchConfirmForTests({});
         MHSetSourceOverwritePolicyTestHooks(FMHSourceOverwritePolicyTestHooks());
     }
@@ -50,7 +41,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeSwitchTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FNavV2Scope V2;
+    const FNavTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);
@@ -145,7 +136,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHEditModeEnterSelectionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FNavV2Scope V2;
+    const FNavTestScope Scope;
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
     if (!TestNotNull(TEXT("level subsystem"), Subsystem)) return false;
     FCompositeEditFixture F(*this);

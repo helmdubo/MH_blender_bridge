@@ -249,7 +249,6 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<UMHCompositeEditSession> EditSession;
     mutable UE::MimirComposite::FMHCompositeDocument EditingDocument;
-    TArray<TWeakObjectPtr<USceneComponent>> EditingTopLevelComponents;
     /** R6-D0: the definition under edit (the root's asset or a nested child's), its invocation and effective parent. */
     TWeakObjectPtr<UMHCompositeAsset> EditingAsset;
     FString EditingInvocationPath;

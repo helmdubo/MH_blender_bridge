@@ -29,7 +29,6 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
-#include "UI/MHEditSessionKeys.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "UI/MHCompositeActorDetails.h"
 #include "UI/MHSourceToolMenus.h"
@@ -213,7 +212,6 @@ void FMimirCompositeEditorModule::StartupModule()
     MessageLogModule.RegisterLogListing("Mimir", INVTEXT("Mimir"), LogOptions);
 
     UE::MimirComposite::MHRegisterCompositeActorDetails();
-    MHRegisterEditSessionKeys();
     UMHCompositeEditorMode::RegisterCommands();
     // The level editor registers its own SMInstance customization in
     // SLevelEditor::Initialize, before OnLevelEditorCreated; ours must follow
@@ -265,7 +263,6 @@ void FMimirCompositeEditorModule::ShutdownModule()
     }
     if (!IsRunningCommandlet())
     {
-        MHUnregisterEditSessionKeys();
         UMHCompositeEditorMode::UnregisterCommands();
         UE::MimirComposite::MHUnregisterCompositeActorDetails();
         // Dynamic plugin unload still needs cleanup, but engine exit must not

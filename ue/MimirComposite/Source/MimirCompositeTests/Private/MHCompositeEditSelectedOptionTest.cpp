@@ -18,7 +18,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FMHCompositeEditSelectedCompositeOptionTest::RunTest(const FString& Parameters)
 {
     static_cast<void>(Parameters);
-    const FMHCompositeEditBackendScope CE(true);
+
     UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
         ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>()
         : nullptr;
