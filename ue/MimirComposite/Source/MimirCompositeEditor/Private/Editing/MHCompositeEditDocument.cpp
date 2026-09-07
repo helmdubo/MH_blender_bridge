@@ -284,6 +284,41 @@ bool UMHCompositeEditDocument::ReparentNode(const FGuid& Id, const FGuid& NewPar
     return true;
 }
 
+bool UMHCompositeEditDocument::SetNodeName(const FGuid& Id, const FString& Name, FString& OutError)
+{
+    static_cast<void>(Id); static_cast<void>(Name);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
+bool UMHCompositeEditDocument::SetNodeResource(const FGuid& Id, const FString& Resource, FString& OutError)
+{
+    static_cast<void>(Id); static_cast<void>(Resource);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
+FGuid UMHCompositeEditDocument::AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError)
+{
+    static_cast<void>(ParentId); static_cast<void>(Name); static_cast<void>(LocalTransform); static_cast<void>(Options);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return FGuid();
+}
+
+bool UMHCompositeEditDocument::SetNodeOptions(const FGuid& Id, const TArray<FMHCompositeOption>& Options, FString& OutError)
+{
+    static_cast<void>(Id); static_cast<void>(Options);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
+bool UMHCompositeEditDocument::ValidateOptions(const TArray<FMHCompositeOption>& Options, FString& OutError)
+{
+    static_cast<void>(Options);
+    OutError = TEXT("MH_E_COMPOSITE_GRAMMAR: not implemented");
+    return false;
+}
+
 FGuid UMHCompositeEditDocument::GetParentId(const FGuid& Id) const
 {
     const int32 Index = FindNodeIndex(Id);

@@ -77,6 +77,11 @@ public:
     FGuid DuplicateNode(const FGuid& NodeId, FString& OutError);
     /** bKeepWorld: the node keeps where it renders — its local transform is re-authored under the new parent (from the projection). */
     bool ReparentNode(const FGuid& NodeId, const FGuid& NewParentId, int32 SiblingIndex, bool bKeepWorld, FString& OutError);
+    /** CE-4b3 metadata and random commands (see UMHCompositeEditDocument); the projection follows. */
+    bool SetNodeName(const FGuid& NodeId, const FString& Name, FString& OutError);
+    bool SetNodeResource(const FGuid& NodeId, const FString& Resource, FString& OutError);
+    FGuid AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError);
+    bool SetNodeOptions(const FGuid& NodeId, const TArray<FMHCompositeOption>& Options, FString& OutError);
     /** The projection follows the draft after a command (a refresh failure is a preview problem, not an authoring one). */
     void RefreshProjection();
 
