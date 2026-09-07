@@ -135,6 +135,11 @@ class MIMIRCOMPOSITEEDITOR_API UMHCompositeLevelSubsystem final : public UEditor
     GENERATED_BODY()
 
 public:
+    /** CE-6a: the session ends with its placement, its world, or the editor. */
+    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+    virtual void Deinitialize() override;
+
+public:
     bool BuildComposite(
         const TArray<AActor*>& Actors,
         const UE::MimirComposite::FMHCompositeAdoptTarget& AdoptTarget,
@@ -271,6 +276,10 @@ private:
     /** CE-5a: publish the session draft without closing the session first; classifies a failure by the source file's bytes. */
     bool PublishFromSession(UMHCompositeAsset& Asset, const UE::MimirComposite::FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError);
     EMHCompositePublishOutcome LastPublishOutcome = EMHCompositePublishOutcome::None;
+    void OnWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
+    void OnLevelActorDeleted(AActor* Actor);
+    FDelegateHandle WorldCleanupHandle;
+    FDelegateHandle LevelActorDeletedHandle;
     /** After a failed publish: the authoritative source if present, else the pre-publish document; consumers are notified. */
     static void RestoreDefinition(
         UMHCompositeAsset& Asset,

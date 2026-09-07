@@ -1113,6 +1113,26 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
     return bPublished;
 }
 
+void UMHCompositeLevelSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+    Super::Initialize(Collection);
+}
+
+void UMHCompositeLevelSubsystem::Deinitialize()
+{
+    Super::Deinitialize();
+}
+
+void UMHCompositeLevelSubsystem::OnWorldCleanup(UWorld* World, const bool bSessionEnded, const bool bCleanupResources)
+{
+    static_cast<void>(World); static_cast<void>(bSessionEnded); static_cast<void>(bCleanupResources);
+}
+
+void UMHCompositeLevelSubsystem::OnLevelActorDeleted(AActor* Actor)
+{
+    static_cast<void>(Actor);
+}
+
 bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, const FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError)
 {
     // CE-5a (spec §10.2, A25/A26): the session outlives a failed publish. The
