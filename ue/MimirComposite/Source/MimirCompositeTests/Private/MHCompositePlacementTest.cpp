@@ -480,14 +480,14 @@ bool FMHCompositePlacementDependencyViewTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FMHCompositeThumbnailRenderingDisabledTest,
-    "Mimir.V5.Composite.ThumbnailRenderingDisabled",
+    FMHCompositeThumbnailRenderingRegisteredTest,
+    "Mimir.V5.Composite.Thumbnail.RendererRegistered",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FMHCompositeThumbnailRenderingDisabledTest::RunTest(const FString& Parameters)
+bool FMHCompositeThumbnailRenderingRegisteredTest::RunTest(const FString& Parameters)
 {
-    return TestNull(
-        TEXT("Mimir composite custom thumbnail renderer is disabled"),
+    return TestNotNull(
+        TEXT("Mimir composite custom thumbnail renderer is available"),
         FindObject<UClass>(nullptr, TEXT("/Script/MimirCompositeEditor.MHCompositeThumbnailRenderer")));
 }
 

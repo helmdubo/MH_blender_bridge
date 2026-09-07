@@ -3,6 +3,8 @@
 #include "AssetRegistry/AssetData.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeThumbnailRenderer.h"
+#include "ThumbnailRendering/ThumbnailManager.h"
 #include "Composite/MHCompositeRuntimeBridge.h"
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
@@ -190,6 +192,8 @@ void ExecuteReimportManagedMaterials(const FToolMenuContext& MenuContext)
 
 void FMimirCompositeEditorModule::StartupModule()
 {
+    if (!IsRunningCommandlet())
+        UThumbnailManager::Get().RegisterCustomRenderer(UMHCompositeAsset::StaticClass(), UMHCompositeThumbnailRenderer::StaticClass());
     UE::MimirComposite::MHStartupRuntimeCompositeBridge();
     UE::MimirComposite::MHStartupManagedStaticMeshReimportHandler();
     AssetRegistryTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(
@@ -242,6 +246,9 @@ void FMimirCompositeEditorModule::RegisterPoolInstanceSelection()
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
+    UE::MimirComposite::MHReleaseCompositeThumbnails();
+    if (UThumbnailManager* Manager = UThumbnailManager::TryGet())
+        Manager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
     UE::MimirComposite::MHShutdownManagedStaticMeshReimportHandler();
     UE::MimirComposite::MHShutdownRuntimeCompositeBridge();
     UE::MimirComposite::MHShutdownProjectIndex();
@@ -291,6 +298,8 @@ void FMimirCompositeEditorModule::ShutdownModule()
 
 void FMimirCompositeEditorModule::UnregisterMenusBeforeExit()
 {
+    // Preview worlds must go away while the renderer and UObject services are alive.
+    UE::MimirComposite::MHReleaseCompositeThumbnails();
     if (!bOwnsToolMenusRegistration)
     {
         return;

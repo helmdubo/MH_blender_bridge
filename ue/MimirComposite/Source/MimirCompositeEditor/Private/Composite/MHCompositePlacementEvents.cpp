@@ -3,6 +3,7 @@
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeThumbnailRenderer.h"
 #include "Composite/MHEndpointPrototypeRegistry.h"
 #include "Composite/MHInstancePool.h"
 #include "Composite/MHProofCache.h"
@@ -130,6 +131,7 @@ void MHNotifyGeneratedResourceChanged(const FMHResourceKey& Key)
         }
     }
 
+    MHInvalidateCompositeThumbnails(Key);
     if (Key.Kind == EMHResourceKind::Material || Key.Kind == EMHResourceKind::Texture) return;
 
     // 16 §4 on the pool (R5b-0/R5b-1): a mesh interface delta reconciles each

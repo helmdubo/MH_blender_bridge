@@ -10,6 +10,7 @@
 
 | Срез | Статус | PR / примечание |
 |---|---|---|
+| Composite thumbnails | READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-thumbnails`, база `7f89ac0`; native thumbnail scene, один выбранный random option, async readiness; NullRHI 295/295, RHI 68/68; `docs/contracts/composite_thumbnails.md`, `docs/receipts/composite_thumbnails.md` |
 | Composite atomic secondary selection | READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-atomic-selection`, база `d18e34b`; secondary подсветка одного объекта, containing occurrence остаётся Edit target; NullRHI 292/292, D3D12 64/64; `docs/contracts/composite_atomic_selection.md`, `docs/receipts/composite_atomic_selection.md` |
 | Composite native selection + Edit panel | FIELD ACCEPTED; ATOMIC SELECTION FOLLOW-UP (owner 2026-09-07) | `codex/composite-native-selection`, база `859dd0a`; native переключение и inline Outliner приняты в поле; визуальная атомарность уточнена следующим срезом; 292/292 NullRHI, 64/64 RHI; `docs/contracts/composite_native_selection.md` |
 | Composite LMB / RMB | SUPERSEDED BY NATIVE SELECTION (owner 2026-09-07) | `codex/composite-click-buttons`, база `873a7d1`; 291/291 NullRHI, 63/63 RHI; поле выявило неудобство RMB для root Edit; `docs/contracts/composite_click_buttons.md` |
