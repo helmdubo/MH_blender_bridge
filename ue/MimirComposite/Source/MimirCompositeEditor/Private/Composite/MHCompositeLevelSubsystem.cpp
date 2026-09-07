@@ -1104,6 +1104,13 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
     return bPublished;
 }
 
+bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, const FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError)
+{
+    static_cast<void>(Asset); static_cast<void>(Edited); static_cast<void>(CanonicalBytes); static_cast<void>(OutWarnings);
+    OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: not implemented");
+    return false;
+}
+
 bool UMHCompositeLevelSubsystem::PublishDefinition(
     UMHCompositeAsset& Asset,
     const FMHCompositeDocument& Document,
