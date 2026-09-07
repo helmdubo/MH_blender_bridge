@@ -383,14 +383,16 @@ ParentSemanticFingerprint = Hash(kind, resource key, structural role, его Par
   (клик по инстансу пула выделяет owner-композит).
   Уточнение owner 2026-09-07: вне Edit одиночные LMB/RMB сохраняют текущий
   уровень выбора. Двойной LMB на единственном выбранном placement переключает
-  root ↔ logical subcomposite selection; в состоянии вложений одиночный клик
-  выбирает содержащее mesh occurrence и подсвечивает все его листья. RMB
-  открывает меню текущего уровня: Edit root открывает root, Edit occurrence
+  root ↔ logical object selection; в secondary состоянии одиночный клик
+  выбирает и подсвечивает только точный объект (resident leaf NodePath).
+  Его ближайшее содержащее occurrence остаётся контекстом Edit. RMB
+  открывает меню текущего уровня: Edit root открывает root, Edit объекта
   открывает его определение с выбранным authored node задетого меша.
   Composite Outliner встроен в левую панель Edit Mode; отдельной Nomad-вкладки
   нет. Дерево и его команды служат редактированию узлов сессии. Контракт:
   `docs/contracts/composite_native_selection.md` заменяет прежнее разделение
-  кнопок из `docs/contracts/composite_click_buttons.md`.
+  кнопок из `docs/contracts/composite_click_buttons.md`; атомарный визуальный
+  выбор уточнён в `docs/contracts/composite_atomic_selection.md`.
 
 ### 2.9 `Actor`-листья (R7, после capability-контракта)
 

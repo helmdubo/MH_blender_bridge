@@ -373,8 +373,7 @@ void AMHCompositeActor::ClearPlacementLeafSelection()
 
 bool AMHCompositeActor::ShouldHighlightPlacementLeafPath(const FString& NodePath) const
 {
-    return SelectedPlacementLeafPath.IsEmpty() || SelectedPlacementOccurrencePath.IsEmpty() ||
-        NodePath.StartsWith(SelectedPlacementOccurrencePath + TEXT(">"));
+    return SelectedPlacementLeafPath.IsEmpty() || NodePath == SelectedPlacementLeafPath;
 }
 
 void AMHCompositeActor::PrunePlacementLeafSelection()

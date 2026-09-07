@@ -195,7 +195,7 @@ public:
     void ClearPlacementLeafSelection();
     const FString& GetSelectedPlacementLeafPath() const { return SelectedPlacementLeafPath; }
     const FString& GetSelectedPlacementOccurrencePath() const { return SelectedPlacementOccurrencePath; }
-    /** Pool selection predicate: a leaf hit highlights its enclosing occurrence; direct actor selection highlights all. */
+    /** Pool selection predicate: highlight only the selected object; direct actor selection highlights all. Edit scope is separate. */
     bool ShouldHighlightPlacementLeafPath(const FString& NodePath) const;
 
     const TArray<FString>& GetLastPlacementWarnings() const

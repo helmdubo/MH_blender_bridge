@@ -261,14 +261,14 @@ bool FMHPoolLeafSelectsNearestCompositeOccurrenceTest::RunTest(const FString& Pa
         if (!OutInstance || Set->GetSelectionElement(OutInstance, Method) != OwnerHandle) return FString();
         return Row->NodePath;
     };
-    const auto OnlyOccurrenceHighlighted = [&](const FString& Occurrence) -> bool
+    const auto OnlyLeafHighlighted = [&](const FString& LeafPath) -> bool
     {
         for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
         {
             const UInstancedStaticMeshComponent* Bucket =
                 Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
             if (Bucket == nullptr || Row.InstanceIndex == INDEX_NONE) return false;
-            const bool bExpected = Row.NodePath.StartsWith(Occurrence + TEXT(">"));
+            const bool bExpected = Row.NodePath == LeafPath;
             if (Bucket->IsInstanceSelected(Row.InstanceIndex) != bExpected) return false;
         }
         for (const FMHCompositeLeafMaterialization& Row : Other->GetLeafMaterializations())
@@ -317,16 +317,16 @@ bool FMHPoolLeafSelectsNearestCompositeOccurrenceTest::RunTest(const FString& Pa
     // mapping independently, including repeated and random invocations.
     bPassed &= TestTrue(TEXT("first leaf selects its enclosing occurrence"),
         Actor->SelectPlacementLeafByNodePath(FirstHit));
-    bPassed &= TestTrue(TEXT("first occurrence highlighted as a unit"),
-        OnlyOccurrenceHighlighted(ExplicitOccurrences[0]));
+    bPassed &= TestTrue(TEXT("only first clicked leaf is highlighted"),
+        OnlyLeafHighlighted(FirstHit));
     FTypedElementHandle SecondRawHit;
     const FString SecondHit = HitUnder(
         ExplicitOccurrences[1], ETypedElementSelectionMethod::Primary, SecondRawHit);
     bPassed &= TestFalse(TEXT("second occurrence has a hittable pooled leaf"), SecondHit.IsEmpty());
     bPassed &= TestTrue(TEXT("second leaf maps to its distinct occurrence"),
         Actor->SelectPlacementLeafByNodePath(SecondHit));
-    bPassed &= TestTrue(TEXT("second occurrence highlighted as a unit"),
-        OnlyOccurrenceHighlighted(ExplicitOccurrences[1]));
+    bPassed &= TestTrue(TEXT("only second clicked leaf is highlighted"),
+        OnlyLeafHighlighted(SecondHit));
     FTypedElementHandle OptionRawHit;
     const FString OptionHit = HitUnder(
         RandomOccurrence, ETypedElementSelectionMethod::Primary, OptionRawHit);
@@ -335,8 +335,8 @@ bool FMHPoolLeafSelectsNearestCompositeOccurrenceTest::RunTest(const FString& Pa
         Actor->SelectPlacementLeafByNodePath(OptionHit));
     bPassed &= TestEqual(TEXT("exact selected option leaf"),
         Actor->GetSelectedPlacementLeafPath(), OptionHit);
-    bPassed &= TestTrue(TEXT("selected composite option highlighted as one occurrence"),
-        OnlyOccurrenceHighlighted(RandomOccurrence));
+    bPassed &= TestTrue(TEXT("only clicked option descendant is highlighted"),
+        OnlyLeafHighlighted(OptionHit));
 
     // Once selection leaves the actor, a later direct actor selection has no
     // stale leaf context and therefore keeps the established whole-placement

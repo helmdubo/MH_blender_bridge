@@ -64,6 +64,9 @@ bool FMHCompositeNativeSelectionCycleTest::RunTest(const FString& Parameters)
     Option.Kind = EMHCompositeOptionKind::Composite;
     Option.Resource = Child->LogicalName;
     Option.Weight = 1.0f;
+    FMHCompositeNode& DirectLeaf = RootDocument.Nodes.AddDefaulted_GetRef();
+    DirectLeaf.Kind = EMHCompositeNodeKind::Mesh;
+    DirectLeaf.Resource = MeshName;
     UMHCompositeAsset* Root = Recipe.Composite(Recipe.Name(TEXT("native_selection_root")), RootDocument, {});
     if (!TestNotNull(TEXT("root"), Root)) return false;
 
@@ -112,16 +115,16 @@ bool FMHCompositeNativeSelectionCycleTest::RunTest(const FString& Parameters)
     {
         return Actor->GetLeafMaterializations().FindByPredicate([&Prefix](const FMHCompositeLeafMaterialization& Row)
         {
-            return Row.NodePath.StartsWith(Prefix + TEXT(">"));
+            return Row.NodePath == Prefix || Row.NodePath.StartsWith(Prefix + TEXT(">"));
         });
     };
-    auto HighlightedOnly = [&](const FString& Prefix) -> bool
+    auto HighlightedOnly = [&](const FString& LeafPath) -> bool
     {
         for (const FMHCompositeLeafMaterialization& Row : Actor->GetLeafMaterializations())
         {
             const UInstancedStaticMeshComponent* Bucket = Cast<UInstancedStaticMeshComponent>(Row.Component.Get());
             if (Bucket == nullptr || Row.InstanceIndex == INDEX_NONE) return false;
-            const bool bExpected = Prefix.IsEmpty() || Row.NodePath.StartsWith(Prefix + TEXT(">"));
+            const bool bExpected = LeafPath.IsEmpty() || Row.NodePath == LeafPath;
             if (Bucket->IsInstanceSelected(Row.InstanceIndex) != bExpected) return false;
         }
         for (const FMHCompositeLeafMaterialization& Row : Other->GetLeafMaterializations())
@@ -179,7 +182,22 @@ bool FMHCompositeNativeSelectionCycleTest::RunTest(const FString& Parameters)
     // typed selection route; no helper or direct actor-selection shortcut is used.
     bPassed &= NativeHit(Occurrences[0], ETypedElementSelectionMethod::Secondary, true);
     bPassed &= TestEqual(TEXT("secondary enters occurrence context"), Actor->GetSelectedPlacementOccurrencePath(), Occurrences[0]);
-    bPassed &= TestTrue(TEXT("secondary highlights first occurrence"), HighlightedOnly(Occurrences[0]));
+    bPassed &= TestTrue(TEXT("secondary highlights only clicked object"), HighlightedOnly(RowFor(Occurrences[0])->NodePath));
+
+    // Two objects belong to the same subcomposite: a Primary hit changes only
+    // the selected object, while retaining that definition as the Edit target.
+    const FString FirstObject = RowFor(Occurrences[0])->NodePath;
+    const FMHCompositeLeafMaterialization* SecondObjectRow = Actor->GetLeafMaterializations().FindByPredicate(
+        [&](const FMHCompositeLeafMaterialization& Row)
+        {
+            return Row.NodePath.StartsWith(Occurrences[0] + TEXT(">")) && Row.NodePath != FirstObject;
+        });
+    if (!TestNotNull(TEXT("second object in same occurrence"), SecondObjectRow)) return false;
+    const FString SecondObject = SecondObjectRow->NodePath;
+    bPassed &= NativeHit(SecondObject, ETypedElementSelectionMethod::Primary, true);
+    bPassed &= TestEqual(TEXT("single click selects exact second object"), Actor->GetSelectedPlacementLeafPath(), SecondObject);
+    bPassed &= TestEqual(TEXT("object selection preserves containing Edit scope"), Actor->GetSelectedPlacementOccurrencePath(), Occurrences[0]);
+    bPassed &= TestTrue(TEXT("other objects in the same composite are not highlighted"), HighlightedOnly(SecondObject));
 
     bPassed &= NativeHit(Occurrences[1], ETypedElementSelectionMethod::Primary, false);
     bPassed &= TestEqual(TEXT("RMB in nested selection retargets sibling"), Actor->GetSelectedPlacementOccurrencePath(), Occurrences[1]);
@@ -199,7 +217,7 @@ bool FMHCompositeNativeSelectionCycleTest::RunTest(const FString& Parameters)
     // primary hit with the owner already selected must not force root context.
     bPassed &= NativeHit(Occurrences[1], ETypedElementSelectionMethod::Primary, true);
     bPassed &= TestEqual(TEXT("primary nested hit retargets sibling"), Actor->GetSelectedPlacementOccurrencePath(), Occurrences[1]);
-    bPassed &= TestTrue(TEXT("sibling occurrence highlighted"), HighlightedOnly(Occurrences[1]));
+    bPassed &= TestTrue(TEXT("only the clicked sibling object is highlighted"), HighlightedOnly(RowFor(Occurrences[1])->NodePath));
 
     // Secondary toggles nested state back to the owner root.
     bPassed &= NativeHit(Occurrences[1], ETypedElementSelectionMethod::Secondary, true);
@@ -241,6 +259,23 @@ bool FMHCompositeNativeSelectionCycleTest::RunTest(const FString& Parameters)
     }
     bPassed &= TestFalse(TEXT("other actor deselects first owner"), Actor->IsSelected());
     bPassed &= TestTrue(TEXT("other actor clears stale first owner context"), Actor->GetSelectedPlacementLeafPath().IsEmpty());
+
+    const FMHCompositeLeafMaterialization* DirectRow = Actor->GetLeafMaterializations().FindByPredicate(
+        [](const FMHCompositeLeafMaterialization& Row) { return !Row.NodePath.Contains(TEXT(">")); });
+    if (!TestNotNull(TEXT("direct root object"), DirectRow)) return false;
+    const FString DirectPath = DirectRow->NodePath;
+    bPassed &= NativeHit(DirectPath, ETypedElementSelectionMethod::Primary, true);
+    bPassed &= NativeHit(DirectPath, ETypedElementSelectionMethod::Secondary, true);
+    bPassed &= TestTrue(TEXT("direct root object is highlighted alone"), HighlightedOnly(DirectPath));
+    bPassed &= TestTrue(TEXT("direct object keeps root as Edit target"), Actor->GetSelectedPlacementOccurrencePath().IsEmpty());
+    bPassed &= TestTrue(TEXT("picked root object opens root Edit"), MHBeginEditPickedComposite(*Actor, DirectPath, Error));
+    Session = Subsystem->GetEditSession();
+    Projection = Session != nullptr ? Session->GetProjection() : nullptr;
+    Component = Projection != nullptr ? Projection->FindComponentForOrigin(DirectPath) : nullptr;
+    bPassed &= TestTrue(TEXT("root Edit preselects clicked object's authored node"),
+        Session != nullptr && Session->GetInvocationPath().IsEmpty() && Component != nullptr &&
+        Session->GetActiveNodeId() == Projection->GetNodeIdForComponent(Component));
+    bPassed &= TestTrue(TEXT("picked root edit cancels"), Subsystem->CancelEditComposite(Error));
     return bPassed;
 }
 
