@@ -1,8 +1,8 @@
 # CE-6b2 — удаление legacy Composite Edit
 
-Статус: **VERIFIED — ready for merge** (owner 2026-09-08). Пользователь принял взаимодействие
+Статус: **MERGED — PR #166** (owner 2026-09-08). Пользователь принял взаимодействие
 Composite Edit и исправленный Break, явно запросил удаление старой реализации,
-commit/push и merge в `main`. Разрешение получено; merge ещё не выполнен.
+commit/push и merge в `main`. Merge выполнен: `ad69756`, cleanup-коммит `6155b53`.
 Проверки завершены: два полных прогона 292/292, D3D12 97/97, guarded/strict
 non-unity/no-PCH и force-unity/adaptive-off, PerfTrace до/после. Квитанция:
 `docs/receipts/composite_edit_cleanup.md`.
@@ -58,5 +58,4 @@ Legacy-тесты переводятся на session/draft/projection либо 
 
 Полный regression suite содержит **292 вместо 297** тестов до cleanup;
 миграции и замены перечислены в квитанции. Обе сборки прошли 292/292,
-D3D12 — 97/97; golden/parity и сборочные гейты пройдены. Merge разрешён
-owner; его фактический результат фиксируется после операции.
+D3D12 — 97/97; golden/parity и сборочные гейты пройдены. Merge выполнен по разрешению owner: PR #166, `ad69756`.
