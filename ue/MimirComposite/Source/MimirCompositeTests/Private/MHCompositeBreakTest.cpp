@@ -43,6 +43,8 @@ struct FBreakFixture
     {
         if (World != nullptr)
         {
+            // Break selects its output actors; release editor handles before destroying the fixture world.
+            if (GEditor != nullptr) GEditor->SelectNone(true, true, false);
             if (GEditor != nullptr && GEditor->Trans != nullptr) GEditor->Trans->Reset(INVTEXT("MH Break test teardown"));
             World->DestroyWorld(false);
         }
