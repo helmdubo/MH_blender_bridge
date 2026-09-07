@@ -1096,8 +1096,9 @@ bool UMHCompositeLevelSubsystem::CommitNestedEditComposite(TArray<FString>& OutW
     if (!MHExtractCompositeV5(*Child, Previous, OutError)) return false;
 
     // CE-5a: a CE-backend session publishes without closing first (a
-    // failure keeps the draft); the legacy path crosses the boundary here.
-    if (bSessionEdit) return PublishFromSession(*Child, Edited, CanonicalPreflight, OutWarnings, OutError);
+    // failure keeps the draft); the legacy path — where the session is only
+    // the facade over the placement's handles — crosses the boundary here.
+    if (bSessionEdit && !bLegacyEdit) return PublishFromSession(*Child, Edited, CanonicalPreflight, OutWarnings, OutError);
 
     // Source boundary, as for a root Commit: once the file is written, UE
     // Undo must not resurrect a pre-publish snapshot.
