@@ -12,6 +12,7 @@ public:
 private:
     void RegisterMenus();
     void UnregisterMenusBeforeExit();
+    void UnregisterThumbnailRenderer();
 
     FDelegateHandle AssetRegistryTagsHandle;
     FDelegateHandle ObjectModifiedHandle;
@@ -20,4 +21,5 @@ private:
     /** R5b-2b: the pool-instance selection seam lives on the level editor's element selection set. */
     void RegisterPoolInstanceSelection();
     bool bOwnsToolMenusRegistration = false;
+    bool bOwnsThumbnailRenderer = false;
 };

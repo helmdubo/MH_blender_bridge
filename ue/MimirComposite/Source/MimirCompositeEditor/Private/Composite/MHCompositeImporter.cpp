@@ -226,9 +226,29 @@ bool AtomicWriteComposite(const FString& TargetPath, const TArray<uint8>& Bytes,
     FMHCompositeDocument Parsed;
     TArray<uint8> Rewritten;
     FString ValidationError;
-    if (!FFileHelper::LoadFileToArray(ReadBack, *TempPath) || ReadBack != Bytes ||
-        !MHParseCompositeV5(ReadBack, Parsed, ValidationError) ||
-        !MHWriteCanonicalCompositeV5(Parsed, Rewritten, ValidationError) || Rewritten != Bytes)
+    bool bValid = false;
+    if (!FFileHelper::LoadFileToArray(ReadBack, *TempPath))
+    {
+        ValidationError = TEXT("cannot read sibling temporary composite");
+    }
+    else if (ReadBack != Bytes)
+    {
+        ValidationError = TEXT("temporary file bytes differ from the canonical payload written");
+    }
+    else
+    {
+        // Bytes already came from the canonical writer. Exact disk equality
+        // proves write integrity; parse/write success checks admission. Do not
+        // require a parse/write byte fixed point: both normalize float32
+        // quaternions, whose low bits can change on another normalization.
+        bValid = MHParseCompositeV5(ReadBack, Parsed, ValidationError) &&
+            MHWriteCanonicalCompositeV5(Parsed, Rewritten, ValidationError);
+        if (!bValid && ValidationError.IsEmpty())
+        {
+            ValidationError = TEXT("temporary composite failed parser/writer admission without a diagnostic");
+        }
+    }
+    if (!bValid)
     {
         IFileManager::Get().Delete(*TempPath, false, true, true);
         OutError = FString::Printf(
