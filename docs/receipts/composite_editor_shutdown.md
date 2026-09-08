@@ -1,7 +1,8 @@
 # Composite editor shutdown crash — 2026-09-08
 
 Status: VERIFIED; INSTALLED FOR FIELD TEST. Branch `codex/fix-editor-shutdown`.
-Includes the preceding unmerged SaveRotation fix; neither change is merged.
+Includes the preceding SaveRotation fix. Owner authorized commit, push and merge
+on 2026-09-08; integration is tracked in [PR #168](https://github.com/helmdubo/MH_blender_bridge/pull/168).
 
 ## Evidence and fix
 

@@ -1,7 +1,9 @@
 # Composite Save: float32 quaternion read-back, 2026-09-08
 
 Status: VERIFIED; INSTALLED FOR FIELD TEST. Branch
-`codex/fix-composite-save-validation`, base `8826fa1`; changes are not merged.
+`codex/fix-composite-save-validation`, base `8826fa1`. Integrated with the shutdown
+fix through [PR #168](https://github.com/helmdubo/MH_blender_bridge/pull/168),
+authorized by owner on 2026-09-08.
 Owner field report: moving a node in `sovmod_cottage_i_plants_cmp` cannot Save;
 the session reports `MH_E_COMPOSITE_GRAMMAR: temporary read-back validation
 failed:` with no reason, followed by `MH_W_NO_EXTERNAL_CHANGE`.

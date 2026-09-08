@@ -13,13 +13,14 @@ CE-6b2 и стек interaction/Break смержены в PR #166 (`ad69756`), и
 исследование панели Composit в Dagor Asset Viewer. Предлагаемые расширения
 EditMode описаны в справочной заметке; реализация новых команд не начата.
 Полевые исправления SaveRotation и последующего краша на выходе проверены и
-установлены для полевого теста; merge не выполнялся. Shutdown проверен штатным
+установлены для полевого теста. Owner разрешил commit/push/merge 2026-09-08;
+интеграция изменений — PR #168. Shutdown проверен штатным
 завершением процесса через Automation SoftQuit после полного набора и RHI.
 
 | Срез | Статус | PR / примечание |
 |---|---|---|
-| Composite editor shutdown | VERIFIED; INSTALLED FOR FIELD TEST (2026-09-08) | `codex/fix-editor-shutdown`: thumbnail/Details cleanup до UObject teardown, однократная регистрация; RED crash, 293/293 full + normal exit 0, 6/6 RHI + normal exit 0; `docs/receipts/composite_editor_shutdown.md` |
-| Composite Save rotation read-back | VERIFIED; INSTALLED FOR FIELD TEST (2026-09-08) | `codex/fix-composite-save-validation`: точные disk bytes + parser/writer admission без fixed-point; 293/293 full, 3/3 focused, три режима сборки; `docs/receipts/composite_save_rotation_readback.md`; не смержено |
+| Composite editor shutdown | VERIFIED; INSTALLED FOR FIELD TEST (2026-09-08) | PR #168, `codex/fix-editor-shutdown`: thumbnail/Details cleanup до UObject teardown, однократная регистрация; RED crash, 293/293 full + normal exit 0, 6/6 RHI + normal exit 0; `docs/receipts/composite_editor_shutdown.md` |
+| Composite Save rotation read-back | VERIFIED; INSTALLED FOR FIELD TEST (2026-09-08) | `codex/fix-composite-save-validation`: точные disk bytes + parser/writer admission без fixed-point; 293/293 full, 3/3 focused, три режима сборки; `docs/receipts/composite_save_rotation_readback.md`; интеграция PR #168 |
 | AV-Edit research | RESEARCH COMPLETE; proposals only (owner 2026-09-08) | `docs/reference_notes/dagor_assetviewer_composit_panel_20260908.md`: C++ Add node / Add entity, модель содержимого, параметры, карта текущего MH; реализация расширений не входит в исследование |
 | Composite Break / Undo | MERGED via #166; FIELD ACCEPTED (owner 2026-09-08) | `codex/composite-break-undo`, база `1b36160`; один слой относительно собственного invocation context, lifecycle пула при Undo/Redo; проверки Break до cleanup: NullRHI 297/297, D3D12 89/89; `docs/contracts/composite_break_undo.md`, `docs/receipts/composite_break_undo.md` |
 | Composite thumbnails | MERGED via #166; READY FOR FIELD TEST (owner 2026-09-07) | `codex/composite-thumbnails`, база `7f89ac0`; native thumbnail scene, один выбранный random option, async readiness; NullRHI 295/295, RHI 68/68; `docs/contracts/composite_thumbnails.md`, `docs/receipts/composite_thumbnails.md` |
