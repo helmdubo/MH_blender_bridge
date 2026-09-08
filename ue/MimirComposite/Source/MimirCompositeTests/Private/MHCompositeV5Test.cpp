@@ -19,6 +19,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
@@ -463,6 +464,63 @@ bool FMHCompositeClosureTest::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("unresolved code"),
         StartsWithCode(Error, TEXT("MH_E_UNRESOLVED_COMPOSITE_REFERENCE")));
     IFileManager::Get().Delete(*NestedPath, false, true, true);
+    return bPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHCompositePublishTranslatedRotationTest,
+    "Mimir.V5.Composite.PublishTranslatedRotation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHCompositePublishTranslatedRotationTest::RunTest(const FString& Parameters)
+{
+    // Rotation from the plants composite field failure. Float32 normalization
+    // changes its low bits on successive parse/write passes, even for a move.
+    FMHCompositeDocument Document;
+    FMHCompositeNode& Node = Document.Nodes.AddDefaulted_GetRef();
+    Node.Kind = EMHCompositeNodeKind::Group;
+    Node.Transform.RotationQuat = FQuat(-0.025757322f, -0.025756564f, -0.7060713f, 0.7072032f);
+    FString Error;
+    const FString LogicalName = TEXT("ue_publish_rotation_") + FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower();
+    UMHCompositeAsset* Asset = MakeCompositeProbeAsset(LogicalName, Document, Error);
+    if (!TestNotNull(TEXT("managed fixture applies"), Asset)) { AddError(Error); return false; }
+
+    Document.Nodes[0].Transform.TranslationCm = FVector(-922.62f, -602.37f, 25.0f);
+    if (!TestTrue(TEXT("translation-only edit applies"), MHApplyCompositeV5(*Asset, Document, Error)))
+    { AddError(Error); return false; }
+    FMHCompositeDocument Extracted;
+    TArray<uint8> Expected;
+    if (!MHExtractCompositeV5(*Asset, Extracted, Error) || !MHWriteCanonicalCompositeV5(Extracted, Expected, Error))
+    { AddError(Error); return false; }
+    FMHCompositeDocument Parsed;
+    TArray<uint8> Rewritten;
+    if (!MHParseCompositeV5(Expected, Parsed, Error) || !MHWriteCanonicalCompositeV5(Parsed, Rewritten, Error))
+    { AddError(Error); return false; }
+    bool bPassed = TestTrue(TEXT("valid rotation is not a parse/write byte fixed point"), Expected != Rewritten);
+    FString Warning;
+    bPassed &= TestTrue(TEXT("translation is initially a local modification"), MHDetectManagedCompositeLocalModification(*Asset, Warning));
+
+    const FString SourceRoot = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("MimirCompositeTests/publish_rotation"), LogicalName);
+    const FString SourcePath = FPaths::Combine(SourceRoot, Asset->SourceRelativePath);
+    for (int32 Pass = 0; Pass < 2; ++Pass)
+    {
+        const FMHCompositeOperationResult Published = MHPublishCompositeV5(*Asset, SourceRoot);
+        if (!TestTrue(TEXT("translated rotation publishes, including repeated Save"), Published.Succeeded()))
+        { AddError(Published.Error); return false; }
+        TArray<uint8> Actual;
+        bPassed &= TestTrue(TEXT("published file reads"), FFileHelper::LoadFileToArray(Actual, *SourcePath));
+        bPassed &= TestTrue(TEXT("disk contains exact original writer bytes"), Actual == Expected);
+        bPassed &= TestEqual(TEXT("source receipt hashes committed bytes"), Asset->SourceHash, MHRawPayloadHash(Expected));
+        bPassed &= TestEqual(TEXT("applied receipt matches committed bytes"), Asset->AppliedHash, Asset->SourceHash);
+        bPassed &= TestFalse(TEXT("successful Save clears local modification"), MHDetectManagedCompositeLocalModification(*Asset, Warning));
+        bPassed &= TestTrue(TEXT("saved document parses"), MHParseCompositeV5(Actual, Parsed, Error));
+        if (Parsed.Nodes.Num() == 1)
+        {
+            bPassed &= TestTrue(TEXT("edited position survives read-back"),
+                Parsed.Nodes[0].Transform.TranslationCm.Equals(Document.Nodes[0].Transform.TranslationCm, 0.0));
+        }
+        else bPassed &= TestEqual(TEXT("node survives publication"), Parsed.Nodes.Num(), 1);
+    }
     return bPassed;
 }
 

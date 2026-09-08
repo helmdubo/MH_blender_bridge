@@ -33,6 +33,7 @@
 #include "UI/MHCompositeActorDetails.h"
 #include "UI/MHSourceToolMenus.h"
 #include "UObject/AssetRegistryTagsContext.h"
+#include "UObject/UObjectBase.h"
 
 #define LOCTEXT_NAMESPACE "MimirCompositeEditor"
 
@@ -192,7 +193,10 @@ void ExecuteReimportManagedMaterials(const FToolMenuContext& MenuContext)
 void FMimirCompositeEditorModule::StartupModule()
 {
     if (!IsRunningCommandlet())
+    {
         UThumbnailManager::Get().RegisterCustomRenderer(UMHCompositeAsset::StaticClass(), UMHCompositeThumbnailRenderer::StaticClass());
+        bOwnsThumbnailRenderer = true;
+    }
     UE::MimirComposite::MHStartupRuntimeCompositeBridge();
     UE::MimirComposite::MHStartupManagedStaticMeshReimportHandler();
     AssetRegistryTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(
@@ -244,9 +248,7 @@ void FMimirCompositeEditorModule::RegisterPoolInstanceSelection()
 
 void FMimirCompositeEditorModule::ShutdownModule()
 {
-    UE::MimirComposite::MHReleaseCompositeThumbnails();
-    if (UThumbnailManager* Manager = UThumbnailManager::TryGet())
-        Manager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
+    UnregisterThumbnailRenderer();
     UE::MimirComposite::MHShutdownManagedStaticMeshReimportHandler();
     UE::MimirComposite::MHShutdownRuntimeCompositeBridge();
     UE::MimirComposite::MHShutdownProjectIndex();
@@ -264,7 +266,7 @@ void FMimirCompositeEditorModule::ShutdownModule()
     if (!IsRunningCommandlet())
     {
         UMHCompositeEditorMode::UnregisterCommands();
-        UE::MimirComposite::MHUnregisterCompositeActorDetails();
+        if (UObjectInitialized()) UE::MimirComposite::MHUnregisterCompositeActorDetails();
         // Dynamic plugin unload still needs cleanup, but engine exit must not
         // touch ToolMenus: its singleton can already be torn down even though
         // this editor module is only now receiving ShutdownModule(). Normal
@@ -293,10 +295,23 @@ void FMimirCompositeEditorModule::ShutdownModule()
     }
 }
 
+void FMimirCompositeEditorModule::UnregisterThumbnailRenderer()
+{
+    if (!bOwnsThumbnailRenderer) return;
+    bOwnsThumbnailRenderer = false;
+    // TryGet returns a raw singleton that can remain non-null after UObject
+    // shutdown. Normal exit releases this registration at OnEnginePreExit;
+    // dynamic module unload may also release it while UObject is still alive.
+    if (!UObjectInitialized()) return;
+    UE::MimirComposite::MHReleaseCompositeThumbnails();
+    if (UThumbnailManager* Manager = UThumbnailManager::TryGet())
+        Manager->UnregisterCustomRenderer(UMHCompositeAsset::StaticClass());
+}
+
 void FMimirCompositeEditorModule::UnregisterMenusBeforeExit()
 {
-    // Preview worlds must go away while the renderer and UObject services are alive.
-    UE::MimirComposite::MHReleaseCompositeThumbnails();
+    UnregisterThumbnailRenderer();
+    if (UObjectInitialized()) UE::MimirComposite::MHUnregisterCompositeActorDetails();
     if (!bOwnsToolMenusRegistration)
     {
         return;
