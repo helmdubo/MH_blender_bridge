@@ -3,6 +3,7 @@
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Engine/World.h"
+#include "UObject/StrongObjectPtr.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeEditSession)
 
@@ -241,10 +242,89 @@ void UMHCompositeEditSession::RefreshProjection()
 
 FGuid UMHCompositeEditSession::AddNode(const FGuid& ParentId, const EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError)
 {
-    if (SessionClosed(*this, Draft, OutError)) return FGuid();
-    const FGuid Id = Draft->AddNode(ParentId, Kind, Resource, Name, LocalTransform, OutError);
-    if (Id.IsValid()) FinishAuthoringCommand(true);
-    return Id;
+    FMHCompositeNodeAdd Request;
+    Request.Kind = Kind;
+    Request.Resource = Resource;
+    Request.Name = Name;
+    Request.LocalTransform = LocalTransform;
+    TArray<FGuid> Ids;
+    return AddNodes(ParentId, MakeArrayView(&Request, 1), Ids, OutError) && Ids.Num() == 1 ? Ids[0] : FGuid();
+}
+
+bool UMHCompositeEditSession::RetargetDefinition(UMHCompositeAsset* InEditedAsset, const FString& InInvocationPath,
+    const FMHCompositeDocument& InOriginal, const uint32 InEpoch, FString& OutError)
+{
+    OutError.Reset();
+    TArray<uint8> NextBytes;
+    if (!IsOpen() || Draft == nullptr || InEditedAsset == nullptr)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: switching scope requires a live edit session and definition");
+        return false;
+    }
+    if (!MHWriteCanonicalCompositeV5(InOriginal, NextBytes, OutError)) return false;
+
+    const TStrongObjectPtr<UMHCompositeEditDocument> PreviousDraft(Draft);
+    const TStrongObjectPtr<UMHCompositeAsset> PreviousAsset(EditedAsset.Get());
+    const FMHCompositeDocument PreviousOriginal = Original;
+    const TArray<uint8> PreviousBytes = OriginalBytes;
+    const FString PreviousPath = InvocationPath;
+    const uint32 PreviousEpoch = Epoch;
+    const TArray<FGuid> PreviousSelection = SelectedNodeIds;
+    const FGuid PreviousActive = ActiveNodeId;
+    // Clear native selection through the bound mode before retiring selected components.
+    SetSelectedNodeIds({});
+    CloseProjection();
+    Epoch = InEpoch;
+    EditedAsset = InEditedAsset;
+    InvocationPath = InInvocationPath;
+    Original = InOriginal;
+    OriginalBytes = MoveTemp(NextBytes);
+    Draft = NewObject<UMHCompositeEditDocument>(this, NAME_None, RF_Transactional);
+    Draft->OnRestored.BindWeakLambda(this, [this]()
+    {
+        if (!IsOpen()) return;
+        PruneSelection();
+        RefreshProjection();
+        OnChanged.Broadcast();
+    });
+    Draft->Load(Original, InEditedAsset->InlinedPlacementProfiles);
+    bDirtyCacheValid = false;
+    if (OpenProjection(OutError)) return true;
+
+    const FString TargetError = OutError;
+    CloseProjection();
+    Draft->OnRestored.Unbind();
+    Draft = PreviousDraft.Get();
+    EditedAsset = PreviousAsset.Get();
+    InvocationPath = PreviousPath;
+    Epoch = PreviousEpoch;
+    Original = PreviousOriginal;
+    OriginalBytes = PreviousBytes;
+    bDirtyCacheValid = false;
+    FString RestoreError;
+    const bool bRestored = OpenProjection(RestoreError);
+    SetSelectedNodeIds(PreviousSelection, PreviousActive);
+    OutError = TargetError;
+    if (!bRestored) OutError += TEXT("; previous draft retained, preview restore failed: ") + RestoreError;
+    return false;
+}
+
+bool UMHCompositeEditSession::AddNodes(
+    const FGuid& ParentId,
+    const TConstArrayView<FMHCompositeNodeAdd> Requests,
+    TArray<FGuid>& OutIds,
+    FString& OutError,
+    const int32 SiblingIndex)
+{
+    OutIds.Reset();
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    if (!Draft->AddNodes(ParentId, Requests, OutIds, OutError, SiblingIndex)) return false;
+    if (!OutIds.IsEmpty())
+    {
+        SetSelectedNodeIds(OutIds, OutIds.Last());
+        FinishAuthoringCommand(true);
+    }
+    return true;
 }
 
 bool UMHCompositeEditSession::DeleteNode(const FGuid& NodeId, FString& OutError)
@@ -371,5 +451,39 @@ bool UMHCompositeEditSession::SetNodeOptions(const FGuid& NodeId, const TArray<F
     if (SessionClosed(*this, Draft, OutError)) return false;
     if (!Draft->SetNodeOptions(NodeId, Options, OutError)) return false;
     FinishAuthoringCommand();
+    return true;
+}
+
+bool UMHCompositeEditSession::AddNodeOptions(
+    const FGuid& NodeId,
+    const TConstArrayView<FMHCompositeOption> Options,
+    FString& OutError)
+{
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    const uint32 RevisionBefore = Draft->GetRevision();
+    if (!Draft->AddNodeOptions(NodeId, Options, OutError)) return false;
+    if (Draft->GetRevision() != RevisionBefore) FinishAuthoringCommand();
+    return true;
+}
+
+bool UMHCompositeEditSession::SetNodeOptionWeight(
+    const FGuid& NodeId,
+    const int32 OptionIndex,
+    const float Weight,
+    FString& OutError)
+{
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    const uint32 RevisionBefore = Draft->GetRevision();
+    if (!Draft->SetNodeOptionWeight(NodeId, OptionIndex, Weight, OutError)) return false;
+    if (Draft->GetRevision() != RevisionBefore) FinishAuthoringCommand();
+    return true;
+}
+
+bool UMHCompositeEditSession::RemoveNodeOption(const FGuid& NodeId, const int32 OptionIndex, FString& OutError)
+{
+    if (SessionClosed(*this, Draft, OutError)) return false;
+    const uint32 RevisionBefore = Draft->GetRevision();
+    if (!Draft->RemoveNodeOption(NodeId, OptionIndex, OutError)) return false;
+    if (Draft->GetRevision() != RevisionBefore) FinishAuthoringCommand();
     return true;
 }

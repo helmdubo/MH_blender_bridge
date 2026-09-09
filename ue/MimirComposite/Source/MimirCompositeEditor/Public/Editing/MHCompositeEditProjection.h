@@ -86,6 +86,10 @@ public:
     bool Open(UMHCompositeEditSession& Session, FString& OutError);
     /** Re-resolves the draft and re-places the components; components keep their identity per plan origin. */
     bool Refresh(FString& OutError);
+    /** A retained draft must suppress the placement's current handles after publishing/rebuilding that placement. */
+    void RebindSuppression();
+    /** Source-graph admission before publication; does not resolve layout or mutate scene components. */
+    bool ValidateDraftSourceGraph(FString& OutError);
     /** Transform-only gesture path; falls back to Refresh when cached topology cannot be reused exactly. */
     bool RefreshTransforms(const TArray<FGuid>& NodeIds, FString& OutError);
     /** Releases the lease and destroys the projection actor. Safe to call twice. */

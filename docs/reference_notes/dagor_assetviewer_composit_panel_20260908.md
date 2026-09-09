@@ -433,12 +433,109 @@ full proof, синхронную компиляцию мешей или публ
 работающие native selection, session isolation, плавный drag, Save/Cancel,
 thumbnail refresh и pooled representation вне Edit.
 
+## 11. Проверка полевых наблюдений автора, 2026-09-09
+
+Повторно проверенная вершина Dagor `main` по GitHub API — тот же
+`75723669297e48e200a0dc67b18c1629e0975daf`. Ниже наблюдения из Asset Viewer
+сопоставлены с UI, сериализацией и исполнителем; это уточнение исследования,
+не изменение контракта или реализации MH.
+
+### Node, содержимое и Random
+
+| Наблюдение | Результат проверки |
+| --- | --- |
+| Node может быть пустой группой без записанной матрицы | Да. Без `tm` и процедурных значений вычисляется identity local transform, который наследует родительский базис. Отсутствие собственной entity не мешает передать transform детям. Полностью пустой лист без параметров и детей редактор пропускает при сериализации; группа с детьми сохраняется. |
+| Матрица позволяет трансформировать содержимое и дочерние nodes | Да. Матрица группы участвует в иерархии до проверки наличия собственного объекта. |
+| При включённой матрице параметры не работают | Только процедурные transform-поля: `rot_*`, `offset_*`, `scale`, `yScale`. Loader выбирает ветку `tm` вместо этих полей. `place_type`, `aboveHt` и seed-параметры читаются отдельно; их применимость зависит от размещаемого объекта и режима, а не от наличия `tm`. |
+| Ссылка на один ассет является содержимым, а не дочерним node | Да. Это параметр `name` самого node. Список `ent` задаёт альтернативные ссылки для того же места в иерархии. |
+| Наличие `ent` автоматически делает node Random, удаление последнего снимает этот признак | Да, для поддерживаемого UI состояния. `getName()` возвращает `random` при наличии непосредственных `ent`; отдельного сохраняемого флага Random нет. Даже один `ent` достаточен. |
+| Random node может иметь обычные дочерние nodes, в том числе Random | Да. Они обрабатываются отдельно от выбора собственного содержимого. Их количество и веса не входят в выбор между `ent` родителя. Empty-вариант родителя не выключает этих детей. |
+
+[Имена строк и признак Random][AV-derived-name], [сериализация дерева][AV-tree-data],
+[загрузка transform][DG-transform-load], [размещение после transform-веток][DG-placement-load],
+[наследование матрицы][DG-evaluate], [обход детей][DG-children].
+
+Следовательно, **Random-содержимое и процедурная трансформация — независимые
+свойства**. Node с `tm` может выбирать один из нескольких `ent`; node с одной
+постоянной ссылкой может иметь процедурный offset/rotation/scale.
+В `p2` записываются центр и разброс: `x + random(-1, 1) * y`, а не minimum/maximum.
+При нулевом разбросе procedural-поля могут задавать постоянный transform.
+[Выбор содержимого][DG-choice], [вычисление transform][DG-transform].
+
+### Entity и веса
+
+`ent` в авторском дереве — вариант ссылки, принадлежащий node, а не отдельный
+трансформируемый объект. Поддерживаемый UI не разрешает редактировать ему
+собственных детей или добавлять варианты внутрь варианта. `Add node` создаёт
+`node` с identity `tm`; `Add entity` создаёт `ent` с пустым `name` и `weight=1`.
+Отсутствующий в исходном файле `weight` тоже имеет значение по умолчанию `1`.
+[Capabilities][AV-capabilities], [создание записей][AV-insert], [default веса][AV-derived-name].
+
+Ссылка разрешается **по имени ассета**. Она может указывать на composit,
+rendInst/gameObj или другой поддерживаемый тип; пустое имя представляет Empty.
+Это не адрес произвольного inline node по имени/пути в текущем дереве. Ссылка
+на композит, внутри которого есть группы или Random, возможна; прямая ссылка
+на локальную «пустышку» — не тот механизм. Один выбранный composit может
+создать много мешей: ограничение «выбирается один» относится к варианту ссылки.
+[Разрешение ссылок и прототипы][DG-candidates].
+
+Для неотрицательных весов с положительной суммой вероятность равна
+`weight / sum(weights)`. В исходнике остаются авторские веса, например `3` и `1`;
+исполнитель нормализует свою копию до вероятностей `75%` и `25%`. Сумма
+**записанных весов не обязана быть 100**. Один непустой вариант с весом `0.5`
+выбирается всегда; для 50% появления нужны два варианта: ассет `0.5` и Empty
+`0.5`. Нулевую сумму и отрицательные веса нельзя трактовать как корректное
+распределение; ветка единственного кандидата выбирает его без сравнения веса.
+[Нормализация][DG-candidates], [одиночный и множественный выбор][DG-choice].
+
+Запрет совместного `name` и `ent` — правило возможностей панели: при наличии
+`ent` нельзя редактировать прямую ссылку, при наличии `name` нельзя добавлять
+варианты. Сам loader более permissive: собирает строковые `name` и блоки `ent`
+в общий список кандидатов. Поэтому нельзя выдавать ограничение UI за строгий
+запрет всего BLK-формата. Для MH такое смешанное состояние не предлагается.
+[UI capabilities][AV-capabilities], [runtime admission][DG-candidates].
+
+### Скриншоты и следствие для MH
+
+Диалог `Parameters to add` из первого скриншота сохранился в C++ как
+`onAddNodeParametersClicked`, но его вызов в проверенной ревизии не найден;
+активный обработчик добавляет поля по отдельным ID. Текст предупреждения со
+второго скриншота в этой ревизии не найден. Точная версия интерфейса автора
+не установлена; независимо от этого его наблюдение об отключённых transform
+полях подтверждается и текущей панелью, и loader.
+[Диалог списка параметров][AV-legacy-parameter-dialog],
+[текущие поля][AV-parameter-fields], [действующие команды][AV-panel-param-actions].
+
+Для расширения MH полезна такая **концептуальная** декомпозиция:
+
+```text
+Node
+  Transform / placement parameters
+  Content: Empty | Asset reference | Weighted variants[]
+  Child nodes[]
+
+Variant
+  Asset reference | Empty
+  Raw weight
+```
+
+Она отделяет структурные дочерние узлы от вариантов содержимого, а Random
+показывает как результат наличия variants. `Add node` создаёт новое место;
+`Add entity/variant` добавляет альтернативу существующему месту. В UI можно
+показывать вычисленную вероятность рядом с авторским весом, не перезаписывая
+его. Это не означает автоматический перенос взаимоисключения Dagor `tm`/`p2`
+в MH: существующие authored TRS и procedural contribution MH имеют собственный
+контракт; расширение Kind/Children также требует отдельного admission-среза
+из разделов 9–10.
+
 ## Источники с зафиксированными ревизиями
 
 Ссылки ниже ведут непосредственно в проверенные C++ файлы. Факты о Dagor,
 наблюдения о MH и предложения расширения не подменяют друг друга.
 
 [AV-node]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/AssetViewer/Entity/compositeEditorTreeDataNode.h#L9-L41
+[AV-derived-name]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/AssetViewer/Entity/compositeEditorTreeDataNode.cpp#L42-L70
+[AV-legacy-parameter-dialog]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/AssetViewer/Entity/compositeEditorPanel.cpp#L585-L608
 [AV-capabilities]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/AssetViewer/Entity/compositeEditorTreeDataNode.cpp#L143-L152
 [AV-insert]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/AssetViewer/Entity/compositeEditorTreeDataNode.cpp#L154-L189
 [AV-tree-data]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/AssetViewer/Entity/compositeEditorTreeData.cpp#L17-L117
@@ -466,6 +563,7 @@ thumbnail refresh и pooled representation вне Edit.
 [DG-choice]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/sceneTools/daEditorX/services/compositMgr/compositMgrService.cpp#L1054-L1070
 [DG-transform]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/sceneTools/daEditorX/services/compositMgr/compositMgrService.cpp#L1151-L1218
 [DG-transform-load]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/sceneTools/daEditorX/services/compositMgr/compositMgrService.cpp#L1317-L1364
+[DG-placement-load]: https://github.com/GaijinEntertainment/DagorEngine/blob/75723669297e48e200a0dc67b18c1629e0975daf/prog/tools/sceneTools/daEditorX/services/compositMgr/compositMgrService.cpp#L1296-L1380
 [MH-document]: https://github.com/helmdubo/MH_blender_bridge/blob/8826fa17493bcab1de0776807ce12312bf1f2c3e/ue/MimirComposite/Source/MimirCompositeEditor/Private/Editing/MHCompositeEditDocument.cpp#L284-L465
 [MH-session]: https://github.com/helmdubo/MH_blender_bridge/blob/8826fa17493bcab1de0776807ce12312bf1f2c3e/ue/MimirComposite/Source/MimirCompositeEditor/Private/Editing/MHCompositeEditSession.cpp#L169-L375
 [MH-outliner]: https://github.com/helmdubo/MH_blender_bridge/blob/8826fa17493bcab1de0776807ce12312bf1f2c3e/ue/MimirComposite/Source/MimirCompositeEditor/Private/UI/MHCompositeOutliner.cpp#L340-L802

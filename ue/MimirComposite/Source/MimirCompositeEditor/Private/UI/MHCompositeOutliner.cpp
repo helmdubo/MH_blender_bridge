@@ -2,6 +2,7 @@
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "ContentBrowserModule.h"
 #include "Editing/MHCompositeEditDocument.h"
 #include "Editing/MHCompositeEditProjection.h"
 #include "Editing/MHCompositeEditSession.h"
@@ -15,6 +16,7 @@
 #include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "LevelEditor.h"
+#include "IContentBrowserSingleton.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "Settings/MHCompositeSettings.h"
@@ -139,6 +141,37 @@ public:
                         .Text(LOCTEXT("NoOverlay", "Open a composite edit session to work with its nodes"))
                         .AutoWrapText(true)
                     ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f, 0.0f, 0.0f)
+                    [
+                        SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 4.0f, 0.0f)
+                        [
+                            SNew(SButton)
+                            .Text(LOCTEXT("AddSelectedNodes", "Add Nodes"))
+                            .ToolTipText(LOCTEXT("AddSelectedNodesTip", "Add every selected managed MH mesh/composite as a child of the selected authored node. With no tree selection, add roots to the current edited definition."))
+                            .OnClicked(this, &SMHCompositeOutliner::AddSelectedAssetsAsNodes)
+                            .IsEnabled(this, &SMHCompositeOutliner::CanAddSelectedAssetsAsNodes)
+                        ]
+                        + SHorizontalBox::Slot().AutoWidth()
+                        [
+                            SNew(SButton)
+                            .Text(LOCTEXT("AddSelectedEntities", "Add Entities"))
+                            .ToolTipText(LOCTEXT("AddSelectedEntitiesTip", "Add every selected managed MH mesh/composite as a weight-one content variant of the selected authored node."))
+                            .OnClicked(this, &SMHCompositeOutliner::AddSelectedAssetsAsOptions)
+                            .IsEnabled(this, &SMHCompositeOutliner::CanAddSelectedAssetsAsOptions)
+                        ]
+                    ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 0.0f)
+                    [
+                        SNew(STextBlock)
+                        .AutoWrapText(true)
+                        .ColorAndOpacity(FSlateColor::UseSubduedForeground())
+                        .Text(this, &SMHCompositeOutliner::GetAuthoringTargetText)
+                    ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 0.0f)
+                    [
+                        SAssignNew(NavigationBox, SHorizontalBox)
+                    ]
                 ]
             ]
             + SVerticalBox::Slot().FillHeight(1.0f)
@@ -157,6 +190,7 @@ public:
                         .OnGenerateRow(this, &SMHCompositeOutliner::GenerateRow)
                         .OnGetChildren(this, &SMHCompositeOutliner::GetTreeChildren)
                         .OnSelectionChanged(this, &SMHCompositeOutliner::TreeSelectionChanged)
+                        .OnMouseButtonDoubleClick(this, &SMHCompositeOutliner::TreeItemDoubleClicked)
                         .OnContextMenuOpening(this, &SMHCompositeOutliner::OpenContextMenu)
                     ]
                 ]
@@ -229,7 +263,11 @@ private:
             + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
             [
                 SNew(STextBlock)
-                .Text(Item.IsValid() ? FText::FromString(Item->Label) : FText::GetEmpty())
+                .Text_Lambda([Item]()
+                {
+                    if (!Item.IsValid()) return FText::GetEmpty();
+                    return FText::FromString(Item->Label);
+                })
                 .ColorAndOpacity_Lambda([Item, WeakSelf = TWeakPtr<SMHCompositeOutliner>(SharedThis(this))]()
                 {
                     if (!Item.IsValid()) return FSlateColor::UseForeground();
@@ -246,22 +284,20 @@ private:
                     return FSlateColor::UseForeground();
                 })
             ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.0f, 0.0f)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4.0f, 0.0f)
             [
-                SNew(STextBlock)
-                .Text(Item.IsValid() ? FText::FromString(OutlinerKindText(Item->Kind)) : FText::GetEmpty())
-                .ColorAndOpacity(FSlateColor::UseSubduedForeground())
-            ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(LOCTEXT("SelectedOptionMark", "selected"))
-                .ColorAndOpacity(FLinearColor(0.2f, 0.9f, 0.35f))
-                .Visibility_Lambda([Item]()
+                SNew(SButton)
+                .Text(LOCTEXT("EditContentsButton", "Edit"))
+                .ToolTipText(LOCTEXT("EditContentsButtonTip", "Switch the current session to this materialized composite reference. Dirty edits keep the Save / Discard / Stay policy."))
+                .Visibility_Lambda([Item, WeakSelf = TWeakPtr<SMHCompositeOutliner>(SharedThis(this))]()
                 {
-                    return Item.IsValid() && Item->bSelectedOption
-                        ? EVisibility::Visible
-                        : EVisibility::Collapsed;
+                    const TSharedPtr<SMHCompositeOutliner> Self = WeakSelf.Pin();
+                    return Self.IsValid() && Self->CanSwitchToItem(Item) ? EVisibility::Visible : EVisibility::Collapsed;
+                })
+                .OnClicked_Lambda([Item, WeakSelf = TWeakPtr<SMHCompositeOutliner>(SharedThis(this))]()
+                {
+                    if (const TSharedPtr<SMHCompositeOutliner> Self = WeakSelf.Pin()) Self->QueueSwitchEditContents(Item->NodePath);
+                    return FReply::Handled();
                 })
             ]
         ];
@@ -329,99 +365,205 @@ private:
                 // SetSelectedNodeIds intentionally does not broadcast a no-op;
                 // still canonicalize a clicked nested visual to its authored row.
                 SyncTreeSelectionFromSession();
+                // A variant is a distinct presentation row even though the
+                // authored selection belongs to its owner node. Keep the
+                // clicked variant as the primary inspector row.
+                if (Item.IsValid() && Item->IsOption()) RevealItem(Item);
                 return;
             }
         }
     }
 
-    // CE-4b2: draft rows take Content Browser assets — onto a group as its
-    // child, above/below any row as its sibling. Only managed meshes and
-    // composites become nodes; the rest is refused with the reason.
+    // Managed Content Browser assets use the same prevalidated atomic command
+    // whether they arrive from the toolbar or drag/drop.
     TOptional<EItemDropZone> CanAcceptDrop(const FDragDropEvent& Event, const EItemDropZone Zone, TSharedPtr<FMHCompositeOutlinerItem> Item)
     {
         const TSharedPtr<FAssetDragDropOp> Op = Event.GetOperationAs<FAssetDragDropOp>();
-        if (!Op.IsValid() || !Item.IsValid() || !Item->DraftNodeId.IsValid() || !UMHCompositeEditorMode::IsActive()) return TOptional<EItemDropZone>();
-        const bool bTakesInto = Item->Kind == EMHRandomSemanticKind::Group || Item->Kind == EMHRandomSemanticKind::Random;
-        return Zone == EItemDropZone::OntoItem && !bTakesInto ? EItemDropZone::BelowItem : Zone;
+        if (!Op.IsValid() || !Item.IsValid() ||
+            Item->IsOption() || !Item->DraftNodeId.IsValid() || !UMHCompositeEditorMode::IsActive())
+            return TOptional<EItemDropZone>();
+        return Zone;
     }
 
     FReply AcceptDrop(const FDragDropEvent& Event, const EItemDropZone Zone, TSharedPtr<FMHCompositeOutlinerItem> Item)
     {
         const TSharedPtr<FAssetDragDropOp> Op = Event.GetOperationAs<FAssetDragDropOp>();
-        UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
         const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
-        UMHCompositeEditDocument* Draft = Session != nullptr ? Session->GetDraft() : nullptr;
-        if (!Op.IsValid() || Mode == nullptr || Draft == nullptr || !Item.IsValid() || !Item->DraftNodeId.IsValid()) return FReply::Unhandled();
-        // CE-4b3: onto a random node the assets become its options.
+        if (!Op.IsValid() || Session == nullptr ||
+            Session->GetDraft() == nullptr || !Item.IsValid() || Item->IsOption() || !Item->DraftNodeId.IsValid())
+            return FReply::Unhandled();
+        TArray<UObject*> Assets;
+        for (const FAssetData& AssetData : Op->GetAssets()) Assets.Add(AssetData.GetAsset());
         if (Zone == EItemDropZone::OntoItem && Item->Kind == EMHRandomSemanticKind::Random)
         {
-            const FMHCompositeAssetNode* Node = DraftNodeOf(*Item);
-            if (Node == nullptr) return FReply::Unhandled();
-            TArray<FMHCompositeOption> Options = Node->Options;
-            TArray<FString> RefusedAssets;
-            for (const FAssetData& AssetData : Op->GetAssets())
-            {
-                FMHOutlinerAddRequest Request;
-                FString Error;
-                if (!MHDescribeOutlinerAssetAdd(AssetData.GetAsset(), nullptr, *Draft, Request, Error)) { RefusedAssets.Add(Error); continue; }
-                FMHCompositeOption Option;
-                Option.Kind = Request.Kind == EMHCompositeNodeKind::Composite ? EMHCompositeOptionKind::Composite : EMHCompositeOptionKind::Mesh;
-                Option.Resource = Request.Resource;
-                Option.Weight = 1.0f;
-                Options.Add(Option);
-            }
-            for (const FString& Error : RefusedAssets) FMessageLog("Mimir").Warning(FText::FromString(Error));
-            if (!RefusedAssets.IsEmpty()) FMessageLog("Mimir").Open(EMessageSeverity::Warning, true);
-            const FGuid Id = Item->DraftNodeId;
-            CommitDraftEdit(LOCTEXT("DropOptionsTransaction", "Add Random Options"), [Id, Options](UMHCompositeEditSession& InSession, FString& Error) { return InSession.SetNodeOptions(Id, Options, Error); });
+            ExecuteAssetOptionBatch(Assets, Item, LOCTEXT("DropOptionsTransaction", "Add Composite Content Variants"));
             return FReply::Handled();
         }
-        const bool bInto = Zone == EItemDropZone::OntoItem && Item->Kind == EMHRandomSemanticKind::Group;
-        const FGuid ParentId = bInto ? Item->DraftNodeId : Draft->GetParentId(Item->DraftNodeId);
-        int32 SiblingIndex = INDEX_NONE;
-        if (!bInto)
+        if (Zone == EItemDropZone::AboveItem || Zone == EItemDropZone::BelowItem)
         {
-            const TArray<FGuid> Siblings = Draft->GetChildIds(ParentId);
-            SiblingIndex = Siblings.IndexOfByKey(Item->DraftNodeId) + (Zone == EItemDropZone::AboveItem ? 0 : 1);
-        }
-        TArray<FGuid> Added;
-        TArray<FString> Refused;
-        {
-            const FScopedTransaction Transaction(LOCTEXT("DropNodesTransaction", "Add Composite Nodes"));
-            for (const FAssetData& AssetData : Op->GetAssets())
+            const UMHCompositeEditDocument* Draft = Session->GetDraft();
+            FGuid ParentId;
+            int32 SiblingIndex = INDEX_NONE;
+            FString Error;
+            if (!MHResolveOutlinerSiblingInsertion(Item.Get(), Zone == EItemDropZone::BelowItem,
+                    *Draft, ParentId, SiblingIndex, Error))
             {
-                FMHOutlinerAddRequest Request;
-                FString Error;
-                if (!MHDescribeOutlinerAssetAdd(AssetData.GetAsset(), nullptr, *Draft, Request, Error))
-                {
-                    Refused.Add(Error);
-                    continue;
-                }
-                AddDraftNode(ParentId, Request.Kind, Request.Resource, Request.Name, SiblingIndex, Added);
-                if (SiblingIndex != INDEX_NONE) ++SiblingIndex;
+                ReportAuthoringError(Error);
+                return FReply::Handled();
             }
+            ExecuteAssetNodeBatch(Assets, Item, false, LOCTEXT("DropSiblingNodesTransaction", "Insert Composite Nodes"),
+                TOptional<FGuid>(ParentId), SiblingIndex);
         }
-        for (const FString& Error : Refused) FMessageLog("Mimir").Warning(FText::FromString(Error));
-        if (!Refused.IsEmpty()) FMessageLog("Mimir").Open(EMessageSeverity::Warning, true);
-        FinishDraftCommand(Added.IsEmpty() ? FGuid() : Added.Last());
+        else
+        {
+            ExecuteAssetNodeBatch(Assets, Item, false, LOCTEXT("DropNodesTransaction", "Add Composite Nodes"));
+        }
         return FReply::Handled();
     }
 
-    /** One draft add: the session command, placed among its siblings when asked. */
-    void AddDraftNode(const FGuid& ParentId, const EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const int32 SiblingIndex, TArray<FGuid>& OutAdded)
+    TSharedPtr<FMHCompositeOutlinerItem> GetTreeAuthoringTarget() const
     {
-        UMHCompositeEditSession* Session = const_cast<UMHCompositeEditSession*>(SessionOf(CurrentActor.Get()));
-        if (Session == nullptr) return;
+        if (!TreeView.IsValid()) return nullptr;
+        const TArray<TSharedPtr<FMHCompositeOutlinerItem>> Selected = TreeView->GetSelectedItems();
+        if (SelectedItem.IsValid() && Selected.Contains(SelectedItem)) return SelectedItem;
+        return Selected.IsEmpty() ? nullptr : Selected[0];
+    }
+
+    static void ReportAuthoringError(const FString& Error)
+    {
+        if (Error.IsEmpty()) return;
+        FMessageLog("Mimir").Error(FText::FromString(Error));
+        FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
+    }
+
+    static TArray<UObject*> GetSelectedContentBrowserAssets()
+    {
+        TArray<FAssetData> Selected;
+        FModuleManager::LoadModuleChecked<FContentBrowserModule>(TEXT("ContentBrowser"))
+            .Get().GetSelectedAssets(Selected);
+        TArray<UObject*> Assets;
+        Assets.Reserve(Selected.Num());
+        for (const FAssetData& Asset : Selected) Assets.Add(Asset.GetAsset());
+        return Assets;
+    }
+
+    bool CanAddSelectedAssetsAsNodes() const
+    {
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        if (Session == nullptr || Session->GetDraft() == nullptr || !UMHCompositeEditorMode::IsActive()) return false;
+        const TSharedPtr<FMHCompositeOutlinerItem> Target = GetTreeAuthoringTarget();
+        if (!Target.IsValid()) return true; // explicit Current Composite / Root destination
+        return !Target->IsOption() && Target->DraftNodeId.IsValid() &&
+            Session->GetDraft()->FindNodeIndex(Target->DraftNodeId) != INDEX_NONE;
+    }
+
+    bool CanAddSelectedAssetsAsOptions() const
+    {
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        const TSharedPtr<FMHCompositeOutlinerItem> Target = GetTreeAuthoringTarget();
+        return Session != nullptr && Session->GetDraft() != nullptr && UMHCompositeEditorMode::IsActive() &&
+            Target.IsValid() && !Target->IsOption() && Target->DraftNodeId.IsValid() &&
+            Session->GetDraft()->FindNodeIndex(Target->DraftNodeId) != INDEX_NONE;
+    }
+
+    FText GetAuthoringTargetText() const
+    {
+        const TSharedPtr<FMHCompositeOutlinerItem> Target = GetTreeAuthoringTarget();
+        if (!Target.IsValid()) return LOCTEXT("RootAuthoringTarget", "Destination: Current Composite / Root");
+        if (Target->IsOption()) return LOCTEXT("VariantAuthoringTarget", "Destination: variant row (select its authored node)");
+        if (!Target->DraftNodeId.IsValid()) return LOCTEXT("LockedAuthoringTarget", "Destination: locked context (use Edit Contents)");
+        return FText::FromString(TEXT("Destination: child of ") + Target->Label);
+    }
+
+    FReply AddSelectedAssetsAsNodes()
+    {
+        const TSharedPtr<FMHCompositeOutlinerItem> Target = GetTreeAuthoringTarget();
+        ExecuteAssetNodeBatch(GetSelectedContentBrowserAssets(), Target, !Target.IsValid(),
+            LOCTEXT("AddSelectedNodesTransaction", "Add Composite Nodes"));
+        return FReply::Handled();
+    }
+
+    FReply AddSelectedAssetsAsOptions()
+    {
+        ExecuteAssetOptionBatch(GetSelectedContentBrowserAssets(), GetTreeAuthoringTarget(),
+            LOCTEXT("AddSelectedOptionsTransaction", "Add Composite Content Variants"));
+        return FReply::Handled();
+    }
+
+    void ExecuteAssetNodeBatch(
+        const TArray<UObject*>& Assets,
+        const TSharedPtr<FMHCompositeOutlinerItem>& Target,
+        const bool bExplicitRoot,
+        const FText& TransactionTitle,
+        const TOptional<FGuid>& ParentOverride = TOptional<FGuid>(),
+        const int32 SiblingIndex = INDEX_NONE)
+    {
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        const UMHCompositeEditDocument* Draft = Session != nullptr ? Session->GetDraft() : nullptr;
+        if (Draft == nullptr) return;
+        TArray<FMHOutlinerAddRequest> Described;
         FString Error;
-        const FGuid Id = Session->AddNode(ParentId, Kind, Resource, Name, FTransform::Identity, Error);
-        if (!Id.IsValid())
+        if (!MHDescribeOutlinerAssetAddBatch(Assets, Target.Get(), bExplicitRoot, *Draft, Described, Error))
         {
-            FMessageLog("Mimir").Error(FText::FromString(Error));
-            FMessageLog("Mimir").Open(EMessageSeverity::Error, true);
+            ReportAuthoringError(Error);
             return;
         }
-        if (SiblingIndex != INDEX_NONE) Session->ReparentNode(Id, ParentId, SiblingIndex, false, Error);
-        OutAdded.Add(Id);
+        const FGuid ParentId = ParentOverride.IsSet() ? ParentOverride.GetValue() : Described[0].ParentId;
+        TArray<FMHCompositeNodeAdd> Requests;
+        Requests.Reserve(Described.Num());
+        for (const FMHOutlinerAddRequest& Source : Described)
+        {
+            FMHCompositeNodeAdd& Request = Requests.AddDefaulted_GetRef();
+            Request.Kind = Source.Kind;
+            Request.Resource = Source.Resource;
+            Request.Name = Source.Name;
+            Request.LocalTransform = FTransform::Identity;
+        }
+        CommitDraftEdit(TransactionTitle,
+            [ParentId, Requests, SiblingIndex](UMHCompositeEditSession& InSession, FString& OutError)
+            {
+                TArray<FGuid> Added;
+                return InSession.AddNodes(ParentId, Requests, Added, OutError, SiblingIndex);
+            });
+    }
+
+    void ExecuteAssetOptionBatch(
+        const TArray<UObject*>& Assets,
+        const TSharedPtr<FMHCompositeOutlinerItem>& Target,
+        const FText& TransactionTitle)
+    {
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        const UMHCompositeEditDocument* Draft = Session != nullptr ? Session->GetDraft() : nullptr;
+        if (Draft == nullptr || !Target.IsValid() || Target->IsOption() ||
+            !Target->DraftNodeId.IsValid() || Draft->FindNodeIndex(Target->DraftNodeId) == INDEX_NONE)
+        {
+            ReportAuthoringError(TEXT("MH_E_INVALID_AUTHORING_TARGET: Add Entities needs one selected authored node"));
+            return;
+        }
+        if (Assets.IsEmpty())
+        {
+            ReportAuthoringError(TEXT("MH_E_INVALID_RESOURCE_SOURCE: select one or more managed assets in the Content Browser"));
+            return;
+        }
+        TArray<FMHCompositeOption> Options;
+        Options.Reserve(Assets.Num());
+        FString Error;
+        for (const UObject* Asset : Assets)
+        {
+            FMHCompositeOption Option;
+            if (!MHDescribeOutlinerAssetOption(Asset, Option, Error))
+            {
+                ReportAuthoringError(Error);
+                return;
+            }
+            Options.Add(MoveTemp(Option));
+        }
+        const FGuid NodeId = Target->DraftNodeId;
+        CommitDraftEdit(TransactionTitle,
+            [NodeId, Options](UMHCompositeEditSession& InSession, FString& OutError)
+            {
+                return InSession.AddNodeOptions(NodeId, Options, OutError);
+            });
     }
 
     /** After a draft command: rebuild the rows and grab the node the command produced. */
@@ -451,16 +593,19 @@ private:
     template <typename TCommand>
     void CommitDraftEdit(const FText& Title, TCommand Command)
     {
-        if (GEditor == nullptr) return;
+        const UMHCompositeEditSession* CapturedSession = SessionOf(CurrentActor.Get());
+        if (GEditor == nullptr || CapturedSession == nullptr) return;
+        const FMHOutlinerCommandStamp Stamp = FMHOutlinerCommandStamp::Capture(*CapturedSession);
         TWeakPtr<SMHCompositeOutliner> Weak = StaticCastSharedRef<SMHCompositeOutliner>(AsShared());
-        GEditor->GetTimerManager()->SetTimerForNextTick([Weak, Title, Command]()
+        GEditor->GetTimerManager()->SetTimerForNextTick([Weak, Title, Command, Stamp]()
         {
             const TSharedPtr<SMHCompositeOutliner> Self = Weak.Pin();
             UMHCompositeEditSession* Session = Self.IsValid() ? const_cast<UMHCompositeEditSession*>(Self->SessionOf(Self->CurrentActor.Get())) : nullptr;
-            if (Session == nullptr) return;
+            if (Session == nullptr || !Stamp.Matches(*Session)) return;
             FString Error;
             bool bOk = false;
             {
+                TGuardValue<bool> CommandGuard(Self->bExecutingCommand, true);
                 const FScopedTransaction Transaction(Title);
                 bOk = Command(*Session, Error);
             }
@@ -473,37 +618,15 @@ private:
         });
     }
 
-    /** CE-4b3: name, resource and random options of a draft row are edited in place. */
-    TSharedRef<SWidget> BuildEditSection(const TSharedPtr<FMHCompositeOutlinerItem>& Item, const FMHCompositeAssetNode& Node)
+    /** Editable content controls live in the Content section that owns them. */
+    TSharedRef<SWidget> BuildEditableContent(const TSharedPtr<FMHCompositeOutlinerItem>& Item, const FMHCompositeAssetNode& Node)
     {
         const FGuid Id = Item->DraftNodeId;
         TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
-        auto AddRow = [&Box](const FText& Label, const TSharedRef<SWidget>& Widget)
-        {
-            Box->AddSlot().AutoHeight().Padding(0.0f, 1.0f)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)
-                [
-                    SNew(STextBlock).Text(Label).ColorAndOpacity(FSlateColor::UseSubduedForeground())
-                ]
-                + SHorizontalBox::Slot().FillWidth(1.0f)
-                [
-                    Widget
-                ]
-            ];
-        };
-        AddRow(LOCTEXT("EditNameLabel", "Name"), SNew(SEditableTextBox)
-            .Text(FText::FromString(Node.Name))
-            .OnTextCommitted_Lambda([this, Id](const FText& Text, const ETextCommit::Type Commit)
-            {
-                if (Commit != ETextCommit::OnEnter && Commit != ETextCommit::OnUserMovedFocus) return;
-                CommitDraftEdit(LOCTEXT("RenameNodeTransaction", "Rename Composite Node"), [Id, Name = Text.ToString()](UMHCompositeEditSession& InSession, FString& Error) { return InSession.SetNodeName(Id, Name, Error); });
-            }));
         const bool bTakesResource = Node.Kind != EMHCompositeNodeKind::Group && Node.Kind != EMHCompositeNodeKind::Random;
         if (bTakesResource)
         {
-            AddRow(LOCTEXT("EditResourceLabel", "Resource"), SNew(SEditableTextBox)
+            AddWidgetField(Box, LOCTEXT("EditResourceLabel", "Single asset"), SNew(SEditableTextBox)
                 .Text(FText::FromString(Node.Resource))
                 .ToolTipText(LOCTEXT("EditResourceTip", "Logical name of a managed mesh, actor, composite or gameobj ([a-z0-9_]+). Dropping an asset on a row adds a node instead."))
                 .OnTextCommitted_Lambda([this, Id](const FText& Text, const ETextCommit::Type Commit)
@@ -514,11 +637,14 @@ private:
         }
         if (Node.Kind == EMHCompositeNodeKind::Random)
         {
-            const TArray<FMHCompositeOption> Options = Node.Options;
-            for (int32 Index = 0; Index < Options.Num(); ++Index)
+            double TotalWeight = 0.0;
+            for (const FMHCompositeOption& Candidate : Node.Options) TotalWeight += Candidate.Weight;
+            for (int32 Index = 0; Index < Node.Options.Num(); ++Index)
             {
-                const FMHCompositeOption& Option = Options[Index];
-                const FString Label = Option.Kind == EMHCompositeOptionKind::Empty ? TEXT("-- (empty)") : Option.Resource;
+                const FMHCompositeOption& Option = Node.Options[Index];
+                const FString Label = FString::Printf(TEXT("%s  (%.2f%%)"),
+                    Option.Kind == EMHCompositeOptionKind::Empty ? TEXT("-- (empty)") : *Option.Resource,
+                    TotalWeight > 0.0 ? 100.0 * static_cast<double>(Option.Weight) / TotalWeight : 0.0);
                 Box->AddSlot().AutoHeight().Padding(0.0f, 1.0f)
                 [
                     SNew(SHorizontalBox)
@@ -534,12 +660,11 @@ private:
                             .MinValue(0.0f)
                             .Value(Option.Weight)
                             .ToolTipText(LOCTEXT("OptionWeightTip", "Weight of this option (finite, non-negative; at least one option must be positive)."))
-                            .OnValueCommitted_Lambda([this, Id, Options, Index](const float Value, ETextCommit::Type)
+                            .OnValueCommitted_Lambda([this, Id, Index](const float Value, ETextCommit::Type)
                             {
-                                TArray<FMHCompositeOption> Next = Options;
-                                if (!Next.IsValidIndex(Index)) return;
-                                Next[Index].Weight = Value;
-                                CommitDraftEdit(LOCTEXT("OptionWeightTransaction", "Change Random Option Weight"), [Id, Next](UMHCompositeEditSession& InSession, FString& Error) { return InSession.SetNodeOptions(Id, Next, Error); });
+                                CommitDraftEdit(LOCTEXT("OptionWeightTransaction", "Change Random Option Weight"),
+                                    [Id, Index, Value](UMHCompositeEditSession& InSession, FString& Error)
+                                    { return InSession.SetNodeOptionWeight(Id, Index, Value, Error); });
                             })
                         ]
                     ]
@@ -547,12 +672,12 @@ private:
                     [
                         SNew(SButton)
                         .Text(LOCTEXT("RemoveOption", "Remove"))
-                        .ToolTipText(LOCTEXT("RemoveOptionTip", "Remove this option (a random node keeps at least one positive option)."))
-                        .OnClicked_Lambda([this, Id, Options, Index]()
+                        .ToolTipText(LOCTEXT("RemoveOptionTip", "Remove this content variant. Removing the final variant clears node content and preserves its transform and children."))
+                        .OnClicked_Lambda([this, Id, Index]()
                         {
-                            TArray<FMHCompositeOption> Next = Options;
-                            if (Next.IsValidIndex(Index)) Next.RemoveAt(Index);
-                            CommitDraftEdit(LOCTEXT("RemoveOptionTransaction", "Remove Random Option"), [Id, Next](UMHCompositeEditSession& InSession, FString& Error) { return InSession.SetNodeOptions(Id, Next, Error); });
+                            CommitDraftEdit(LOCTEXT("RemoveOptionTransaction", "Remove Content Variant"),
+                                [Id, Index](UMHCompositeEditSession& InSession, FString& Error)
+                                { return InSession.RemoveNodeOption(Id, Index, Error); });
                             return FReply::Handled();
                         })
                     ]
@@ -566,19 +691,24 @@ private:
                     SNew(SButton)
                     .Text(LOCTEXT("AddEmptyOption", "Add Empty Option"))
                     .ToolTipText(LOCTEXT("AddEmptyOptionTip", "Add an empty option with weight 1. Drop a managed mesh or composite onto this row to add it as an option."))
-                    .OnClicked_Lambda([this, Id, Options]()
+                    .OnClicked_Lambda([this, Id]()
                     {
-                        TArray<FMHCompositeOption> Next = Options;
                         FMHCompositeOption Empty;
                         Empty.Kind = EMHCompositeOptionKind::Empty;
                         Empty.Weight = 1.0f;
-                        Next.Add(Empty);
-                        CommitDraftEdit(LOCTEXT("AddEmptyOptionTransaction", "Add Random Option"), [Id, Next](UMHCompositeEditSession& InSession, FString& Error) { return InSession.SetNodeOptions(Id, Next, Error); });
+                        CommitDraftEdit(LOCTEXT("AddEmptyOptionTransaction", "Add Content Variant"),
+                            [Id, Empty](UMHCompositeEditSession& InSession, FString& Error)
+                            {
+                                const TArray<FMHCompositeOption> Added{Empty};
+                                return InSession.AddNodeOptions(Id, Added, Error);
+                            });
                         return FReply::Handled();
                     })
                 ]
             ];
         }
+        if (Node.Kind == EMHCompositeNodeKind::Group)
+            AddField(Box, LOCTEXT("EmptyContentField", "Content"), TEXT("Empty"));
         return Box;
     }
 
@@ -592,9 +722,15 @@ private:
         Empty.Weight = 1.0f;
         FGuid Added;
         FString Error;
+        FGuid ParentId;
+        if (!MHResolveOutlinerAddParent(Item.Get(), false, *Draft, ParentId, Error))
+        {
+            ReportAuthoringError(Error);
+            return;
+        }
         {
             const FScopedTransaction Transaction(LOCTEXT("AddRandomNodeTransaction", "Add Random Composite Node"));
-            Added = Session->AddRandomNode(MHOutlinerAddParentFor(Item.Get(), *Draft), TEXT("random"), FTransform::Identity, {Empty}, Error);
+            Added = Session->AddRandomNode(ParentId, TEXT("random"), FTransform::Identity, {Empty}, Error);
         }
         if (!Added.IsValid() && !Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
         FinishDraftCommand(Added);
@@ -602,14 +738,26 @@ private:
 
     void AddEmptyNodeAt(const TSharedPtr<FMHCompositeOutlinerItem> Item)
     {
-        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        UMHCompositeEditSession* Session = const_cast<UMHCompositeEditSession*>(SessionOf(CurrentActor.Get()));
         const UMHCompositeEditDocument* Draft = Session != nullptr ? Session->GetDraft() : nullptr;
         if (Draft == nullptr) return;
+        FGuid ParentId;
+        FString Error;
+        if (!MHResolveOutlinerAddParent(Item.Get(), false, *Draft, ParentId, Error))
+        {
+            ReportAuthoringError(Error);
+            return;
+        }
+        FMHCompositeNodeAdd Request;
+        Request.Kind = EMHCompositeNodeKind::Group;
+        Request.Name = TEXT("empty");
         TArray<FGuid> Added;
         {
             const FScopedTransaction Transaction(LOCTEXT("AddEmptyNodeTransaction", "Add Empty Composite Node"));
-            AddDraftNode(MHOutlinerAddParentFor(Item.Get(), *Draft), EMHCompositeNodeKind::Group, FString(), TEXT("empty"), INDEX_NONE, Added);
+            const TArray<FMHCompositeNodeAdd> Requests{Request};
+            Session->AddNodes(ParentId, Requests, Added, Error);
         }
+        if (Added.IsEmpty()) ReportAuthoringError(Error);
         FinishDraftCommand(Added.IsEmpty() ? FGuid() : Added.Last());
     }
 
@@ -698,7 +846,7 @@ private:
 
     void SessionChanged()
     {
-        if (UMHCompositeEditorMode::IsActive() && !bRefreshingModel) RefreshModel();
+        if (UMHCompositeEditorMode::IsActive() && !bRefreshingModel && !bExecutingCommand && !bSwitchingScope) RefreshModel();
     }
 
     /** Mirror semantic GUID selection into the current row objects after refresh/reorder/Undo. */
@@ -731,17 +879,23 @@ private:
         RebuildDetails();
     }
 
-    /** Reveal the edited subtree without changing viewport selection or camera. */
-    void FocusEditScope(const FString& InvocationPath)
+    /** Load and expand only the active occurrence; do not change selection or camera. */
+    TSharedPtr<FMHCompositeOutlinerItem> PrepareEditScope(const FString& InvocationPath)
     {
-        AMHCompositeActor* Root = CurrentActor.Get();
-        if (Root == nullptr || GEditor == nullptr) return;
+        if (CurrentActor.Get() == nullptr || GEditor == nullptr) return nullptr;
         if (TSharedPtr<FMHCompositeOutlinerItem> Item = Model.FindByNodePath(InvocationPath))
         {
             if (Item->IsCompositeReference() && !Item->bNestedChildrenLoaded) Model.ExpandItem(Item);
-            RevealItem(Item);
-            if (TreeView.IsValid()) TreeView->SetItemExpansion(Item, true);
+            if (TreeView.IsValid())
+            {
+                for (TSharedPtr<FMHCompositeOutlinerItem> Parent = Item->Parent.Pin();
+                     Parent.IsValid(); Parent = Parent->Parent.Pin())
+                    TreeView->SetItemExpansion(Parent, true);
+                TreeView->SetItemExpansion(Item, true);
+            }
+            return Item;
         }
+        return nullptr;
     }
 
     TSharedPtr<SWidget> OpenContextMenu()
@@ -781,7 +935,7 @@ private:
             {
                 Menu.AddMenuEntry(
                     LOCTEXT("AddEmptyNode", "Add Empty Node"),
-                    LOCTEXT("AddEmptyNodeTip", "Add an empty group node: into this group, or next to this node. Drag a managed static mesh or composite from the Content Browser onto a row to add it as a node."),
+                    LOCTEXT("AddEmptyNodeTip", "Add an empty child node under this authored node. Drag a managed static mesh or composite onto a row to add content, or above/below it to insert sibling nodes."),
                     FSlateIcon(),
                     FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::AddEmptyNodeAt, Item)));
                 Menu.AddMenuEntry(
@@ -802,14 +956,13 @@ private:
             }
             // CE-3d: another definition of this placement from the open session
             // (Save / Discard / stay first when there are changes).
-            if (UMHCompositeEditorMode::IsActive() && Item->IsCompositeReference() && !Item->NodePath.IsEmpty() &&
-                Item->NodePath != EditSubsystem->GetEditContext().InvocationPath && EditSubsystem->IsEditingComposite(CurrentActor.Get()))
+            if (CanSwitchToItem(Item))
             {
                 Menu.AddMenuEntry(
                     LOCTEXT("SwitchEditContents", "Edit Contents..."),
-                    LOCTEXT("SwitchEditContentsTip", "Leave the definition being edited (Save, Discard or stay) and edit this one in the context of this placement."),
+                    LOCTEXT("SwitchEditContentsTip", "Switch this session to the referenced definition. Choose Save or Discard first when the current draft has changes."),
                     FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::SwitchEditContents, Item->NodePath)));
+                    FUIAction(FExecuteAction::CreateSP(SharedThis(this), &SMHCompositeOutliner::QueueSwitchEditContents, Item->NodePath)));
             }
             Menu.AddMenuEntry(
                 LOCTEXT("CancelEditContents", "Cancel Edit Contents (Esc)"),
@@ -865,14 +1018,76 @@ private:
         return Menu.MakeWidget();
     }
 
-    /** CE-3d: switch the open session to another definition of this placement. */
-    void SwitchEditContents(const FString InvocationPath)
+    bool CanSwitchToItem(const TSharedPtr<FMHCompositeOutlinerItem>& Item) const
     {
-        UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
-        if (Mode == nullptr) return;
-        const bool bSwitched = Mode->RequestSwitch(InvocationPath);
-        RefreshModel();
-        if (bSwitched) FocusEditScope(InvocationPath);
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        if (Session == nullptr || !UMHCompositeEditorMode::IsActive() || !Item.IsValid() ||
+            !Item->IsCompositeReference() || Item->NodePath.IsEmpty() || Item->bMissingEndpoint ||
+            Item->NodePath == Session->GetInvocationPath()) return false;
+        // A random option invokes only when it is the resolved choice. For a
+        // source-node reference the plan overlay proves this occurrence exists.
+        return Item->IsOption() ? Item->bSelectedOption : Item->bHasResolvedOverlay;
+    }
+
+    void TreeItemDoubleClicked(TSharedPtr<FMHCompositeOutlinerItem> Item)
+    {
+        if (CanSwitchToItem(Item)) QueueSwitchEditContents(Item->NodePath);
+    }
+
+    /** Switch is deferred because RequestSwitch may show Save / Discard / Stay and retarget the live session. */
+    void QueueSwitchEditContents(const FString InvocationPath)
+    {
+        const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+        if (GEditor == nullptr || Session == nullptr || InvocationPath == Session->GetInvocationPath()) return;
+        const FMHOutlinerCommandStamp Stamp = FMHOutlinerCommandStamp::Capture(*Session);
+        const TWeakPtr<SMHCompositeOutliner> Weak = StaticCastSharedRef<SMHCompositeOutliner>(AsShared());
+        GEditor->GetTimerManager()->SetTimerForNextTick([Weak, Stamp, InvocationPath]()
+        {
+            const TSharedPtr<SMHCompositeOutliner> Self = Weak.Pin();
+            UMHCompositeEditSession* Current = Self.IsValid()
+                ? const_cast<UMHCompositeEditSession*>(Self->SessionOf(Self->CurrentActor.Get())) : nullptr;
+            UMHCompositeEditorMode* Mode = UMHCompositeEditorMode::GetActive();
+            if (Current == nullptr || Mode == nullptr || !Stamp.Matches(*Current)) return;
+            bool bSwitched = false;
+            {
+                TGuardValue<bool> SwitchGuard(Self->bSwitchingScope, true);
+                bSwitched = Mode->RequestSwitch(InvocationPath);
+            }
+            if (bSwitched) Self->RefreshModel();
+        });
+    }
+
+    void RebuildNavigation()
+    {
+        if (!NavigationBox.IsValid()) return;
+        NavigationBox->ClearChildren();
+        const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+            ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+        const FMHCompositeEditContext Context = Subsystem != nullptr
+            ? Subsystem->GetEditContext() : FMHCompositeEditContext();
+        const TArray<TPair<FString, FString>> Targets = UMHCompositeEditorMode::BreadcrumbTargets(Context);
+        if (Targets.Num() <= 1) return;
+        NavigationBox->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 5.0f, 0.0f)
+        [
+            SNew(STextBlock).Text(LOCTEXT("NavigateDefinition", "Navigate:"))
+                .ColorAndOpacity(FSlateColor::UseSubduedForeground())
+        ];
+        for (int32 Index = 0; Index + 1 < Targets.Num(); ++Index)
+        {
+            const FString Label = Index == 0 ? TEXT("Root: ") + Targets[Index].Key : TEXT("Parent: ") + Targets[Index].Key;
+            const FString Path = Targets[Index].Value;
+            NavigationBox->AddSlot().AutoWidth().Padding(0.0f, 0.0f, 4.0f, 0.0f)
+            [
+                SNew(SButton)
+                .Text(FText::FromString(Label))
+                .ToolTipText(LOCTEXT("NavigateDefinitionTip", "Switch through the current session; camera and Game View do not change."))
+                .OnClicked_Lambda([Weak = TWeakPtr<SMHCompositeOutliner>(SharedThis(this)), Path]()
+                {
+                    if (const TSharedPtr<SMHCompositeOutliner> Self = Weak.Pin()) Self->QueueSwitchEditContents(Path);
+                    return FReply::Handled();
+                })
+            ];
+        }
     }
 
     void CancelEditContents()
@@ -957,6 +1172,25 @@ private:
         ];
     }
 
+    static void AddWidgetField(
+        const TSharedRef<SVerticalBox>& Box,
+        const FText& Label,
+        const TSharedRef<SWidget>& Widget)
+    {
+        Box->AddSlot().AutoHeight().Padding(0.0f, 1.0f)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f, 0.0f, 8.0f, 0.0f)
+            [
+                SNew(STextBlock).Text(Label).ColorAndOpacity(FSlateColor::UseSubduedForeground())
+            ]
+            + SHorizontalBox::Slot().FillWidth(1.0f)
+            [
+                Widget
+            ]
+        ];
+    }
+
     void RebuildDetails()
     {
         if (!DetailsBox.IsValid()) return;
@@ -973,72 +1207,133 @@ private:
         }
 
         const TSharedPtr<FMHCompositeOutlinerItem> Item = SelectedItem;
-        // CE-4b3: a draft row edits its name, resource and random options here.
-        if (Item->DraftNodeId.IsValid() && !Item->IsOption() && UMHCompositeEditorMode::IsActive())
+        const FMHCompositeAssetNode* EditableNode = Item->DraftNodeId.IsValid() && !Item->IsOption()
+            ? DraftNodeOf(*Item) : nullptr;
+        TSharedRef<SVerticalBox> NodeBox = SNew(SVerticalBox);
+        if (EditableNode != nullptr)
         {
-            if (const FMHCompositeAssetNode* DraftNode = DraftNodeOf(*Item)) AddSection(LOCTEXT("EditSection", "Edit"), BuildEditSection(Item, *DraftNode));
+            const FGuid NodeId = Item->DraftNodeId;
+            AddWidgetField(NodeBox, LOCTEXT("EditNameLabel", "Name"), SNew(SEditableTextBox)
+                .Text(FText::FromString(EditableNode->Name))
+                .OnTextCommitted_Lambda([this, NodeId](const FText& Text, const ETextCommit::Type Commit)
+                {
+                    if (Commit != ETextCommit::OnEnter && Commit != ETextCommit::OnUserMovedFocus) return;
+                    CommitDraftEdit(LOCTEXT("RenameNodeTransaction", "Rename Composite Node"),
+                        [NodeId, Name = Text.ToString()](UMHCompositeEditSession& InSession, FString& Error)
+                        { return InSession.SetNodeName(NodeId, Name, Error); });
+                }));
         }
-        TSharedRef<SVerticalBox> Entities = SNew(SVerticalBox);
-        if (Item->Kind == EMHRandomSemanticKind::Random && !Item->IsOption())
+        AddField(NodeBox, LOCTEXT("KindField", "Kind"), Item->IsOption() ? TEXT("content variant") : OutlinerKindText(Item->Kind));
+        NodeBox->SetToolTipText(FText::FromString(Item->NodePath));
+        FString Access = TEXT("Locked context — use Edit Contents to author this definition");
+        const TSharedPtr<FMHCompositeOutlinerItem> OptionOwner = Item->IsOption() ? Item->Parent.Pin() : nullptr;
+        if (OptionOwner.IsValid() && OptionOwner->DraftNodeId.IsValid()) Access = TEXT("Content variant of the active authored node");
+        else if (Item->DraftNodeId.IsValid()) Access = TEXT("Editable authored node");
+        else if (!RowScopePath.IsEmpty() && Item->NodePath == RowScopePath) Access = TEXT("Active edited definition");
+        AddField(NodeBox, LOCTEXT("AccessField", "Authoring"), Access);
+        AddSection(LOCTEXT("NodeSection", "Node"), NodeBox);
+
+        TSharedRef<SVerticalBox> TransformBox = SNew(SVerticalBox);
+        if (Item->IsOption())
         {
+            AddField(TransformBox, LOCTEXT("VariantTransformField", "Transform"), TEXT("Owned by the parent node"));
+        }
+        else
+        {
+            AddField(TransformBox, LOCTEXT("FixedTrsField", "Authored TRS"), Item->FixedTransform.ToHumanReadableString());
+            const UMHCompositeAsset* SourceAsset = Item->SourceAsset.Get();
+            const FMHCompositeAssetNode* SourceNode = EditableNode != nullptr ? EditableNode
+                : SourceAsset != nullptr && SourceAsset->Nodes.IsValidIndex(Item->SourceNodeIndex)
+                    ? &SourceAsset->Nodes[Item->SourceNodeIndex] : nullptr;
+            const bool bProcedural = !Item->Profile.IsEmpty() || (SourceNode != nullptr && SourceNode->bHasInlinePlacement);
+            const FString PlacementStatus = bProcedural
+                ? TEXT("Procedural placement; ordinary transform editing is disabled")
+                : TEXT("Authored placement");
+            AddField(TransformBox, LOCTEXT("PlacementStatusField", "Status"), PlacementStatus);
+            if (Item->PlaceType != INDEX_NONE)
+                AddField(TransformBox, LOCTEXT("PlaceTypeField", "place_type"), FString::FromInt(Item->PlaceType));
+            if (Item->SampledLocalTrs.IsSet())
+                AddField(TransformBox, LOCTEXT("SampledTrsField", "Sampled TRS"), FormatRandomTrs(Item->SampledLocalTrs.GetValue()));
+        }
+        AddSection(LOCTEXT("TransformSection", "Transform / Placement"), TransformBox);
+
+        TSharedRef<SVerticalBox> ContentBox = SNew(SVerticalBox);
+        TSharedRef<SWidget> ContentWidget = ContentBox;
+        if (Item->IsOption())
+        {
+            double Total = 0.0;
+            const TSharedPtr<FMHCompositeOutlinerItem> Parent = Item->Parent.Pin();
+            if (Parent.IsValid())
+                for (const TSharedPtr<FMHCompositeOutlinerItem>& Child : Parent->Children)
+                    if (Child.IsValid() && Child->IsOption()) Total += Child->Weight;
+            AddField(ContentBox, LOCTEXT("VariantResourceField", "Variant"), Item->Resource.IsEmpty() ? TEXT("Empty") : Item->Resource);
+            if (Parent.IsValid() && Parent->DraftNodeId.IsValid())
+            {
+                const FGuid NodeId = Parent->DraftNodeId;
+                const int32 OptionIndex = Item->OptionIndex;
+                AddWidgetField(ContentBox, LOCTEXT("VariantWeightField", "Weight"),
+                    SNew(SSpinBox<float>)
+                    .MinValue(0.0f)
+                    .Value(Item->Weight)
+                    .OnValueCommitted_Lambda([this, NodeId, OptionIndex](const float Value, ETextCommit::Type)
+                    {
+                        CommitDraftEdit(LOCTEXT("SelectedOptionWeightTransaction", "Change Content Variant Weight"),
+                            [NodeId, OptionIndex, Value](UMHCompositeEditSession& InSession, FString& Error)
+                            { return InSession.SetNodeOptionWeight(NodeId, OptionIndex, Value, Error); });
+                    }));
+                AddWidgetField(ContentBox, LOCTEXT("VariantRemoveField", "Action"),
+                    SNew(SButton)
+                    .Text(LOCTEXT("RemoveSelectedOption", "Remove Variant"))
+                    .OnClicked_Lambda([this, NodeId, OptionIndex]()
+                    {
+                        CommitDraftEdit(LOCTEXT("RemoveSelectedOptionTransaction", "Remove Content Variant"),
+                            [NodeId, OptionIndex](UMHCompositeEditSession& InSession, FString& Error)
+                            { return InSession.RemoveNodeOption(NodeId, OptionIndex, Error); });
+                        return FReply::Handled();
+                    }));
+            }
+            else AddField(ContentBox, LOCTEXT("VariantWeightReadOnlyField", "Weight"), FString::Printf(TEXT("%.9g"), static_cast<double>(Item->Weight)));
+            AddField(ContentBox, LOCTEXT("VariantChanceField", "Computed chance"), FString::Printf(TEXT("%.2f%%"), Total > 0.0 ? 100.0 * Item->Weight / Total : 0.0));
+            AddField(ContentBox, LOCTEXT("VariantSelectedField", "Preview"), Item->bSelectedOption ? TEXT("Selected") : TEXT("Not selected"));
+        }
+        else if (EditableNode != nullptr)
+        {
+            ContentWidget = BuildEditableContent(Item, *EditableNode);
+        }
+        else if (Item->Kind == EMHRandomSemanticKind::Random)
+        {
+            double Total = 0.0;
+            for (const TSharedPtr<FMHCompositeOutlinerItem>& Child : Item->Children)
+                if (Child.IsValid() && Child->IsOption()) Total += Child->Weight;
             for (const TSharedPtr<FMHCompositeOutlinerItem>& Child : Item->Children)
             {
-                if (!Child->IsOption()) continue;
-                Entities->AddSlot().AutoHeight().Padding(0.0f, 1.0f)
+                if (!Child.IsValid() || !Child->IsOption()) continue;
+                ContentBox->AddSlot().AutoHeight().Padding(0.0f, 1.0f)
                 [
                     SNew(SHorizontalBox)
                     + SHorizontalBox::Slot().FillWidth(1.0f)
                     [
                         SNew(STextBlock)
-                        .Text(FText::FromString(Child->Label + (Child->bSelectedOption ? TEXT("  [selected]") : TEXT(""))))
+                        .Text(FText::FromString(TEXT("Variant: ") + Child->Label + (Child->bSelectedOption ? TEXT("  [selected]") : TEXT(""))))
                     ]
                     + SHorizontalBox::Slot().AutoWidth()
                     [
                         SNew(STextBlock)
-                        .Text(FText::FromString(FString::Printf(TEXT("Weight %.9g"), static_cast<double>(Child->Weight))))
+                        .Text(FText::FromString(FString::Printf(TEXT("Weight %.9g  |  %.2f%%"),
+                            static_cast<double>(Child->Weight), Total > 0.0 ? 100.0 * Child->Weight / Total : 0.0)))
                     ]
                 ];
             }
         }
+        else if (!Item->Resource.IsEmpty())
+        {
+            AddField(ContentBox, LOCTEXT("SingleContentField", "Single asset"), Item->Resource);
+        }
         else
         {
-            Entities->AddSlot().AutoHeight()
-            [SNew(STextBlock).Text(LOCTEXT("NoEntities", "Not a random node."))
-                .ColorAndOpacity(FSlateColor::UseSubduedForeground())];
+            AddField(ContentBox, LOCTEXT("EmptyContentField", "Content"), TEXT("Empty"));
         }
-        AddSection(LOCTEXT("EntitiesSection", "Entities"), Entities);
-
-        TSharedRef<SVerticalBox> Children = SNew(SVerticalBox);
-        int32 ChildCount = 0;
-        for (const TSharedPtr<FMHCompositeOutlinerItem>& Child : Item->Children)
-        {
-            if (!Child.IsValid() || Child->IsOption()) continue;
-            ++ChildCount;
-            Children->AddSlot().AutoHeight().Padding(0.0f, 1.0f)
-            [SNew(STextBlock).Text(FText::FromString(Child->Label))];
-        }
-        if (ChildCount == 0)
-        {
-            Children->AddSlot().AutoHeight()
-            [SNew(STextBlock).Text(LOCTEXT("NoChildren", "No child nodes."))
-                .ColorAndOpacity(FSlateColor::UseSubduedForeground())];
-        }
-        AddSection(LOCTEXT("ChildrenSection", "Children"), Children);
-
-        TSharedRef<SVerticalBox> Node = SNew(SVerticalBox);
-        AddField(Node, LOCTEXT("KindField", "Kind"), OutlinerKindText(Item->Kind));
-        AddField(Node, LOCTEXT("ResourceField", "Resource"), Item->Resource.IsEmpty() ? TEXT("--") : Item->Resource);
-        AddField(Node, LOCTEXT("NodePathField", "NodePath"), Item->NodePath);
-        AddField(Node, LOCTEXT("FixedTrsField", "Fixed TRS"), Item->FixedTransform.ToHumanReadableString());
-        if (Item->PlaceType != INDEX_NONE)
-            AddField(Node, LOCTEXT("PlaceTypeField", "place_type"), FString::FromInt(Item->PlaceType));
-        if (Item->bAppearanceSeedBoundary)
-            AddField(Node, LOCTEXT("AppearanceBoundaryField", "appearance_seed_boundary"), TEXT("true"));
-        if (Item->IsOption())
-            AddField(Node, LOCTEXT("SelectedField", "Selected"), Item->bSelectedOption ? TEXT("yes") : TEXT("no"));
-        if (Item->SampledLocalTrs.IsSet())
-            AddField(Node, LOCTEXT("SampledTrsField", "Sampled TRS"), FormatRandomTrs(Item->SampledLocalTrs.GetValue()));
-        AddSection(LOCTEXT("NodeSection", "Node"), Node);
+        AddSection(LOCTEXT("ContentSection", "Content"), ContentWidget);
     }
 
     void EditorModeChanged(const FEditorModeID& ModeId, const bool bEnteringMode)
@@ -1117,6 +1412,7 @@ private:
     {
         TGuardValue<bool> RefreshGuard(bRefreshingModel, true);
         ObserveSession(const_cast<UMHCompositeEditSession*>(SessionOf(CurrentActor.Get())));
+        const UMHCompositeEditSession* ActiveSession = SessionOf(CurrentActor.Get());
         const FString PreviousPath = SelectedItem.IsValid() ? SelectedItem->NodePath : FString();
         // R6-UX1: a refresh never collapses what the user opened.
         TArray<FString> ExpandedPaths;
@@ -1130,6 +1426,8 @@ private:
             }
         }
         RowScopePath.Reset();
+        TSharedPtr<FMHCompositeOutlinerItem> ScopeItem;
+        bool bScopeChanged = false;
         SelectedItem.Reset();
         RootItems.Reset();
         const bool bBuilt = SessionOf(CurrentActor.Get()) != nullptr && Model.BuildFromActor(*CurrentActor);
@@ -1152,43 +1450,79 @@ private:
         {
             RootItems = Model.GetRoots();
             const UMHCompositeAsset* Asset = CurrentActor->GetCompositeAsset();
-            if (HeaderText.IsValid()) HeaderText->SetText(FText::FromString(FString::Printf(
-                TEXT("%s  |  Layout Seed %d  |  Appearance Seed %d"),
-                Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"),
-                CurrentActor->GetSeed(), CurrentActor->GetAppearanceSeed())));
+            const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr
+                ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+            const FMHCompositeEditContext EditContext = Subsystem != nullptr
+                ? Subsystem->GetEditContext() : FMHCompositeEditContext();
+            const bool bHasEditContext = !EditContext.EditedLogicalName.IsEmpty() &&
+                EditContext.RootPlacement.Get() == CurrentActor.Get();
+            if (bHasEditContext)
+            {
+                RowScopePath = EditContext.InvocationPath;
+                if (ActiveSession != nullptr)
+                {
+                    bScopeChanged = FocusedSessionId != ActiveSession->GetSessionId() ||
+                        FocusedEpoch != ActiveSession->GetEpoch() ||
+                        FocusedInvocationPath != EditContext.InvocationPath;
+                }
+            }
+            if (HeaderText.IsValid())
+            {
+                HeaderText->SetText(FText::FromString(FString::Printf(
+                    TEXT("Composite Edit — %s"),
+                    bHasEditContext ? *EditContext.EditedLogicalName
+                        : Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"))));
+                HeaderText->SetToolTipText(FText::FromString(FString::Printf(
+                    TEXT("Placement: %s\nLayout seed: %d\nAppearance seed: %d"),
+                    Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"),
+                    CurrentActor->GetSeed(), CurrentActor->GetAppearanceSeed())));
+            }
             if (StatusText.IsValid())
             {
-                const UMHCompositeLevelSubsystem* Subsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
-                const FMHCompositeEditContext EditContext = Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext();
-                if (CurrentActor->IsPreviewLoading())
+                const UMHCompositeEditSession* Session = SessionOf(CurrentActor.Get());
+                if (Session != nullptr && !Session->GetPreviewError().IsEmpty())
                 {
-                    StatusText->SetText(LOCTEXT("OverlayLoading", "Loading selected meshes…"));
+                    StatusText->SetText(LOCTEXT("PreviewError", "Preview error — authored changes are still in the draft"));
+                    StatusText->SetToolTipText(FText::FromString(Session->GetPreviewError()));
+                    StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.18f, 0.12f)));
+                }
+                else if (CurrentActor->IsPreviewLoading())
+                {
+                    StatusText->SetText(FText::FromString(FString::Printf(TEXT("%s  •  Loading preview…"),
+                        Session != nullptr && Session->IsDirty() ? TEXT("Unsaved changes") : TEXT("Saved"))));
+                    StatusText->SetToolTipText(FText::GetEmpty());
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
-                else if (!EditContext.EditedLogicalName.IsEmpty() && EditContext.RootPlacement.Get() == CurrentActor.Get())
+                else if (bHasEditContext)
                 {
-                    // R6-D0: what is edited, where it sits, and what saving touches.
-                    RowScopePath = EditContext.InvocationPath;
-                    const FString Context = EditContext.InvocationPath.IsEmpty()
-                        ? Asset != nullptr ? Asset->LogicalName : FString()
-                        : FString::Printf(TEXT("%s -> %s"), Asset != nullptr ? *Asset->LogicalName : TEXT("<missing>"), *EditContext.InvocationPath);
-                    const TCHAR* Hint = TEXT("Click a node row or its geometry in the viewport to grab it; Save / Cancel are in the viewport; Esc cancels the whole session immediately; right-click for Save As Unique Copy");
                     StatusText->SetText(FText::FromString(FString::Printf(
-                        TEXT("Editing: %s  |  Context: %s  |  Saves: shared definition (%d placement%s)  |  %s"),
-                        *EditContext.EditedLogicalName, *Context, EditContext.ConsumerPlacements, EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"), Hint)));
+                        TEXT("%s  •  %s"),
+                        ActiveSession != nullptr && ActiveSession->IsDirty() ? TEXT("Unsaved changes") : TEXT("Saved"),
+                        EditContext.InvocationPath.IsEmpty() ? TEXT("Root definition") : TEXT("Nested definition"))));
+                    StatusText->SetToolTipText(FText::FromString(FString::Printf(
+                        TEXT("Editing: %s\nInvocation: %s\nSaving updates the shared definition used by %d placement%s."),
+                        *EditContext.EditedLogicalName,
+                        EditContext.InvocationPath.IsEmpty() ? TEXT("Root") : *EditContext.InvocationPath,
+                        EditContext.ConsumerPlacements,
+                        EditContext.ConsumerPlacements == 1 ? TEXT("") : TEXT("s"))));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.75f, 0.2f)));
                 }
                 else if (Model.GetOverlayStatus().IsEmpty())
                 {
                     StatusText->SetText(LOCTEXT("OverlayActive", "Resolved overlay active"));
+                    StatusText->SetToolTipText(FText::GetEmpty());
                     StatusText->SetColorAndOpacity(FSlateColor::UseSubduedForeground());
                 }
                 else
                 {
-                    StatusText->SetText(FText::FromString(Model.GetOverlayStatus()));
+                    StatusText->SetText(LOCTEXT("OverlayUnavailable", "Preview unavailable"));
+                    StatusText->SetToolTipText(FText::FromString(Model.GetOverlayStatus()));
                     StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.18f, 0.12f)));
                 }
             }
+            // The nested draft rows are created only after its occurrence is
+            // expanded. Do that before semantic GUID selection is mirrored.
+            if (!RowScopePath.IsEmpty()) ScopeItem = PrepareEditScope(RowScopePath);
             if (!PreviousPath.IsEmpty()) SelectedItem = Model.FindByNodePath(PreviousPath);
             if (TreeView.IsValid())
             {
@@ -1210,10 +1544,26 @@ private:
             if (UMHCompositeEditorMode::IsActive() && SessionOf(CurrentActor.Get()) != nullptr)
             {
                 SyncTreeSelectionFromSession();
+                if (bScopeChanged && ScopeItem.IsValid() &&
+                    SessionOf(CurrentActor.Get())->GetSelectedNodeIds().IsEmpty())
+                    TreeView->RequestScrollIntoView(ScopeItem);
             }
             else if (SelectedItem.IsValid()) RevealItem(SelectedItem);
             else TreeView->ClearSelection();
         }
+        if (bBuilt && ActiveSession != nullptr)
+        {
+            FocusedSessionId = ActiveSession->GetSessionId();
+            FocusedEpoch = ActiveSession->GetEpoch();
+            FocusedInvocationPath = ActiveSession->GetInvocationPath();
+        }
+        else
+        {
+            FocusedSessionId.Invalidate();
+            FocusedEpoch = 0;
+            FocusedInvocationPath.Reset();
+        }
+        RebuildNavigation();
         RebuildDetails();
     }
 
@@ -1225,6 +1575,7 @@ private:
     /** R6-UX1: invocation path of the session edited on CurrentActor (rows outside it are dimmed). */
     FString RowScopePath;
     TSharedPtr<STreeView<TSharedPtr<FMHCompositeOutlinerItem>>> TreeView;
+    TSharedPtr<SHorizontalBox> NavigationBox;
     TSharedPtr<SVerticalBox> DetailsBox;
     TSharedPtr<STextBlock> HeaderText;
     TSharedPtr<STextBlock> StatusText;
@@ -1233,8 +1584,13 @@ private:
     TWeakObjectPtr<UMHCompositeEditSession> ObservedSession;
     FDelegateHandle SessionSelectionChangedHandle;
     FDelegateHandle SessionChangedHandle;
+    FGuid FocusedSessionId;
+    uint32 FocusedEpoch = 0;
+    FString FocusedInvocationPath;
     bool bRefreshPending = false;
     bool bRefreshingModel = false;
+    bool bExecutingCommand = false;
+    bool bSwitchingScope = false;
     bool bSyncingTreeSelection = false;
 };
 

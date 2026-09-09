@@ -154,13 +154,11 @@ bool FMHEditStructureRefusalTest::RunTest(const FString& Parameters)
     const FGuid Grouped = Draft->GetNodeId(2);
     const uint32 Revision = Draft->GetRevision();
 
-    bool bPassed = TestFalse(TEXT("a leaf cannot have children"), Session->AddNode(Plain, EMHCompositeNodeKind::Group, FString(), TEXT("under a mesh"), FTransform::Identity, Error).IsValid());
-    bPassed &= TestFalse(TEXT("a mesh needs a resource"), Session->AddNode(Group, EMHCompositeNodeKind::Mesh, FString(), TEXT("no resource"), FTransform::Identity, Error).IsValid());
+    bool bPassed = TestFalse(TEXT("a mesh needs a resource"), Session->AddNode(Group, EMHCompositeNodeKind::Mesh, FString(), TEXT("no resource"), FTransform::Identity, Error).IsValid());
     bPassed &= TestFalse(TEXT("a group forbids a resource"), Session->AddNode(Group, EMHCompositeNodeKind::Group, F.MeshC, TEXT("group with resource"), FTransform::Identity, Error).IsValid());
     bPassed &= TestFalse(TEXT("a random node needs options (not this command)"), Session->AddNode(Group, EMHCompositeNodeKind::Random, FString(), TEXT("random"), FTransform::Identity, Error).IsValid());
     bPassed &= TestFalse(TEXT("an unknown parent"), Session->AddNode(FGuid::NewGuid(), EMHCompositeNodeKind::Group, FString(), TEXT("orphan"), FTransform::Identity, Error).IsValid());
     bPassed &= TestFalse(TEXT("no cycles: a group under its own child"), Session->ReparentNode(Group, Grouped, INDEX_NONE, false, Error));
-    bPassed &= TestFalse(TEXT("no reparent onto a leaf"), Session->ReparentNode(Grouped, Plain, INDEX_NONE, false, Error));
     bPassed &= TestFalse(TEXT("no reparent onto itself"), Session->ReparentNode(Group, Group, INDEX_NONE, false, Error));
     bPassed &= TestFalse(TEXT("delete needs a known node"), Session->DeleteNode(FGuid::NewGuid(), Error));
     bPassed &= TestFalse(TEXT("duplicate needs a known node"), Session->DuplicateNode(FGuid::NewGuid(), Error).IsValid());
