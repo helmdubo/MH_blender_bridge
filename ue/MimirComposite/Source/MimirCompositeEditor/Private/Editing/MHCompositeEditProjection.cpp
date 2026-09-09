@@ -27,6 +27,47 @@ using namespace UE::MimirComposite;
 namespace
 {
 
+/** Draft overlays identify definitions by logical name, not transient UObject identity. */
+bool ValidateDraftGraphCycles(const FMHRandomSourceGraph& Graph, FString& OutError)
+{
+    TSet<FString> Visiting;
+    TSet<FString> Finished;
+    TFunction<bool(const FString&)> VisitComposite;
+    TFunction<bool(const TArray<FMHRandomNode>&)> VisitNodes;
+    VisitNodes = [&](const TArray<FMHRandomNode>& Nodes)
+    {
+        for (const FMHRandomNode& Node : Nodes)
+        {
+            if (Node.Kind == EMHRandomSemanticKind::Composite && !VisitComposite(Node.Resource)) return false;
+            for (const FMHRandomOption& Option : Node.Options)
+            {
+                // Inactive and zero-weight variants must also form a valid source graph.
+                if (Option.Kind == EMHRandomSemanticKind::Composite && !VisitComposite(Option.Resource)) return false;
+            }
+            if (!VisitNodes(Node.Children)) return false;
+        }
+        return true;
+    };
+    VisitComposite = [&](const FString& Name)
+    {
+        if (Finished.Contains(Name)) return true;
+        if (Visiting.Contains(Name))
+        {
+            OutError = FString::Printf(TEXT("MH_E_COMPOSITE_CYCLE: composite:%s includes itself or an ancestor"), *Name);
+            return false;
+        }
+        const FMHRandomComposite* Composite = Graph.Composites.Find(Name);
+        // Missing resources retain the normal preview resolver's diagnostics.
+        if (Composite == nullptr) return true;
+        Visiting.Add(Name);
+        if (!VisitNodes(Composite->Nodes)) return false;
+        Visiting.Remove(Name);
+        Finished.Add(Name);
+        return true;
+    };
+    return VisitComposite(Graph.RootComposite);
+}
+
 void RetireProjectionComponent(USceneComponent* Component)
 {
     if (!IsValid(Component)) return;
@@ -246,6 +287,17 @@ void UMHCompositeEditProjection::AcquireLease()
     Lease = Pool->AcquireSuppression(Handles);
 }
 
+void UMHCompositeEditProjection::RebindSuppression()
+{
+    const UMHCompositeEditSession* Owner = Session.Get();
+    const AMHCompositeActor* Root = Owner != nullptr ? Owner->GetRootPlacement() : nullptr;
+    UMHInstancePoolSubsystem* Pool = Root != nullptr ? UMHInstancePoolSubsystem::Get(Root->GetWorld()) : nullptr;
+    if (Pool == nullptr || !IsOpen()) return;
+    const FMHPoolSuppressionLease Previous = Lease;
+    AcquireLease();
+    if (Previous.IsSet()) Pool->ReleaseSuppression(Previous);
+}
+
 void UMHCompositeEditProjection::OnEndpointLoadReady(const FMHResourceKey& Key)
 {
     if (!ProjectionActor.IsValid() || !PendingEndpointKeys.Contains(Key)) return;
@@ -301,6 +353,13 @@ bool UMHCompositeEditProjection::UnderOccurrence(const FString& Path) const
     return OccurrencePrefix.IsEmpty() || Path.StartsWith(OccurrencePrefix);
 }
 
+bool UMHCompositeEditProjection::ValidateDraftSourceGraph(FString& OutError)
+{
+    OutError.Reset();
+    FMHRandomSourceGraph Graph;
+    return BuildDraftGraph(Graph, OutError);
+}
+
 bool UMHCompositeEditProjection::BuildDraftGraph(FMHRandomSourceGraph& OutGraph, FString& OutError)
 {
     ++FullGraphBuildCount;
@@ -348,7 +407,7 @@ bool UMHCompositeEditProjection::BuildDraftGraph(FMHRandomSourceGraph& OutGraph,
     {
         OutGraph.ResourceDependencies.Add(Pair.Key, Pair.Value);
     }
-    return true;
+    return ValidateDraftGraphCycles(OutGraph, OutError);
 }
 
 USceneComponent* UMHCompositeEditProjection::PlaceComponent(const FString& Origin, UClass* Class, const FMatrix& WorldMatrix, const TFunction<void(USceneComponent&)>& Configure)

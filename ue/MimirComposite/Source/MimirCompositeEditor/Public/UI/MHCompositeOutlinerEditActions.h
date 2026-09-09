@@ -5,6 +5,7 @@
 #include "Misc/Guid.h"
 
 class UMHCompositeEditDocument;
+class UMHCompositeEditSession;
 
 namespace UE::MimirComposite
 {
@@ -21,12 +22,37 @@ struct MIMIRCOMPOSITEEDITOR_API FMHOutlinerAddRequest
     FString Name;
 };
 
+/** Identity captured by a deferred authoring callback. */
+struct MIMIRCOMPOSITEEDITOR_API FMHOutlinerCommandStamp
+{
+    TWeakObjectPtr<const UMHCompositeEditSession> Session;
+    FGuid SessionId;
+    uint32 Epoch = 0;
+    uint64 DraftChangeSerial = 0;
+
+    static FMHOutlinerCommandStamp Capture(const UMHCompositeEditSession& InSession);
+    bool Matches(const UMHCompositeEditSession& InSession) const;
+};
+
 /**
- * Where a node added "at" a row goes: into the row when it is a group of the
- * draft, next to it (under its parent) for any other draft row, at the root
- * when there is no row or the row is not part of the draft.
+ * Resolves the exact destination. Every authored node can own children;
+ * locked/variant rows fail, and root requires an explicit root action.
  */
-MIMIRCOMPOSITEEDITOR_API FGuid MHOutlinerAddParentFor(const UE::MimirComposite::FMHCompositeOutlinerItem* Target, const UMHCompositeEditDocument& Draft);
+MIMIRCOMPOSITEEDITOR_API bool MHResolveOutlinerAddParent(
+    const UE::MimirComposite::FMHCompositeOutlinerItem* Target,
+    bool bExplicitRoot,
+    const UMHCompositeEditDocument& Draft,
+    FGuid& OutParentId,
+    FString& OutError);
+
+/** Resolves one atomic sibling-block insertion before an above/below drop. */
+MIMIRCOMPOSITEEDITOR_API bool MHResolveOutlinerSiblingInsertion(
+    const UE::MimirComposite::FMHCompositeOutlinerItem* Target,
+    bool bBelow,
+    const UMHCompositeEditDocument& Draft,
+    FGuid& OutParentId,
+    int32& OutSiblingIndex,
+    FString& OutError);
 
 /**
  * The node an asset becomes when dropped on / added at a row: a managed
@@ -38,4 +64,19 @@ MIMIRCOMPOSITEEDITOR_API bool MHDescribeOutlinerAssetAdd(
     const UE::MimirComposite::FMHCompositeOutlinerItem* Target,
     const UMHCompositeEditDocument& Draft,
     FMHOutlinerAddRequest& OutRequest,
+    FString& OutError);
+
+/** Prevalidates a complete Content Browser/drop batch before the session mutates. */
+MIMIRCOMPOSITEEDITOR_API bool MHDescribeOutlinerAssetAddBatch(
+    TConstArrayView<UObject*> Assets,
+    const UE::MimirComposite::FMHCompositeOutlinerItem* Target,
+    bool bExplicitRoot,
+    const UMHCompositeEditDocument& Draft,
+    TArray<FMHOutlinerAddRequest>& OutRequests,
+    FString& OutError);
+
+/** Describes one managed asset as a weight-one content variant. */
+MIMIRCOMPOSITEEDITOR_API bool MHDescribeOutlinerAssetOption(
+    const UObject* Asset,
+    FMHCompositeOption& OutOption,
     FString& OutError);

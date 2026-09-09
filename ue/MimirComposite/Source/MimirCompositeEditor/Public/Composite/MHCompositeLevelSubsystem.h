@@ -70,6 +70,7 @@ struct FMHCompositeAdoptTarget;
 namespace UE::MimirComposite
 {
 struct FMHCompositeDocument;
+struct FMHResolvedCompositePlan;
 
 /**
  * Pure Build preflight (R4-pre-2, owner decision 2026-09-04): assembles the
@@ -161,6 +162,8 @@ public:
      * The source is untouched until an explicit publish; Cancel discards.
      */
     bool BeginEditNestedComposite(AMHCompositeActor* Root, const FString& InvocationNodePath, FString& OutError);
+    /** Resolve Save/Discard, then change scope without ending the session, mode, or toolkit. Failure keeps the current draft. */
+    bool SwitchEditComposite(const FString& InvocationNodePath, bool bSaveCurrent, TArray<FString>& OutWarnings, FString& OutError);
     /**
      * Publishes the active session: a root session writes the edited top-level
      * transforms to the placement's source; a nested session (R6-D2, docs/16
@@ -194,8 +197,8 @@ public:
     bool IsEditingComposite() const { return EditingActor.IsValid(); }
     /**
      * CE-pre: identity of the current session. Advances on every Begin and on
-     * every session end, so a callback captured for one session never acts on
-     * a later one (spec CE §9: deferred callbacks carry the epoch).
+     * every scope switch and session end, so a callback cannot act on another
+     * definition or a later session (spec CE §9: deferred callbacks carry the epoch).
      */
     uint32 GetEditSessionEpoch() const { return EditSessionEpoch; }
     /** CE-5a: the outcome of the last Commit / Apply from a CE-backend session (None before any). */
@@ -256,6 +259,10 @@ private:
     void ResetEditSession();
     /** CE-1: creates the session object for the edit just begun (EditingDocument is its original). */
     void OpenEditSession(AMHCompositeActor* Root, UMHCompositeAsset* Asset, const FString& InvocationNodePath);
+    bool ResolveEditTarget(AMHCompositeActor* Root, const FString& InvocationNodePath,
+        const UE::MimirComposite::FMHResolvedCompositePlan& Plan, bool bUseDraft,
+        UMHCompositeAsset*& OutAsset, UE::MimirComposite::FMHCompositeDocument& OutDocument,
+        FMatrix& OutParentWorld, FString& OutError) const;
     /** One managed composite from a document: validated, published to Source Root under Target, imported (Build, R6-U). */
     bool CreateManagedComposite(
         const UE::MimirComposite::FMHCompositeDocument& Document,
@@ -273,7 +280,7 @@ private:
     /** R6-D2: Apply Shared Definition — the nested draft becomes the child's source; consumers follow. */
     bool CommitNestedEditComposite(TArray<FString>& OutWarnings, FString& OutError);
     /** CE-5a: publish the session draft without closing the session first; classifies a failure by the source file's bytes. */
-    bool PublishFromSession(UMHCompositeAsset& Asset, const UE::MimirComposite::FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError);
+    bool PublishFromSession(UMHCompositeAsset& Asset, const UE::MimirComposite::FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError, bool bCloseOnSuccess = true);
     EMHCompositePublishOutcome LastPublishOutcome = EMHCompositePublishOutcome::None;
     void OnWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
     void OnLevelActorDeleted(AActor* Actor);

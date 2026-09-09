@@ -997,8 +997,18 @@ void UMHCompositeLevelSubsystem::OnLevelActorDeleted(AActor* Actor)
     if (Actor != nullptr && Actor == EditingActor.Get()) ResetEditSession();
 }
 
-bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, const FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError)
+bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, const FMHCompositeDocument& Edited, const TArray<uint8>& CanonicalBytes, TArray<FString>& OutWarnings, FString& OutError, const bool bCloseOnSuccess)
 {
+    // Syntax alone cannot detect a cycle introduced by an authored reference.
+    // Validate the overlaid source graph before applying or writing the draft.
+    if (UMHCompositeEditProjection* Projection = EditSession != nullptr ? EditSession->GetProjection() : nullptr)
+    {
+        if (!Projection->ValidateDraftSourceGraph(OutError))
+        {
+            LastPublishOutcome = EMHCompositePublishOutcome::NoExternalChange;
+            return false;
+        }
+    }
     // CE-5a (spec §10.2, A25/A26): the session outlives a failed publish. The
     // source boundary is crossed only on success; the outcome of a failure
     // is read from the file itself, not from a UI flag.
@@ -1019,7 +1029,8 @@ bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, co
         LastPublishOutcome = EMHCompositePublishOutcome::Succeeded;
         // Source boundary: once the file is written, UE Undo must not
         // resurrect a pre-publish snapshot (the mode's Exit resets as well).
-        ResetEditSession();
+        if (bCloseOnSuccess) ResetEditSession();
+        else if (EditSession != nullptr) EditSession->RebaseOriginal(Edited);
         if (GEditor != nullptr) GEditor->ResetTransaction(INVTEXT("MH Composite publish cannot be undone"));
         if (Root != nullptr) Root->RebuildComposite();
         return true;
@@ -1052,7 +1063,11 @@ bool UMHCompositeLevelSubsystem::PublishFromSession(UMHCompositeAsset& Asset, co
         OutWarnings.Add(TEXT("MH_W_NO_EXTERNAL_CHANGE: nothing was written; the session and its draft stay — fix the cause and Save again"));
     }
     // The restore notified consumers; the projection follows the rebuilt placement.
-    if (EditSession != nullptr) EditSession->RefreshProjection();
+    if (EditSession != nullptr)
+    {
+        EditSession->RefreshProjection();
+        if (UMHCompositeEditProjection* Projection = EditSession->GetProjection()) Projection->RebindSuppression();
+    }
     return false;
 }
 
@@ -1511,6 +1526,40 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
         OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: Edit Contents requires a current resolved placement");
         return false;
     }
+    UMHCompositeAsset* TargetAsset = nullptr;
+    if (!ResolveEditTarget(Root, InvocationNodePath, *Plan, false, TargetAsset, EditingDocument, EditingParentWorld, OutError)) return false;
+    ++EditSessionEpoch;
+    EditingActor = Root;
+    EditingAsset = TargetAsset;
+    EditingInvocationPath = InvocationNodePath;
+    OpenEditSession(Root, TargetAsset, EditingInvocationPath);
+    if (!EditSession->OpenProjection(OutError))
+    {
+        ResetEditSession();
+        return false;
+    }
+    UMHCompositeEditorMode::ActivateForSession();
+    return true;
+}
+
+bool UMHCompositeLevelSubsystem::ResolveEditTarget(AMHCompositeActor* Root, const FString& InvocationNodePath,
+    const FMHResolvedCompositePlan& ResolvedPlan, const bool bUseDraft, UMHCompositeAsset*& OutAsset,
+    FMHCompositeDocument& OutDocument, FMatrix& OutParentWorld, FString& OutError) const
+{
+    OutAsset = nullptr;
+    OutError.Reset();
+    if (Root == nullptr || Root->GetCompositeAsset() == nullptr)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: switching scope requires a placed composite");
+        return false;
+    }
+    if (InvocationNodePath.IsEmpty())
+    {
+        OutAsset = Root->GetCompositeAsset();
+        OutParentWorld = Root->GetActorTransform().ToMatrixWithScale();
+        return MHExtractCompositeV5(*OutAsset, OutDocument, OutError);
+    }
+    const FMHResolvedCompositePlan* Plan = &ResolvedPlan;
     // The invocation is a node of the resident preview plan (16 §2.10); its
     // world matrix under the placement basis is the effective parent of
     // everything the child definition materializes here.
@@ -1560,7 +1609,20 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
             const FMHCompiledRecipeComponent* Component = Recipe != nullptr
                 ? Recipe->Components.FindByPredicate([&LocalPath](const FMHCompiledRecipeComponent& Value) { return Value.NodePath == LocalPath; })
                 : nullptr;
-            if (Component != nullptr && Component->Options.IsValidIndex(Owner->SelectedOptionIndex) &&
+            // Before a Save switch, the projected options can differ from
+            // the published recipe. Address the authoring owner in that draft.
+            const UMHCompositeEditDocument* Draft = bUseDraft && EditSession != nullptr && OwnerAsset == EditSession->GetEditedAsset()
+                ? EditSession->GetDraft() : nullptr;
+            const int32 DraftIndex = Draft != nullptr && Colon != INDEX_NONE
+                ? Draft->FindNodeIndexBySelector(LocalPath.Mid(Colon + 1)) : INDEX_NONE;
+            if (DraftIndex != INDEX_NONE && Draft->GetNodes()[DraftIndex].Kind == EMHCompositeNodeKind::Random &&
+                Draft->GetNodes()[DraftIndex].Options.IsValidIndex(Owner->SelectedOptionIndex) &&
+                Draft->GetNodes()[DraftIndex].Options[Owner->SelectedOptionIndex].Kind == EMHCompositeOptionKind::Composite)
+            {
+                Invocation = Owner;
+                InvocationResource = Draft->GetNodes()[DraftIndex].Options[Owner->SelectedOptionIndex].Resource;
+            }
+            else if (DraftIndex == INDEX_NONE && Component != nullptr && Component->Options.IsValidIndex(Owner->SelectedOptionIndex) &&
                 Component->Options[Owner->SelectedOptionIndex].Kind == EMHRandomSemanticKind::Composite)
             {
                 Invocation = Owner;
@@ -1585,23 +1647,73 @@ bool UMHCompositeLevelSubsystem::BeginEditNestedComposite(AMHCompositeActor* Roo
             : AdmissionError;
         return false;
     }
-    if (!MHExtractCompositeV5(*Child, EditingDocument, OutError))
+    if (!MHExtractCompositeV5(*Child, OutDocument, OutError)) return false;
+    OutAsset = Child;
+    OutParentWorld = Invocation->WorldMatrix * Root->GetActorTransform().ToMatrixWithScale();
+    return true;
+}
+
+bool UMHCompositeLevelSubsystem::SwitchEditComposite(const FString& InvocationNodePath, const bool bSaveCurrent,
+    TArray<FString>& OutWarnings, FString& OutError)
+{
+    OutWarnings.Reset();
+    OutError.Reset();
+    AMHCompositeActor* Root = EditingActor.Get();
+    if (EditSession == nullptr || !EditSession->IsOpen() || Root == nullptr || EditSession->GetDraft() == nullptr)
     {
-        EditingDocument = FMHCompositeDocument();
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: switching scope requires an active composite session");
         return false;
     }
-    ++EditSessionEpoch;
-    EditingActor = Root;
-    EditingAsset = Child;
+    if (InvocationNodePath == EditingInvocationPath) return true;
+    const bool bPublish = bSaveCurrent && EditSession->IsDirty();
+    const UMHCompositeEditProjection* Projection = EditSession->GetProjection();
+    const FMHResolvedCompositePlan* Plan = bPublish && Projection != nullptr ? Projection->GetPlan() : Root->GetResolvedPlan();
+    UMHCompositeAsset* TargetAsset = nullptr;
+    FMHCompositeDocument TargetDocument;
+    FMatrix TargetParent = FMatrix::Identity;
+    // A missing/inactive target must not discard the current draft or write a file.
+    if (Plan == nullptr || !ResolveEditTarget(Root, InvocationNodePath, *Plan, bPublish,
+        TargetAsset, TargetDocument, TargetParent, OutError))
+    {
+        if (OutError.IsEmpty()) OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the target scope has no resolved preview");
+        return false;
+    }
+    if (bPublish)
+    {
+        UMHCompositeAsset* CurrentAsset = EditSession->GetEditedAsset();
+        FMHCompositeDocument Edited;
+        TArray<uint8> Bytes;
+        if (CurrentAsset == nullptr || !EditSession->GetDraft()->Extract(Edited, OutError) ||
+            !MHWriteCanonicalCompositeV5(Edited, Bytes, OutError) ||
+            !PublishFromSession(*CurrentAsset, Edited, Bytes, OutWarnings, OutError, false)) return false;
+        // Publishing updates every occurrence. Resolve the saved destination
+        // again, including another occurrence of this same definition.
+        Plan = Root->GetResolvedPlan();
+        if (Plan == nullptr || !ResolveEditTarget(Root, InvocationNodePath, *Plan, false,
+            TargetAsset, TargetDocument, TargetParent, OutError))
+        {
+            if (OutError.IsEmpty()) OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: the saved target has no resolved placement");
+            EditSession->RefreshProjection();
+            if (UMHCompositeEditProjection* RetainedProjection = EditSession->GetProjection()) RetainedProjection->RebindSuppression();
+            EditSession->OnChanged.Broadcast();
+            return false;
+        }
+    }
+    const uint32 NextEpoch = EditSessionEpoch + 1;
+    if (!EditSession->RetargetDefinition(TargetAsset, InvocationNodePath, TargetDocument, NextEpoch, OutError))
+    {
+        EditSession->OnChanged.Broadcast();
+        return false;
+    }
+    EditSessionEpoch = NextEpoch;
+    EditingAsset = TargetAsset;
     EditingInvocationPath = InvocationNodePath;
-    EditingParentWorld = Invocation->WorldMatrix * Root->GetActorTransform().ToMatrixWithScale();
-    OpenEditSession(Root, Child, EditingInvocationPath);
-    if (!EditSession->OpenProjection(OutError))
-    {
-        ResetEditSession();
-        return false;
-    }
-    UMHCompositeEditorMode::ActivateForSession();
+    EditingParentWorld = TargetParent;
+    EditingDocument = MoveTemp(TargetDocument);
+    // Save/Discard finishes this definition's draft history. Undo cannot
+    // apply records belonging to a different definition after navigation.
+    if (GEditor != nullptr) GEditor->ResetTransaction(INVTEXT("Composite edited definition changed"));
+    EditSession->OnChanged.Broadcast();
     return true;
 }
 

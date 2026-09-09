@@ -5,6 +5,7 @@
 #include "Composite/MHCompositeLevelSubsystem.h"
 #include "Composite/MHCompositeTransformAdmission.h"
 #include "ConvexVolume.h"
+#include "Dialog/SMessageDialog.h"
 #include "UnrealWidget.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -20,6 +21,7 @@
 #include "LevelEditorActions.h"
 #include "LevelEditorViewport.h"
 #include "Logging/MessageLog.h"
+#include "Misc/App.h"
 #include "Misc/MessageDialog.h"
 #include "Selection.h"
 #include "Styling/AppStyle.h"
@@ -32,6 +34,7 @@
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -84,9 +87,8 @@ FText Breadcrumb()
 
 /**
  * CE-3d: `Composite Edit | root > child > current*` — every crumb but the
- * last is a button that switches to that definition (deferred: the switch
- * closes this toolkit). The chain is fixed for a session's lifetime: a
- * switch re-enters the mode and rebuilds the overlay.
+ * last is a button that switches to that definition. The chain is refreshed
+ * when the same session changes scope; the mode and toolkit remain alive.
  */
 TSharedRef<SWidget> BuildCrumbs(TWeakObjectPtr<UMHCompositeEditorMode> Mode)
 {
@@ -108,7 +110,22 @@ TSharedRef<SWidget> BuildCrumbs(TWeakObjectPtr<UMHCompositeEditorMode> Mode)
             .ToolTipText(LOCTEXT("CrumbTip", "Edit this definition (Save, Discard or stay first when there are changes)."))
             .OnClicked_Lambda([Mode, Path]()
             {
-                if (GEditor != nullptr) GEditor->GetTimerManager()->SetTimerForNextTick([Mode, Path]() { if (Mode.IsValid()) Mode->RequestSwitch(Path); });
+                const UMHCompositeLevelSubsystem* Current = LevelSubsystem();
+                const TWeakObjectPtr<UMHCompositeEditSession> Session(Current != nullptr ? Current->GetEditSession() : nullptr);
+                if (GEditor != nullptr && Session.IsValid() && Session->GetDraft() != nullptr)
+                {
+                    const uint32 Epoch = Session->GetEpoch();
+                    const uint64 Serial = Session->GetDraft()->GetChangeSerial();
+                    GEditor->GetTimerManager()->SetTimerForNextTick([Mode, Path, Session, Epoch, Serial]()
+                    {
+                        const UMHCompositeLevelSubsystem* Active = LevelSubsystem();
+                        if (Mode.IsValid() && UMHCompositeEditorMode::GetActive() == Mode.Get() &&
+                            Session.IsValid() && Session->IsOpen() && Session->GetEpoch() == Epoch &&
+                            Active != nullptr && Active->GetEditSession() == Session.Get() &&
+                            Session->GetDraft() != nullptr && Session->GetDraft()->GetChangeSerial() == Serial)
+                            Mode->RequestSwitch(Path);
+                    });
+                }
                 return FReply::Handled();
             })
             [
@@ -139,6 +156,7 @@ class FMHCompositeEditorModeToolkit final : public FModeToolkit
 public:
     virtual ~FMHCompositeEditorModeToolkit() override
     {
+        if (ObservedSession.IsValid()) ObservedSession->OnChanged.Remove(ScopeChangedHandle);
         if (IsHosted() && Overlay.IsValid()) GetToolkitHost()->RemoveViewportOverlayWidget(Overlay.ToSharedRef());
     }
 
@@ -161,7 +179,7 @@ public:
                 ]
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(FMargin(8.0f, 0.0f, 0.0f, 0.0f))
                 [
-                    BuildCrumbs(Mode)
+                    SAssignNew(CrumbContainer, SBox)[BuildCrumbs(Mode)]
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(FMargin(8.0f, 0.0f, 0.0f, 0.0f))
                 [
@@ -185,6 +203,23 @@ public:
             ]
         ];
         GetToolkitHost()->AddViewportOverlayWidget(Overlay.ToSharedRef());
+        const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
+        ObservedSession = Subsystem != nullptr ? Subsystem->GetEditSession() : nullptr;
+        if (ObservedSession.IsValid())
+        {
+            const TWeakPtr<SBox> WeakContainer = CrumbContainer;
+            const TWeakObjectPtr<UMHCompositeEditSession> Session = ObservedSession;
+            ScopeChangedHandle = ObservedSession->OnChanged.AddLambda(
+                [WeakContainer, Session, Mode, Path = Session->GetInvocationPath()]() mutable
+                {
+                    const TSharedPtr<SBox> Container = WeakContainer.Pin();
+                    if (Container.IsValid() && Session.IsValid() && Session->IsOpen() && Path != Session->GetInvocationPath())
+                    {
+                        Path = Session->GetInvocationPath();
+                        Container->SetContent(BuildCrumbs(Mode));
+                    }
+                });
+        }
     }
 
     virtual FName GetToolkitFName() const override { return FName("MHCompositeEditorModeToolkit"); }
@@ -192,6 +227,9 @@ public:
     virtual TSharedPtr<SWidget> GetInlineContent() const override { return InlineContent; }
 
 private:
+    TSharedPtr<SBox> CrumbContainer;
+    TWeakObjectPtr<UMHCompositeEditSession> ObservedSession;
+    FDelegateHandle ScopeChangedHandle;
     TSharedPtr<SWidget> InlineContent;
     TSharedPtr<SWidget> Overlay;
 };
@@ -263,39 +301,29 @@ bool UMHCompositeEditorMode::RequestSwitch(const FString& InvocationPath)
     AMHCompositeActor* Root = Session != nullptr ? Session->GetRootPlacement() : nullptr;
     if (Subsystem == nullptr || Session == nullptr || Root == nullptr) return false;
     if (Session->GetInvocationPath() == InvocationPath) return true;
-    // One writable session (spec §5.2, LI EditLevelInstanceInternal): the
-    // current one is resolved before the target opens.
+    CancelGesture();
+    // One session and one writable definition. Save/Discard resolves the
+    // current draft; changing scope does not exit the mode or its toolkit.
+    bool bSaveCurrent = false;
     if (Session->IsDirty())
     {
         switch (ConfirmSwitch(InvocationPath))
         {
         case EAppReturnType::Yes:
-            // The usual overwrite confirmation; a declined or failed publish keeps the session.
-            MHExecuteCommitEditCompositeInteractive();
-            if (Subsystem->IsEditingComposite()) return false;
+            bSaveCurrent = true;
             break;
         case EAppReturnType::No:
-        {
-            FString CancelError;
-            Subsystem->CancelEditComposite(CancelError);
             break;
-        }
         default:
             return false;
         }
     }
-    else
-    {
-        FString CancelError;
-        Subsystem->CancelEditComposite(CancelError);
-    }
-    // This object may be recycled by the mode manager from here on: no members.
+    TArray<FString> Warnings;
     FString Error;
-    const bool bOpened = InvocationPath.IsEmpty()
-        ? Subsystem->BeginEditComposite(Root, Error)
-        : Subsystem->BeginEditNestedComposite(Root, InvocationPath, Error);
-    if (!bOpened && !Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
-    return bOpened;
+    const bool bSwitched = Subsystem->SwitchEditComposite(InvocationPath, bSaveCurrent, Warnings, Error);
+    for (const FString& Warning : Warnings) FMessageLog("Mimir").Warning(FText::FromString(Warning));
+    if (!bSwitched && !Error.IsEmpty()) FMessageLog("Mimir").Error(FText::FromString(Error));
+    return bSwitched;
 }
 
 TArray<TPair<FString, FString>> UMHCompositeEditorMode::BreadcrumbTargets(const FMHCompositeEditContext& Context)
@@ -329,6 +357,8 @@ EAppReturnType::Type UMHCompositeEditorMode::ConfirmSwitch(const FString& Target
 #if WITH_DEV_AUTOMATION_TESTS
     if (GSwitchConfirmForTests) return GSwitchConfirmForTests();
 #endif
+    if (!FSlateApplication::IsInitialized() || FApp::IsUnattended() || IsRunningCommandlet())
+        return EAppReturnType::Cancel;
     const UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem();
     const FMHCompositeEditContext Context = Subsystem != nullptr ? Subsystem->GetEditContext() : FMHCompositeEditContext();
     FString Target;
@@ -346,9 +376,23 @@ EAppReturnType::Type UMHCompositeEditorMode::ConfirmSwitch(const FString& Target
             }
         }
     }
-    return FMessageDialog::Open(EAppMsgType::YesNoCancel,
-        FText::Format(LOCTEXT("SwitchPrompt", "Save changes to {0} before editing {1}?"), FText::FromString(Context.EditedLogicalName), FText::FromString(Target)),
-        LOCTEXT("SwitchTitle", "Edit Contents"));
+    const FText TargetText = Target.IsEmpty() ? LOCTEXT("SelectedSwitchTarget", "the selected composite") : FText::FromString(Target);
+    const TSharedRef<SMessageDialog> Dialog = SNew(SMessageDialog)
+        .Title(LOCTEXT("SwitchTitle", "Edit Contents"))
+        .UseRichText(false)
+        .Message(FText::Format(LOCTEXT("SwitchPrompt", "Save changes to {0} before editing {1}?"), FText::FromString(Context.EditedLogicalName), TargetText))
+        .Buttons({
+            SMessageDialog::FButton(LOCTEXT("SwitchSave", "Save")).SetPrimary(true),
+            SMessageDialog::FButton(LOCTEXT("SwitchDiscard", "Discard"))
+        });
+    const TWeakPtr<SMessageDialog> WeakDialog(Dialog);
+    Dialog->SetOnCancelHotkeyPressed(FSimpleDelegate::CreateLambda([WeakDialog]()
+    {
+        if (const TSharedPtr<SMessageDialog> Pinned = WeakDialog.Pin()) Pinned->RequestDestroyWindow();
+    }));
+    // Closing this choice leaves the draft open; it is not the mode's Cancel command.
+    const int32 Choice = Dialog->ShowModal();
+    return Choice == 0 ? EAppReturnType::Yes : Choice == 1 ? EAppReturnType::No : EAppReturnType::Cancel;
 }
 
 UMHCompositeEditSession* UMHCompositeEditorMode::GetSession() const

@@ -44,6 +44,10 @@ public:
         uint32 InEpoch);
     /** Terminal: the draft stays readable, every command is refused from here on. */
     void Close();
+    /** Switch the edited definition in place. Session identity and frozen placement context survive; the scope epoch advances.
+     * Restores the previous draft/selection if opening the target projection fails. Caller broadcasts OnChanged after updating its context. */
+    bool RetargetDefinition(UMHCompositeAsset* InEditedAsset, const FString& InInvocationPath,
+        const UE::MimirComposite::FMHCompositeDocument& InOriginal, uint32 InEpoch, FString& OutError);
     /** CE-5a: after a source-committed failure the committed document is the new original — dirty and Cancel measure against the file. */
     void RebaseOriginal(const UE::MimirComposite::FMHCompositeDocument& Committed);
 
@@ -91,6 +95,7 @@ public:
     bool SetNodeTransform(const FGuid& NodeId, const FTransform& LocalTransform, FString& OutError);
     /** CE-4b1 structural commands on the draft (see UMHCompositeEditDocument); the projection follows each one. */
     FGuid AddNode(const FGuid& ParentId, EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError);
+    bool AddNodes(const FGuid& ParentId, TConstArrayView<FMHCompositeNodeAdd> Requests, TArray<FGuid>& OutIds, FString& OutError, int32 SiblingIndex = INDEX_NONE);
     bool DeleteNode(const FGuid& NodeId, FString& OutError);
     FGuid DuplicateNode(const FGuid& NodeId, FString& OutError);
     /** bKeepWorld: the node keeps where it renders — its local transform is re-authored under the new parent (from the projection). */
@@ -100,6 +105,9 @@ public:
     bool SetNodeResource(const FGuid& NodeId, const FString& Resource, FString& OutError);
     FGuid AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError);
     bool SetNodeOptions(const FGuid& NodeId, const TArray<FMHCompositeOption>& Options, FString& OutError);
+    bool AddNodeOptions(const FGuid& NodeId, TConstArrayView<FMHCompositeOption> Options, FString& OutError);
+    bool SetNodeOptionWeight(const FGuid& NodeId, int32 OptionIndex, float Weight, FString& OutError);
+    bool RemoveNodeOption(const FGuid& NodeId, int32 OptionIndex, FString& OutError);
     /** The projection follows the draft after a command (a refresh failure is a preview problem, not an authoring one). */
     void RefreshProjection();
 

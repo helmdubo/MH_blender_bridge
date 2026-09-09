@@ -207,7 +207,10 @@ bool FMHCompositeOutlinerGaz53Test::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("second root path"), Model.GetRoots()[1]->NodePath,
         FString(TEXT("gaz53_b_random_cmp:nodes[1]")));
 
-    bPassed &= TestTrue(TEXT("body composite expands lazily"), Model.ExpandItem(Model.GetRoots()[0]));
+    const FString RevealedBodyPath = TEXT("gaz53_b_random_cmp:nodes[0]>gaz53_b_body_cmp:nodes[0]");
+    bPassed &= TestTrue(TEXT("path reveal expands the containing composite"), Model.FindByNodePath(RevealedBodyPath).IsValid());
+    bPassed &= TestTrue(TEXT("the revealed branch is loaded"), Model.GetRoots()[0]->bNestedChildrenLoaded);
+    bPassed &= TestFalse(TEXT("path reveal leaves the unrelated composite collapsed"), Model.GetRoots()[1]->bNestedChildrenLoaded);
     if (!Model.GetRoots()[0]->Children.IsEmpty())
     {
         const TSharedPtr<FMHCompositeOutlinerItem> Group = Model.GetRoots()[0]->Children[0];

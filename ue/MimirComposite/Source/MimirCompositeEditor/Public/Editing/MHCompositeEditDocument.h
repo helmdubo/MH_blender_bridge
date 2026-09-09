@@ -7,6 +7,15 @@
 #include "UObject/Object.h"
 #include "MHCompositeEditDocument.generated.h"
 
+/** One authored node requested by an atomic AddNodes command. */
+struct FMHCompositeNodeAdd
+{
+    EMHCompositeNodeKind Kind = EMHCompositeNodeKind::Group;
+    FString Resource;
+    FString Name;
+    FTransform LocalTransform = FTransform::Identity;
+};
+
 /**
  * CE-1 (docs/contracts/composite_edit_ce0.md, spec §5.2): the transactional
  * authoring draft of one composite definition. The tree lives in the same
@@ -62,6 +71,8 @@ public:
      */
     /** Appends a node as the last child of ParentId (invalid = a new root); returns its id, invalid on refusal. */
     FGuid AddNode(const FGuid& ParentId, EMHCompositeNodeKind Kind, const FString& Resource, const FString& Name, const FTransform& LocalTransform, FString& OutError);
+    /** Atomically inserts ordered siblings (INDEX_NONE appends); no ids or mutation survive a refused request. */
+    bool AddNodes(const FGuid& ParentId, TConstArrayView<FMHCompositeNodeAdd> Requests, TArray<FGuid>& OutIds, FString& OutError, int32 SiblingIndex = INDEX_NONE);
     /** Removes the node with its subtree. */
     bool DeleteNode(const FGuid& Id, FString& OutError);
     /** Copies the node's subtree right after it under the same parent, with fresh ids; returns the copy's id. */
@@ -76,6 +87,10 @@ public:
     FGuid AddRandomNode(const FGuid& ParentId, const FString& Name, const FTransform& LocalTransform, const TArray<FMHCompositeOption>& Options, FString& OutError);
     /** Replaces a random node's options (validated as a whole). */
     bool SetNodeOptions(const FGuid& Id, const TArray<FMHCompositeOption>& Options, FString& OutError);
+    /** Converts group/resource content to random when needed, preserving all node metadata and children. */
+    bool AddNodeOptions(const FGuid& NodeId, TConstArrayView<FMHCompositeOption> Options, FString& OutError);
+    bool SetNodeOptionWeight(const FGuid& NodeId, int32 OptionIndex, float Weight, FString& OutError);
+    bool RemoveNodeOption(const FGuid& NodeId, int32 OptionIndex, FString& OutError);
     /** The writer's rules for options: non-empty, finite non-negative weights with one positive, empty options without and other options with a canonical resource. */
     static bool ValidateOptions(const TArray<FMHCompositeOption>& Options, FString& OutError);
     /** Parent id of a node; invalid for roots and unknown ids. */

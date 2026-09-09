@@ -3,6 +3,7 @@
 #include "Composite/MHCompositePlacementEvents.h"
 #include "Composite/MHCompositePlacementCompiler.h"
 #include "Composite/MHCompositeProtocol.h"
+#include "Composite/MHInstancePool.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
@@ -119,6 +120,40 @@ UStaticMeshComponent* ReviewPreviewRegressionLeaf(AMHCompositeActor& Actor)
     return nullptr;
 }
 
+bool ReviewPreviewPooledHitMapsToOwner(
+    FAutomationTestBase& Test,
+    const FString& Phase,
+    HHitProxy* Hit,
+    AMHCompositeActor& ExpectedOwner,
+    UStaticMeshComponent* ExpectedLeaf)
+{
+    const HInstancedStaticMeshInstance* InstanceHit =
+        Hit != nullptr && Hit->IsA(HInstancedStaticMeshInstance::StaticGetType())
+        ? static_cast<const HInstancedStaticMeshInstance*>(Hit)
+        : nullptr;
+    bool bPassed = Test.TestNotNull(Phase + TEXT(": rasterized native ISM instance proxy"), InstanceHit);
+    if (InstanceHit == nullptr) return false;
+
+    UInstancedStaticMeshComponent* Component = InstanceHit->Component.Get();
+    bPassed &= Test.TestTrue(Phase + TEXT(": proxy names the rendered pool bucket"),
+        Component != nullptr && Component == ExpectedLeaf);
+    bPassed &= Test.TestTrue(Phase + TEXT(": proxy instance index is live"),
+        Component != nullptr && Component->IsValidInstance(InstanceHit->InstanceIndex));
+    const FMHCompositeLeafMaterialization* Leaf =
+        ExpectedOwner.FindLeafMaterialization(Component, InstanceHit->InstanceIndex);
+    bPassed &= Test.TestTrue(Phase + TEXT(": proxy resolves to the owner's plan-aligned leaf"),
+        Leaf != nullptr && Leaf->IsInstanced() && Leaf->Component == Component &&
+        Leaf->InstanceIndex == InstanceHit->InstanceIndex && !Leaf->NodePath.IsEmpty());
+
+    const UMHInstancePoolSubsystem* Pool = UMHInstancePoolSubsystem::Get(ExpectedOwner.GetWorld());
+    AActor* ReverseOwner = nullptr;
+    FString ReversePath;
+    bPassed &= Test.TestTrue(Phase + TEXT(": pool reverse lookup names the composite owner and leaf path"),
+        Pool != nullptr && Pool->ReverseLookup(Component, InstanceHit->InstanceIndex, ReverseOwner, ReversePath) &&
+        ReverseOwner == &ExpectedOwner && Leaf != nullptr && ReversePath == Leaf->NodePath);
+    return bPassed;
+}
+
 /** The perspective level viewport of the isolated host, or nullptr. */
 FLevelEditorViewportClient* ReviewPreviewLevelViewport()
 {
@@ -189,13 +224,13 @@ bool FMHReviewRenderedHitProxyRegression::RunTest(const FString& Parameters)
     for (FLevelEditorViewportClient* Candidate : GEditor->GetLevelViewportClients())
         if (Candidate != nullptr && Candidate->IsPerspective() && Candidate->Viewport != nullptr) { Client = Candidate; break; }
     if (!TestNotNull(TEXT("real level viewport"), Client)) return false;
-    FReviewPreviewRegressionFixture Fixture;
-    if (!Fixture.Build(*this, true)) return false;
+    const TSharedRef<FReviewPreviewRegressionFixture> Fixture = MakeShared<FReviewPreviewRegressionFixture>();
+    if (!Fixture->Build(*this, true)) return false;
     UWorld* World = Client->GetWorld();
     AMHCompositeActor* Actor = World->SpawnActor<AMHCompositeActor>();
     const FVector Origin(20000, 20000, 20000);
     Actor->SetActorLocation(Origin);
-    Actor->SetCompositeAsset(Fixture.Asset);
+    Actor->SetCompositeAsset(Fixture->Asset);
     UStaticMeshComponent* Leaf = ReviewPreviewRegressionLeaf(*Actor);
     if (!TestNotNull(TEXT("rendered leaf"), Leaf)) { Actor->Destroy(); return false; }
     const FVector OldLocation = Client->GetViewLocation();
@@ -205,16 +240,47 @@ bool FMHReviewRenderedHitProxyRegression::RunTest(const FString& Parameters)
     Client->SetViewMode(VMI_Unlit);
     Client->SetViewLocation(Origin + FVector(500, 0, 0));
     Client->SetViewRotation(FRotator(0, 180, 0));
-    bool bPassed = true;
-    for (int32 Pass = 0; Pass < 4; ++Pass)
+    // ISM/GPU Scene updates are frame-based. Rebuilding and redrawing four
+    // times in one RunTest call bypassed their normal frame lifetime.
+    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand(
+        [this, Fixture, Client, World, Actor, Origin, OldLocation, OldRotation, OldFlags, OldMode,
+         Pass = 0, bPrepared = false]() mutable
     {
-        const bool bGameView = (Pass % 2) != 0;
-        Client->SetGameView(bGameView);
-        if (Pass == 2)
+        if (Pass == 5) return true; // keep fixture assets alive through the cleanup frame
+        if (Pass == 4)
         {
-            Actor->RebuildComposite();
-            Actor->SetActorLocation(Origin + FVector(0, 0, 10));
-            Actor->SetSeed(42);
+            Client->SetViewMode(OldMode);
+            Client->EngineShowFlags = OldFlags;
+            Client->SetViewLocation(OldLocation);
+            Client->SetViewRotation(OldRotation);
+            Client->Viewport->InvalidateHitProxy();
+            Actor->Destroy();
+            World->SendAllEndOfFrameUpdates();
+            FlushRenderingCommands();
+            Client->Invalidate(true, true);
+            ++Pass;
+            return false;
+        }
+        const bool bGameView = (Pass % 2) != 0;
+        if (!bPrepared)
+        {
+            Client->SetGameView(bGameView);
+            if (Pass == 2)
+            {
+                Actor->RebuildComposite();
+                Actor->SetActorLocation(Origin + FVector(0, 0, 10));
+                Actor->SetSeed(42);
+            }
+            bPrepared = true;
+            return false; // let Unreal process a real frame before inspecting the new instances
+        }
+        UStaticMeshComponent* CurrentLeaf = ReviewPreviewRegressionLeaf(*Actor);
+        TestNotNull(*FString::Printf(TEXT("pass %d current rendered leaf"), Pass), CurrentLeaf);
+        if (CurrentLeaf == nullptr)
+        {
+            ++Pass;
+            bPrepared = false;
+            return false;
         }
         World->SendAllEndOfFrameUpdates();
         FlushRenderingCommands();
@@ -224,27 +290,24 @@ bool FMHReviewRenderedHitProxyRegression::RunTest(const FString& Parameters)
         FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
             Client->Viewport, World->Scene, Client->EngineShowFlags).SetRealtimeUpdate(false));
         const FSceneView* View = Client->CalcSceneView(&ViewFamily);
-        FPrimitiveSceneProxy* Proxy = Leaf->GetSceneProxy();
-        bPassed &= TestNotNull(*FString::Printf(TEXT("pass %d registered render proxy"), Pass), Proxy);
+        FPrimitiveSceneProxy* Proxy = CurrentLeaf->GetSceneProxy();
+        TestNotNull(*FString::Printf(TEXT("pass %d registered render proxy"), Pass), Proxy);
         if (Proxy != nullptr)
         {
-            bPassed &= TestTrue(*FString::Printf(TEXT("pass %d actual proxy shown (G=%d)"), Pass, bGameView), Proxy->IsShown(View));
-            bPassed &= TestTrue(TEXT("render proxy selectable"), Proxy->IsSelectable());
+            TestTrue(*FString::Printf(TEXT("pass %d actual proxy shown (G=%d)"), Pass, bGameView), Proxy->IsShown(View));
+            TestTrue(TEXT("render proxy selectable"), Proxy->IsSelectable());
         }
         const FIntPoint Size = Client->Viewport->GetSizeXY();
         HHitProxy* Hit = Client->Viewport->GetHitProxy(Size.X / 2, Size.Y / 2);
-        bPassed &= TestTrue(*FString::Printf(TEXT("pass %d rasterized native HActor at mesh pixel"), Pass),
-            Hit != nullptr && Hit->IsA(HActor::StaticGetType()) && static_cast<HActor*>(Hit)->Actor == Actor);
+        ReviewPreviewPooledHitMapsToOwner(
+            *this, FString::Printf(TEXT("pass %d"), Pass), Hit, *Actor, CurrentLeaf);
         AddInfo(FString::Printf(TEXT("RHI native-pick pass=%d G=%d size=%dx%d hit=%s"), Pass, bGameView,
             Size.X, Size.Y, Hit != nullptr ? Hit->GetType()->GetName() : TEXT("none")));
-    }
-    Client->SetViewMode(OldMode);
-    Client->EngineShowFlags = OldFlags;
-    Client->SetViewLocation(OldLocation);
-    Client->SetViewRotation(OldRotation);
-    Actor->Destroy();
-    Client->Invalidate(true, true);
-    return bPassed;
+        ++Pass;
+        bPrepared = false;
+        return false;
+    }));
+    return true;
 }
 
 /**
@@ -341,14 +404,16 @@ bool FMHLoadedPlacementClickSelection::RunTest(const FString& Parameters)
     const uint32 HitX = Size.X / 2;
     const uint32 HitY = Size.Y / 2;
     HHitProxy* Hit = Client->Viewport->GetHitProxy(HitX, HitY);
-    bPassed &= TestTrue(TEXT("reopened leaf rasterizes a native HActor of the composite actor"),
-        Hit != nullptr && Hit->IsA(HActor::StaticGetType()) && static_cast<HActor*>(Hit)->Actor == Actor);
-    FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
-        Client->Viewport, World->Scene, Client->EngineShowFlags).SetRealtimeUpdate(false));
-    FSceneView* View = Client->CalcSceneView(&ViewFamily);
-    if (View != nullptr)
     {
-        Client->ProcessClick(*View, Hit, EKeys::LeftMouseButton, IE_Released, HitX, HitY);
+        bPassed &= ReviewPreviewPooledHitMapsToOwner(
+            *this, TEXT("reopened leaf"), Hit, *Actor, Leaf);
+        FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+            Client->Viewport, World->Scene, Client->EngineShowFlags).SetRealtimeUpdate(false));
+        FSceneView* View = Client->CalcSceneView(&ViewFamily);
+        if (View != nullptr)
+        {
+            Client->ProcessClick(*View, Hit, EKeys::LeftMouseButton, IE_Released, HitX, HitY);
+        }
     }
     const bool bSelected = GEditor->GetSelectedActors() != nullptr &&
         GEditor->GetSelectedActors()->IsSelected(Actor);
@@ -358,6 +423,9 @@ bool FMHLoadedPlacementClickSelection::RunTest(const FString& Parameters)
     bPassed &= TestTrue(TEXT("clicking the leaf selects the composite actor"), bSelected);
 
     GEditor->SelectNone(false, true, false);
+    Hit = nullptr;
+    Client->Viewport->InvalidateHitProxy();
+    Leaf = nullptr;
     Client->SetViewMode(OldMode);
     Client->SetViewLocation(OldLocation);
     Client->SetViewRotation(OldRotation);

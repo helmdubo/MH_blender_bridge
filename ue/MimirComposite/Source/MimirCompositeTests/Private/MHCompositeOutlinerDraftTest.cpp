@@ -120,7 +120,7 @@ bool FMHOutlinerShowsDraftTest::RunTest(const FString& Parameters)
 
 // CE-4b2: what a drop / menu add becomes — a managed static mesh is a mesh
 // node, a managed composite a composite node, anything else is refused;
-// a group takes the node as a child, any other row as a sibling.
+// every authored node can be an exact parent; root is an explicit destination.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FMHOutlinerAddDescribeTest,
     "Mimir.V5.Composite.EditMode.Structure.OutlinerDropDescribesTheCommand",
@@ -149,19 +149,71 @@ bool FMHOutlinerAddDescribeTest::RunTest(const FString& Parameters)
     const TSharedPtr<FMHCompositeOutlinerItem> GroupedRow = Model.FindByNodePath(Prefix + TEXT("nodes[1]/children[0]"));
     if (!TestTrue(TEXT("rows"), PlainRow.IsValid() && GroupRow.IsValid() && GroupedRow.IsValid())) return false;
 
-    bool bPassed = TestFalse(TEXT("a group takes the node as a child"), MHOutlinerAddParentFor(GroupRow.Get(), *Draft) != Draft->GetNodeId(1));
-    bPassed &= TestTrue(TEXT("a leaf at the root takes it as a root sibling"), !MHOutlinerAddParentFor(PlainRow.Get(), *Draft).IsValid());
-    bPassed &= TestTrue(TEXT("a grouped leaf takes it as a sibling under the group"), MHOutlinerAddParentFor(GroupedRow.Get(), *Draft) == Draft->GetNodeId(1));
-    bPassed &= TestTrue(TEXT("no row: a root"), !MHOutlinerAddParentFor(nullptr, *Draft).IsValid());
+    FGuid ParentId;
+    bool bPassed = TestTrue(TEXT("a group is the exact parent: ") + Error,
+        MHResolveOutlinerAddParent(GroupRow.Get(), false, *Draft, ParentId, Error) && ParentId == Draft->GetNodeId(1));
+    bPassed &= TestTrue(TEXT("a resource node is also the exact parent: ") + Error,
+        MHResolveOutlinerAddParent(PlainRow.Get(), false, *Draft, ParentId, Error) && ParentId == Draft->GetNodeId(0));
+    bPassed &= TestTrue(TEXT("a nested resource node is the exact parent: ") + Error,
+        MHResolveOutlinerAddParent(GroupedRow.Get(), false, *Draft, ParentId, Error) && ParentId == Draft->GetNodeId(2));
+    bPassed &= TestFalse(TEXT("no row is not silently treated as root"),
+        MHResolveOutlinerAddParent(nullptr, false, *Draft, ParentId, Error));
+    bPassed &= TestTrue(TEXT("Current Composite / Root is explicit: ") + Error,
+        MHResolveOutlinerAddParent(nullptr, true, *Draft, ParentId, Error) && !ParentId.IsValid());
+    int32 SiblingIndex = INDEX_NONE;
+    bPassed &= TestTrue(TEXT("above root row inserts at its exact index: ") + Error,
+        MHResolveOutlinerSiblingInsertion(PlainRow.Get(), false, *Draft, ParentId, SiblingIndex, Error) &&
+        !ParentId.IsValid() && SiblingIndex == 0);
+    bPassed &= TestTrue(TEXT("below root row inserts after its exact index: ") + Error,
+        MHResolveOutlinerSiblingInsertion(PlainRow.Get(), true, *Draft, ParentId, SiblingIndex, Error) &&
+        !ParentId.IsValid() && SiblingIndex == 1);
+    bPassed &= TestTrue(TEXT("below nested row keeps its authored parent: ") + Error,
+        MHResolveOutlinerSiblingInsertion(GroupedRow.Get(), true, *Draft, ParentId, SiblingIndex, Error) &&
+        ParentId == Draft->GetNodeId(1) && SiblingIndex == 1);
+
+    TSharedRef<FMHCompositeOutlinerItem> Locked = MakeShared<FMHCompositeOutlinerItem>();
+    bPassed &= TestFalse(TEXT("locked context is refused"),
+        MHResolveOutlinerAddParent(&Locked.Get(), false, *Draft, ParentId, Error));
+    TSharedRef<FMHCompositeOutlinerItem> Option = MakeShared<FMHCompositeOutlinerItem>();
+    Option->ItemType = EMHCompositeOutlinerItemType::Option;
+    Option->DraftNodeId = Draft->GetNodeId(1);
+    bPassed &= TestFalse(TEXT("an entity row is refused"),
+        MHResolveOutlinerAddParent(&Option.Get(), false, *Draft, ParentId, Error));
 
     FMHOutlinerAddRequest Request;
     bPassed &= TestTrue(TEXT("a managed static mesh: ") + Error, MHDescribeOutlinerAssetAdd(F.MeshAssetC, GroupRow.Get(), *Draft, Request, Error));
     bPassed &= TestTrue(TEXT("mesh node under the group"), Request.Kind == EMHCompositeNodeKind::Mesh && Request.Resource == F.MeshC && Request.ParentId == Draft->GetNodeId(1));
     bPassed &= TestTrue(TEXT("a managed composite: ") + Error, MHDescribeOutlinerAssetAdd(F.Child, PlainRow.Get(), *Draft, Request, Error));
-    bPassed &= TestTrue(TEXT("composite node at the root"), Request.Kind == EMHCompositeNodeKind::Composite && Request.Resource == F.Child->LogicalName && !Request.ParentId.IsValid());
+    bPassed &= TestTrue(TEXT("composite node is a child of the selected resource node"), Request.Kind == EMHCompositeNodeKind::Composite && Request.Resource == F.Child->LogicalName && Request.ParentId == Draft->GetNodeId(0));
     bPassed &= TestFalse(TEXT("a foreign object is refused"), MHDescribeOutlinerAssetAdd(GetTransientPackage(), GroupRow.Get(), *Draft, Request, Error));
     bPassed &= TestFalse(TEXT("nothing is refused"), MHDescribeOutlinerAssetAdd(nullptr, GroupRow.Get(), *Draft, Request, Error));
+
+    TArray<UObject*> ValidAssets{F.MeshAssetC, F.Child};
+    TArray<FMHOutlinerAddRequest> Batch;
+    bPassed &= TestTrue(TEXT("root batch validates as a whole: ") + Error,
+        MHDescribeOutlinerAssetAddBatch(ValidAssets, nullptr, true, *Draft, Batch, Error));
+    bPassed &= TestEqual(TEXT("root batch keeps every selected asset"), Batch.Num(), 2);
+    bPassed &= TestTrue(TEXT("root batch has the explicit root destination"),
+        Batch.Num() == 2 && !Batch[0].ParentId.IsValid() && !Batch[1].ParentId.IsValid());
+    TArray<UObject*> MixedAssets{F.MeshAssetC, GetTransientPackage()};
+    bPassed &= TestFalse(TEXT("a mixed invalid batch is refused"),
+        MHDescribeOutlinerAssetAddBatch(MixedAssets, GroupRow.Get(), false, *Draft, Batch, Error));
+    bPassed &= TestTrue(TEXT("a refused batch exposes no partial requests"), Batch.IsEmpty());
+
+    FMHCompositeOption DescribedOption;
+    bPassed &= TestTrue(TEXT("managed composite becomes a weight-one variant: ") + Error,
+        MHDescribeOutlinerAssetOption(F.Child, DescribedOption, Error));
+    bPassed &= TestTrue(TEXT("variant descriptor"), DescribedOption.Kind == EMHCompositeOptionKind::Composite &&
+        DescribedOption.Resource == F.Child->LogicalName && DescribedOption.Weight == 1.0f);
+
+    const FMHOutlinerCommandStamp Stamp = FMHOutlinerCommandStamp::Capture(*Session);
+    bPassed &= TestTrue(TEXT("fresh deferred command stamp matches"), Stamp.Matches(*Session));
+    bPassed &= TestTrue(TEXT("change for stale stamp: ") + Error,
+        Session->SetNodeName(Draft->GetNodeId(0), TEXT("serial_advanced"), Error));
+    bPassed &= TestFalse(TEXT("a draft change rejects the stale callback"), Stamp.Matches(*Session));
+    const FMHOutlinerCommandStamp ClosingStamp = FMHOutlinerCommandStamp::Capture(*Session);
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
+    bPassed &= TestFalse(TEXT("a closed session rejects its captured callback"), ClosingStamp.Matches(*Session));
     return bPassed;
 }
 
@@ -202,6 +254,12 @@ bool FMHOutlinerPinsActiveSessionRootTest::RunTest(const FString& Parameters)
     bPassed &= TestEqual(TEXT("enter selects no infrastructure actor"), GEditor->GetSelectedActorCount(), 0);
     bPassed &= TestTrue(TEXT("empty native selection keeps the active session tree"),
         WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+    bPassed &= TestTrue(TEXT("authoring toolbar exposes Add Nodes"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("Add Nodes")));
+    bPassed &= TestTrue(TEXT("authoring toolbar exposes Add Entities"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("Add Entities")));
+    bPassed &= TestTrue(TEXT("first attach identifies the nested edited definition"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("Composite Edit — ") + F.Child->LogicalName));
 
     const FGuid NodeId = Session->GetDraft()->GetNodeId(0);
     Mode->SelectNodeIds({NodeId}, NodeId);
@@ -217,6 +275,13 @@ bool FMHOutlinerPinsActiveSessionRootTest::RunTest(const FString& Parameters)
     GEditor->SelectActor(F.B, true, true, true);
     bPassed &= TestTrue(TEXT("another native actor cannot replace the active session tree"),
         WidgetTreeContainsText(Outliner.Get(), F.Root->LogicalName));
+
+    const uint32 NestedEpoch = Session->GetEpoch();
+    bPassed &= TestTrue(TEXT("switch to root in the same panel"), Mode->RequestSwitch(FString()));
+    bPassed &= TestTrue(TEXT("switch keeps the session object"), Subsystem->GetEditSession() == Session);
+    bPassed &= TestTrue(TEXT("switch advances the session epoch"), Session->GetEpoch() > NestedEpoch);
+    bPassed &= TestTrue(TEXT("scope change refreshes the retained panel"),
+        WidgetTreeContainsText(Outliner.Get(), TEXT("Composite Edit — ") + F.Root->LogicalName));
 
     bPassed &= TestTrue(TEXT("cancel"), Subsystem->CancelEditComposite(Error));
     bPassed &= TestTrue(TEXT("closed session empties the Outliner"),
