@@ -284,6 +284,134 @@ int32 PolygonMaterialIndex(const FbxMesh& Mesh, const int32 PolygonIndex, FStrin
     return Indices.GetAt(Lookup);
 }
 
+bool LayerElementLookupIndex(
+    const FbxLayerElement& Layer,
+    const FbxMesh& Mesh,
+    const int32 PolygonIndex,
+    const int32 Corner,
+    const int32 PositionIndex,
+    const TCHAR* Semantic,
+    int32& OutLookup,
+    FString& OutError)
+{
+    switch (Layer.GetMappingMode())
+    {
+    case FbxLayerElement::eByControlPoint:
+        OutLookup = PositionIndex;
+        return true;
+    case FbxLayerElement::eByPolygonVertex:
+    {
+        const int32 PolygonVertexStart = Mesh.GetPolygonVertexIndex(PolygonIndex);
+        if (PolygonVertexStart < 0)
+        {
+            OutError = TransportError(FString::Printf(
+                TEXT("polygon %d has no polygon-vertex start for %s layer '%s'"),
+                PolygonIndex,
+                Semantic,
+                UTF8_TO_TCHAR(Layer.GetName())));
+            return false;
+        }
+        OutLookup = PolygonVertexStart + Corner;
+        return true;
+    }
+    case FbxLayerElement::eByPolygon:
+        OutLookup = PolygonIndex;
+        return true;
+    case FbxLayerElement::eAllSame:
+        OutLookup = 0;
+        return true;
+    default:
+        OutError = TransportError(FString::Printf(
+            TEXT("%s layer '%s' has unsupported mapping mode %d"),
+            Semantic,
+            UTF8_TO_TCHAR(Layer.GetName()),
+            static_cast<int32>(Layer.GetMappingMode())));
+        return false;
+    }
+}
+
+template <typename ElementType, typename ValueType>
+bool ReadLayerElementValue(
+    const ElementType& Layer,
+    const FbxMesh& Mesh,
+    const int32 PolygonIndex,
+    const int32 Corner,
+    const int32 PositionIndex,
+    const TCHAR* Semantic,
+    ValueType& OutValue,
+    bool& bOutMapped,
+    FString& OutError)
+{
+    bOutMapped = false;
+    int32 Lookup = INDEX_NONE;
+    if (!LayerElementLookupIndex(
+            Layer,
+            Mesh,
+            PolygonIndex,
+            Corner,
+            PositionIndex,
+            Semantic,
+            Lookup,
+            OutError))
+    {
+        return false;
+    }
+
+    int32 DirectIndex = Lookup;
+    switch (Layer.GetReferenceMode())
+    {
+    case FbxLayerElement::eDirect:
+        break;
+    case FbxLayerElement::eIndexToDirect:
+    {
+        const auto& Indices = Layer.GetIndexArray();
+        if (Lookup < 0 || Lookup >= Indices.GetCount())
+        {
+            OutError = TransportError(FString::Printf(
+                TEXT("polygon %d corner %d references %s layer '%s' index %d outside %d entries"),
+                PolygonIndex,
+                Corner,
+                Semantic,
+                UTF8_TO_TCHAR(Layer.GetName()),
+                Lookup,
+                Indices.GetCount()));
+            return false;
+        }
+        DirectIndex = Indices.GetAt(Lookup);
+        // FBX uses a negative direct index for an explicitly unmapped corner.
+        if (DirectIndex < 0)
+        {
+            return true;
+        }
+        break;
+    }
+    default:
+        OutError = TransportError(FString::Printf(
+            TEXT("%s layer '%s' has unsupported reference mode %d"),
+            Semantic,
+            UTF8_TO_TCHAR(Layer.GetName()),
+            static_cast<int32>(Layer.GetReferenceMode())));
+        return false;
+    }
+
+    const auto& Values = Layer.GetDirectArray();
+    if (DirectIndex < 0 || DirectIndex >= Values.GetCount())
+    {
+        OutError = TransportError(FString::Printf(
+            TEXT("polygon %d corner %d references %s layer '%s' value %d outside %d entries"),
+            PolygonIndex,
+            Corner,
+            Semantic,
+            UTF8_TO_TCHAR(Layer.GetName()),
+            DirectIndex,
+            Values.GetCount()));
+        return false;
+    }
+    OutValue = Values.GetAt(DirectIndex);
+    bOutMapped = true;
+    return true;
+}
+
 bool ReadGeometry(
     FbxNode& Node,
     FMHSceneIRNode& OutNode,
@@ -320,9 +448,51 @@ bool ReadGeometry(
             GlobalGeometry.MultT(Mesh->GetControlPointAt(PointIndex))));
     }
 
-    FbxStringList UVSetNames;
-    Mesh->GetUVSetNames(UVSetNames);
-    const char* UVSetName = UVSetNames.GetCount() > 0 ? UVSetNames.GetStringAt(0) : nullptr;
+    TArray<const FbxGeometryElementUV*> UVLayers;
+    UVLayers.Reserve(Mesh->GetElementUVCount());
+    for (int32 UVLayerIndex = 0; UVLayerIndex < Mesh->GetElementUVCount(); ++UVLayerIndex)
+    {
+        const FbxGeometryElementUV* UVLayer = Mesh->GetElementUV(UVLayerIndex);
+        if (UVLayer == nullptr)
+        {
+            OutError = TransportError(FString::Printf(
+                TEXT("mesh node '%s' has a null UV layer at index %d"),
+                UTF8_TO_TCHAR(Node.GetName()),
+                UVLayerIndex));
+            return false;
+        }
+        UVLayers.Add(UVLayer);
+    }
+    const FbxGeometryElementVertexColor* ColorLayer = nullptr;
+    for (int32 ColorLayerIndex = 0;
+         ColorLayerIndex < Mesh->GetElementVertexColorCount();
+         ++ColorLayerIndex)
+    {
+        const FbxGeometryElementVertexColor* Candidate =
+            Mesh->GetElementVertexColor(ColorLayerIndex);
+        if (Candidate == nullptr)
+        {
+            OutError = TransportError(FString::Printf(
+                TEXT("mesh node '%s' has a null vertex-color layer at index %d"),
+                UTF8_TO_TCHAR(Node.GetName()),
+                ColorLayerIndex));
+            return false;
+        }
+        // The FBX SDK exporter may synthesize empty eNone elements before an
+        // authored color set, and on sibling meshes with no colors. They are
+        // semantically absent; select the first authored set in stable FBX
+        // order. Every non-empty/configured unsupported set remains subject to
+        // the strict mapping/reference validation below.
+        if (Candidate->GetMappingMode() == FbxLayerElement::eNone &&
+            Candidate->GetDirectArray().GetCount() == 0 &&
+            Candidate->GetIndexArray().GetCount() == 0)
+        {
+            continue;
+        }
+        ColorLayer = Candidate;
+        break;
+    }
+    Geometry.bHasVertexColors = ColorLayer != nullptr;
     const bool bHasNormalLayer = Mesh->GetElementNormalCount() > 0;
     Geometry.Triangles.Reserve(Mesh->GetPolygonCount());
     for (int32 PolygonIndex = 0; PolygonIndex < Mesh->GetPolygonCount(); ++PolygonIndex)
@@ -336,6 +506,14 @@ bool ReadGeometry(
             return false;
         }
         FMHSceneTriangle& Triangle = Geometry.Triangles.AddDefaulted_GetRef();
+        Triangle.AdditionalCornerUVs.SetNum(FMath::Max(0, UVLayers.Num() - 1));
+        for (TStaticArray<FVector2f, 3>& UVChannel : Triangle.AdditionalCornerUVs)
+        {
+            UVChannel = TStaticArray<FVector2f, 3>(
+                FVector2f::ZeroVector,
+                FVector2f::ZeroVector,
+                FVector2f::ZeroVector);
+        }
         Triangle.MaterialSlotIndex = PolygonMaterialIndex(*Mesh, PolygonIndex, OutError);
         if (!OutError.IsEmpty())
         {
@@ -394,23 +572,81 @@ bool ReadGeometry(
                     Corner));
                 return false;
             }
-            if (UVSetName != nullptr)
+            for (int32 UVLayerIndex = 0; UVLayerIndex < UVLayers.Num(); ++UVLayerIndex)
             {
                 FbxVector2 UV;
-                bool bUnmapped = false;
-                if (!Mesh->GetPolygonVertexUV(PolygonIndex, Corner, UVSetName, UV, bUnmapped))
-                {
-                    OutError = TransportError(FString::Printf(
-                        TEXT("polygon %d corner %d has an invalid UV layer index"),
+                bool bMapped = false;
+                if (!ReadLayerElementValue(
+                        *UVLayers[UVLayerIndex],
+                        *Mesh,
                         PolygonIndex,
-                        Corner));
+                        Corner,
+                        PositionIndex,
+                        TEXT("UV"),
+                        UV,
+                        bMapped,
+                        OutError))
+                {
                     return false;
                 }
-                if (!bUnmapped)
+                if (bMapped)
                 {
-                    Triangle.CornerUV0[Corner] = FVector2f(
+                    if (!FMath::IsFinite(UV[0]) || !FMath::IsFinite(UV[1]))
+                    {
+                        OutError = TransportError(FString::Printf(
+                            TEXT("polygon %d corner %d has a non-finite value in UV layer '%s'"),
+                            PolygonIndex,
+                            Corner,
+                            UTF8_TO_TCHAR(UVLayers[UVLayerIndex]->GetName())));
+                        return false;
+                    }
+                    const FVector2f Converted(
                         static_cast<float>(UV[0]),
                         static_cast<float>(1.0 - UV[1]));
+                    if (UVLayerIndex == 0)
+                    {
+                        Triangle.CornerUV0[Corner] = Converted;
+                    }
+                    else
+                    {
+                        Triangle.AdditionalCornerUVs[UVLayerIndex - 1][Corner] = Converted;
+                    }
+                }
+            }
+            if (ColorLayer != nullptr)
+            {
+                FbxColor Color;
+                bool bMapped = false;
+                if (!ReadLayerElementValue(
+                        *ColorLayer,
+                        *Mesh,
+                        PolygonIndex,
+                        Corner,
+                        PositionIndex,
+                        TEXT("vertex-color"),
+                        Color,
+                        bMapped,
+                        OutError))
+                {
+                    return false;
+                }
+                if (bMapped)
+                {
+                    if (!FMath::IsFinite(Color.mRed) || !FMath::IsFinite(Color.mGreen) ||
+                        !FMath::IsFinite(Color.mBlue) || !FMath::IsFinite(Color.mAlpha))
+                    {
+                        OutError = TransportError(FString::Printf(
+                            TEXT("polygon %d corner %d has a non-finite value in vertex-color layer '%s'"),
+                            PolygonIndex,
+                            Corner,
+                            UTF8_TO_TCHAR(ColorLayer->GetName())));
+                        return false;
+                    }
+                    Triangle.CornerColors[Corner] = FVector4f(
+                        static_cast<float>(Color.mRed),
+                        static_cast<float>(Color.mGreen),
+                        static_cast<float>(Color.mBlue),
+                        static_cast<float>(Color.mAlpha));
                 }
             }
         }

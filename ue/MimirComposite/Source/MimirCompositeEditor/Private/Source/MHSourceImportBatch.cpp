@@ -3,6 +3,8 @@
 #include "AssetCompilingManager.h"
 #include "Composite/MHCompositePlacementEvents.h"
 #include "FileHelpers.h"
+#include "MaterialShared.h"
+#include "Materials/MaterialInstanceConstant.h"
 #include "Misc/FileHelper.h"
 #include "Source/MHPayloadHashes.h"
 #include "Source/MHSourceComposition.h"
@@ -24,6 +26,8 @@ FMHSourceImportBatchContext::FMHSourceImportBatchContext()
 
 FMHSourceImportBatchContext::~FMHSourceImportBatchContext()
 {
+    MaterialUpdateContext.Reset();
+    MaterialKeepAlive.Reset();
     check(GMHActiveSourceImportBatch == this);
     GMHActiveSourceImportBatch = nullptr;
 }
@@ -31,6 +35,10 @@ FMHSourceImportBatchContext::~FMHSourceImportBatchContext()
 bool FMHSourceImportBatchContext::FinishCompilation(
     TMap<FMHResourceKey, FString>& OutErrors)
 {
+    // Closing the context submits shader/resource updates and restores component
+    // render state. Do this before waiting, including early/cancelled batches.
+    MaterialUpdateContext.Reset();
+    MaterialKeepAlive.Reset();
     OutErrors.Reset();
     if (!bNeedsCompilation)
     {
@@ -148,6 +156,24 @@ bool FMHSourceImportBatchContext::CommitProjectionAndNotifications(
 bool MHIsSourceImportBatchActive()
 {
     return GMHActiveSourceImportBatch != nullptr;
+}
+
+FMaterialUpdateContext& FMHSourceImportBatchContext::GetMaterialUpdateContext(
+    UMaterialInstanceConstant& Material)
+{
+    MaterialKeepAlive.Emplace(&Material);
+    if (!MaterialUpdateContext)
+    {
+        MaterialUpdateContext = MakeUnique<FMaterialUpdateContext>();
+    }
+    return *MaterialUpdateContext;
+}
+
+FMaterialUpdateContext* MHGetSourceImportMaterialUpdateContext(UMaterialInstanceConstant& Material)
+{
+    return GMHActiveSourceImportBatch != nullptr
+        ? &GMHActiveSourceImportBatch->GetMaterialUpdateContext(Material)
+        : nullptr;
 }
 
 void FMHSourceImportBatchContext::QueuePackage(

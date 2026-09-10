@@ -135,56 +135,47 @@ void ExecuteReimportManagedMaterials(const FToolMenuContext& MenuContext)
         return;
     }
 
-    int32 Succeeded = 0;
-    int32 Failed = 0;
     const TArray<UMaterialInstanceConstant*> Materials =
         Context->LoadSelectedObjects<UMaterialInstanceConstant>();
-    for (UMaterialInstanceConstant* Material : Materials)
+    TArray<UE::MimirComposite::FMHMaterialReimportResult> Results;
+    FString BatchError;
+    Importer->ReimportMaterials(Materials, Results, BatchError);
+    int32 Succeeded = 0;
+    int32 Failed = 0;
+    int32 Cancelled = 0;
+    for (const UE::MimirComposite::FMHMaterialReimportResult& Result : Results)
     {
-        if (Material == nullptr)
+        if (Result.bSucceeded)
         {
-            continue;
+            ++Succeeded;
+            Log.Info(FText::FromString(FString::Printf(
+                TEXT("Reimported %s from the current project source document"),
+                *GetPathNameSafe(Result.Material))));
         }
-        TArray<FString> Warnings;
-        FString Error;
-        if (!Importer->ReimportMaterial(Material, Warnings, Error))
+        else if (Result.bCancelled)
+        {
+            ++Cancelled;
+        }
+        else
         {
             ++Failed;
-            Log.Error(FText::FromString(FString::Printf(
-                TEXT("%s: %s"),
-                *Material->GetPathName(),
-                *Error)));
-            continue;
+            Log.Error(FText::FromString(FString::Printf(TEXT("%s: %s"),
+                *GetPathNameSafe(Result.Material), *Result.Error)));
         }
-
-        ++Succeeded;
-        Log.Info(FText::FromString(FString::Printf(
-            TEXT("Reimported %s from the current project source document"),
-            *Material->GetPathName())));
-        for (const FString& Warning : Warnings)
+        for (const FString& Warning : Result.Warnings)
         {
-            Log.Warning(FText::FromString(FString::Printf(
-                TEXT("%s: %s"),
-                *Material->GetPathName(),
-                *Warning)));
+            Log.Warning(FText::FromString(FString::Printf(TEXT("%s: %s"),
+                *GetPathNameSafe(Result.Material), *Warning)));
         }
     }
-
-    if (Materials.IsEmpty())
-    {
-        Log.Error(LOCTEXT(
-            "NoMaterialInstancesSelected",
-            "MH_E_INVALID_RESOURCE_SOURCE: no Material Instance assets were selected"));
-        ++Failed;
-    }
+    if (!BatchError.IsEmpty()) Log.Error(FText::FromString(BatchError));
     Log.Notify(
         FText::Format(
-            LOCTEXT(
-                "ManagedMaterialReimportSummary",
-                "MH material reimport: {0} succeeded, {1} failed"),
-            FText::AsNumber(Succeeded),
-            FText::AsNumber(Failed)),
-        Failed > 0 ? EMessageSeverity::Error : EMessageSeverity::Info,
+            LOCTEXT("ManagedMaterialReimportSummary",
+                "MH material reimport: {0} succeeded, {1} failed, {2} cancelled"),
+            FText::AsNumber(Succeeded), FText::AsNumber(Failed), FText::AsNumber(Cancelled)),
+        Failed > 0 || !BatchError.IsEmpty() ? EMessageSeverity::Error :
+            (Cancelled > 0 ? EMessageSeverity::Warning : EMessageSeverity::Info),
         true);
 }
 

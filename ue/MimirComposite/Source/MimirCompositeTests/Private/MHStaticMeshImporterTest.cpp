@@ -1347,12 +1347,16 @@ bool FMHStaticMeshImporterCollisionCarrierTest::RunTest(const FString& Parameter
         TEXT("unresolved phmat tokens warn without blocking"),
         HasWarning(Import, TEXT("MH_W_DAGOR_CONSTRUCT_DROPPED")));
 
-    // Importer version 4 is what forces the one-time rebuild of version 3 meshes.
+    // Any stale receipt, including a version 3 collision-carrier mesh, forces a
+    // one-time rebuild to the current importer semantics.
     UMHStaticMeshImportData* Receipt = Cast<UMHStaticMeshImportData>(Mesh->GetAssetImportData());
     bPassed &= TestNotNull(TEXT("carrier receipt exists"), Receipt);
     if (Receipt != nullptr)
     {
-        bPassed &= TestEqual(TEXT("receipt records importer version 5"), Receipt->ImporterVersion, 5);
+        bPassed &= TestEqual(
+            TEXT("receipt records current importer version"),
+            Receipt->ImporterVersion,
+            MHStaticMeshImporterVersion);
         Receipt->ImporterVersion = 3;
         const FMHStaticMeshOperationResult Upgrade =
             MHImportStaticMeshV4(Entry, Resolver, Fixture.SourceRoot);

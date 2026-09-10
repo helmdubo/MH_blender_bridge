@@ -2,9 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "Source/MHSourceResolver.h"
+#include "UObject/StrongObjectPtr.h"
 
 class UObject;
 class UPackage;
+class FMaterialUpdateContext;
+class UMaterialInstanceConstant;
 
 namespace UE::MimirComposite
 {
@@ -27,6 +30,7 @@ public:
         const FMHResourceKey& Key,
         TFunction<bool(FString&)> Finalizer);
     void QueueCompilation() { bNeedsCompilation = true; }
+    FMaterialUpdateContext& GetMaterialUpdateContext(UMaterialInstanceConstant& Material);
     void QueueCompletion(const FMHResourceKey& Key, bool bNotify);
     void QueuePostSave(const FMHResourceKey& Key, TFunction<void()> Action);
     void QueueSourceGuard(
@@ -56,9 +60,16 @@ private:
     TSet<FMHResourceKey> NotificationKeys;
     TSet<FMHResourceKey> FailedKeys;
     bool bNeedsCompilation = false;
+    TUniquePtr<FMaterialUpdateContext> MaterialUpdateContext;
+    // FMaterialUpdateContext stores raw pointers, including our transient probes.
+    TArray<TStrongObjectPtr<UMaterialInstanceConstant>> MaterialKeepAlive;
 };
 
 MIMIRCOMPOSITEEDITOR_API bool MHIsSourceImportBatchActive();
+
+/** Lazily shared render-state protection; released before the compilation barrier. */
+MIMIRCOMPOSITEEDITOR_API FMaterialUpdateContext* MHGetSourceImportMaterialUpdateContext(
+    UMaterialInstanceConstant& Material);
 
 /** Mark dirty and suppress the importer's immediate SavePackage call. */
 MIMIRCOMPOSITEEDITOR_API bool MHDeferSourceImportPersistence(UObject& Asset);

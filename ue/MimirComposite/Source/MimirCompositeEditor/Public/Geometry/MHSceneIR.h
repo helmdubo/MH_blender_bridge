@@ -59,7 +59,15 @@ struct FMHSceneTriangle
 {
     TStaticArray<int32, 3> PositionIndices{INDEX_NONE, INDEX_NONE, INDEX_NONE};
     TStaticArray<FVector3f, 3> CornerNormals{FVector3f::ZeroVector, FVector3f::ZeroVector, FVector3f::ZeroVector};
+    /** Authored FBX UV set 0. Retained as a named field for existing callers. */
     TStaticArray<FVector2f, 3> CornerUV0{FVector2f::ZeroVector, FVector2f::ZeroVector, FVector2f::ZeroVector};
+    /** Authored FBX UV sets 1..N in stable source order. */
+    TArray<TStaticArray<FVector2f, 3>> AdditionalCornerUVs;
+    /** First authored FBX vertex-color set; white where a corner is unmapped. */
+    TStaticArray<FVector4f, 3> CornerColors{
+        FVector4f(1.0f, 1.0f, 1.0f, 1.0f),
+        FVector4f(1.0f, 1.0f, 1.0f, 1.0f),
+        FVector4f(1.0f, 1.0f, 1.0f, 1.0f)};
     int32 MaterialSlotIndex = INDEX_NONE;
 };
 
@@ -68,6 +76,8 @@ struct FMHSceneGeometry
 {
     TArray<FVector3f> Positions;
     TArray<FMHSceneTriangle> Triangles;
+    /** True when FBX authored at least one vertex-color layer for this mesh. */
+    bool bHasVertexColors = false;
 };
 
 /**

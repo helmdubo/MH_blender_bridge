@@ -13,6 +13,34 @@ struct FMHSourceAnalysisEntry;
 MIMIRCOMPOSITEEDITOR_API bool MHTextureIsManagedNormalMapLogicalName(
     const FString& LogicalName);
 
+enum class EMHPivotTextureKind : uint8
+{
+    None,
+    Position,
+    Direction,
+};
+
+/** Exact, case-sensitive logical-name policy for Dagor pivot atlases. */
+MIMIRCOMPOSITEEDITOR_API EMHPivotTextureKind MHTexturePivotKindFromLogicalName(
+    const FString& LogicalName);
+
+/** Validates the native 32x64, one-mip source representation required by Kind. */
+MIMIRCOMPOSITEEDITOR_API bool MHValidatePivotTextureSource(
+    const UTexture& Texture,
+    EMHPivotTextureKind Kind,
+    FString& OutError);
+
+/** True only when every build and sampling setting preserves pivot-atlas data. */
+MIMIRCOMPOSITEEDITOR_API bool MHTextureHasManagedPivotSettings(
+    const UTexture& Texture,
+    EMHPivotTextureKind Kind);
+
+/** Applies the shared lossless pivot-atlas policy after validating native source data. */
+MIMIRCOMPOSITEEDITOR_API bool MHTextureApplyManagedPivotSettings(
+    UTexture& Texture,
+    EMHPivotTextureKind Kind,
+    FString& OutError);
+
 struct MIMIRCOMPOSITEEDITOR_API FMHTextureOperationResult
 {
     UTexture* Texture = nullptr;

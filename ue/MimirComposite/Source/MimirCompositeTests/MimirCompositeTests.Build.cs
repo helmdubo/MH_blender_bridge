@@ -17,6 +17,7 @@ public class MimirCompositeTests : ModuleRules
                 "Engine",
                 // V5-S6.2 routes a real viewport click through EKeys.
                 "InputCore",
+                "ImageCore",
                 "Json",
                 "MeshDescription",
                 "MimirCompositeEditor",

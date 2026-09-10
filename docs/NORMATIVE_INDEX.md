@@ -37,6 +37,8 @@
 | `docs/reference_notes/MH_Edit_Interaction_Audit_d3ec999.md` | внешний аудит взаимодействия 2026-09-07; уточнения owner и контракт исправления — `docs/contracts/composite_edit_interaction_i1.md` |
 | `docs/reference_notes/dagor_assetviewer_composite_edit_20260907.md` | проверенный референс Asset Viewer: nested context, shared/unique save, Undo identity; без переноса camera remap в UE |
 | `docs/reference_notes/dagor_assetviewer_composit_panel_20260908.md` | исследование Asset Viewer: node/ent/IObjEntity, Add node/Add entity, замена, типизированные параметры; сопоставление с MH и предлагаемые срезы расширения EditMode |
+| `docs/reference_notes/dagor_pivot_wind_20260910.md` | формат атласов Pivot Painter, генерация и глобальные настройки ветра Dagor; проверка семи кустов и адаптация данных/материалов MH |
+| `docs/reference_notes/dagor_wind_motion_parity_20260911.md` | перенос мелкого движения листвы и поля ветра Dagor, проверка исходных данных шума и обновление первой версии графа |
 | `docs/reference_notes/composite_loading_vs_packed_level_actor_20260907.md` | исследование загрузки: сохранённые packed dependencies UE 5.7, кубы Loading и каскад пересборок MH; принятый owner контракт — `docs/contracts/composite_loading.md` |
 
 ## История

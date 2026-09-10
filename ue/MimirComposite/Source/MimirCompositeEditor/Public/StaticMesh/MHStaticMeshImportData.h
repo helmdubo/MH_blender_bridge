@@ -23,8 +23,12 @@ namespace UE::MimirComposite
  *     geometry lands in the same space as composite node TRS (the ratified
  *     axis_probe expectation). Every mesh applied by version 4 is rotated 90
  *     degrees around Z and must be rebuilt once.
+ * 6 - Authored vertex attributes: every FBX UV set (up to UE's explicit
+ *     eight-channel limit) and the first vertex-color set are carried into the
+ *     built mesh. Meshes applied by version 5 must be rebuilt once because they
+ *     retained UV0 only and discarded authored wind/pivot attributes.
  */
-inline constexpr int32 MHStaticMeshImporterVersion = 5;
+inline constexpr int32 MHStaticMeshImporterVersion = 6;
 
 /**
  * Suppresses managed-mesh local-edit tracking for importer-owned mutations.
