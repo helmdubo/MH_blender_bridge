@@ -1289,120 +1289,215 @@ bool UMHSourceImporter::ReimportStaticMesh(
     return bCommitted;
 }
 
-bool UMHSourceImporter::ReimportMaterial(
-    UMaterialInstanceConstant* Material,
-    TArray<FString>& OutWarnings,
-    FString& OutError)
+bool UE::MimirComposite::MHReimportMaterialsFromSource(
+    const TArray<UMaterialInstanceConstant*>& Materials,
+    const FString& SourceRoot,
+    const UMHCompositeSettings& Settings,
+    TArray<FMHMaterialReimportResult>& OutResults,
+    FString& OutError,
+    const bool bShowProgress,
+    TFunction<bool()> ShouldCancel)
 {
-    OutWarnings.Reset();
+    OutResults.Reset();
     OutError.Reset();
-    if (!IsInGameThread() || Material == nullptr)
+    if (!IsInGameThread() || MHIsSourceImportBatchActive())
     {
-        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: ReimportMaterial requires a material instance on the game thread");
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: material reimport requires the game thread with no active import batch");
         return false;
     }
-
-    const UMHMaterialSourceData* Data = Cast<UMHMaterialSourceData>(
-        Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()));
-    if (Data == nullptr || Data->LogicalName.IsEmpty() || Data->SourceRelativePath.IsEmpty())
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_INVALID_RESOURCE_SOURCE: material '%s' has no v4 source receipt"),
-            *Material->GetPathName());
-        return false;
-    }
-
-    FMHResourceKey MaterialKey;
-    MaterialKey.Kind = EMHResourceKind::Material;
-    MaterialKey.LogicalName = Data->LogicalName;
-    if (!MaterialKey.IsCanonical())
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: managed material '%s' has noncanonical receipt name '%s'"),
-            *Material->GetPathName(),
-            *Data->LogicalName);
-        return false;
-    }
-
-    const FString ExpectedPackageName = FString(TEXT("/Game/MH/Generated/Materials/")) + MaterialKey.LogicalName;
-    const FString ExpectedObjectPath = ExpectedPackageName + TEXT(".") + MaterialKey.LogicalName;
-    if (Material->GetPathName() != ExpectedObjectPath ||
-        StaticLoadObject(UMaterialInstanceConstant::StaticClass(), nullptr, *ExpectedObjectPath) != Material)
-    {
-        OutError = FString::Printf(
-            TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: '%s' is not canonical managed material '%s'"),
-            *Material->GetPathName(),
-            *ExpectedObjectPath);
-        return false;
-    }
-
-    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
-    const FString SourceRoot = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
     if (SourceRoot.IsEmpty())
     {
         OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
         return false;
     }
 
+    TSet<UMaterialInstanceConstant*> Seen;
+    TArray<FMHSourceAnalysisEntry> Entries;
+    TArray<int32> ValidIndices;
+    for (UMaterialInstanceConstant* Material : Materials)
+    {
+        if (Seen.Contains(Material)) continue;
+        Seen.Add(Material);
+        const int32 Index = OutResults.AddDefaulted();
+        FMHMaterialReimportResult& Result = OutResults[Index];
+        Result.Material = Material;
+        FMHSourceAnalysisEntry& Entry = Entries.AddDefaulted_GetRef();
+        const UMHMaterialSourceData* Data = Material != nullptr
+            ? Cast<UMHMaterialSourceData>(Material->GetAssetUserDataOfClass(UMHMaterialSourceData::StaticClass()))
+            : nullptr;
+        if (Data == nullptr || Data->LogicalName.IsEmpty() || Data->SourceRelativePath.IsEmpty())
+        {
+            Result.Error = FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: material '%s' has no v4 source receipt"),
+                *GetPathNameSafe(Material));
+            continue;
+        }
+        Entry.Key.Kind = EMHResourceKind::Material;
+        Entry.Key.LogicalName = Data->LogicalName;
+        if (!Entry.Key.IsCanonical())
+        {
+            Result.Error = FString::Printf(TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: managed material '%s' has noncanonical receipt name '%s'"),
+                *Material->GetPathName(), *Data->LogicalName);
+            continue;
+        }
+        const FString PackageName = FString(TEXT("/Game/MH/Generated/Materials/")) + Entry.Key.LogicalName;
+        const FString ObjectPath = PackageName + TEXT(".") + Entry.Key.LogicalName;
+        if (Material->GetPathName() != ObjectPath ||
+            StaticLoadObject(UMaterialInstanceConstant::StaticClass(), nullptr, *ObjectPath) != Material)
+        {
+            Result.Error = FString::Printf(TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: '%s' is not canonical managed material '%s'"),
+                *Material->GetPathName(), *ObjectPath);
+            continue;
+        }
+        ValidIndices.Add(Index);
+    }
+    if (ValidIndices.IsEmpty())
+    {
+        if (OutResults.IsEmpty()) OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: no Material Instance assets were selected");
+        return false;
+    }
+
+    FScopedSlowTask Progress(static_cast<float>(ValidIndices.Num() + 2),
+        NSLOCTEXT("MimirComposite", "ForceMaterialBatchProgress", "Reimporting materials from MH Source"));
+    MHRecordSourceImportProgressScope();
+    if (bShowProgress && !IsRunningCommandlet()) Progress.MakeDialog(true);
+    Progress.EnterProgressFrame(1.0f,
+        NSLOCTEXT("MimirComposite", "ForceMaterialBatchScan", "Scanning MH Source"));
+
+    // Keep the full snapshot: a selected payload's duplicate elsewhere in source_root
+    // must still block its import. Reuse the resulting resolver for every target.
     FMHSourceAnalysisServices Services;
     if (!MHCreateDefaultSourceAnalysisServices(SourceRoot, Services, OutError))
     {
+        for (const int32 Index : ValidIndices) OutResults[Index].Error = OutError;
         return false;
     }
-
-    FMHSourceAnalysisEntry Entry;
-    Entry.Key = MoveTemp(MaterialKey);
-    const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Entry.Key);
-    if (Outcome.Status != EMHResolveStatus::Resolved)
-    {
-        OutError = Outcome.Diagnostic.IsEmpty()
-            ? FString::Printf(
-                TEXT("MH_E_INVALID_RESOURCE_SOURCE: source for material:%s does not resolve"),
-                *Entry.Key.LogicalName)
-            : Outcome.Diagnostic;
-        return false;
-    }
-
-    Entry.PayloadPath = Outcome.PayloadPath;
     FString RelativeBase = FPaths::ConvertRelativePathToFull(SourceRoot);
     FPaths::NormalizeDirectoryName(RelativeBase);
     RelativeBase += TEXT("/");
-    Entry.SourcePath = Outcome.PayloadPath;
-    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    for (const int32 Index : ValidIndices)
     {
-        OutError = FString::Printf(
-            TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source path for material:%s from '%s'"),
-            *Entry.Key.LogicalName,
-            *Outcome.PayloadPath);
-        return false;
-    }
-    FPaths::NormalizeFilename(Entry.SourcePath);
-    Entry.RawHash = Outcome.RawHash;
-    Entry.Change = EMHSourceChange::Reimport;
-
-    FMHMaterialOperationResult Result = MHImportMaterialV4(
-        Entry,
-        *Services.Resolver,
-        SourceRoot,
-        *Settings);
-    OutWarnings = MoveTemp(Result.Warnings);
-    OutError = MoveTemp(Result.Error);
-    if (!Result.Succeeded())
-    {
-        if (!OutError.Contains(Outcome.PayloadPath, ESearchCase::CaseSensitive))
+        FMHSourceAnalysisEntry& Entry = Entries[Index];
+        const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Entry.Key);
+        if (Outcome.Status != EMHResolveStatus::Resolved)
         {
-            OutError = FString::Printf(TEXT("%s: %s"), *Outcome.PayloadPath, *OutError);
+            OutResults[Index].Error = Outcome.Diagnostic.IsEmpty()
+                ? FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: source for %s does not resolve"), *Entry.Key.ToString())
+                : Outcome.Diagnostic;
+            continue;
         }
-        return false;
+        Entry.PayloadPath = Outcome.PayloadPath;
+        Entry.SourcePath = Outcome.PayloadPath;
+        if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+        {
+            OutResults[Index].Error = FString::Printf(TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source path for %s from '%s'"),
+                *Entry.Key.ToString(), *Outcome.PayloadPath);
+            continue;
+        }
+        FPaths::NormalizeFilename(Entry.SourcePath);
+        Entry.RawHash = Outcome.RawHash;
+        Entry.Change = EMHSourceChange::Reimport;
     }
-    if (Result.Material != Material)
+
+    FMHSourceImportBatchContext Batch;
+    TArray<int32> PreparedIndices;
+    bool bCancelled = false;
+    for (const int32 Index : ValidIndices)
     {
-        OutError = FString::Printf(
-            TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: material:%s reimport resolved a different managed UObject"),
-            *Entry.Key.LogicalName);
+        FMHMaterialReimportResult& Result = OutResults[Index];
+        if (!Result.Error.IsEmpty()) continue;
+        if (!bCancelled)
+        {
+            Progress.EnterProgressFrame(1.0f, FText::FromString(Entries[Index].Key.ToString()));
+            bCancelled = (ShouldCancel && ShouldCancel()) || Progress.ShouldCancel();
+        }
+        if (bCancelled)
+        {
+            Result.bCancelled = true;
+            continue;
+        }
+        MHRecordSourceImportProgressResourceTick();
+        FMHMaterialOperationResult Imported = MHImportMaterialV4(
+            Entries[Index], *Services.Resolver, SourceRoot, Settings);
+        const bool bPrepared = Imported.Succeeded();
+        Result.Warnings = MoveTemp(Imported.Warnings);
+        Result.Error = MoveTemp(Imported.Error);
+        if (!bPrepared)
+        {
+            // Succeeded also checks the material pointer. Preserve a diagnostic for every failure.
+            if (Result.Error.IsEmpty()) Result.Error = TEXT("MH_E_IMPORT_FAILED: material preparation failed");
+            if (!Result.Error.Contains(Entries[Index].PayloadPath, ESearchCase::CaseSensitive))
+                Result.Error = FString::Printf(TEXT("%s: %s"), *Entries[Index].PayloadPath, *Result.Error);
+        }
+        else if (Imported.Material != Result.Material)
+        {
+            Result.Error = FString::Printf(TEXT("MH_E_AMBIGUOUS_GENERATED_ASSET: %s reimport resolved a different managed UObject"),
+                *Entries[Index].Key.ToString());
+        }
+        else
+        {
+            PreparedIndices.Add(Index);
+        }
+    }
+
+    TMap<FMHResourceKey, FString> CompilationErrors;
+    Batch.FinishCompilation(CompilationErrors);
+    for (const int32 Index : PreparedIndices)
+    {
+        if (const FString* Error = CompilationErrors.Find(Entries[Index].Key)) OutResults[Index].Error = *Error;
+    }
+    if (Batch.HasPreparedResources())
+    {
+        Progress.EnterProgressFrame(1.0f,
+            NSLOCTEXT("MimirComposite", "ForceMaterialBatchCommit", "Saving prepared materials"));
+        if (!Batch.SavePackages(OutError) || !Batch.CommitProjectionAndNotifications(SourceRoot, OutError))
+        {
+            if (OutError.IsEmpty()) OutError = TEXT("MH_E_IMPORT_FAILED: material batch commit failed");
+            for (const int32 Index : PreparedIndices)
+            {
+                if (OutResults[Index].Error.IsEmpty()) OutResults[Index].Error = OutError;
+            }
+        }
+    }
+    for (const int32 Index : PreparedIndices)
+    {
+        OutResults[Index].bSucceeded = OutResults[Index].Error.IsEmpty() && OutError.IsEmpty();
+    }
+    return !OutResults.IsEmpty() && OutError.IsEmpty() &&
+        !OutResults.ContainsByPredicate([](const FMHMaterialReimportResult& Result) { return !Result.bSucceeded; });
+}
+
+bool UMHSourceImporter::ReimportMaterials(
+    const TArray<UMaterialInstanceConstant*>& Materials,
+    TArray<FMHMaterialReimportResult>& OutResults,
+    FString& OutError)
+{
+    if (bImportInProgress)
+    {
+        OutResults.Reset();
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: another source import is already active");
         return false;
     }
-    return true;
+    TGuardValue<bool> ImportGuard(bImportInProgress, true);
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    return MHReimportMaterialsFromSource(Materials, Settings->GetSourceRootPath(), *Settings,
+        OutResults, OutError, true);
+}
+
+bool UMHSourceImporter::ReimportMaterial(
+    UMaterialInstanceConstant* Material,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutWarnings.Reset();
+    TArray<FMHMaterialReimportResult> Results;
+    const bool bSucceeded = ReimportMaterials({Material}, Results, OutError);
+    if (!Results.IsEmpty())
+    {
+        OutWarnings = MoveTemp(Results[0].Warnings);
+        if (OutError.IsEmpty()) OutError = MoveTemp(Results[0].Error);
+        if (Results[0].bCancelled) OutError = TEXT("MH_E_IMPORT_FAILED: material reimport was cancelled");
+    }
+    return bSucceeded;
 }
 
 bool UMHSourceImporter::ImportCompositeFile(

@@ -34,6 +34,7 @@ public class MimirCompositeEditor : ModuleRules
                 "InteractiveToolsFramework",
                 "DirectoryWatcher",
                 "InputCore",
+                "ImageCore",
                 "Json",
                 "LevelEditor",
                 "MessageLog",

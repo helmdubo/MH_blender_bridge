@@ -5,6 +5,7 @@
 #include "Engine/AssetUserData.h"
 #include "Engine/Texture.h"
 #include "HAL/FileManager.h"
+#include "MaterialShared.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Material/MHMaterialSourceData.h"
 #include "Misc/FileHelper.h"
@@ -522,9 +523,23 @@ bool MHApplyMaterialV4(
         }
     }
 
+    // Protect live scene proxies before clearing parameters or changing parent.
+    // One batch shares this context instead of recreating scene render states
+    // independently for every material and its round-trip probe.
+    const TStrongObjectPtr<UMaterialInstanceConstant> KeepAlive(&Material);
+    TUniquePtr<FMaterialUpdateContext> LocalUpdateContext;
+    FMaterialUpdateContext* UpdateContext = MHGetSourceImportMaterialUpdateContext(Material);
+    if (UpdateContext == nullptr)
+    {
+        LocalUpdateContext = MakeUnique<FMaterialUpdateContext>();
+        UpdateContext = LocalUpdateContext.Get();
+    }
     Material.Modify();
     Material.ClearParameterValuesEditorOnly();
-    Material.SetParentEditorOnly(&Parent);
+    if (Material.Parent != &Parent)
+    {
+        Material.SetParentEditorOnly(&Parent);
+    }
     FMaterialInstanceBasePropertyOverrides Overrides;
     if (Document.Mode == EMHMaterialMode::Class && Document.bHasTwoSided)
     {
@@ -532,7 +547,7 @@ bool MHApplyMaterialV4(
         Overrides.TwoSided = Document.bTwoSided;
     }
     FStaticParameterSet EmptyStaticParameters;
-    Material.UpdateStaticPermutation(EmptyStaticParameters, Overrides);
+    Material.UpdateStaticPermutation(EmptyStaticParameters, Overrides, false, UpdateContext);
     if (Document.Mode == EMHMaterialMode::Class)
     {
         TArray<FString> ParamNames;
@@ -568,6 +583,8 @@ bool MHApplyMaterialV4(
                 Textures.FindChecked(Token));
         }
     }
+    Material.PostEditChange();
+    UpdateContext->AddMaterialInstance(&Material);
     return true;
 }
 
@@ -723,7 +740,6 @@ FMHMaterialOperationResult MHImportMaterialV4(
     {
         return Result;
     }
-    Material->PostEditChange();
     if (MHIsSourceImportBatchActive())
     {
         MHQueueSourceImportCompilation();
@@ -748,11 +764,6 @@ FMHMaterialOperationResult MHImportMaterialV4(
         return Result;
     }
 
-    if (!SaveMaterialPackage(*Material, Result.Error))
-    {
-        return Result;
-    }
-
     UMHMaterialSourceData* Data = GetSourceData(*Material);
     if (Data == nullptr)
     {
@@ -764,7 +775,8 @@ FMHMaterialOperationResult MHImportMaterialV4(
     Data->SourceHash = InitialSourceHash;
     Data->AppliedHash = MHRawPayloadHash(AppliedBytes);
     Data->AppliedParent = AppliedParentReceipt(Document);
-    Material->PostEditChange();
+    // Receipt metadata does not change shaders or parameters.
+    Material->MarkPackageDirty();
     if (!SaveMaterialPackage(*Material, Result.Error))
     {
         return Result;

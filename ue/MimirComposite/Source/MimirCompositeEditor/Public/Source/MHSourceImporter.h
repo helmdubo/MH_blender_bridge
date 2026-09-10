@@ -23,6 +23,26 @@ struct MIMIRCOMPOSITEEDITOR_API FMHImportSourcesScope
     static FMHImportSourcesScope All() { return FMHImportSourcesScope(); }
 };
 
+/** One deduplicated target's outcome; success means compilation, save and projection completed. */
+struct MIMIRCOMPOSITEEDITOR_API FMHMaterialReimportResult
+{
+    UMaterialInstanceConstant* Material = nullptr;
+    TArray<FString> Warnings;
+    FString Error;
+    bool bSucceeded = false;
+    bool bCancelled = false;
+};
+
+/** Force source-wins reimport with one source snapshot and one persistence batch. */
+MIMIRCOMPOSITEEDITOR_API bool MHReimportMaterialsFromSource(
+    const TArray<UMaterialInstanceConstant*>& Materials,
+    const FString& SourceRoot,
+    const UMHCompositeSettings& Settings,
+    TArray<FMHMaterialReimportResult>& OutResults,
+    FString& OutError,
+    bool bShowProgress = false,
+    TFunction<bool()> ShouldCancel = {});
+
 /**
  * Filters an already-built plan without re-reading source files.
  */
@@ -102,6 +122,12 @@ public:
     bool ReimportMaterial(
         UMaterialInstanceConstant* Material,
         TArray<FString>& OutWarnings,
+        FString& OutError);
+
+    /** Force reimport all unique targets; cancellation commits the already prepared prefix. */
+    bool ReimportMaterials(
+        const TArray<UMaterialInstanceConstant*>& Materials,
+        TArray<UE::MimirComposite::FMHMaterialReimportResult>& OutResults,
         FString& OutError);
 
     /** Manual file-drop adapter for a source already inside source_root; CB target is ignored. */

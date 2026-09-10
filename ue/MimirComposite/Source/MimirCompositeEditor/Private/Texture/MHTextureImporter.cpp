@@ -5,6 +5,7 @@
 #include "AssetToolsModule.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Engine/Texture.h"
+#include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
@@ -30,26 +31,190 @@ bool MHTextureIsManagedNormalMapLogicalName(const FString& LogicalName)
         LogicalName.EndsWith(TEXT("_tex_n"), ESearchCase::CaseSensitive);
 }
 
+EMHPivotTextureKind MHTexturePivotKindFromLogicalName(const FString& LogicalName)
+{
+    if (LogicalName == TEXT("pivot_pos") ||
+        LogicalName.EndsWith(TEXT("_pivot_pos"), ESearchCase::CaseSensitive))
+    {
+        return EMHPivotTextureKind::Position;
+    }
+    if (LogicalName == TEXT("pivot_dir") ||
+        LogicalName.EndsWith(TEXT("_pivot_dir"), ESearchCase::CaseSensitive))
+    {
+        return EMHPivotTextureKind::Direction;
+    }
+    return EMHPivotTextureKind::None;
+}
+
+constexpr const TCHAR* GeneratedTextureRoot = TEXT("/Game/MH/Generated/Textures");
+constexpr int64 PivotAtlasWidth = 32;
+constexpr int64 PivotAtlasHeight = 64;
+
+bool MHValidatePivotTextureSource(
+    const UTexture& Texture,
+    const EMHPivotTextureKind Kind,
+    FString& OutError)
+{
+    if (Kind == EMHPivotTextureKind::None)
+    {
+        OutError = TEXT("MH_E_INVALID_RESOURCE_SOURCE: pivot atlas policy requires an explicit position or direction kind");
+        return false;
+    }
+
+#if WITH_EDITORONLY_DATA
+    const UTexture2D* Texture2D = Cast<UTexture2D>(&Texture);
+    const ETextureSourceFormat ExpectedFormat = Kind == EMHPivotTextureKind::Position
+        ? TSF_RGBA16F
+        : TSF_BGRA8;
+    if (Texture2D == nullptr ||
+        Texture.Source.GetSizeX() != PivotAtlasWidth ||
+        Texture.Source.GetSizeY() != PivotAtlasHeight ||
+        Texture.Source.GetNumSlices() != 1 ||
+        Texture.Source.GetNumLayers() != 1 ||
+        Texture.Source.GetNumMips() != 1 ||
+        Texture.Source.GetFormat() != ExpectedFormat)
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_INVALID_RESOURCE_SOURCE: texture:%s pivot atlas must be a 32x64 one-mip 2D %s source"),
+            *Texture.GetPathName(),
+            Kind == EMHPivotTextureKind::Position ? TEXT("RGBA16F") : TEXT("RGBA8"));
+        return false;
+    }
+    return true;
+#else
+    OutError = FString::Printf(
+        TEXT("MH_E_INVALID_RESOURCE_SOURCE: texture:%s pivot atlas validation requires editor-only source data"),
+        *Texture.GetPathName());
+    return false;
+#endif
+}
+
+bool MHTextureHasManagedPivotSettings(
+    const UTexture& Texture,
+    const EMHPivotTextureKind Kind)
+{
+    if (Kind == EMHPivotTextureKind::None)
+    {
+        return false;
+    }
+    const UTexture2D* Texture2D = Cast<UTexture2D>(&Texture);
+    FString IgnoredError;
+    return Texture2D != nullptr &&
+        MHValidatePivotTextureSource(Texture, Kind, IgnoredError) &&
+        !Texture.SRGB &&
+        Texture.CompressionSettings == (Kind == EMHPivotTextureKind::Position
+            ? TC_HDR
+            : TC_VectorDisplacementmap) &&
+        Texture.Filter == TF_Nearest &&
+        Texture.MipGenSettings == TMGS_NoMipmaps &&
+        Texture.NeverStream &&
+        !Texture.VirtualTextureStreaming &&
+        !Texture.CompressionNoAlpha &&
+        !Texture.CompressionNone &&
+        !Texture.CompressionYCoCg &&
+        Texture.LossyCompressionAmount == TLCA_None &&
+        Texture.SourceColorSettings.EncodingOverride == ETextureSourceEncoding::TSE_None &&
+        Texture.SourceColorSettings.ColorSpace == ETextureColorSpace::TCS_None &&
+        Texture.AdjustBrightness == 1.0f &&
+        Texture.AdjustBrightnessCurve == 1.0f &&
+        Texture.AdjustVibrance == 0.0f &&
+        Texture.AdjustSaturation == 1.0f &&
+        Texture.AdjustRGBCurve == 1.0f &&
+        Texture.AdjustHue == 0.0f &&
+        Texture.AdjustMinAlpha == 0.0f &&
+        Texture.AdjustMaxAlpha == 1.0f &&
+        !Texture.bFlipGreenChannel &&
+        !Texture.bChromaKeyTexture &&
+        Texture.MaxTextureSize == 0 &&
+        Texture.LODBias == 0 &&
+        Texture.PowerOfTwoMode == ETexturePowerOfTwoSetting::None &&
+        Texture.ResizeDuringBuildX == 0 &&
+        Texture.ResizeDuringBuildY == 0 &&
+        Texture.Downscale.Default == 1.0f &&
+        Texture.Downscale.PerPlatform.IsEmpty() &&
+        Texture.DownscaleOptions == ETextureDownscaleOptions::Unfiltered &&
+        Texture2D->AddressX == TA_Clamp &&
+        Texture2D->AddressY == TA_Clamp;
+}
+
+bool MHTextureApplyManagedPivotSettings(
+    UTexture& Texture,
+    const EMHPivotTextureKind Kind,
+    FString& OutError)
+{
+    if (!MHValidatePivotTextureSource(Texture, Kind, OutError))
+    {
+        return false;
+    }
+    UTexture2D* Texture2D = CastChecked<UTexture2D>(&Texture);
+    Texture.SRGB = false;
+    Texture.CompressionSettings = Kind == EMHPivotTextureKind::Position
+        ? TC_HDR
+        : TC_VectorDisplacementmap;
+    Texture.Filter = TF_Nearest;
+    Texture.MipGenSettings = TMGS_NoMipmaps;
+    Texture.NeverStream = true;
+    Texture.VirtualTextureStreaming = false;
+    Texture.CompressionNoAlpha = false;
+    Texture.CompressionNone = false;
+    Texture.CompressionYCoCg = false;
+    Texture.LossyCompressionAmount = TLCA_None;
+    Texture.SourceColorSettings = FTextureSourceColorSettings();
+    Texture.AdjustBrightness = 1.0f;
+    Texture.AdjustBrightnessCurve = 1.0f;
+    Texture.AdjustVibrance = 0.0f;
+    Texture.AdjustSaturation = 1.0f;
+    Texture.AdjustRGBCurve = 1.0f;
+    Texture.AdjustHue = 0.0f;
+    Texture.AdjustMinAlpha = 0.0f;
+    Texture.AdjustMaxAlpha = 1.0f;
+    Texture.bFlipGreenChannel = false;
+    Texture.bChromaKeyTexture = false;
+    Texture.MaxTextureSize = 0;
+    Texture.LODBias = 0;
+    Texture.PowerOfTwoMode = ETexturePowerOfTwoSetting::None;
+    Texture.ResizeDuringBuildX = 0;
+    Texture.ResizeDuringBuildY = 0;
+    Texture.Downscale.Default = 1.0f;
+    Texture.Downscale.PerPlatform.Reset();
+    Texture.DownscaleOptions = ETextureDownscaleOptions::Unfiltered;
+    Texture2D->AddressX = TA_Clamp;
+    Texture2D->AddressY = TA_Clamp;
+    Texture.PostEditChange();
+    return true;
+}
+
 namespace
 {
 
-constexpr const TCHAR* GeneratedTextureRoot = TEXT("/Game/MH/Generated/Textures");
-
 bool MHTextureHasManagedSettings(const UTexture& Texture, const FString& LogicalName)
 {
-    return !MHTextureIsManagedNormalMapLogicalName(LogicalName) ||
-        (!Texture.SRGB && Texture.CompressionSettings == TC_BC7);
+    if (MHTextureIsManagedNormalMapLogicalName(LogicalName))
+    {
+        return !Texture.SRGB && Texture.CompressionSettings == TC_BC7;
+    }
+
+    const EMHPivotTextureKind Kind = MHTexturePivotKindFromLogicalName(LogicalName);
+    return Kind == EMHPivotTextureKind::None ||
+        MHTextureHasManagedPivotSettings(Texture, Kind);
 }
 
-void MHTextureApplyManagedSettings(UTexture& Texture, const FString& LogicalName)
+bool MHTextureApplyManagedSettings(
+    UTexture& Texture,
+    const FString& LogicalName,
+    FString& OutError)
 {
-    if (!MHTextureIsManagedNormalMapLogicalName(LogicalName))
+    if (MHTextureIsManagedNormalMapLogicalName(LogicalName))
     {
-        return;
+        Texture.SRGB = false;
+        Texture.CompressionSettings = TC_BC7;
+        Texture.PostEditChange();
+        return true;
     }
-    Texture.SRGB = false;
-    Texture.CompressionSettings = TC_BC7;
-    Texture.PostEditChange();
+
+    const EMHPivotTextureKind Kind = MHTexturePivotKindFromLogicalName(LogicalName);
+    return Kind == EMHPivotTextureKind::None ||
+        MHTextureApplyManagedPivotSettings(Texture, Kind, OutError);
 }
 
 bool TextureRelativeToRoot(
@@ -286,7 +451,16 @@ FMHTextureOperationResult FinalizeTextureImport(
     return MoveTemp(Prepared.Result);
 #endif
 
-    MHTextureApplyManagedSettings(*Texture, Entry.Key.LogicalName);
+    const EMHPivotTextureKind PivotKind = MHTexturePivotKindFromLogicalName(Entry.Key.LogicalName);
+    if (PivotKind != EMHPivotTextureKind::None &&
+        !MHValidatePivotTextureSource(*Texture, PivotKind, Prepared.Result.Error))
+    {
+        return MoveTemp(Prepared.Result);
+    }
+    if (!MHTextureApplyManagedSettings(*Texture, Entry.Key.LogicalName, Prepared.Result.Error))
+    {
+        return MoveTemp(Prepared.Result);
+    }
     if (!bDeferred)
     {
         FMHSourceImportMetricScope WaitScope(

@@ -8,6 +8,7 @@
 #include "Material/MHMaterialSourceData.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MeshDescription.h"
+#include "Math/Color.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Modules/ModuleManager.h"
@@ -46,6 +47,20 @@ bool FailStaticMeshImport(FString& OutError, const TCHAR* Code, const FString& M
 {
     OutError = FString::Printf(TEXT("%s: %s"), Code, *Message);
     return false;
+}
+
+FVector4f EncodeImportedVertexColor(const FVector4f& SourceColor)
+{
+    // Match UE's native FBX importer: authored FBX components are first
+    // clamped and truncated into sRGB bytes, then decoded to the linear value
+    // stored in MeshDescription. StaticMeshBuilder's ToFColor(true) therefore
+    // reconstructs the authored bytes instead of applying sRGB twice.
+    const FColor Quantized(
+        static_cast<uint8>(255.0f * FMath::Clamp(SourceColor.X, 0.0f, 1.0f)),
+        static_cast<uint8>(255.0f * FMath::Clamp(SourceColor.Y, 0.0f, 1.0f)),
+        static_cast<uint8>(255.0f * FMath::Clamp(SourceColor.Z, 0.0f, 1.0f)),
+        static_cast<uint8>(255.0f * FMath::Clamp(SourceColor.W, 0.0f, 1.0f)));
+    return FVector4f(FLinearColor(Quantized));
 }
 
 bool LoadSourceBytes(const FString& Filename, TArray<uint8>& OutBytes, FString& OutError)
@@ -438,12 +453,37 @@ bool BuildMeshDescriptionForLOD(
     FString& OutError)
 {
     OutSectionSlotNames.Reset();
+    int32 NumUVChannels = 1;
+    for (const FMHSceneIRNode& Node : Scene.Nodes)
+    {
+        if (Node.Kind != EMHSceneNodeKind::Render || Node.LODLevel != LODLevel)
+        {
+            continue;
+        }
+        for (const FMHSceneTriangle& Triangle : Node.Geometry->Triangles)
+        {
+            NumUVChannels = FMath::Max(NumUVChannels, 1 + Triangle.AdditionalCornerUVs.Num());
+        }
+    }
+    if (NumUVChannels > MAX_MESH_TEXTURE_COORDS_MD)
+    {
+        return FailStaticMeshImport(
+            OutError,
+            TEXT("MH_E_FBX_TRANSPORT_FAILED"),
+            FString::Printf(
+                TEXT("LOD%d authors %d UV channels, exceeding UE's %d-channel mesh limit"),
+                LODLevel,
+                NumUVChannels,
+                MAX_MESH_TEXTURE_COORDS_MD));
+    }
+
     FStaticMeshAttributes Attributes(OutDescription);
     Attributes.Register();
     TVertexAttributesRef<FVector3f> Positions = Attributes.GetVertexPositions();
     TVertexInstanceAttributesRef<FVector3f> Normals = Attributes.GetVertexInstanceNormals();
     TVertexInstanceAttributesRef<FVector2f> UVs = Attributes.GetVertexInstanceUVs();
-    UVs.SetNumChannels(1);
+    TVertexInstanceAttributesRef<FVector4f> Colors = Attributes.GetVertexInstanceColors();
+    UVs.SetNumChannels(NumUVChannels);
     TPolygonGroupAttributesRef<FName> SlotNames = Attributes.GetPolygonGroupMaterialSlotNames();
 
     TMap<FString, FPolygonGroupID> PolygonGroups;
@@ -514,8 +554,39 @@ bool BuildMeshDescriptionForLOD(
                         FString::Printf(TEXT("node '%s' triangle references vertex %d outside its geometry"), *Node.Name, PositionIndex));
                 }
                 const FVertexInstanceID Instance = OutDescription.CreateVertexInstance(VertexIds[PositionIndex]);
+                if (Triangle.CornerNormals[SourceCorner].ContainsNaN() ||
+                    Triangle.CornerUV0[SourceCorner].ContainsNaN() ||
+                    Triangle.CornerColors[SourceCorner].ContainsNaN())
+                {
+                    return FailStaticMeshImport(
+                        OutError,
+                        TEXT("MH_E_INVALID_RESOURCE_SOURCE"),
+                        FString::Printf(TEXT("node '%s' contains a non-finite corner attribute"), *Node.Name));
+                }
                 Normals[Instance] = Triangle.CornerNormals[SourceCorner];
                 UVs.Set(Instance, 0, Triangle.CornerUV0[SourceCorner]);
+                for (int32 UVChannel = 1; UVChannel < NumUVChannels; ++UVChannel)
+                {
+                    FVector2f UV = FVector2f::ZeroVector;
+                    if (Triangle.AdditionalCornerUVs.IsValidIndex(UVChannel - 1))
+                    {
+                        UV = Triangle.AdditionalCornerUVs[UVChannel - 1][SourceCorner];
+                        if (UV.ContainsNaN())
+                        {
+                            return FailStaticMeshImport(
+                                OutError,
+                                TEXT("MH_E_INVALID_RESOURCE_SOURCE"),
+                                FString::Printf(
+                                    TEXT("node '%s' contains a non-finite corner UV%d"),
+                                    *Node.Name,
+                                    UVChannel));
+                        }
+                    }
+                    UVs.Set(Instance, UVChannel, UV);
+                }
+                Colors[Instance] = Geometry.bHasVertexColors
+                    ? EncodeImportedVertexColor(Triangle.CornerColors[SourceCorner])
+                    : FVector4f(1.0f, 1.0f, 1.0f, 1.0f);
                 Perimeter.Add(Instance);
             }
             OutDescription.CreatePolygon(PolygonGroup, Perimeter);
@@ -548,12 +619,36 @@ bool BuildTraceCollisionMeshDescription(
     FString& OutError)
 {
     OutSectionTokens.Reset();
+    int32 NumUVChannels = 1;
+    for (const FMHSceneIRNode& Node : Scene.Nodes)
+    {
+        if (!IsTraceCollisionNode(Node))
+        {
+            continue;
+        }
+        for (const FMHSceneTriangle& Triangle : Node.Geometry->Triangles)
+        {
+            NumUVChannels = FMath::Max(NumUVChannels, 1 + Triangle.AdditionalCornerUVs.Num());
+        }
+    }
+    if (NumUVChannels > MAX_MESH_TEXTURE_COORDS_MD)
+    {
+        return FailStaticMeshImport(
+            OutError,
+            TEXT("MH_E_FBX_TRANSPORT_FAILED"),
+            FString::Printf(
+                TEXT("trace collision geometry authors %d UV channels, exceeding UE's %d-channel mesh limit"),
+                NumUVChannels,
+                MAX_MESH_TEXTURE_COORDS_MD));
+    }
+
     FStaticMeshAttributes Attributes(OutDescription);
     Attributes.Register();
     TVertexAttributesRef<FVector3f> Positions = Attributes.GetVertexPositions();
     TVertexInstanceAttributesRef<FVector3f> Normals = Attributes.GetVertexInstanceNormals();
     TVertexInstanceAttributesRef<FVector2f> UVs = Attributes.GetVertexInstanceUVs();
-    UVs.SetNumChannels(1);
+    TVertexInstanceAttributesRef<FVector4f> Colors = Attributes.GetVertexInstanceColors();
+    UVs.SetNumChannels(NumUVChannels);
     TPolygonGroupAttributesRef<FName> SlotNames = Attributes.GetPolygonGroupMaterialSlotNames();
 
     TMap<FString, FPolygonGroupID> PolygonGroups;
@@ -611,8 +706,39 @@ bool BuildTraceCollisionMeshDescription(
                             PositionIndex));
                 }
                 const FVertexInstanceID Instance = OutDescription.CreateVertexInstance(VertexIds[PositionIndex]);
+                if (Triangle.CornerNormals[Corner].ContainsNaN() ||
+                    Triangle.CornerUV0[Corner].ContainsNaN() ||
+                    Triangle.CornerColors[Corner].ContainsNaN())
+                {
+                    return FailStaticMeshImport(
+                        OutError,
+                        TEXT("MH_E_INVALID_RESOURCE_SOURCE"),
+                        FString::Printf(TEXT("trace node '%s' contains a non-finite corner attribute"), *Node.Name));
+                }
                 Normals[Instance] = Triangle.CornerNormals[Corner];
                 UVs.Set(Instance, 0, Triangle.CornerUV0[Corner]);
+                for (int32 UVChannel = 1; UVChannel < NumUVChannels; ++UVChannel)
+                {
+                    FVector2f UV = FVector2f::ZeroVector;
+                    if (Triangle.AdditionalCornerUVs.IsValidIndex(UVChannel - 1))
+                    {
+                        UV = Triangle.AdditionalCornerUVs[UVChannel - 1][Corner];
+                        if (UV.ContainsNaN())
+                        {
+                            return FailStaticMeshImport(
+                                OutError,
+                                TEXT("MH_E_INVALID_RESOURCE_SOURCE"),
+                                FString::Printf(
+                                    TEXT("trace node '%s' contains a non-finite corner UV%d"),
+                                    *Node.Name,
+                                    UVChannel));
+                        }
+                    }
+                    UVs.Set(Instance, UVChannel, UV);
+                }
+                Colors[Instance] = Geometry.bHasVertexColors
+                    ? EncodeImportedVertexColor(Triangle.CornerColors[Corner])
+                    : FVector4f(1.0f, 1.0f, 1.0f, 1.0f);
                 Perimeter.Add(Instance);
             }
             OutDescription.CreatePolygon(PolygonGroup, Perimeter);
