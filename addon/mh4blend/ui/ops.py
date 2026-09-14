@@ -13,6 +13,7 @@ from ..scene.export_closure import (
     export_composite_closure_collection,
 )
 from ..scene.export_fbx import export_fbx_collection
+from ..scene.export_collection_materials import export_collection_materials
 from ..scene.export_material import (
     prepare_blender_material_export,
     write_prepared_material,
@@ -523,6 +524,28 @@ class MH_OT_export_composite_include_all(
     allow_prefab_as_mesh_lossy: _prefab_lossy_option()
 
 
+class MH_OT_export_collection_materials(bpy.types.Operator):
+    bl_idname = "mh.export_collection_materials"
+    bl_label = "Export Collection Materials Only"
+    bl_description = (
+        "Overwrite materials used by this collection and all nested collection "
+        "instances, including every option; write no FBX or composite files")
+
+    def execute(self, context):
+        try:
+            report = export_collection_materials(
+                context.scene.mh_composite_export_collection,
+                _directory(context.scene.mh_composite_export_directory),
+                source_root=_directory(prefs_mod.get_prefs(context).source_root))
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log("export_collection_materials", {"ok": False, "error": str(exc)})
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _log("export_collection_materials", report)
+        self.report({"INFO"}, f"Materials exported: {report['materials_exported']}")
+        return {"FINISHED"}
+
+
 class MH_OT_import_composite(bpy.types.Operator):
     bl_idname = "mh.import_composite"
     bl_label = "Import Composite"
@@ -641,6 +664,7 @@ CLASSES = (
     MH_OT_export_composite,
     MH_OT_export_composite_closure,
     MH_OT_export_composite_include_all,
+    MH_OT_export_collection_materials,
     MH_OT_import_composite,
     MH_OT_import_dagor_composite,
     MH_OT_convert_dag4blend_composite,

@@ -27,6 +27,7 @@ from mh4blend.scene.export_material import (  # noqa: E402
     write_prepared_material,
 )
 from mh4blend.scene.export_fbx import export_fbx_collection  # noqa: E402
+from mh4blend.scene.export_collection_materials import export_collection_materials
 from mh4blend.core.model import MaterialResource  # noqa: E402
 from mh4blend.core.source_inventory import scan_source_inventory  # noqa: E402
 from mh4blend.core.validate import MHValidationError  # noqa: E402
@@ -63,6 +64,65 @@ def _mesh(name, collection, material):
     obj = bpy.data.objects.new(name, mesh)
     collection.objects.link(obj)
     return obj
+
+
+def test_collection_materials_overwrite_all_nested_options_only(tmp_path):
+    root = bpy.data.collections.new("materials_root")
+    child = bpy.data.collections.new("child")
+    root.children.link(child)
+    shared = _class_material("shared_paint")
+    _mesh("direct", root, shared)
+    _mesh("child_mesh", child, shared)
+    for index in range(2):
+        definition = bpy.data.collections.new(f"option_{index}")
+        _mesh("body", definition, _class_material(f"option_paint_{index}"))
+        obj = bpy.data.objects.new(f"hidden_option_{index}", None)
+        obj.instance_type = "COLLECTION"
+        obj.instance_collection = definition
+        obj.hide_viewport = True
+        root.objects.link(obj)
+    unrelated = bpy.data.collections.new("unrelated")
+    _mesh("unrelated", unrelated, _class_material("unrelated_paint"))
+    _mesh("technical", child, bpy.data.materials.new("cls"))
+    source = tmp_path / "source"
+    source.mkdir()
+    shared_dir = source / "shared"
+    shared_dir.mkdir()
+    existing = shared_dir / "shared_paint.material"
+    existing.write_text('{"class":"artist_old"}')
+    mesh_file = source / "keep.mesh.fbx"
+    composite_file = source / "keep.composite"
+    mesh_file.write_bytes(b"mesh sentinel")
+    composite_file.write_bytes(b"composite sentinel")
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+              for p in (mesh_file, composite_file)}
+    output = source / "new"
+
+    report = export_collection_materials(root, output, source_root=source)
+
+    assert report["materials_exported"] == 3
+    assert read_material_file(existing).material_class == "simple"
+    assert sorted(p.name for p in output.iterdir()) == [
+        "option_paint_0.material", "option_paint_1.material"]
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+    assert not list(source.rglob("unrelated_paint.material"))
+    assert not list(source.rglob("cls.material"))
+    assert "mh_resource_kind" not in root
+
+
+def test_collection_materials_preflight_failure_writes_nothing(tmp_path):
+    root = bpy.data.collections.new("material_validation")
+    _mesh("valid", root, _class_material("a_valid"))
+    invalid = _class_material("z_invalid")
+    invalid.mh4blend.material_class = ""
+    _mesh("invalid", root, invalid)
+    existing = tmp_path / "a_valid.material"
+    existing.write_text('{"class":"keep_me"}')
+    before = existing.read_bytes()
+    with pytest.raises(ValueError):
+        export_collection_materials(root, tmp_path, source_root=tmp_path)
+    assert existing.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a_valid.material"]
 
 
 def test_dagor_material_preflight_does_not_allocate_missing_mh_settings(tmp_path, monkeypatch):

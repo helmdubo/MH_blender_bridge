@@ -73,6 +73,7 @@ class MH_PT_source_tools(bpy.types.Panel):
             box.operator("mh.export_composite", icon="EXPORT")
             box.operator("mh.export_composite_closure", icon="EXPORT")
             box.operator("mh.export_composite_include_all", icon="EXPORT")
+            box.operator("mh.export_collection_materials", icon="MATERIAL")
         draw_random_options(box, context)
 
         materials = layout.box()
