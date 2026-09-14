@@ -17,8 +17,19 @@ EditMode описаны в справочной заметке; реализац
 интеграция изменений — PR #168. Shutdown проверен штатным
 завершением процесса через Automation SoftQuit после полного набора и RHI.
 
+По запросам owner 2026-09-14 реализованы и установлены адресный импорт FBX,
+нативный импорт `.material`, обновление удалённых кандидатов индекса и
+**Update dependencies** с учётом secondary selection и прямого выбора Static
+Mesh. Owner разрешил документацию, commit/push/merge этого набора. Восстановление
+материала подтверждено owner; окончательная полевая приёмка исправленной области
+secondary selection пока не зафиксирована. Текущие правила команд — протокол
+§9.1/§10.1 и README; квитанции ниже сохраняют историю отдельных сборок.
+
 | Срез | Статус | PR / примечание |
 |---|---|---|
+| Single FBX import | VERIFIED; INSTALLED (2026-09-14) | `codex/import-single-fbx`: Tools → MH Source Tool → Import Single FBX; один `.mesh.fbx`, штатный MH-конвейер, без bulk import; `docs/receipts/single_fbx_import.md` |
+| Native material import + candidate refresh | VERIFIED; MI RECOVERY CONFIRMED BY OWNER (2026-09-14) | `.material` через drag/drop и Import to Current Folder; восстановление MI и его текстур без FBX; удалённые duplicate candidates перепроверяются на retry; `docs/receipts/material_file_import.md`, `docs/receipts/material_candidate_refresh.md` |
+| Context-aware Update dependencies | VERIFIED; INSTALLED FOR FIELD TEST; MERGE AUTHORIZED (2026-09-14) | Secondary — только подсвеченный меш; composite — его замыкание; Static Mesh — Content Browser и сцена. 325 completed / 0 failed NullRHI, 7/7 D3D12, strict/non-unity/no-PCH + guarded force-unity; 14 прежних conditional checks перечислены отдельно. `docs/receipts/dependency_selection_scope.md`; исходный actor-wide вариант — `docs/receipts/composite_dependency_update.md` |
 | Composite editor shutdown | VERIFIED; INSTALLED FOR FIELD TEST (2026-09-08) | PR #168, `codex/fix-editor-shutdown`: thumbnail/Details cleanup до UObject teardown, однократная регистрация; RED crash, 293/293 full + normal exit 0, 6/6 RHI + normal exit 0; `docs/receipts/composite_editor_shutdown.md` |
 | Composite Save rotation read-back | VERIFIED; INSTALLED FOR FIELD TEST (2026-09-08) | `codex/fix-composite-save-validation`: точные disk bytes + parser/writer admission без fixed-point; 293/293 full, 3/3 focused, три режима сборки; `docs/receipts/composite_save_rotation_readback.md`; интеграция PR #168 |
 | AV-Edit research | RESEARCH COMPLETE; proposals only (owner 2026-09-08) | `docs/reference_notes/dagor_assetviewer_composit_panel_20260908.md`: C++ Add node / Add entity, модель содержимого, параметры, карта текущего MH; реализация расширений не входит в исследование |

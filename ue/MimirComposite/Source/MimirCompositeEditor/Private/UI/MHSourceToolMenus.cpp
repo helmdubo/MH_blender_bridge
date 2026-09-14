@@ -3,15 +3,21 @@
 #include "AssetRegistry/AssetData.h"
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeAsset.h"
+#include "Composite/MHCompositeDependencies.h"
 #include "Composite/MHCompositeImporter.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
+#include "Composite/MHCompositeResolvedPlan.h"
 #include "Composite/MHCompositeSelectionAdapter.h"
+#include "Composite/MHEndpointPrototypeRegistry.h"
+#include "Components/StaticMeshComponent.h"
 #include "Editing/MHCompositeEditorMode.h"
 #include "Editing/MHCompositeEditSession.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Diagnostics/MHSourceOperations.h"
 #include "DesktopPlatformModule.h"
 #include "Editor.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
 #include "Elements/Framework/TypedElementSelectionSet.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -302,6 +308,53 @@ void ExecuteImportChanged(const FToolMenuContext&)
             : LOCTEXT("ImportChangedErrors", "MH source import failed"),
         bOk && !Analysis.HasErrors() ? EMessageSeverity::Info : EMessageSeverity::Error,
         true);
+}
+
+void ExecuteImportSingleFbx(const FToolMenuContext&)
+{
+    const FText Page = LOCTEXT("ImportSingleFbxPage", "Import Single FBX");
+    const FText Failed = LOCTEXT("ImportSingleFbxFailed", "MH single FBX import failed");
+    IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+    UMHSourceImporter* Importer = SourceImporter();
+    if (DesktopPlatform == nullptr || Importer == nullptr || !FSlateApplication::IsInitialized())
+    {
+        NotifyOperation(Page, Failed, {}, TEXT("MH_E_IMPORT_THREAD_INVALID: FBX import UI is unavailable"));
+        return;
+    }
+    const FString Root = SourceRoot();
+    if (Root.IsEmpty())
+    {
+        NotifyOperation(Page, Failed, {}, TEXT("MH_E_SOURCE_INDEX_INVALID: configure Source Root in Project Settings > Plugins > Mimir Composite"));
+        return;
+    }
+    TArray<FString> SelectedFiles;
+    if (!DesktopPlatform->OpenFileDialog(
+            FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
+            Page.ToString(),
+            Root,
+            FString(),
+            TEXT("MH Mesh FBX (*.mesh.fbx)|*.mesh.fbx"),
+            EFileDialogFlags::None,
+            SelectedFiles) || SelectedFiles.Num() != 1)
+    {
+        return;
+    }
+    UStaticMesh* Asset = nullptr;
+    TArray<FString> Warnings;
+    FString Error;
+    if (!Importer->ImportStaticMeshFile(SelectedFiles[0], Asset, Warnings, Error) && Error.IsEmpty())
+    {
+        Error = TEXT("MH_E_IMPORT_FAILED: single FBX import did not complete");
+    }
+    NotifyOperation(Page,
+        Error.IsEmpty() && Asset != nullptr
+            ? FText::Format(LOCTEXT("ImportSingleFbxOk", "Imported FBX: {0}"), FText::FromString(Asset->GetPathName()))
+            : Failed,
+        Warnings, Error);
+    if (Error.IsEmpty() && Asset != nullptr)
+    {
+        GEditor->SyncBrowserToObjects(TArray<UObject*>{Asset});
+    }
 }
 
 void ExecuteBuildComposite(const TArray<TWeakObjectPtr<AActor>>& ActorSnapshot)
@@ -1481,6 +1534,152 @@ void ExecutePublishComposites(const FToolMenuContext& MenuContext)
         Error);
 }
 
+void ExecuteUpdateDependencies(
+    const TArray<UMHCompositeAsset*>& Assets,
+    const TArray<UStaticMesh*>& Meshes,
+    const TArray<AMHCompositeActor*>& Actors = {})
+{
+    const FScopedTransaction Transaction(LOCTEXT("UpdateDependenciesTransaction", "Update composite dependencies"));
+    FMHCompositeDependencyUpdateResult Result;
+    MHUpdateAssetDependencies(Assets, Meshes, Result);
+    TArray<FString> Warnings;
+    if (Result.CompositesVisited > 0)
+    {
+        if (UMHCompositeLevelSubsystem* Subsystem = LevelSubsystem())
+        {
+            FString Error;
+            if (!Actors.IsEmpty())
+            {
+                if (!Subsystem->RebuildComposites(Actors, Warnings, Error)) Result.Errors.Add(Error);
+            }
+            else
+            {
+                for (UMHCompositeAsset* Asset : Assets)
+                {
+                    TArray<FString> ItemWarnings;
+                    if (!Subsystem->RebuildAllInstances(Asset, ItemWarnings, Error)) Result.Errors.Add(Error);
+                    Warnings.Append(ItemWarnings);
+                }
+            }
+        }
+    }
+    NotifyOperation(
+        LOCTEXT("UpdateDependenciesPage", "Update dependencies"),
+        FText::Format(LOCTEXT("UpdateDependenciesSummary", "Updated {0} material slots in {1} meshes; checked {2} composites. Save changed meshes to keep the new bindings."),
+            FText::AsNumber(Result.SlotsUpdated), FText::AsNumber(Result.MeshesUpdated), FText::AsNumber(Result.CompositesVisited)),
+        Warnings, FString::Join(Result.Errors, TEXT("\n")));
+}
+
+void ExecuteUpdateAssetDependenciesFromContentBrowser(const FToolMenuContext& MenuContext)
+{
+    const UContentBrowserAssetContextMenuContext* Context = UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext);
+    if (Context == nullptr) return;
+    TArray<UMHCompositeAsset*> Assets;
+    TArray<UStaticMesh*> Meshes;
+    for (UObject* Object : Context->LoadSelectedObjects<UObject>())
+    {
+        if (UMHCompositeAsset* Asset = Cast<UMHCompositeAsset>(Object)) Assets.AddUnique(Asset);
+        else if (UStaticMesh* Mesh = Cast<UStaticMesh>(Object)) Meshes.AddUnique(Mesh);
+    }
+    ExecuteUpdateDependencies(Assets, Meshes);
+}
+
+struct FDependencyActorSnapshot
+{
+    TWeakObjectPtr<AActor> Actor;
+    TWeakObjectPtr<UMHCompositeAsset> Root;
+    TWeakObjectPtr<UObject> Target;
+    FString LeafPath;
+    FString LeafResource;
+};
+
+TArray<FDependencyActorSnapshot> CaptureDependencyActors(
+    const TArray<TWeakObjectPtr<AActor>>& Actors, const bool bUseSecondary)
+{
+    TArray<FDependencyActorSnapshot> Result;
+    for (const TWeakObjectPtr<AActor>& Actor : Actors)
+    {
+        FDependencyActorSnapshot& Snapshot = Result.AddDefaulted_GetRef();
+        Snapshot.Actor = Actor;
+        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Actor.Get()))
+        {
+            Snapshot.Root = Composite->GetCompositeAsset();
+            Snapshot.LeafPath = bUseSecondary ? Composite->GetSelectedPlacementLeafPath() : FString();
+            if (Snapshot.LeafPath.IsEmpty()) Snapshot.Target = Snapshot.Root.Get();
+            else if (const FMHResolvedCompositePlan* Plan = Composite->GetResolvedPlan())
+            {
+                const FMHResolvedCompositeLeaf* Leaf = Plan->Leaves.FindByPredicate(
+                    [&Snapshot](const FMHResolvedCompositeLeaf& Item) { return Item.Origin == Snapshot.LeafPath; });
+                const FMHCompositeLeafMaterialization* Row = Composite->FindLeafMaterializationByNodePath(Snapshot.LeafPath);
+                UStaticMeshComponent* Component = Row != nullptr ? Cast<UStaticMeshComponent>(Row->Component.Get()) : nullptr;
+                UStaticMesh* Mesh = Component != nullptr ? Component->GetStaticMesh() : nullptr;
+                FString Error;
+                if (Leaf != nullptr && Leaf->Kind == EMHRandomSemanticKind::Mesh && Mesh != nullptr &&
+                    MHAdmitEndpointIdentity({EMHResourceKind::StaticMesh, Leaf->Resource}, *Mesh, Error))
+                {
+                    Snapshot.Target = Mesh;
+                    Snapshot.LeafResource = Leaf->Resource;
+                }
+            }
+        }
+        else if (const AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(Actor.Get()))
+        {
+            Snapshot.Target = MeshActor->GetStaticMeshComponent()->GetStaticMesh();
+        }
+    }
+    return Result;
+}
+
+void ExecuteUpdateActorDependencies(const TArray<FDependencyActorSnapshot>& Snapshots)
+{
+    TArray<UMHCompositeAsset*> Assets;
+    TArray<UStaticMesh*> Meshes;
+    TArray<AMHCompositeActor*> WholeActors;
+    FString Error;
+    for (const FDependencyActorSnapshot& Snapshot : Snapshots)
+    {
+        bool bValid = Snapshot.Actor.IsValid() && Snapshot.Target.IsValid();
+        if (AMHCompositeActor* Composite = Cast<AMHCompositeActor>(Snapshot.Actor.Get()); bValid && Composite != nullptr)
+        {
+            bValid = Snapshot.Root.IsValid() && Composite->GetCompositeAsset() == Snapshot.Root.Get();
+            if (bValid && !Snapshot.LeafPath.IsEmpty())
+            {
+                const FMHResolvedCompositePlan* Plan = Composite->GetResolvedPlan();
+                const FMHResolvedCompositeLeaf* Leaf = Plan != nullptr ? Plan->Leaves.FindByPredicate(
+                    [&Snapshot](const FMHResolvedCompositeLeaf& Item) { return Item.Origin == Snapshot.LeafPath; }) : nullptr;
+                const FMHCompositeLeafMaterialization* Row = Composite->FindLeafMaterializationByNodePath(Snapshot.LeafPath);
+                UStaticMeshComponent* Component = Row != nullptr ? Cast<UStaticMeshComponent>(Row->Component.Get()) : nullptr;
+                bValid = Leaf != nullptr && Leaf->Kind == EMHRandomSemanticKind::Mesh &&
+                    Leaf->Resource == Snapshot.LeafResource && Component != nullptr &&
+                    Component->GetStaticMesh() == Snapshot.Target.Get() &&
+                    MHCheckGeneratedAssetClaims({EMHResourceKind::StaticMesh, Snapshot.LeafResource}, Error);
+                if (bValid) Meshes.AddUnique(CastChecked<UStaticMesh>(Snapshot.Target.Get()));
+            }
+            else if (bValid)
+            {
+                Assets.AddUnique(Snapshot.Root.Get());
+                WholeActors.AddUnique(Composite);
+            }
+        }
+        else if (const AStaticMeshActor* MeshActor = Cast<AStaticMeshActor>(Snapshot.Actor.Get()); bValid && MeshActor != nullptr)
+        {
+            bValid = MeshActor->GetStaticMeshComponent()->GetStaticMesh() == Snapshot.Target.Get();
+            if (bValid) Meshes.AddUnique(CastChecked<UStaticMesh>(Snapshot.Target.Get()));
+        }
+        else bValid = false;
+        if (!bValid)
+        {
+            if (Error.IsEmpty()) Error = TEXT("MH_E_INVALID_RESOURCE_SOURCE: selected dependency target changed or is unavailable; reopen the context menu");
+            NotifyOperation(LOCTEXT("UpdateDependenciesPage", "Update dependencies"),
+                LOCTEXT("UpdateDependenciesStale", "Dependencies were not changed. Select the target again."), {}, Error);
+            return;
+        }
+    }
+    // Secondary selection contributes only its exact mesh. It must never add
+    // the owner root or refresh that whole actor as a fallback.
+    ExecuteUpdateDependencies(Assets, Meshes, WholeActors);
+}
+
 void ExecuteRebuildAllCompositeAssets(const FToolMenuContext& MenuContext)
 {
     const UContentBrowserAssetContextMenuContext* Context =
@@ -1696,6 +1895,15 @@ void FillCompositeOptionsSubMenu(UToolMenu* Menu)
 
     if (!CompositeActors.IsEmpty() && CompositeActors.Num() == Actors.Num())
     {
+        const ULevelEditorContextMenuContext* Context = Menu->FindContext<ULevelEditorContextMenuContext>();
+        const TArray<FDependencyActorSnapshot> DependencyActors = CaptureDependencyActors(Actors,
+            Actors.Num() == 1 && Context != nullptr && Context->ContextType == ELevelEditorMenuContext::Viewport);
+        AddLevelAction(Section, TEXT("MHUpdateCompositeDependencies"), LOCTEXT("UpdateDependencies", "Update dependencies"),
+            LOCTEXT("UpdateCompositeDependenciesTip", "Restore materials by slot name. A highlighted object updates only its mesh; an actor selection updates the whole composite, including nested composites and all random options."),
+            FToolMenuExecuteAction::CreateLambda([DependencyActors](const FToolMenuContext&)
+            {
+                ExecuteUpdateActorDependencies(DependencyActors);
+            }));
         AddLevelAction(Section, TEXT("MHBreakComposite"), LOCTEXT("BreakComposite", "Break Composite"),
             LOCTEXT("BreakCompositeTip", "Remove one composite layer. Promote its meshes and actors into the level; keep nested composites intact. Undo restores the original composite."),
             FToolMenuExecuteAction::CreateLambda([CompositeActors](const FToolMenuContext&)
@@ -1765,6 +1973,9 @@ void MHRegisterS6ToolMenus()
         AddLevelAction(Project, TEXT("MHImportChanged"), LOCTEXT("ImportChanged", "Import Changed"),
             LOCTEXT("ImportChangedTip", "Import all resources whose current source state differs from their managed receipts."),
             FToolMenuExecuteAction::CreateStatic(&ExecuteImportChanged));
+        AddLevelAction(Project, TEXT("MHImportSingleFbx"), LOCTEXT("ImportSingleFbx", "Import Single FBX..."),
+            LOCTEXT("ImportSingleFbxTip", "Choose one .mesh.fbx inside Source Root and import or rebuild only that mesh through the MH pipeline. Referenced materials must already be imported."),
+            FToolMenuExecuteAction::CreateStatic(&ExecuteImportSingleFbx));
         AddLevelAction(Project, TEXT("MHShowDuplicates"), LOCTEXT("ShowDuplicates", "Show Duplicates"),
             LOCTEXT("ShowDuplicatesTip", "Show ambiguous source keys and duplicate managed claims in the Mimir Message Log."),
             FToolMenuExecuteAction::CreateStatic(&ExecuteShowDuplicates));
@@ -1816,7 +2027,26 @@ void MHRegisterS6ToolMenus()
                     LOCTEXT("CompositeOptions", "Composite Options"),
                     LOCTEXT("CompositeOptionsTip", "Build, edit, apply, refresh or break MH composites."),
                     FNewToolMenuDelegate::CreateStatic(&FillCompositeOptionsSubMenu));
+                const bool bHasStaticMesh = Actors.ContainsByPredicate([](const TWeakObjectPtr<AActor>& Actor)
+                    { return Cast<AStaticMeshActor>(Actor.Get()) != nullptr; });
+                const bool bSupportedSelection = !Actors.ContainsByPredicate([](const TWeakObjectPtr<AActor>& Actor)
+                    { return Cast<AStaticMeshActor>(Actor.Get()) == nullptr && Cast<AMHCompositeActor>(Actor.Get()) == nullptr; });
+                if (bHasStaticMesh && bSupportedSelection && (Subsystem == nullptr || !Subsystem->IsEditingComposite()))
+                {
+                    const TArray<FDependencyActorSnapshot> Snapshot = CaptureDependencyActors(Actors, false);
+                    AddLevelAction(Section, TEXT("MHUpdateCompositeDependencies"), LOCTEXT("UpdateDependencies", "Update dependencies"),
+                        LOCTEXT("UpdateMeshActorDependenciesTip", "Restore material bindings by slot name on the selected Static Mesh assets and composite dependencies. Save the changed meshes afterward."),
+                        FToolMenuExecuteAction::CreateLambda([Snapshot](const FToolMenuContext&) { ExecuteUpdateActorDependencies(Snapshot); }));
+                }
             }));
+    }
+
+    if (UToolMenu* MeshMenu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(UStaticMesh::StaticClass()))
+    {
+        FToolMenuSection& Section = MeshMenu->FindOrAddSection(TEXT("GetAssetActions"));
+        AddLevelAction(Section, TEXT("MHUpdateCompositeDependencies"), LOCTEXT("UpdateDependencies", "Update dependencies"),
+            LOCTEXT("UpdateMeshDependenciesTip", "Restore materials by slot name on the selected Static Mesh assets. Save the changed meshes afterward."),
+            FToolMenuExecuteAction::CreateStatic(&ExecuteUpdateAssetDependenciesFromContentBrowser));
     }
 
     if (UToolMenu* MaterialMenu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(
@@ -1903,6 +2133,9 @@ void MHRegisterS6ToolMenus()
                 Add(TEXT("MHPublishComposites"), LOCTEXT("PublishComposite", "Publish Composite to MH Source"),
                     LOCTEXT("PublishCompositeTip", "Full-overwrite the selected managed .composite documents."),
                     FToolMenuExecuteAction::CreateStatic(&ExecutePublishComposites));
+                Add(TEXT("MHUpdateCompositeDependencies"), LOCTEXT("UpdateDependencies", "Update dependencies"),
+                    LOCTEXT("UpdateCompositeAssetDependenciesTip", "Restore material bindings by slot name throughout the selected composites, including nested composites and every random option. Refresh loaded instances. Save the changed meshes afterward."),
+                    FToolMenuExecuteAction::CreateStatic(&ExecuteUpdateAssetDependenciesFromContentBrowser));
                 Add(TEXT("MHRebuildAllCompositeInstances"), LOCTEXT("RebuildAllCompositeInstances", "Rebuild All Loaded Instances"),
                     LOCTEXT("RebuildAllCompositeInstancesTip", "Recompile every loaded level instance that references this asset."),
                     FToolMenuExecuteAction::CreateStatic(&ExecuteRebuildAllCompositeAssets));

@@ -12,13 +12,16 @@ public class MimirCompositeTests : ModuleRules
             new[]
             {
                 "AssetRegistry",
+                "AssetTools",
                 "Core",
                 "CoreUObject",
+                "ContentBrowser",
                 "Engine",
                 // V5-S6.2 routes a real viewport click through EKeys.
                 "InputCore",
                 "ImageCore",
                 "Json",
+                "LevelEditor",
                 "MeshDescription",
                 "MimirCompositeEditor",
                 "MimirCompositeRuntime",
@@ -29,6 +32,7 @@ public class MimirCompositeTests : ModuleRules
                 "Slate",
                 "SlateCore",
                 "StaticMeshDescription",
+                "ToolMenus",
                 "UnrealEd",
                 "TypedElementFramework",
                 "TypedElementRuntime"

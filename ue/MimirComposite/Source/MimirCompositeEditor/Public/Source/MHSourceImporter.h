@@ -118,6 +118,20 @@ public:
         TArray<FString>& OutWarnings,
         FString& OutError);
 
+    /** Import exactly one .mesh.fbx inside source_root; existing materials are required. */
+    bool ImportStaticMeshFile(
+        const FString& Filename,
+        UStaticMesh*& OutAsset,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
+
+    /** File-drop adapter for one source-root .material; restores its canonical managed MI. */
+    bool ImportMaterialFile(
+        const FString& Filename,
+        UMaterialInstanceConstant*& OutAsset,
+        TArray<FString>& OutWarnings,
+        FString& OutError);
+
     /** Explicit source-wins material rebuild; reapplies the complete managed source document. */
     bool ReimportMaterial(
         UMaterialInstanceConstant* Material,

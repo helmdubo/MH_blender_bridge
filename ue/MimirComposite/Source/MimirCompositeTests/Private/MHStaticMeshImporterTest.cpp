@@ -2462,4 +2462,95 @@ bool FMHTargetedStaticMeshMultiSelectionTest::RunTest(const FString& Parameters)
     return bPassed;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMHSingleFbxImportTest,
+    "Mimir.V4.StaticMesh.Importer.SingleFile",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHSingleFbxImportTest::RunTest(const FString& Parameters)
+{
+    FTargetedStaticMeshReimportFixture Fixture(*this);
+    if (!Fixture.Build()) return false;
+    UStaticMesh* OtherMesh = Fixture.AddSecondMesh();
+    if (!TestNotNull(TEXT("unselected mesh"), OtherMesh)) return false;
+    const UMHStaticMeshImportData* OtherReceipt = Cast<UMHStaticMeshImportData>(OtherMesh->GetAssetImportData());
+    const FString OtherHash = OtherReceipt->SourceHash;
+    const TArray<FVector3f> OtherPositions = CaptureLOD0Positions(*OtherMesh);
+    FString Error;
+    // Both existing sources change, but only the selected path may be applied.
+    FString SelectedHash;
+    if (!Fixture.WriteReplacementSource(SelectedHash)) return false;
+    const FString OtherPath = FPaths::Combine(Fixture.Source.SourceRoot, OtherReceipt->SourceRelativePath);
+    if (!TestTrue(TEXT("change unselected source"), ExportPlainStaticMeshFbx(
+            Fixture.TemplateFbx, OtherPath, Fixture.MaterialName, true, Error))) return false;
+
+    FMHSourceAnalysisServices Services;
+    if (!TestTrue(TEXT("warm source index"), MHCreateDefaultSourceAnalysisServices(
+            Fixture.Source.SourceRoot, Services, Error))) return false;
+    const int32 FullScans = Services.Index->GetFullScanCountForTests();
+    UMHSourceImporter* Importer = NewObject<UMHSourceImporter>();
+    UStaticMesh* Imported = nullptr;
+    TArray<FString> Warnings;
+    TArray<FMHResourceKey> Notifications;
+    MHSetGeneratedResourceChangedObserverForTests([&Notifications](const FMHResourceKey& Key)
+    {
+        Notifications.Add(Key);
+    });
+    ON_SCOPE_EXIT { MHSetGeneratedResourceChangedObserverForTests({}); };
+    bool bPassed = TestTrue(TEXT("import only selected FBX"), Importer->ImportStaticMeshFile(
+        Fixture.MeshPath, Imported, Warnings, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestEqual(TEXT("reimport preserves mesh identity"), Imported, Fixture.Mesh);
+    bPassed &= TestEqual(TEXT("selected receipt advances"),
+        Cast<UMHStaticMeshImportData>(Fixture.Mesh->GetAssetImportData())->SourceHash, SelectedHash);
+    bPassed &= TestEqual(TEXT("unselected receipt unchanged"), OtherReceipt->SourceHash, OtherHash);
+    bPassed &= TestTrue(TEXT("unselected geometry unchanged"), CaptureLOD0Positions(*OtherMesh) == OtherPositions);
+    bPassed &= TestEqual(TEXT("one mesh notification"), Notifications.Num(), 1);
+    bPassed &= TestEqual(TEXT("warm import does not full scan"), Services.Index->GetFullScanCountForTests(), FullScans);
+
+    // An explicit repeat also restores local edits when source bytes are unchanged.
+    Fixture.Mesh->GetSourceModel(0).BuildSettings.bRecomputeNormals = true;
+    bPassed &= TestTrue(TEXT("unchanged file can be explicitly rebuilt"), Importer->ImportStaticMeshFile(
+        Fixture.MeshPath, Imported, Warnings, Error));
+    bPassed &= TestFalse(TEXT("source wins over local build setting"),
+        Fixture.Mesh->GetSourceModel(0).BuildSettings.bRecomputeNormals);
+
+    FGeneratedPackageCleanup NewCleanup;
+    const FString NewName = Fixture.LogicalName + TEXT("_new");
+    NewCleanup.MeshObjectPath = TEXT("/Game/MH/Generated/Meshes/") + NewName + TEXT(".") + NewName;
+    const FString NewPath = FPaths::Combine(Fixture.Source.SourceRoot, TEXT("meshes"), NewName + TEXT(".mesh.fbx"));
+    if (!TestTrue(TEXT("write never imported FBX"), ExportPlainStaticMeshFbx(
+            Fixture.TemplateFbx, NewPath, Fixture.MaterialName, false, Error))) return false;
+    bPassed &= TestTrue(TEXT("first import through same entry point"), Importer->ImportStaticMeshFile(
+        NewPath, Imported, Warnings, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bPassed &= TestTrue(TEXT("new mesh saved"), Imported != nullptr &&
+        Imported->GetPathName() == NewCleanup.MeshObjectPath && !Imported->GetOutermost()->IsDirty());
+    bPassed &= TestEqual(TEXT("new path uses incremental index"), Services.Index->GetFullScanCountForTests(), FullScans);
+
+    const auto Reject = [&](const FString& Path, const FString& Diagnostic)
+    {
+        bool bRejected = TestFalse(TEXT("invalid selection rejected"), Importer->ImportStaticMeshFile(
+            Path, Imported, Warnings, Error));
+        bRejected &= TestNull(TEXT("failed import returns no asset"), Imported);
+        bRejected &= TestTrue(TEXT("actionable rejection diagnostic"), Error.Contains(Diagnostic));
+        return bRejected;
+    };
+    bPassed &= Reject(Fixture.TemplateFbx, TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT"));
+    bPassed &= Reject(FPaths::Combine(Fixture.Source.SourceRoot, TEXT("plain.fbx")), TEXT("MH_E_INVALID_RESOURCE_SOURCE"));
+    bPassed &= Reject(FPaths::Combine(Fixture.Source.SourceRoot, TEXT("Bad.mesh.fbx")), TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"));
+    bPassed &= Reject(FPaths::Combine(Fixture.Source.SourceRoot, TEXT("bad.MESH.FBX")), TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"));
+    bPassed &= Reject(FPaths::Combine(Fixture.Source.SourceRoot, TEXT("missing.mesh.fbx")), TEXT("MH_E_INVALID_RESOURCE_SOURCE"));
+    Importer->SetPIEActiveForTests(true);
+    bPassed &= Reject(NewPath, TEXT("MH_E_IMPORT_THREAD_INVALID"));
+    Importer->SetPIEActiveForTests(false);
+    const int32 NotificationsBeforeReject = Notifications.Num();
+    const FString DuplicatePath = FPaths::Combine(Fixture.Source.SourceRoot, TEXT("duplicate"), NewName + TEXT(".mesh.fbx"));
+    if (!TestTrue(TEXT("write duplicate key"), ExportPlainStaticMeshFbx(
+            Fixture.TemplateFbx, DuplicatePath, Fixture.MaterialName, false, Error))) return false;
+    bPassed &= Reject(DuplicatePath, TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME"));
+    bPassed &= TestEqual(TEXT("duplicate rejection applies no mesh"), Notifications.Num(), NotificationsBeforeReject);
+    return bPassed;
+}
+
 } // namespace UE::MimirComposite::Tests
