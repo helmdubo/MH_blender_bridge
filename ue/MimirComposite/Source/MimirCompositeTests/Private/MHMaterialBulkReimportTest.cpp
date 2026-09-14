@@ -1,4 +1,8 @@
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
+#include "AutomatedAssetImportData.h"
+#include "IAssetTools.h"
+#include "Modules/ModuleManager.h"
 #include "HAL/FileManager.h"
 #include "FileHelpers.h"
 #include "Components/StaticMeshComponent.h"
@@ -11,6 +15,7 @@
 #include "StaticMeshCompiler.h"
 #include "Index/MHProjectResourceIndex.h"
 #include "Material/MHMaterialSourceData.h"
+#include "Material/MHMaterialFactory.h"
 #include "Material/MHMaterialProtocol.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -26,6 +31,7 @@
 #include "Source/MHSourceImportMetrics.h"
 #include "UObject/Package.h"
 #include "UObject/PackageReload.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace UE::MimirComposite::Tests
 {
@@ -126,7 +132,7 @@ struct FMaterialBatchFixture
         return true;
     }
 
-    bool CheckMaterial(FAutomationTestBase& Test, UMaterialInstanceConstant* Material)
+    bool CheckMaterial(FAutomationTestBase& Test, UMaterialInstanceConstant* Material, bool bNativeFactoryPostEdit = false)
     {
         if (!Test.TestNotNull(TEXT("material exists"), Material)) return false;
         const UMHMaterialSourceData* Receipt = Cast<UMHMaterialSourceData>(
@@ -146,7 +152,10 @@ struct FMaterialBatchFixture
             bOk &= Test.TestEqual(TEXT("source receipt hash"), Receipt->SourceHash, ExpectedHash);
             bOk &= Test.TestEqual(TEXT("applied receipt hash"), Receipt->AppliedHash, ExpectedHash);
         }
-        bOk &= Test.TestFalse(TEXT("package was saved"), Material->GetOutermost()->IsDirty());
+        // UFactory::ImportObject marks the returned package dirty and calls
+        // PostEditChange after FactoryCreateFile has saved the MH import.
+        bOk &= Test.TestEqual(TEXT("package dirty state after importer/factory"),
+            Material->GetOutermost()->IsDirty(), bNativeFactoryPostEdit);
         bOk &= Test.TestTrue(TEXT("package exists on disk"), IFileManager::Get().FileExists(
             *FPackageName::LongPackageNameToFilename(Material->GetOutermost()->GetName(), FPackageName::GetAssetPackageExtension())));
         return bOk;
@@ -363,4 +372,147 @@ bool FMHMaterialForceDuplicateSourceTest::RunTest(const FString& Parameters)
     bOk &= TestEqual(TEXT("one full scan sees backup and originals"), Index->GetFullScanCountForTests(), 1);
     return bOk;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHMaterialNativeFileImportTest,
+    "Mimir.V4.Material.NativeFileImport.RecoverDeletedMI",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHMaterialNativeFileImportTest::RunTest(const FString& Parameters)
+{
+    FMaterialBatchFixture Fixture;
+    if (!Fixture.Build(*this, 0)) return false;
+    TStrongObjectPtr<UMHCompositeSettings> KeepSettings(Fixture.Settings);
+    UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+    TGuardValue<FString> RootGuard(Settings->SourceRoot.Path, Fixture.Root);
+    TGuardValue<FString> MasterGuard(Settings->MasterRoot, Fixture.Settings->MasterRoot);
+    FMHMaterialDocument Document;
+    Document.Parent = Fixture.Parent->GetName();
+    Document.bHasTwoSided = true;
+    Document.bTwoSided = true;
+    FMHMaterialParameter Scalar;
+    Scalar.Scalar = 0.375f;
+    Document.Params.Add(TEXT("batch_scalar"), Scalar);
+    TArray<uint8> Bytes;
+    FString Error;
+    if (!MHWriteCanonicalMaterialV4(Document, Bytes, Error)) return false;
+    TStrongObjectPtr<UAutomatedAssetImportData> ImportData(NewObject<UAutomatedAssetImportData>());
+    ImportData->DestinationPath = TEXT("/Game/MH/FileImportDropTarget");
+    ImportData->bReplaceExisting = true;
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        const FString Name = FString::Printf(TEXT("%s_file_%d"), *Fixture.Token, Index);
+        const FString Path = FPaths::Combine(Fixture.Root, Name + TEXT(".material"));
+        Fixture.PackageNames.Add(ImportData->DestinationPath / Name);
+        Fixture.PackageNames.Add(TEXT("/Game/MH/Generated/Materials/") + Name);
+        if (!FFileHelper::SaveArrayToFile(Bytes, *Path)) return false;
+        // The third material is present in source_root but was not selected.
+        if (Index < 2) ImportData->Filenames.Add(Path);
+    }
+    IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+    TArray<UObject*> Imported = AssetTools.ImportAssetsAutomated(ImportData.Get());
+    if (!TestEqual(TEXT("native file import auto-discovers .material and imports both selected files"), Imported.Num(), 2)) return false;
+    bool bOk = true;
+    for (int32 Index = 0; Index < Imported.Num(); ++Index)
+    {
+        UMaterialInstanceConstant* Material = Cast<UMaterialInstanceConstant>(Imported[Index]);
+        if (!TestNotNull(TEXT("native import returns MI"), Material)) return false;
+        const FString Name = FPaths::GetBaseFilename(ImportData->Filenames[Index]);
+        bOk &= TestEqual(TEXT("Content Browser drop keeps canonical managed path"),
+            Material->GetPathName(), TEXT("/Game/MH/Generated/Materials/") + Name + TEXT(".") + Name);
+        bOk &= Fixture.CheckMaterial(*this, Material, true);
+    }
+    const FString UnselectedPackage = Fixture.PackageNames.Last();
+    bOk &= TestNull(TEXT("unselected source material not created"), StaticFindObject(UObject::StaticClass(), nullptr,
+        *(UnselectedPackage + TEXT(".") + FPackageName::GetLongPackageAssetName(UnselectedPackage))));
+    const TSharedPtr<FMHProjectResourceIndex> Index = MHPeekProjectIndex();
+    if (!TestTrue(TEXT("index exists"), Index.IsValid())) return false;
+    const int32 Scans = Index->GetFullScanCountForTests();
+    UMaterialInstanceConstant* First = CastChecked<UMaterialInstanceConstant>(Imported[0]);
+    const FString FirstObjectPath = First->GetPathName();
+    Imported.Reset();
+    // Use the complete editor deletion path, including package cleanup and GC;
+    // DeleteSingleObject alone only clears asset flags and leaves it in memory.
+    if (!TestEqual(TEXT("editor deletes selected MI"), ObjectTools::DeleteObjectsUnchecked({First}), 1)) return false;
+    First = nullptr;
+    bOk &= TestNull(TEXT("MI is absent before recovery"), StaticFindObject(UObject::StaticClass(), nullptr, *FirstObjectPath));
+    ImportData->Filenames.SetNum(1);
+    Imported = AssetTools.ImportAssetsAutomated(ImportData.Get());
+    if (!TestEqual(TEXT("same .material restores deleted MI"), Imported.Num(), 1)) return false;
+    bOk &= TestEqual(TEXT("recovery restores original asset path"), Imported[0]->GetPathName(), FirstObjectPath);
+    bOk &= Fixture.CheckMaterial(*this, Cast<UMaterialInstanceConstant>(Imported[0]), true);
+    bOk &= TestEqual(TEXT("recovery reuses warm source index"), Index->GetFullScanCountForTests(), Scans);
+    TArray<uint8> SourceAfter;
+    FFileHelper::LoadFileToArray(SourceAfter, *ImportData->Filenames[0]);
+    bOk &= TestTrue(TEXT("import preserves source bytes"), SourceAfter == Bytes);
+    return bOk;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMHMaterialFileAdmissionTest,
+    "Mimir.V4.Material.NativeFileImport.Admission",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMHMaterialFileAdmissionTest::RunTest(const FString& Parameters)
+{
+    FMaterialBatchFixture Fixture;
+    if (!Fixture.Build(*this, 2)) return false;
+    UMHCompositeSettings* Settings = GetMutableDefault<UMHCompositeSettings>();
+    TGuardValue<FString> RootGuard(Settings->SourceRoot.Path, Fixture.Root);
+    TGuardValue<FString> MasterGuard(Settings->MasterRoot, Fixture.Settings->MasterRoot);
+    UMHSourceImporter* Importer = NewObject<UMHSourceImporter>();
+    UMHMaterialFactory* Factory = NewObject<UMHMaterialFactory>();
+    const FString Name = Fixture.Materials[0]->GetName();
+    const FString FirstPath = FPaths::Combine(Fixture.Root, Name + TEXT(".material"));
+    bool bOk = TestTrue(TEXT("factory advertises .material"), Factory->FactoryCanImport(FirstPath));
+    bOk &= TestFalse(TEXT("factory rejects other extensions"), Factory->FactoryCanImport(FirstPath + TEXT(".composite")));
+    bOk &= TestFalse(TEXT("factory rejects uppercase suffix"), Factory->FactoryCanImport(FirstPath + TEXT(".MATERIAL")));
+    UMaterialInstanceConstant* Imported = nullptr;
+    FString Error;
+    TArray<FString> Warnings;
+    const auto Reject = [&](const FString& Path, const FString& Code)
+    {
+        bool bRejected = TestFalse(TEXT("invalid file import rejected"), Importer->ImportMaterialFile(Path, Imported, Warnings, Error));
+        bRejected &= TestNull(TEXT("failure returns no material"), Imported);
+        bRejected &= TestTrue(TEXT("failure has expected diagnostic"), Error.Contains(Code));
+        return bRejected;
+    };
+    bOk &= Reject(Fixture.Root + TEXT("_outside.material"), TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT"));
+    bOk &= Reject(FPaths::Combine(Fixture.Root, TEXT("Bad.material")), TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"));
+    bOk &= Reject(FPaths::Combine(Fixture.Root, TEXT("bad.MATERIAL")), TEXT("MH_E_NONCANONICAL_RESOURCE_NAME"));
+    bOk &= Reject(FPaths::Combine(Fixture.Root, TEXT("missing.material")), TEXT("MH_E_INVALID_RESOURCE_SOURCE"));
+    Importer->SetPIEActiveForTests(true);
+    bOk &= Reject(FirstPath, TEXT("MH_E_IMPORT_THREAD_INVALID"));
+    Importer->SetPIEActiveForTests(false);
+    const FString DuplicateFolder = FPaths::Combine(Fixture.Root, TEXT("duplicate"));
+    IFileManager::Get().MakeDirectory(*DuplicateFolder, true);
+    const FString DuplicatePath = FPaths::Combine(DuplicateFolder, Name + TEXT(".material"));
+    if (!TestEqual(TEXT("write duplicate material source"), IFileManager::Get().Copy(*DuplicatePath, *FirstPath), COPY_OK)) return false;
+    bOk &= Reject(FirstPath, TEXT("MH_E_AMBIGUOUS_RESOURCE_NAME"));
+    bOk &= TestTrue(TEXT("duplicate error identifies both files"), Error.Contains(FirstPath) && Error.Contains(DuplicatePath));
+    bOk &= TestNull(TEXT("ambiguous material remains untouched"), Fixture.Materials[0]->Parent.Get());
+    const FString SecondPath = FPaths::Combine(Fixture.Root, Fixture.Materials[1]->GetName() + TEXT(".material"));
+    bOk &= TestTrue(TEXT("unrelated ambiguity does not block selected material"),
+        Importer->ImportMaterialFile(SecondPath, Imported, Warnings, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bOk &= TestEqual(TEXT("existing MI updated in place"), Imported, Fixture.Materials[1]);
+    bOk &= Fixture.CheckMaterial(*this, Imported);
+    const TSharedPtr<FMHProjectResourceIndex> Index = MHPeekProjectIndex();
+    if (!TestTrue(TEXT("warm index exists after duplicate rejection"), Index.IsValid())) return false;
+    const int32 FullScans = Index->GetFullScanCountForTests();
+    const FMHResourceKey FirstKey{EMHResourceKind::Material, Name};
+    if (!TestTrue(TEXT("remove duplicate source on disk"), IFileManager::Get().Delete(*DuplicatePath))) return false;
+    // Deliberately deliver no DirectoryWatcher event: native file import must
+    // reconcile known candidates even if deletion happened while not watched.
+    bOk &= TestTrue(TEXT("cached duplicate remains before explicit retry"),
+        Index->Resolve(FirstKey).Status == EMHResolveStatus::Ambiguous);
+    bOk &= TestTrue(TEXT("retry immediately imports after duplicate was removed"),
+        Importer->ImportMaterialFile(FirstPath, Imported, Warnings, Error));
+    if (!Error.IsEmpty()) AddError(Error);
+    bOk &= TestEqual(TEXT("retry updates intended MI"), Imported, Fixture.Materials[0]);
+    bOk &= Fixture.CheckMaterial(*this, Imported);
+    const FMHResolveOutcome Refreshed = Index->Resolve(FirstKey);
+    bOk &= TestTrue(TEXT("removed candidate no longer blocks source index"), Refreshed.Status == EMHResolveStatus::Resolved);
+    bOk &= TestEqual(TEXT("only surviving material candidate remains"), Refreshed.CandidatePaths.Num(), 1);
+    bOk &= TestEqual(TEXT("duplicate recovery avoids full source scan"), Index->GetFullScanCountForTests(), FullScans);
+    return bOk;
+}
+
 } // namespace UE::MimirComposite::Tests

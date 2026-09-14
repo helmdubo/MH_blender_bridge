@@ -1500,6 +1500,221 @@ bool UMHSourceImporter::ReimportMaterial(
     return bSucceeded;
 }
 
+bool UMHSourceImporter::ImportMaterialFile(
+    const FString& Filename,
+    UMaterialInstanceConstant*& OutAsset,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutAsset = nullptr;
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || bPIEActive || bImportInProgress || MHIsSourceImportBatchActive())
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: material file import requires the game thread outside PIE with no active import");
+        return false;
+    }
+    TGuardValue<bool> ImportGuard(bImportInProgress, true);
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString Root = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (Root.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: configure Source Root before importing a .material file");
+        return false;
+    }
+    FString AbsoluteRoot = FPaths::ConvertRelativePathToFull(Root);
+    FString AbsoluteFile = FPaths::ConvertRelativePathToFull(Filename);
+    FPaths::NormalizeDirectoryName(AbsoluteRoot);
+    FPaths::NormalizeFilename(AbsoluteFile);
+    FPaths::CollapseRelativeDirectories(AbsoluteRoot);
+    FPaths::CollapseRelativeDirectories(AbsoluteFile);
+    if (!FPaths::IsUnderDirectory(AbsoluteFile, AbsoluteRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: place the .material file inside Source Root '%s' before importing it"),
+            *AbsoluteRoot);
+        return false;
+    }
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key.Kind = EMHResourceKind::Material;
+    FString LogicalName = FPaths::GetCleanFilename(AbsoluteFile);
+    if (!LogicalName.RemoveFromEnd(TEXT(".material"), ESearchCase::CaseSensitive))
+    {
+        OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: material filename must be <[a-z0-9_]+>.material with a lowercase suffix");
+        return false;
+    }
+    Entry.Key.LogicalName = LogicalName;
+    if (!Entry.Key.IsCanonical())
+    {
+        OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: material filename must be <[a-z0-9_]+>.material");
+        return false;
+    }
+    if (!IFileManager::Get().FileExists(*AbsoluteFile))
+    {
+        OutError = FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: material file '%s' does not exist"), *AbsoluteFile);
+        return false;
+    }
+    FMHSourceAnalysisServices Services;
+    FMHProjectIndexUpdateResult Update;
+    bool bUsedFullScan = false;
+    if (!MHCreateIncrementalSourceAnalysisServices(
+            Root, {AbsoluteFile}, Services, Update, bUsedFullScan, OutError))
+    {
+        return false;
+    }
+    FMHResolveOutcome Outcome = Services.Resolver->Resolve(Entry.Key);
+    if (Outcome.Status == EMHResolveStatus::Ambiguous)
+    {
+        // A selected-path refresh does not see a competitor deleted elsewhere
+        // while DirectoryWatcher was inactive or its event was still pending.
+        // Reconcile the known candidates through the index before rejecting;
+        // real duplicates remain ambiguous, without a full source-root scan.
+        if (!Services.Index->UpsertPaths(Outcome.CandidatePaths, Update, OutError))
+        {
+            return false;
+        }
+        Outcome = Services.Resolver->Resolve(Entry.Key);
+    }
+    if (Outcome.Status != EMHResolveStatus::Resolved || !FPaths::IsSamePath(Outcome.PayloadPath, AbsoluteFile))
+    {
+        OutError = Outcome.Diagnostic.IsEmpty()
+            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: selected material is not the unique resolved source for its key")
+            : Outcome.Diagnostic;
+        if (Outcome.CandidatePaths.Num() > 1)
+            OutError += TEXT("; candidates: ") + FString::Join(Outcome.CandidatePaths, TEXT("; "));
+        return false;
+    }
+    Entry.PayloadPath = AbsoluteFile;
+    Entry.SourcePath = AbsoluteFile;
+    const FString RelativeBase = AbsoluteRoot + TEXT("/");
+    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source-relative material path");
+        return false;
+    }
+    Entry.RawHash = Outcome.RawHash;
+    Entry.Change = EMHSourceChange::Reimport;
+    // The standalone material importer ensures referenced textures, protects live
+    // material state, waits for compilation, saves receipts and updates the index.
+    FMHMaterialOperationResult Result = MHImportMaterialV4(Entry, *Services.Resolver, Root, *Settings);
+    OutWarnings = MoveTemp(Result.Warnings);
+    if (!Result.Succeeded())
+    {
+        OutError = Result.Error.IsEmpty() ? TEXT("MH_E_IMPORT_FAILED: material file import failed") : MoveTemp(Result.Error);
+        return false;
+    }
+    OutAsset = Result.Material;
+    return true;
+}
+
+bool UMHSourceImporter::ImportStaticMeshFile(
+    const FString& Filename,
+    UStaticMesh*& OutAsset,
+    TArray<FString>& OutWarnings,
+    FString& OutError)
+{
+    OutAsset = nullptr;
+    OutWarnings.Reset();
+    OutError.Reset();
+    if (!IsInGameThread() || bPIEActive || bImportInProgress || MHIsSourceImportBatchActive())
+    {
+        OutError = TEXT("MH_E_IMPORT_THREAD_INVALID: single FBX import requires the game thread outside PIE with no active import");
+        return false;
+    }
+    TGuardValue<bool> ImportGuard(bImportInProgress, true);
+    const UMHCompositeSettings* Settings = GetDefault<UMHCompositeSettings>();
+    const FString Root = Settings != nullptr ? Settings->GetSourceRootPath() : FString();
+    if (Root.IsEmpty())
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_INVALID: source_root is not configured");
+        return false;
+    }
+
+    FString AbsoluteRoot = FPaths::ConvertRelativePathToFull(Root);
+    FString AbsoluteFile = FPaths::ConvertRelativePathToFull(Filename);
+    FPaths::NormalizeDirectoryName(AbsoluteRoot);
+    FPaths::NormalizeFilename(AbsoluteFile);
+    FPaths::CollapseRelativeDirectories(AbsoluteRoot);
+    FPaths::CollapseRelativeDirectories(AbsoluteFile);
+    if (!FPaths::IsUnderDirectory(AbsoluteFile, AbsoluteRoot))
+    {
+        OutError = FString::Printf(
+            TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: select a .mesh.fbx already inside source_root '%s'"),
+            *AbsoluteRoot);
+        return false;
+    }
+    FString LogicalName = FPaths::GetCleanFilename(AbsoluteFile);
+    FMHSourceAnalysisEntry Entry;
+    Entry.Key.Kind = EMHResourceKind::StaticMesh;
+    if (!LogicalName.RemoveFromEnd(TEXT(".mesh.fbx"), ESearchCase::CaseSensitive))
+    {
+        OutError = LogicalName.EndsWith(TEXT(".mesh.fbx"), ESearchCase::IgnoreCase)
+            ? TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: mesh filename suffix must be lowercase .mesh.fbx")
+            : TEXT("MH_E_INVALID_RESOURCE_SOURCE: select one MH source named <logical_name>.mesh.fbx");
+        return false;
+    }
+    Entry.Key.LogicalName = LogicalName;
+    if (!Entry.Key.IsCanonical())
+    {
+        OutError = TEXT("MH_E_NONCANONICAL_RESOURCE_NAME: mesh filename must be <[a-z0-9_]+>.mesh.fbx");
+        return false;
+    }
+    if (!IFileManager::Get().FileExists(*AbsoluteFile))
+    {
+        OutError = FString::Printf(TEXT("MH_E_INVALID_RESOURCE_SOURCE: file '%s' does not exist"), *AbsoluteFile);
+        return false;
+    }
+
+    FMHSourceAnalysisServices Services;
+    FMHProjectIndexUpdateResult Update;
+    bool bUsedFullScan = false;
+    if (!MHCreateIncrementalSourceAnalysisServices(
+            Root, {AbsoluteFile}, Services, Update, bUsedFullScan, OutError))
+    {
+        return false;
+    }
+    const FMHResolveOutcome Outcome = Services.Resolver->Resolve(Entry.Key);
+    if (Outcome.Status != EMHResolveStatus::Resolved || !FPaths::IsSamePath(Outcome.PayloadPath, AbsoluteFile))
+    {
+        OutError = Outcome.Diagnostic.IsEmpty()
+            ? TEXT("MH_E_INVALID_RESOURCE_SOURCE: selected FBX is not the unique resolved source for its mesh key")
+            : Outcome.Diagnostic;
+        return false;
+    }
+    Entry.PayloadPath = AbsoluteFile;
+    Entry.SourcePath = AbsoluteFile;
+    const FString RelativeBase = AbsoluteRoot + TEXT("/");
+    if (!FPaths::MakePathRelativeTo(Entry.SourcePath, *RelativeBase))
+    {
+        OutError = TEXT("MH_E_SOURCE_INDEX_PATH_OUTSIDE_ROOT: cannot derive source-relative mesh path");
+        return false;
+    }
+    Entry.RawHash = Outcome.RawHash;
+    Entry.Change = EMHSourceChange::Reimport;
+
+    FMHSourceImportBatchContext Batch;
+    FMHStaticMeshOperationResult Result = MHImportStaticMeshV4(Entry, *Services.Resolver, Root, true);
+    OutWarnings = MoveTemp(Result.Warnings);
+    if (!Result.Succeeded())
+    {
+        OutError = MoveTemp(Result.Error);
+        return false;
+    }
+    TMap<FMHResourceKey, FString> CompilationErrors;
+    if (!Batch.FinishCompilation(CompilationErrors))
+    {
+        OutError = CompilationErrors.FindRef(Entry.Key);
+        if (OutError.IsEmpty()) OutError = TEXT("MH_E_IMPORT_FAILED: single FBX compilation failed");
+        return false;
+    }
+    if (!Batch.SavePackages(OutError) || !Batch.CommitProjectionAndNotifications(Root, OutError))
+    {
+        return false;
+    }
+    OutAsset = Result.StaticMesh;
+    return true;
+}
+
 bool UMHSourceImporter::ImportCompositeFile(
     const FString& Filename,
     const FString& TargetPackageName,
