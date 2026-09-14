@@ -1222,7 +1222,8 @@ def _mesh_authority_fingerprint(
 
 
 def prepare_fbx_collection(
-        collection, output_dir, *, source_root="", export_materials=False):
+        collection, output_dir, *, source_root="", export_materials=False,
+        skip_existing_materials=False):
     """Extract and fully validate one Blender mesh without writing source.
 
     The returned plan is suitable both for the legacy one-resource publisher
@@ -1234,7 +1235,8 @@ def prepare_fbx_collection(
         with material_export_session():
             return prepare_fbx_collection(
                 collection, output_dir, source_root=source_root,
-                export_materials=export_materials)
+                export_materials=export_materials,
+                skip_existing_materials=skip_existing_materials)
     if collection is None:
         raise ValueError("collection is required")
     linked = []
@@ -1429,13 +1431,23 @@ def prepare_fbx_collection(
         if resolved_source_root is None:
             raise ValueError(
                 "Project Source Root is required when Export Materials is enabled")
-        from .export_material import prepare_blender_material_export
-        prepared_materials = tuple(
-            prepare_blender_material_export(
+        from .export_material import (
+            _resolve_material_target, prepare_blender_material_export)
+        session = _active_material_export_session()
+        for material in sorted(materials, key=lambda item: item.name):
+            if skip_existing_materials:
+                target = (
+                    session.resolve_material_target(
+                        Path(resolved_output_dir), material.name)
+                    if session.inventory is not None else
+                    _resolve_material_target(
+                        Path(resolved_source_root), Path(resolved_output_dir),
+                        material.name))
+                if target.is_file():
+                    continue
+            prepared_materials.append(prepare_blender_material_export(
                 material, resolved_output_dir,
-                source_root=resolved_source_root)
-            for material in sorted(materials, key=lambda item: item.name)
-        )
+                source_root=resolved_source_root))
 
     lod_levels = tuple(level for level, _child, _objects in payload_levels)
     fingerprint = _mesh_authority_fingerprint(
@@ -1600,7 +1612,7 @@ def _validation_report(prepared):
 
 def export_fbx_collection(
         collection, output_dir, *, dry_run=False, source_root="",
-        export_materials=False):
+        export_materials=False, skip_existing_materials=False):
     """Export one selected collection as one static-mesh resource.
 
     A regular collection writes one FBX. A recognized dag4blend ``.lods``
@@ -1612,7 +1624,8 @@ def export_fbx_collection(
         with material_export_session() as session:
             report = export_fbx_collection(
                 collection, output_dir, dry_run=dry_run,
-                source_root=source_root, export_materials=export_materials)
+                source_root=source_root, export_materials=export_materials,
+                skip_existing_materials=skip_existing_materials)
         report["material_export_metrics"] = session.metrics_snapshot()
         return report
     prepared = prepare_fbx_collection(
@@ -1620,6 +1633,7 @@ def export_fbx_collection(
         output_dir,
         source_root=source_root,
         export_materials=export_materials,
+        skip_existing_materials=skip_existing_materials,
     )
 
     filepath = str(prepared.target)
@@ -1656,6 +1670,7 @@ def export_fbx_collection(
                 write_prepared_material(
                     material, source_root=prepared.source_root)
                 for material in prepared.prepared_materials
+                if not (skip_existing_materials and material.target.is_file())
             ]
         stamp_resource_collection(
             prepared.collection, "mesh", prepared.resource_name)

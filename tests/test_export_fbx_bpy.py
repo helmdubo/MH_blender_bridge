@@ -751,6 +751,41 @@ def registered_material_properties():
             ops.unregister()
 
 
+@pytest.mark.parametrize("skip_existing", [True, False])
+@pytest.mark.parametrize("existing_folder", ["", "shared"])
+def test_export_only_missing_materials(
+        tmp_path, registered_material_properties, skip_existing, existing_folder):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    collection = _collection("material_export")
+    body = _mesh_object("body", collection)
+    for name in ("paint", "glass"):
+        material = _material(name)
+        material.mh4blend.material_class = "rendinst_simple"
+        _assign_material(body, material)
+    folder = tmp_path / existing_folder
+    folder.mkdir(exist_ok=True)
+    existing = folder / "paint.material"
+    original = b'{"class":"artist_edited"}\n'
+    existing.write_bytes(original)
+    original_mtime = existing.stat().st_mtime_ns
+
+    report = export_fbx_collection(
+        collection, tmp_path, source_root=tmp_path, export_materials=True,
+        skip_existing_materials=skip_existing)
+
+    assert (tmp_path / "glass.material").is_file()
+    assert parse_mesh_fbx(report["filepath"]).material_names == ("paint", "glass")
+    assert {row["resource_name"] for row in report["material_updates"]} == (
+        {"glass"} if skip_existing else {"glass", "paint"})
+    if skip_existing:
+        assert existing.read_bytes() == original
+        assert existing.stat().st_mtime_ns == original_mtime
+    else:
+        assert b"rendinst_simple" in existing.read_bytes()
+    if existing_folder:
+        assert not (tmp_path / "paint.material").exists()
+
+
 def _warning_codes(report):
     return [row["code"] for row in report["validation"]["warnings"]]
 

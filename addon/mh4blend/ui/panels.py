@@ -38,6 +38,9 @@ class MH_PT_source_tools(bpy.types.Panel):
         fbx.prop(scene, "mh_fbx_collection", text="Collection")
         fbx.prop(scene, "mh_fbx_directory", text="Folder")
         fbx.prop(scene, "mh_fbx_export_materials", text="Export Materials")
+        material_options = fbx.column()
+        material_options.enabled = scene.mh_fbx_export_materials
+        material_options.prop(scene, "mh_fbx_skip_existing_materials")
         fbx.operator("mh.export_fbx", icon="EXPORT")
 
         box = layout.box()

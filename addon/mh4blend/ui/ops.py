@@ -141,6 +141,7 @@ class MH_OT_export_fbx(bpy.types.Operator):
                 _directory(context.scene.mh_fbx_directory),
                 source_root=_directory(preferences.source_root),
                 export_materials=context.scene.mh_fbx_export_materials,
+                skip_existing_materials=context.scene.mh_fbx_skip_existing_materials,
             )
         except (OSError, RuntimeError, ValueError) as exc:
             _log("export_fbx", {"ok": False, "error": str(exc)})
@@ -676,6 +677,11 @@ def register():
         name="Export Materials",
         description="Write every material used by the exported mesh resource",
         default=False)
+    bpy.types.Scene.mh_fbx_skip_existing_materials = bpy.props.BoolProperty(
+        name="Skip Existing Materials",
+        description=("Export only missing .material files; preserve existing "
+                     "materials in Source Root. Disable to overwrite them"),
+        default=True)
     bpy.types.Scene.mh_material = bpy.props.PointerProperty(
         name="Material", type=bpy.types.Material)
     bpy.types.Scene.mh_material_directory = bpy.props.StringProperty(
@@ -706,7 +712,7 @@ def unregister():
         "mh_dag4blend_composite_collection", "mh_dagor_composite_import_path",
         "mh_composite_import_path", "mh_composite_mode",
         "mh_import_definition_policy", "mh_import_load_mode",
-        "mh_fbx_export_materials", "mh_fbx_import_path",
+        "mh_fbx_skip_existing_materials", "mh_fbx_export_materials", "mh_fbx_import_path",
         "mh_fbx_directory", "mh_fbx_collection",
         "mh_material_directory", "mh_material",
     ):
