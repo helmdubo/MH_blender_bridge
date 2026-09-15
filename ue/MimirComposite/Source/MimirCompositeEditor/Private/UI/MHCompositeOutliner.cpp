@@ -1,4 +1,5 @@
 #include "UI/MHCompositeOutliner.h"
+#include "UI/MHCompositeNavigation.h"
 
 #include "Composite/MHCompositeActor.h"
 #include "Composite/MHCompositeLevelSubsystem.h"
@@ -114,6 +115,31 @@ public:
     // R6-UX2a: Esc/Enter inside the panel act on the session like in the viewport.
     virtual FReply OnKeyDown(const FGeometry&, const FKeyEvent& KeyEvent) override
     {
+        if (!KeyEvent.IsRepeat() && !KeyEvent.IsAltDown() && !KeyEvent.IsShiftDown())
+        {
+            if (KeyEvent.GetKey() == EKeys::F && !KeyEvent.IsControlDown() && TreeView.IsValid())
+            {
+                FBox Bounds(ForceInit);
+                const auto Rows = TreeView->GetSelectedItems();
+                for (const auto& Row : Rows)
+                {
+                    const FBox RowBounds = MHGetOutlinerFocusBounds(Model, Row);
+                    if (RowBounds.IsValid) Bounds += RowBounds;
+                }
+                if (GEditor && Bounds.IsValid) GEditor->MoveViewportCamerasToBox(Bounds, true);
+                else if (Rows.IsEmpty()) MHFocusCompositeSelection();
+                return FReply::Handled();
+            }
+            if (KeyEvent.GetKey() == EKeys::B && KeyEvent.IsControlDown() && TreeView.IsValid())
+            {
+                TArray<UObject*> Assets;
+                for (const auto& Row : TreeView->GetSelectedItems())
+                    if (Row.IsValid()) MHAppendOutlinerAssets(Model, *Row, Assets);
+                if (GEditor && !Assets.IsEmpty()) GEditor->SyncBrowserToObjects(Assets);
+                // An empty/missing resource must not fall through to the root actor.
+                return FReply::Handled();
+            }
+        }
         return !KeyEvent.IsRepeat() && MHHandleEditSessionKey(KeyEvent.GetKey()) ? FReply::Handled() : FReply::Unhandled();
     }
 

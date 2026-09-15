@@ -187,7 +187,7 @@ public:
     virtual void PostActorCreated() override;
     virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
     virtual void Destroyed() override;
-    /** Own components plus the pooled instances of this placement (16 §2.8): F / focus frames the whole placement. */
+    /** Own components plus this placement's pooled instances; UE's native typed-element F route needs MHCompositeNavigation as well. */
     virtual FBox GetComponentsBoundingBox(bool bNonColliding = false, bool bIncludeFromChildActors = false) const override;
 
 #if WITH_EDITOR

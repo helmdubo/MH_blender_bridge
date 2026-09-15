@@ -1,4 +1,6 @@
 #include "Editing/MHCompositeEditProjection.h"
+#include "Composite/MHCompositeLevelSubsystem.h"
+#include "UI/MHCompositeNavigation.h"
 
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeActor.h"
@@ -23,6 +25,18 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MHCompositeEditProjection)
 
 using namespace UE::MimirComposite;
+
+bool AMHCompositeEditProjectionActor::GetReferencedContentObjects(TArray<UObject*>& Objects) const
+{
+    const UMHCompositeLevelSubsystem* Subsystem = GEditor ? GEditor->GetEditorSubsystem<UMHCompositeLevelSubsystem>() : nullptr;
+    const UMHCompositeEditSession* Session = Subsystem ? Subsystem->GetEditSession() : nullptr;
+    if (Session && Session->IsOpen() && Session->GetProjection() && Session->GetProjection()->GetProjectionActor() == this)
+    {
+        MHAppendEditSelectionAssets(*Session, Objects);
+        return true;
+    }
+    return Super::GetReferencedContentObjects(Objects);
+}
 
 namespace
 {
@@ -868,8 +882,8 @@ bool UMHCompositeEditProjection::GetNodeBounds(const FGuid& NodeId, FBox& OutBou
     FBox Bounds(ForceInit);
     for (USceneComponent* Component : GetComponentsForNodeId(NodeId, true))
     {
-        const UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component);
-        if (Primitive != nullptr && Primitive->IsRegistered()) Bounds += Primitive->Bounds.GetBox();
+        const FBox VisualBounds = MHGetVisualFocusBounds(Component);
+        if (VisualBounds.IsValid) Bounds += VisualBounds;
     }
     if (!Bounds.IsValid) return false;
     OutBounds = Bounds;

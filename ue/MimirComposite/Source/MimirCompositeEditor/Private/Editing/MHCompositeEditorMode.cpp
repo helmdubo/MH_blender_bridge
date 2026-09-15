@@ -30,6 +30,7 @@
 #include "Toolkits/BaseToolkit.h"
 #include "Toolkits/IToolkitHost.h"
 #include "UI/MHCompositeOutliner.h"
+#include "UI/MHCompositeNavigation.h"
 #include "UI/MHSourceToolMenus.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
@@ -823,6 +824,10 @@ FBox UMHCompositeEditorMode::ComputeCustomViewportFocus() const
             FBox NodeBounds(ForceInit);
             if (Projection->GetNodeBounds(Id, NodeBounds)) Bounds += NodeBounds;
         }
+    }
+    if (!Bounds.IsValid && Projection != nullptr && Session->GetSelectedNodeIds().IsEmpty())
+    {
+        if (const AActor* Actor = Projection->GetProjectionActor()) Bounds = Actor->GetComponentsBoundingBox(true, true);
     }
     return Bounds;
 }

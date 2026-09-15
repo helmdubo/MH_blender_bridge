@@ -64,6 +64,7 @@ class MIMIRCOMPOSITEEDITOR_API AMHCompositeEditProjectionActor final : public AA
 
 public:
     AMHCompositeEditProjectionActor();
+    virtual bool GetReferencedContentObjects(TArray<UObject*>& Objects) const override;
 };
 
 /**
