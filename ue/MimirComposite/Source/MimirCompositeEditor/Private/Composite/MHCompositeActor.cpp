@@ -1,4 +1,6 @@
 #include "Composite/MHCompositeActor.h"
+#include "UI/MHCompositeNavigation.h"
+#include "UI/MHCompositeOutlinerModel.h"
 
 #include "Composite/MHCompiledRecipe.h"
 #include "Composite/MHCompositeAppearanceTransport.h"
@@ -1150,6 +1152,24 @@ void AMHCompositeActor::PostEditImport()
 
 bool AMHCompositeActor::GetReferencedContentObjects(TArray<UObject*>& Objects) const
 {
+    if (!SelectedPlacementLeafPath.IsEmpty())
+    {
+        const UE::MimirComposite::FMHResolvedCompositePlan* Plan = GetResolvedPlan();
+        if (Plan != nullptr)
+        {
+            for (const UE::MimirComposite::FMHResolvedCompositeLeaf& Leaf : Plan->Leaves)
+            {
+                if (Leaf.Origin != SelectedPlacementLeafPath) continue;
+                UE::MimirComposite::FMHCompositeOutlinerItem Item;
+                Item.Kind = Leaf.Kind;
+                Item.Resource = Leaf.Resource;
+                UE::MimirComposite::FMHCompositeOutlinerModel Model;
+                UE::MimirComposite::MHAppendOutlinerAssets(Model, Item, Objects);
+                return true;
+            }
+        }
+        return true;
+    }
     Super::GetReferencedContentObjects(Objects);
     // Browse to Asset (Ctrl+B) from a placed composite selects its generated
     // source asset in the Content Browser.

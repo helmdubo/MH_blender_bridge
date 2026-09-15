@@ -2,6 +2,7 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "ContentBrowserMenuContexts.h"
+#include "UI/MHCompositeNavigation.h"
 #include "Composite/MHCompositeAsset.h"
 #include "Composite/MHCompositeThumbnailRenderer.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
@@ -208,6 +209,7 @@ void FMimirCompositeEditorModule::StartupModule()
 
     UE::MimirComposite::MHRegisterCompositeActorDetails();
     UMHCompositeEditorMode::RegisterCommands();
+    UE::MimirComposite::MHStartupCompositeNavigation();
     // The level editor registers its own SMInstance customization in
     // SLevelEditor::Initialize, before OnLevelEditorCreated; ours must follow
     // it, whichever of the two modules comes up first.
@@ -256,6 +258,7 @@ void FMimirCompositeEditorModule::ShutdownModule()
     }
     if (!IsRunningCommandlet())
     {
+        UE::MimirComposite::MHShutdownCompositeNavigation();
         UMHCompositeEditorMode::UnregisterCommands();
         if (UObjectInitialized()) UE::MimirComposite::MHUnregisterCompositeActorDetails();
         // Dynamic plugin unload still needs cleanup, but engine exit must not
